@@ -11,7 +11,6 @@ import c3d::scene;
 import c3d::shader;
 import c3d::shader::compile;
 import gpu;
-import std::io;
 import std::math;
 
 const char[*] TRACE_PROBE_SOURCE @local = $embed("trace_probe.comp.glsl");
@@ -98,6 +97,7 @@ fn TextureId add_rough_map(AssetStore* assets, uint side) @local {
                 texels[z * side + x] = (ushort)(wave * (float)ushort::max);
             }
         }
+
         material::TextureDesc desc = material::texture_2d_desc(side, side, R16_UINT);
         desc.generate_mips = false;
         texture = assets.add_texture(desc, ((char*)texels.ptr)[:texels.len * ushort::size])!!;
@@ -111,11 +111,14 @@ fn ProbeView? create_probe_view(TraceRig* rig, Vec2 center) @local {
         renderer: renderer,
         desc:     render::render_target_desc(PROBE_SIZE, PROBE_SIZE, PixelFormat.RGBA8_UNORM),
     )!;
+
     ViewDesc desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
     desc.post.anti_aliasing = AntiAliasing.NONE;
+
     Node* camera = rig.scene.add_camera(camera::perspective_deg(VIEW_FOV_DEGREES, 1, VIEW_FAR))!;
     camera.local.position = { center.x, VIEW_ALTITUDE, center.y };
     camera.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 });
+
     BufferId output = renderer.create_buffer({ .size = PROBE_RESULT_BYTES, .debug_name = "terrain_trace_probe" })!;
     gpu::AllocationDesc readback_desc = {
         .size         = PROBE_RESULT_BYTES,
@@ -124,6 +127,7 @@ fn ProbeView? create_probe_view(TraceRig* rig, Vec2 center) @local {
         .access       = { .graphics },
         .debug_name   = "terrain_trace_probe_host",
     };
+
     return {
         .target   = target,
         .view     = render::create_view(renderer, desc)!,
@@ -142,6 +146,7 @@ fn ComputeShaderId? add_probe_shader(TraceRig* rig, String define) @local {
         defines:   defines[..],
     )!;
     defer alloc::free(mem, spirv.ptr);
+
     ComputeShaderDesc desc = { .compute = spirv };
     return rig.assets.add_compute_shader(&desc);
 }
@@ -159,8 +164,10 @@ fn void? create_trace_rig(TraceRig* rig, bool ray_queries) @local {
     desc.lod_threshold = 0; // the drawn surface is the full-resolution one
     desc.trace = true;
     desc.trace_level = TRACE_LEVEL;
+
     StandardParams grass = { .base_color = { 0.5f, 0.6f, 0.3f, 1 }, .roughness = 1 };
     desc.layers[0] = rig.assets.add_material(material::standard(grass))!;
+
     rig.terrain_node = rig.scene.add_node()!;
     terrain::add_terrain(
         scene:  &rig.scene,
@@ -174,8 +181,10 @@ fn void? create_trace_rig(TraceRig* rig, bool ray_queries) @local {
         assets:    &rig.assets,
         desc:      { .validation = true, .application_name = "terrain_trace_acceptance", .ray_queries = ray_queries },
     )!;
+
     rig.walk_shader = add_probe_shader(rig, "SCENE_TRACE_BVH")!;
     if (ray_queries) rig.query_shader = add_probe_shader(rig, "SCENE_TRACE_RAY_QUERY")!;
+
     rig.views[0] = create_probe_view(rig, FIRST_VIEW_CENTER)!;
     rig.views[1] = create_probe_view(rig, SECOND_VIEW_CENTER)!;
     rig.kind = ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE;
@@ -188,6 +197,7 @@ fn void destroy_trace_rig(TraceRig* rig) @local {
         gpu::GpuAllocation allocation = probe.readback.span.allocation();
         gpu::free_allocation(&rig.renderer.device, &allocation)!!;
     }
+
     render::destroy_renderer(&rig.renderer);
     scene::destroy_scene(&rig.scene);
     asset::destroy_asset_store(&rig.assets);
@@ -204,9 +214,11 @@ fn void? record_probe(TraceRig* rig, ProbeView* probe, gpu::GpuAddress trace_sce
         .output_address = renderer.buffer_address(probe.output),
         .size           = PROBE_SIZE,
     };
+
     BufferId[1] writes = { probe.output };
     DispatchTexture[1] textures = { render::read_view_depth(probe.view, asset::SAMPLER_NEAREST) };
     uint groups = PROBE_SIZE / TRACE_GROUP_SIZE;
+
     renderer.dispatch({
         .shader   = rig.kind == TraceKind.HARDWARE ? rig.query_shader : rig.walk_shader,
         .root     = ((char*)&root)[:TraceProbeRoot::size],
@@ -214,6 +226,7 @@ fn void? record_probe(TraceRig* rig, ProbeView* probe, gpu::GpuAddress trace_sce
         .writes   = writes[..],
         .textures = textures[..],
     })!;
+
     gpu::Barrier written = { .before = { .all }, .after = { .transfer } };
     gpu::cmd_barrier(&renderer.commands, &written)!;
     gpu::BufferCopyDesc copy = {
@@ -230,12 +243,15 @@ fn void? trace_frame(TraceRig* rig) @local {
     Renderer* renderer = &rig.renderer;
     rig.scene.update_world();
     terrain::update(&rig.scene, &rig.assets)!;
+
     renderer.begin_frame({ .time = (double)rig.frame++ * FRAME_STEP, .delta = (float)FRAME_STEP })!;
     defer catch render::abort_frame(renderer);
     foreach (&probe : rig.views) renderer.render_view(&rig.scene, probe.camera, probe.view)!;
+
     gpu::GpuAddress trace_scene = renderer.prepare_scene_trace(&rig.scene, rig.kind)!;
     foreach (&probe : rig.views) record_probe(rig, probe, trace_scene)!;
     foreach (&probe : rig.views) renderer.finish_view(probe.view)!;
+
     renderer.end_frame()!;
     render::wait_frames(renderer)!;
 }
@@ -261,53 +277,10 @@ fn TraceAgreement trace_agreement(TraceRig* rig, ProbeView* probe) @local {
     return agreement;
 }
 
-fn void assert_agreement(TraceRig* rig, ProbeView* probe, ZString name) @local {
+fn void assert_agreement(TraceRig* rig, ProbeView* probe) @local {
     TraceAgreement agreement = trace_agreement(rig, probe);
-    float error = rig.scene.get(rig.terrain_node, TerrainRuntime).trace_error;
-    io::eprintfn(
-        "%s: %d covered, %d mismatched, worst %f m, trace error %f m, limit %f m",
-        name,
-        agreement.covered,
-        agreement.mismatch,
-        agreement.worst,
-        error,
-        agreement.limit,
-    );
     assert(agreement.covered >= COVERAGE_MINIMUM && agreement.mismatch == 0);
     assert(agreement.worst <= agreement.limit);
-}
-
-fn void report_trace_counts(Renderer* renderer, ZString name) @local {
-    Stats* stats = &renderer.stats;
-    io::eprintfn(
-        "%s: %d traced, %d posed, %d poses, %d refits, %d builds, %d updates, %d deform overflow, %d skipped",
-        name,
-        stats.trace_instances,
-        stats.trace_posed_instances,
-        stats.trace_poses,
-        stats.trace_refits,
-        stats.blas_builds,
-        stats.blas_updates,
-        stats.trace_deform_overflow,
-        stats.trace_skipped,
-    );
-}
-
-fn void test_traced_terrain_agrees_with_the_drawn_surface_from_two_views() @test {
-    foreach (ray_queries : TRACE_KINDS) {
-        TraceRig rig;
-        create_trace_rig(&rig, ray_queries)!!;
-        defer destroy_trace_rig(&rig);
-
-        trace_frame(&rig)!!;
-        report_trace_counts(&rig.renderer, "terrain trace");
-        assert(rig.scene.get(rig.terrain_node, TerrainRuntime).trace_error > 0);
-        assert(rig.renderer.stats.trace_posed_instances == 1 && rig.renderer.stats.trace_deform_overflow == 0);
-        assert(rig.renderer.stats.trace_skipped == 0 && rig.renderer.stats.shader_rejections == 0);
-        assert_agreement(&rig, &rig.views[0], "first view");
-        assert_agreement(&rig, &rig.views[1], "second view");
-        check_validation(&rig.renderer);
-    }
 }
 
 // A smooth hill, so the edit leaves the grid's error where it was and a missed pose shows as the whole raise.
@@ -344,23 +317,23 @@ fn void test_height_edit_poses_the_trace_grid_once() @test {
         Renderer* renderer = &rig.renderer;
 
         trace_frame(&rig)!!;
-        report_trace_counts(renderer, "first frame");
+        assert(rig.scene.get(rig.terrain_node, TerrainRuntime).trace_error > 0);
+        assert(renderer.stats.trace_posed_instances == 1 && renderer.stats.trace_deform_overflow == 0);
+        assert(renderer.stats.trace_skipped == 0 && renderer.stats.shader_rejections == 0);
         assert(renderer.stats.trace_poses == 1 && renderer.stats.trace_refits == (ray_queries ? 0 : 1));
         assert(renderer.stats.blas_builds == (ray_queries ? 1 : 0) && renderer.stats.blas_updates == 0);
 
         trace_frame(&rig)!!;
-        report_trace_counts(renderer, "still frame");
         assert(renderer.stats.trace_poses == 0 && renderer.stats.trace_refits == 0);
         assert(renderer.stats.blas_builds == 0 && renderer.stats.blas_updates == 0);
-        assert_agreement(&rig, &rig.views[0], "before the edit");
+        assert_agreement(&rig, &rig.views[0]);
 
         raise_hill(&rig, FIRST_VIEW_CENTER);
         trace_frame(&rig)!!;
-        report_trace_counts(renderer, "edited frame");
         assert(renderer.stats.trace_poses == 1 && renderer.stats.trace_refits == (ray_queries ? 0 : 1));
         assert(renderer.stats.blas_builds == (ray_queries ? 1 : 0) && renderer.stats.blas_updates == 0);
-        assert_agreement(&rig, &rig.views[0], "after the edit, edited view");
-        assert_agreement(&rig, &rig.views[1], "after the edit, other view");
+        assert_agreement(&rig, &rig.views[0]);
+        assert_agreement(&rig, &rig.views[1]);
 
         trace_frame(&rig)!!;
         assert(renderer.stats.trace_poses == 0 && renderer.stats.blas_builds == 0);

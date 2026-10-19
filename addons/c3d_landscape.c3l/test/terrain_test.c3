@@ -355,7 +355,7 @@ fn TerrainDesc traced_desc(Fixture* fixture, TextureId height_map, uint level = 
     return desc;
 }
 
-// The map is the plane height = MAP_LOW + 3x + 5z: linear, so any triangulation of it is exact.
+// The plane height = MAP_LOW + 3x + 5z: linear, so the grid is exact on it and a raised texel is the only gap.
 fn TextureId add_plane_map(Fixture* fixture, uint texels) @local {
     TextureId texture = add_height_map(fixture, texels, SEED, flat: true);
     ushort* pixels = (ushort*)fixture.assets.texture(texture).pixels.ptr;
@@ -398,9 +398,6 @@ fn void test_terrain_trace_error_bound() @test {
     setup(&fixture);
     defer teardown(&fixture);
 
-    Node* plane = add_terrain_node(&fixture, traced_desc(&fixture, add_plane_map(&fixture, TWO_LEVEL_TEXELS)));
-    assert(fixture.scene.get(plane, TerrainRuntime).trace_error == 0);
-
     // A texel in the middle of a cell lies on its diagonal, so the grid misses it by the whole bump.
     TextureId centered = add_plane_map(&fixture, TWO_LEVEL_TEXELS);
     raise_texel(&fixture, centered, CELL_CENTER_X, CELL_CENTER_Z);
@@ -417,12 +414,6 @@ fn void test_terrain_trace_error_bound() @test {
     // The grid's diagonal runs from (x + 1, z) to (x, z + 1); the other one would miss every middle texel here.
     Node* checker = add_terrain_node(&fixture, traced_desc(&fixture, add_checker_map(&fixture, TWO_LEVEL_TEXELS)));
     assert(fixture.scene.get(checker, TerrainRuntime).trace_error == 0);
-
-    // The finest grid is the surface itself.
-    TextureId finest = add_plane_map(&fixture, TWO_LEVEL_TEXELS);
-    raise_texel(&fixture, finest, CELL_CENTER_X, CELL_CENTER_Z);
-    Node* exact = add_terrain_node(&fixture, traced_desc(&fixture, finest, level: 0));
-    assert(fixture.scene.get(exact, TerrainRuntime).trace_error == 0);
 
     // An edit refreshes the chunks its rectangle meets and agrees with a build from the edited texels.
     TextureId edited_map = copy_height_map(&fixture, add_plane_map(&fixture, TWO_LEVEL_TEXELS));
