@@ -46,7 +46,7 @@ attempt created, preserving shared assets used by prior owners.
 
 Ordinary updates skip pending owners. A pending terrain has no generated
 `InstancedMesh` or trace grid, pending foliage has no generated cells, and pending water has
-no generated `Mesh` or mirror camera. They produce no generated draws. Existing
+no generated `Mesh` (`InstancedMesh` for an ocean) or mirror camera. They produce no generated draws. Existing
 `add_terrain`, `add_foliage` and `add_water` combine attachment and preparation,
 retaining their immediate-ready behavior and rollback on failure.
 
