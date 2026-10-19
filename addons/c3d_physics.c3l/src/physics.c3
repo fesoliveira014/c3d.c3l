@@ -123,6 +123,7 @@ struct CollisionFilter {
 
 <*
  Cells of a texture height field that one collider covers; all zero covers the whole map.
+ A window with map cells past any side also reads a ring of neighbour samples and per-cell materials around it.
 *>
 struct HeightFieldWindow {
     uint x;

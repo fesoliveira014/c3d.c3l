@@ -102,7 +102,7 @@ fn void? add_height_field_windows(
             @pool() {
                 ColliderDesc window_collider = windows.collider;
                 window_collider.height_field.window = window;
-                window_collider.material_indices = window_materials(windows.collider.material_indices, map.x, window);
+                window_collider.material_indices = window_materials(windows.collider.material_indices, map, window);
                 scene.add(window_node, try_copy_physics_body(
                     allocator: scene.allocator,
                     body:      default_body_desc(STATIC),
@@ -117,7 +117,7 @@ fn void? add_height_field_windows(
 
 <*
  Mark changed every window whose samples the rectangle touches.
- Neighbouring windows share their edge samples, so an edge marks both and a corner marks four.
+ Neighbouring windows share their edge samples and read one sample past them, so an edit beside an edge marks both.
  @param [&inout] scene
  @param node : "Carries HeightFieldWindows."
  @param rect : "Samples written in the height map."
@@ -131,10 +131,12 @@ fn uint? mark_height_field_windows_changed(Scene* scene, Entity node, SampleRect
     if (!windows) return c3d::INVALID_ID~;
 
     uint cells = windows.window_cells;
-    uint first_column = rect.x ? (rect.x - 1) / cells : 0;
-    uint first_row = rect.z ? (rect.z - 1) / cells : 0;
-    uint last_column = math::min((rect.x + rect.columns - 1) / cells, windows.columns - 1);
-    uint last_row = math::min((rect.z + rect.rows - 1) / cells, windows.rows - 1);
+    uint first_sample_column = rect.x ? rect.x - 1 : 0;
+    uint first_sample_row = rect.z ? rect.z - 1 : 0;
+    uint first_column = first_sample_column ? (first_sample_column - 1) / cells : 0;
+    uint first_row = first_sample_row ? (first_sample_row - 1) / cells : 0;
+    uint last_column = math::min((rect.x + rect.columns) / cells, windows.columns - 1);
+    uint last_row = math::min((rect.z + rect.rows) / cells, windows.rows - 1);
 
     uint marked;
     for (uint row = first_row; row <= last_row; row++) {
@@ -244,14 +246,20 @@ fn HeightFieldWindows carve_windows(
     };
 }
 
-// The window's rows of the map-wide per-cell indices; empty when the map has none.
-fn char[] window_materials(char[] indices, uint row_cells, HeightFieldWindow window) @local {
+// The window's cells of the map-wide indices, ringed by its neighbours' cells; empty when the map has none.
+fn char[] window_materials(char[] indices, MapCells map, HeightFieldWindow window) @local {
     if (!indices.len) return {};
 
-    char[] slice = alloc::new_array(tmem, char, (sz)((usz)window.count_x * window.count_z));
-    for (uint row = 0; row < window.count_z; row++) {
-        usz source = (usz)(window.z + row) * row_cells + window.x;
-        slice[(usz)row * window.count_x:window.count_x] = indices[source:window.count_x];
+    uint padding = apron_padding(window_apron_sides(window, map));
+    uint columns = window.count_x + 2 * padding;
+    uint rows = window.count_z + 2 * padding;
+    char[] slice = alloc::new_array(tmem, char, (sz)((usz)columns * rows));
+    for (uint row = 0; row < rows; row++) {
+        usz source_row = padded_map_index(window.z, row, padding, map.z);
+        for (uint column = 0; column < columns; column++) {
+            usz source_column = padded_map_index(window.x, column, padding, map.x);
+            slice[(usz)row * columns + column] = indices[source_row * map.x + source_column];
+        }
     }
     return slice;
 }

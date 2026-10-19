@@ -366,9 +366,9 @@ physics::add_height_field_windows(
   exactly at their seams and an edit never changes the quantization of another window.
 - [Tiles](#tile-sets) of one set each get their own windows. Tiles with equal `height_scale` quantize over the same
   range, so they meet exactly at the tile seam too.
-- Separate height fields carry no adjacency in the physics engine, so a body can catch on the edge of an internal
-  seam. A sphere of radius 0.5 m rolling at 4 m/s over a flat seam loses 1.9 % of its speed and rises 6 mm.
-  The package README lists the window contracts.
+- Each window reads one sample of its neighbours past a shared edge, so a body crosses a window seam as it crosses
+  the interior of a whole field. The edge of a map reads no neighbour, so two tiles still meet as separate height
+  fields. The package README lists the window contracts.
 
 ## Edits
 

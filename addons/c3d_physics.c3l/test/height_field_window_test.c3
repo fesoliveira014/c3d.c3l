@@ -3,6 +3,7 @@ module c3d_physics_height_window_test;
 import std::math;
 import c3d;
 import c3d::asset;
+import c3d::debug;
 import c3d::ecs;
 import c3d::material;
 import c3d::physics;
@@ -24,17 +25,33 @@ const float SPHERE_RADIUS @private = 0.5f;
 const float ROLL_SPEED @private = 4;
 const float ROLL_START_X @private = 4;
 const float ROLL_START_Z @private = 4;
+const float CAPSULE_RADIUS @private = 0.4f;
+const float CAPSULE_HALF_HEIGHT @private = 0.6f;
 const float SEAM_X @private = 8;
-const float SPEED_LOSS_LIMIT @private = 0.05f; // of the rolling speed
-const float HOP_LIMIT @private = 0.02f; // metres of rise above the rolling height
-const float HEADING_LIMIT @private = 0.02f; // radians
+const float SEAM_CLEARANCE @private = 1; // metres past the seam, more than either body's diameter
+const float SPEED_EPSILON @private = 0.001f; // m/s; solver rounding between two cooks of one surface
+const float RISE_EPSILON @private = 0.0005f; // metres; the same rounding, seen in height
+const float HEADING_EPSILON @private = 0.001f; // radians; the same rounding, seen in direction
 const ushort FLAT_LEVEL @private = 6554; // a tenth of the range
 const uint  FLOAT_TEXEL_BYTES @private = 16;
+const float WIRE_TOLERANCE @private = 0.0001f; // metres; the wire holds float samples and the map 16-bit ones
+const uint  WINDOW_COUNT @private = 4;
+
+enum Tiling @private {
+    WHOLE,
+    WINDOWS,
+}
 
 struct Fixture @private {
     AssetStore   assets;
     Scene        scene;
     PhysicsWorld physics;
+}
+
+struct Crossing @private {
+    float speed_loss;
+    float rise;
+    float heading_drift;
 }
 
 fn void setup(Fixture* fixture) @private {
@@ -132,6 +149,93 @@ fn Node* add_sphere(
     return node;
 }
 
+// Friction and rotation are off, so a seam is the only thing that can slow it or lift it.
+fn Node* add_capsule(Fixture* fixture, Vec3 position, Vec3 velocity) @private {
+    Node* node = fixture.scene.add_node(name: "capsule")!!;
+    node.local.position = position;
+    fixture.scene.update_world();
+    BodyDesc body = physics::default_body_desc(DYNAMIC);
+    body.linear_velocity = velocity;
+    body.locks = { .angular_x = true, .angular_y = true, .angular_z = true };
+    ColliderDesc collider = physics::default_collider_desc(CAPSULE);
+    collider.radius = CAPSULE_RADIUS;
+    collider.half_height = CAPSULE_HALF_HEIGHT;
+    collider.material.friction = 0;
+    fixture.physics.add_body(node, body, (&collider)[:1])!!;
+    return node;
+}
+
+fn void add_flat_terrain(Fixture* fixture, Tiling tiling) @private {
+    ColliderDesc collider = map_collider(add_flat_map(fixture));
+    switch (tiling) {
+        case WHOLE:
+            Node* terrain = add_terrain_node(fixture);
+            fixture.physics.add_body(terrain, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+        case WINDOWS:
+            add_window_terrain(fixture, &collider, FLAT_WINDOW_CELLS);
+    }
+}
+
+fn Crossing measure_crossing(Fixture* fixture, Node* body) @private {
+    run_updates(fixture, ROLL_SETTLE_UPDATES);
+
+    float resting_height = body.world_position().y;
+    float slowest = ROLL_SPEED;
+    float highest = resting_height;
+    float heading_drift;
+    for (uint update = 0; update < ROLL_UPDATES; update++) {
+        run_updates(fixture, 1);
+        Vec3 velocity = fixture.physics.body_state(body).linear_velocity;
+        slowest = math::min(slowest, velocity.x);
+        highest = math::max(highest, body.world_position().y);
+        heading_drift = math::max(heading_drift, math::abs(math::atan2(velocity.z, velocity.x)));
+    }
+
+    assert(body.world_position().x > SEAM_X + SEAM_CLEARANCE);
+    return {
+        .speed_loss    = ROLL_SPEED - slowest,
+        .rise          = highest - resting_height,
+        .heading_drift = heading_drift,
+    };
+}
+
+fn Crossing roll_sphere_across_the_seam(Tiling tiling) @private {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    add_flat_terrain(&fixture, tiling);
+    float ground = FLAT_LEVEL * HEIGHT_SCALE / 65535;
+    Node* sphere = add_sphere(
+        fixture:  &fixture,
+        position: { ROLL_START_X, ground + SPHERE_RADIUS, ROLL_START_Z },
+        velocity: { ROLL_SPEED, 0, 0 },
+        spin:     { 0, 0, -ROLL_SPEED / SPHERE_RADIUS },
+    );
+    return measure_crossing(&fixture, sphere);
+}
+
+fn Crossing slide_capsule_across_the_seam(Tiling tiling) @private {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    add_flat_terrain(&fixture, tiling);
+    float ground = FLAT_LEVEL * HEIGHT_SCALE / 65535;
+    Node* capsule = add_capsule(
+        &fixture,
+        { ROLL_START_X, ground + CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS, ROLL_START_Z },
+        { ROLL_SPEED, 0, 0 },
+    );
+    return measure_crossing(&fixture, capsule);
+}
+
+fn void assert_crosses_like_the_whole_field(Crossing windows, Crossing whole) @private {
+    assert(windows.speed_loss <= whole.speed_loss + SPEED_EPSILON);
+    assert(windows.rise <= whole.rise + RISE_EPSILON);
+    assert(windows.heading_drift <= whole.heading_drift + HEADING_EPSILON);
+}
+
 fn fault add_body_fault(Fixture* fixture, ColliderDesc collider) @private {
     Node* node = fixture.scene.add_node(name: "probe")!!;
     fixture.scene.update_world();
@@ -200,6 +304,29 @@ fn void test_height_field_windows_match_the_whole_field() @test {
     assert(holes == 2);
 }
 
+fn void test_window_wireframes_follow_the_map_samples() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    TextureId texture = add_hill_map(&fixture);
+    ColliderDesc collider = map_collider(texture);
+    add_window_terrain(&fixture, &collider, WINDOW_CELLS);
+    usz segments_per_window = 2 * WINDOW_CELLS * (WINDOW_CELLS + 1);
+    debug::DebugDraw sink = debug::create_debug_draw(mem, WINDOW_COUNT * segments_per_window);
+    defer debug::destroy_debug_draw(&sink);
+    fixture.physics.debug_draw(&sink, { .colliders = true });
+
+    assert((usz)sink.vertices.len() == 2 * WINDOW_COUNT * segments_per_window);
+    ushort* texels = (ushort*)fixture.assets.texture(texture).pixels.ptr;
+    foreach (vertex : sink.vertices) {
+        uint column = (uint)math::round(vertex.position.x);
+        uint row = (uint)math::round(vertex.position.z);
+        float expected = texels[row * MAP_SAMPLES + column] * HEIGHT_SCALE / 65535;
+        assert(math::abs(vertex.position.y - expected) < WIRE_TOLERANCE);
+    }
+}
+
 fn void test_window_edit_marks_every_sharing_window() @test {
     Fixture fixture;
     setup(&fixture);
@@ -209,14 +336,18 @@ fn void test_window_edit_marks_every_sharing_window() @test {
     Node* terrain = add_window_terrain(&fixture, &collider, FLAT_WINDOW_CELLS);
     assert(fixture.physics.counters().pending_bodies == 0);
 
-    SampleRect[5] rects = {
+    SampleRect[9] rects = {
         { .x = 3, .z = 3, .columns = 2, .rows = 2 },
         { .x = 8, .z = 3, .columns = 1, .rows = 2 },
         { .x = 3, .z = 8, .columns = 2, .rows = 1 },
         { .x = 8, .z = 8, .columns = 1, .rows = 1 },
         { .x = 0, .z = 0, .columns = FLAT_SAMPLES, .rows = FLAT_SAMPLES },
+        { .x = 7, .z = 3, .columns = 1, .rows = 1 },
+        { .x = 9, .z = 3, .columns = 1, .rows = 1 },
+        { .x = 6, .z = 3, .columns = 1, .rows = 1 },
+        { .x = 9, .z = 9, .columns = 1, .rows = 1 },
     };
-    uint[5] expected = { 1, 2, 2, 4, 4 };
+    uint[9] expected = { 1, 2, 2, 4, 4, 2, 2, 1, 4 };
     foreach (index, rect : rects) {
         uint marked = physics::mark_height_field_windows_changed(&fixture.scene, terrain.id, rect)!!;
         assert(marked == expected[index]);
@@ -263,37 +394,17 @@ fn void test_body_on_an_unedited_window_keeps_its_contact() @test {
 }
 
 fn void test_sphere_rolls_across_a_window_seam() @test {
-    Fixture fixture;
-    setup(&fixture);
-    defer teardown(&fixture);
+    Crossing whole = roll_sphere_across_the_seam(WHOLE);
+    Crossing windows = roll_sphere_across_the_seam(WINDOWS);
 
-    ColliderDesc collider = map_collider(add_flat_map(&fixture));
-    add_window_terrain(&fixture, &collider, FLAT_WINDOW_CELLS);
-    float ground = FLAT_LEVEL * HEIGHT_SCALE / 65535;
-    Node* sphere = add_sphere(
-        fixture:  &fixture,
-        position: { ROLL_START_X, ground + SPHERE_RADIUS, ROLL_START_Z },
-        velocity: { ROLL_SPEED, 0, 0 },
-        spin:     { 0, 0, -ROLL_SPEED / SPHERE_RADIUS },
-    );
-    run_updates(&fixture, ROLL_SETTLE_UPDATES);
+    assert_crosses_like_the_whole_field(windows, whole);
+}
 
-    float rolling_height = sphere.world_position().y;
-    float slowest = ROLL_SPEED;
-    float highest = rolling_height;
-    float heading_drift;
-    for (uint update = 0; update < ROLL_UPDATES; update++) {
-        run_updates(&fixture, 1);
-        Vec3 velocity = fixture.physics.body_state(sphere).linear_velocity;
-        slowest = math::min(slowest, velocity.x);
-        highest = math::max(highest, sphere.world_position().y);
-        heading_drift = math::max(heading_drift, math::abs(math::atan2(velocity.z, velocity.x)));
-    }
+fn void test_capsule_slides_across_a_window_seam() @test {
+    Crossing whole = slide_capsule_across_the_seam(WHOLE);
+    Crossing windows = slide_capsule_across_the_seam(WINDOWS);
 
-    assert(sphere.world_position().x > SEAM_X + 2 * SPHERE_RADIUS);
-    assert(ROLL_SPEED - slowest < ROLL_SPEED * SPEED_LOSS_LIMIT);
-    assert(highest - rolling_height < HOP_LIMIT);
-    assert(heading_drift < HEADING_LIMIT);
+    assert_crosses_like_the_whole_field(windows, whole);
 }
 
 fn void test_windowed_field_validation() @test {
@@ -325,6 +436,16 @@ fn void test_windowed_field_validation() @test {
     inside.height_field.window = { .x = 8, .z = 8, .count_x = 8, .count_z = 8 };
     Node* edge_window = add_terrain_node(&fixture);
     fixture.physics.add_body(edge_window, physics::default_body_desc(STATIC), (&inside)[:1])!!;
+
+    SurfaceMaterialDesc material = physics::default_surface_material();
+    char[8 * 8] window_cells;
+    char[10 * 10] ringed_cells;
+    inside.face_materials = (&material)[:1];
+    inside.material_indices = window_cells[..];
+    assert(add_body_fault(&fixture, inside) == c3d::INVALID_ARGUMENT);
+    inside.material_indices = ringed_cells[..];
+    Node* ringed_window = add_terrain_node(&fixture);
+    fixture.physics.add_body(ringed_window, physics::default_body_desc(STATIC), (&inside)[:1])!!;
 
     TextureDesc float_desc = material::texture_2d_desc(FLAT_SAMPLES, FLAT_SAMPLES, RGBA32_FLOAT);
     float_desc.generate_mips = false;
