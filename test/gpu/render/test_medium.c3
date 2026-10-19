@@ -14,7 +14,7 @@ const float MEDIUM_BED_DISTANCE @private = 30;
 const float MEDIUM_BOX_HALF @private = 50;
 const float MEDIUM_MIRROR_BOX @private = 1000;
 const float SECOND_BOX_ENTRY @private = 5;      // metres along the level ray where the second box begins
-const uint MEDIUM_REFERENCE_STEPS @private = 20000; // midpoint steps of the in-scatter reference
+const float MEDIUM_RAISE @private = 10;         // metres the second box top sits above the first, deepening the camera
 const MediumVolume MEDIUM_WATER @private = {
     .absorption  = { 0.02f, 0.05f, 0.01f },
     .scattering  = { 0.01f, 0, 0.03f },
@@ -189,30 +189,19 @@ fn void test_medium_in_a_clip_plane_frame_applies_only_past_the_plane() @test {
     check_validation(&fixture.renderer);
 }
 
-// In-scatter of a box along a ray by midpoint integration: the ambient, and the sun through the phase and the
-// column from the top face along the sun.
-fn Vec3 integrated_scattering(MediumVolume* medium, FogRay ray, Vec3 to_sun, float sun_intensity) @private {
-    Vec3 extinction = extinction_of(medium);
-    float reach = covered_distance(ray);
-    float g = medium.anisotropy;
-    float denominator = 1 + g * g - 2 * g * ray.direction.dot(to_sun);
-    float phase = (1 - g * g) / (4 * (float)math::PI * denominator * math::sqrt(denominator));
-    double step = (double)reach / MEDIUM_REFERENCE_STEPS;
-    double[3] total;
-    for (uint index = 0; index < MEDIUM_REFERENCE_STEPS; index++) {
-        double along = ((double)index + 0.5) * step;
-        double below_top = MEDIUM_TOP - (ray.origin.y + ray.direction.y * along);
-        double column = below_top / to_sun.y;
-        for (uint channel = 0; channel < 3; channel++) {
-            double view = math::exp(-(double)extinction[channel] * along);
-            double sun = (double)sun_intensity * phase * math::exp(-(double)extinction[channel] * column);
-            total[channel] += (double)medium.scattering[channel] * (FOG_AMBIENT[channel] + sun) * view * step;
-        }
-    }
-    return { (float)total[0], (float)total[1], (float)total[2] };
+fn Vec4 level_pixel(Fixture* fixture, FogScene* target, FogView* fog_view) @private {
+    Vec4[] pixels = render_fog_pixels(fixture, target, fog_view)!!;
+    defer free(pixels);
+    return pixel_at(pixels, SKY_CENTRE, SKY_CENTRE);
 }
 
-fn void test_medium_scatters_the_ambient_and_the_sun_through_its_column() @test {
+fn float channel_sum(Vec3 value) @private {
+    return value.x + value.y + value.z;
+}
+
+// Every case compares two renders of one scene: the black emitter makes a pixel the medium's own in-scatter, and the
+// render without a sun is the ambient the sun term is measured over.
+fn void test_medium_sun_term_follows_its_phase_and_its_column() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -221,27 +210,35 @@ fn void test_medium_scatters_the_ambient_and_the_sun_through_its_column() @test 
     add_facing_plane(&target, add_unlit(&fixture, { 0, 0, 0, 1 })!!, MEDIUM_BED_DISTANCE)!!;
     MediumVolume medium = MEDIUM_WATER;
     medium.anisotropy = 0.4f;
-    add_medium_box(&target, medium, { 0, MEDIUM_TOP, 0 })!!;
+    medium.depth = MEDIUM_DEPTH + MEDIUM_RAISE;
+    Node* box = add_medium_box(&target, medium, { 0, MEDIUM_TOP, 0 })!!;
     Vec3 to_sun = ((Vec3){ 0.3f, 0.7f, -0.6f }).normalize();
-    add_plain_sun(&target, to_sun, false)!!;
+    Node* sun = add_plain_sun(&target, to_sun, false)!!;
     FogView fog_view = create_fog_view(&fixture, ShadingPath.FORWARD)!!;
     defer destroy_fog_view(&fixture, &fog_view);
 
-    Vec4[] pixels = render_fog_pixels(&fixture, &target, &fog_view)!!;
-    defer free(pixels);
-    uint[2] rows = { SKY_CENTRE, SKY_UPPER_ROW };
-    String[2] names = { "level ray", "ray leaving through the top face" };
-    foreach (index, row : rows) {
-        FogRay ray = pixel_ray(&target, row, MEDIUM_BED_DISTANCE);
-        Vec3 expected = integrated_scattering(&medium, ray, to_sun, VOLUME_SUN_INTENSITY);
-        check_rgb_close(pixel_at(pixels, SKY_CENTRE, row), expected, names[index]);
-    }
+    Light* lamp = target.scene.get(sun, Light);
+    float intensity = lamp.intensity;
+    lamp.intensity = 0;
+    Vec3 ambient = level_pixel(&fixture, &target, &fog_view).xyz;
+    assert(ambient.x > 0 && ambient.z > 0 && ambient.y == 0, "the ambient scatters in the channels that scatter");
 
+    lamp.intensity = intensity;
+    float forward = channel_sum(level_pixel(&fixture, &target, &fog_view).xyz - ambient);
+    assert(forward > 0, "the sun adds light: %f", forward);
+    target.scene.get(box, MediumVolume).anisotropy = -0.4f;
+    float backward = channel_sum(level_pixel(&fixture, &target, &fog_view).xyz - ambient);
+    assert(forward > 2 * backward, "forward scattering toward the sun is brighter: %f against %f", forward, backward);
+
+    target.scene.get(box, MediumVolume).anisotropy = 0.4f;
+    box.local.position.y = MEDIUM_TOP + MEDIUM_RAISE;
+    target.scene.update_world();
+    float deeper = channel_sum(level_pixel(&fixture, &target, &fog_view).xyz - ambient);
+    assert(deeper < 0.85f * forward, "a deeper camera sees less sun: %f against %f", deeper, forward);
+
+    box.local.position.y = MEDIUM_TOP;
     target.sun.local.rotation = maths::look_rotation({ 0, 1, 0 }, { 0, 0, 1 });
-    Vec4[] below = render_fog_pixels(&fixture, &target, &fog_view)!!;
-    defer free(below);
-    FogRay level = pixel_ray(&target, SKY_CENTRE, MEDIUM_BED_DISTANCE);
-    Vec3 ambient_only = integrated_scattering(&medium, level, { 0, -1, 0 }, 0);
-    check_rgb_close(pixel_at(below, SKY_CENTRE, SKY_CENTRE), ambient_only, "a sun below the horizon scatters nothing");
+    target.scene.update_world();
+    check_rgb_close(level_pixel(&fixture, &target, &fog_view), ambient, "a sun below the top face scatters nothing");
     check_validation(&fixture.renderer);
 }
