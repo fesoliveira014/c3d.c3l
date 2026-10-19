@@ -102,6 +102,11 @@ fn NavMeshDesc GridCache.mesh_desc(&self) {
 }
 
 <*
+ Source origin that a later set_source must repeat exactly.
+*>
+fn Vec3 GridCache.source_origin(&self) => self.source.origin;
+
+<*
  Request every tile whose captured cells intersect the edit.
  @param cells : "Half-open source-cell range."
  @param revision : "Current source revision; never decreases."
@@ -334,6 +339,35 @@ fn GridUpdateResult GridCache.update(&self, NavMesh* mesh, uint budget = 1) {
 }
 
 <*
+ Move the source origin, cached and staged layers, obstacles and held jobs by the negated offset.
+ @param [&inout] self : "No slot is building on another thread; join workers first."
+ @require offset.y == 0
+*>
+fn void GridCache.shift_origin(&self, Vec3 offset) {
+    self.source.origin -= offset;
+
+    foreach (&record : self.tiles) {
+        if (!record.pending) continue;
+        foreach (blob : record.pending.blobs[:record.pending.count]) shift_grid_layer(blob, offset);
+    }
+
+    foreach (&job : self.jobs) {
+        switch (job.state) {
+            case READY:
+                job.builder.source.origin -= offset;
+            case BUILT:
+                foreach (blob : job.blobs[:job.layer_count]) shift_grid_layer(blob, offset);
+            case FREE:
+            case RASTERIZING:
+            case FAILED:
+                break;
+        }
+    }
+
+    shift_tile_cache(&self.cache, offset);
+}
+
+<*
  Configure fixed cached-grid storage over a tile extent.
  @param tiles : "Half-open tile-coordinate range."
 *>
@@ -544,6 +578,12 @@ fn void free_grid_replacement(Allocator allocator, GridLayerReplacement* pending
     if (!pending) return;
     foreach (blob : pending.blobs[:pending.count]) alloc::free(allocator, blob.ptr);
     alloc::free(allocator, pending);
+}
+
+fn void shift_grid_layer(char[] blob, Vec3 offset) @local {
+    LayerHeader* header = (LayerHeader*)blob.ptr;
+    shift_bounds(&header.bounds, offset);
+    shift_cached_grid_reference(blob, offset);
 }
 
 fn uint grid_coordinate(GridCache* grid, int x, int z) @local {

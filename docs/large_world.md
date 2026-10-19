@@ -134,6 +134,7 @@ scene.shift_characters(offset);
 nav_mesh.shift_origin(offset);
 builder.shift_origin(offset);
 crowd.shift_origin(offset);
+grid_cache.shift_origin(offset);
 scene.shift_navigation(offset);
 scene.shift_foliage();
 audio.shift_origin(offset);
@@ -165,8 +166,9 @@ this order:
    support owners supply their already-shifted frame before the next contact update.
 5. The simulation owners shift their state. `PhysicsWorld.shift_origin` takes the
    scene. Navigation shifts the mesh, the builder (join tile builds on other
-   threads first), the crowd and `Scene.shift_navigation`; a `NavQuery` the
-   application holds itself needs `NavQuery.shift_origin`.
+   threads first), the crowd, a `GridCache` (join its workers first) and
+   `Scene.shift_navigation`; a `NavQuery` the application holds itself needs
+   `NavQuery.shift_origin`. See [navigation grid caches](#navigation-grid-caches).
 6. `scene.shift_foliage()` stores the current node worlds as the scatter poses so
    no layer re-scatters. `AudioSystem.shift_origin(offset)` moves positioned
    one-shots; emitters follow their nodes.
@@ -239,10 +241,33 @@ The application shifts, or retakes after the shift:
 - `spatial::SceneIndex`: call `refresh` after the shift.
 - `HeightView`, `SurfaceView` and other query views taken from absolute data.
 - Buoyancy surfaces and any callback returning absolute heights or positions.
-- `GridSourceDesc.origin` and floor callbacks of navigation sources.
+- `GridHeightSampler.origin`, `GridHeightView.origin` and floor callbacks of
+  navigation sources; see [navigation grid caches](#navigation-grid-caches).
 - Absolute positions held in application structures, such as camera targets.
 - A `ViewDesc` the application stores for `configure_view`: re-read it after the
   shift.
+
+### Navigation grid caches
+
+A `GridCache` holds world positions of its own: the source origin, cached and
+staged layers, obstacles and the jobs it has captured. `GridCache.shift_origin(offset)`
+moves them without rebuilding a tile, and leaves dirty marks, revisions and
+requests as they are. Within the protocol above, the navigation owners go in this order:
+
+1. `scene.shift_origin(offset)` and `physics.shift_origin(&scene, offset)`.
+2. `NavMesh.shift_origin`, `NavQuery.shift_origin` and `Crowd.shift_origin`. The
+   mesh a cache publishes into is the application's.
+3. `GridCache.shift_origin(offset)`, with no worker running a cache job.
+4. The source behind the cache: subtract the offset from a
+   `GridHeightSampler.origin` or `GridHeightView.origin`, and retake views
+   taken from absolute data (see [terrain](terrain.md#navigation)). World-space
+   obstacle positions and floors callbacks the application keeps follow the offset.
+
+A later `set_source` passes `GridCache.source_origin()` as its origin: it refuses
+any other. Use the 256 m multiples of the rebase step, which keep origins
+exactly representable. Another offset also works; the shifted layers then agree
+with a build at the new origin within float rounding, and seams between shifted
+and later rebuilt tiles rely on the link tolerance.
 
 ### Shadow lattice
 
