@@ -392,7 +392,13 @@ fn bool is_map_size(uint size) {
     return false;
 }
 
-fn TerrainDesc? ground_desc(AssetStore* assets, uint layers, float lod_threshold) @local {
+fn TerrainDesc? ground_desc(
+    AssetStore* assets,
+    uint layers,
+    float lod_threshold,
+    float morph_band,
+    SlopeProjection slope_projection,
+) @local {
     TerrainDesc desc = terrain::default_terrain_desc();
     for (uint index = 0; index < layers; index++) {
         desc.layers[index] = add_layer(assets, LAYER_LOOKS[index], index)!;
@@ -400,6 +406,8 @@ fn TerrainDesc? ground_desc(AssetStore* assets, uint layers, float lod_threshold
     desc.cell_size = CELL_SIZE;
     desc.height_scale = HEIGHT_SCALE;
     desc.lod_threshold = lod_threshold;
+    desc.morph_band = morph_band;
+    desc.slope_projection = slope_projection;
     return desc;
 }
 
@@ -410,6 +418,8 @@ fn TerrainDesc? ground_desc(AssetStore* assets, uint layers, float lod_threshold
  @param size : "Height-map texels per side."
  @param layers : "Material layers generated, grass first."
  @param lod_threshold : "Chunk split threshold in output pixels."
+ @param morph_band : "Share of a range over which chunk vertices morph; zero for none."
+ @param slope_projection : "How the layers project onto steep ground."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
  @require is_map_size(size)
  @require layers > 0 && layers <= LAYER_COUNT
@@ -420,8 +430,16 @@ fn Ground? add_ground(
     uint size,
     uint layers,
     float lod_threshold,
+    float morph_band = 0,
+    SlopeProjection slope_projection = TOP,
 ) {
-    TerrainDesc desc = ground_desc(assets, layers, lod_threshold)!;
+    TerrainDesc desc = ground_desc(
+        assets:           assets,
+        layers:           layers,
+        lod_threshold:    lod_threshold,
+        morph_band:       morph_band,
+        slope_projection: slope_projection,
+    )!;
     desc.height_map = add_height_map(assets, size)!;
     TextureAsset* heights = assets.texture(desc.height_map);
     desc.control_map = add_control_map(
@@ -480,6 +498,8 @@ fn TextureId? add_height_tile(
  @param size : "Height-map texels per side of the whole landscape."
  @param layers : "Material layers generated, grass first."
  @param lod_threshold : "Chunk split threshold in output pixels."
+ @param morph_band : "Share of a range over which chunk vertices morph; zero for none."
+ @param slope_projection : "How the layers project onto steep ground."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
  @require is_map_size(size)
  @require layers > 0 && layers <= LAYER_COUNT
@@ -490,8 +510,16 @@ fn Ground? add_ground_tiles(
     uint size,
     uint layers,
     float lod_threshold,
+    float morph_band = 0,
+    SlopeProjection slope_projection = TOP,
 ) {
-    TerrainDesc desc = ground_desc(assets, layers, lod_threshold)!;
+    TerrainDesc desc = ground_desc(
+        assets:           assets,
+        layers:           layers,
+        lod_threshold:    lod_threshold,
+        morph_band:       morph_band,
+        slope_projection: slope_projection,
+    )!;
     TextureId whole = add_height_map(assets, size)!;
     defer assets.remove_texture(whole);
     ushort[] whole_heights = ((ushort*)assets.texture(whole).pixels.ptr)[:(usz)size * size];
