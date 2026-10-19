@@ -11,7 +11,6 @@ import c3d::scene;
 import c3d::shader;
 import c3d::shader::compile;
 import gpu;
-import std::io;
 import std::math;
 
 const char[*] MORPH_READBACK_SOURCE @local = $embed("morph_readback.comp.glsl");
@@ -19,15 +18,11 @@ const uint MORPH_READBACK_POINTS @local = 32; // mirrored as MORPH_READBACK_POIN
 const uint MORPH_TEXELS @local = 257; // two finest chunks per side under one root
 const uint MORPH_NODES @local = 5; // four finest chunks and the root
 const float MORPH_CELL_SIZE @local = 0.1f; // a 25.6 m map: the box ranges stay within tens of metres
-const float MORPH_HEIGHT_SCALE @local = 12;
-const float MORPH_NOISE_SHARE @local = 0.5f; // of the height scale: odd vertices sit far off their parents
 const float MORPH_BAND @local = 0.25f;
-const float MORPH_SPLIT_PIXELS @local = 64;
-const float MORPH_FOV_DEGREES @local = 90;
 const float MORPH_FAR_PLANE @local = 300;
 const uint MORPH_FINEST_CHUNK @local = 128; // the finest chunk at the far corner of the map starts at this texel
 const uint MORPH_PROBE_SPAN @local = 100; // texels scanned for a probe inside that chunk
-const float MORPH_MIN_POP @local = 1.5f; // metres between a probe vertex and its parent surface
+const float MORPH_MIN_POP @local = 0.1f; // metres between a probe vertex and its parent surface, and between diagonals
 const uint DEPTH_SIZE @local = 65; // odd: the centre pixel's ray is the optical axis
 const float DEPTH_HIGH @local = 60; // metres above the map: only the root draws
 const float DEPTH_LOW @local = 8; // only the finest chunks draw
@@ -43,6 +38,39 @@ const float VELOCITY_STEP @local = 0.5f; // metres of descent per frame
 const float VELOCITY_RANGE @local = 16; // pixels either side of zero, mirrored as TAA_DEBUG_VELOCITY_RANGE
 const float VELOCITY_TOLERANCE @local = 0.3f; // pixels: above the morph's own motion, below a stale morph state
 const double MORPH_TIME_STEP @local = 1.0 / 60.0;
+
+struct MorphSetup @local {
+    float height_scale; // metres at texel 65535
+    float noise_share;  // of the height scale: odd vertices sit off their parents by about this much of it
+    float fov_degrees;
+    float split_pixels;
+}
+
+// A root cell of 0.2 m covers about one pixel at the split (26 m, 130 pixels per radian), so the centre pixel's height
+// follows the surface to the rasterizer's sub-pixel precision times the relief, a millimetre at 8 bits and under the
+// tolerance at the 4 bits Vulkan guarantees. A coarser view would multiply that error by the slope.
+const MorphSetup DEPTH_SETUP @local = {
+    .height_scale = 1.2f,
+    .noise_share  = 0.2f,
+    .fov_degrees  = 28,
+    .split_pixels = 1500,
+};
+
+// The sphere rule splits the root at 2 r s / T from the box centre: 180 puts it at the same 26 m as the box ranges.
+const MorphSetup DEPTH_OFF_SETUP @local = {
+    .height_scale = 1.2f,
+    .noise_share  = 0.2f,
+    .fov_degrees  = 28,
+    .split_pixels = 180,
+};
+
+// A wide view and a rough map put the terrain far off the optical axis and its odd vertices far off their parents.
+const MorphSetup VELOCITY_SETUP @local = {
+    .height_scale = 12,
+    .noise_share  = 0.5f,
+    .fov_degrees  = 90,
+    .split_pixels = 64,
+};
 
 struct MorphReadbackRoot @local {
     gpu::GpuAddress                          output;
@@ -67,6 +95,7 @@ struct MorphFixture @local {
     BufferId           output;
     gpu::MappedGpuSpan readback;
     gpu::MappedGpuSpan selection;
+    MorphSetup         setup;
     uint               size;
     uint               frame;
     uint               drawn; // nodes the last rendering selected
@@ -91,19 +120,21 @@ fn uint noise_hash(uint x, uint z) @local {
     return value;
 }
 
-fn float noise_height(uint x, uint z) @local {
+fn float noise_height(MorphSetup setup, uint x, uint z) @local {
     float unit = (float)(noise_hash(x, z) & 0xffff) / 65535.0f;
-    return MORPH_HEIGHT_SCALE * (0.5f + MORPH_NOISE_SHARE * (unit - 0.5f));
+    return setup.height_scale * (0.5f + setup.noise_share * (unit - 0.5f));
 }
 
-fn ushort noise_texel(uint x, uint z) @local => (ushort)(noise_height(x, z) / MORPH_HEIGHT_SCALE * 65535.0f);
+fn ushort noise_texel(MorphSetup setup, uint x, uint z) @local {
+    return (ushort)(noise_height(setup, x, z) / setup.height_scale * 65535.0f);
+}
 
-fn TextureId add_noise_map(AssetStore* assets) @local {
+fn TextureId add_noise_map(AssetStore* assets, MorphSetup setup) @local {
     TextureId texture;
     @pool() {
         ushort[] texels = alloc::new_array(tmem, ushort, (sz)MORPH_TEXELS * MORPH_TEXELS);
         for (uint z = 0; z < MORPH_TEXELS; z++) {
-            for (uint x = 0; x < MORPH_TEXELS; x++) texels[z * MORPH_TEXELS + x] = noise_texel(x, z);
+            for (uint x = 0; x < MORPH_TEXELS; x++) texels[z * MORPH_TEXELS + x] = noise_texel(setup, x, z);
         }
         material::TextureDesc desc = material::texture_2d_desc(MORPH_TEXELS, MORPH_TEXELS, R16_UINT);
         desc.generate_mips = false;
@@ -114,20 +145,22 @@ fn TextureId add_noise_map(AssetStore* assets) @local {
 
 fn void? create_morph_fixture(
     MorphFixture* fixture,
+    MorphSetup setup,
     float morph_band,
     uint size,
     AntiAliasing anti_aliasing,
 ) @local {
+    fixture.setup = setup;
     fixture.size = size;
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
     terrain::register_terrain(&fixture.scene, &fixture.assets)!;
 
     TerrainDesc desc = terrain::default_terrain_desc();
-    desc.height_map = add_noise_map(&fixture.assets);
+    desc.height_map = add_noise_map(&fixture.assets, setup);
     desc.cell_size = MORPH_CELL_SIZE;
-    desc.height_scale = MORPH_HEIGHT_SCALE;
-    desc.lod_threshold = MORPH_SPLIT_PIXELS;
+    desc.height_scale = setup.height_scale;
+    desc.lod_threshold = setup.split_pixels;
     desc.morph_band = morph_band;
     StandardParams grass = { .base_color = { 0.5f, 0.6f, 0.3f, 1 }, .roughness = 1 };
     desc.layers[0] = fixture.assets.add_material(material::standard(grass))!;
@@ -139,7 +172,7 @@ fn void? create_morph_fixture(
         desc:   desc,
     )!;
 
-    fixture.camera_node = fixture.scene.add_camera(camera::perspective_deg(MORPH_FOV_DEGREES, 1, MORPH_FAR_PLANE))!;
+    fixture.camera_node = fixture.scene.add_camera(camera::perspective_deg(setup.fov_degrees, 1, MORPH_FAR_PLANE))!;
     fixture.camera_node.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 });
     fixture.scene.update_world();
 
@@ -336,7 +369,8 @@ fn float[2]? find_split_altitudes(MorphFixture* fixture, float x, float z) @loca
 }
 
 // The first interior vertex of the finest chunk at the far corner with the parities, standing off its parent surface.
-fn VertexProbe find_probe(bool odd_x, bool odd_z) @local {
+// A doubly-odd probe also stands off the other diagonal's mean, so a morph toward the wrong diagonal fails.
+fn VertexProbe find_probe(MorphSetup setup, bool odd_x, bool odd_z) @local {
     for (uint z = MORPH_FINEST_CHUNK + 2; z < MORPH_FINEST_CHUNK + MORPH_PROBE_SPAN; z++) {
         for (uint x = MORPH_FINEST_CHUNK + 2; x < MORPH_FINEST_CHUNK + MORPH_PROBE_SPAN; x++) {
             bool x_is_odd = (bool)((x - MORPH_FINEST_CHUNK) & 1);
@@ -345,13 +379,16 @@ fn VertexProbe find_probe(bool odd_x, bool odd_z) @local {
 
             float parent;
             if (odd_x && odd_z) {
-                parent = 0.5f * (noise_height(x + 1, z - 1) + noise_height(x - 1, z + 1));
+                parent = 0.5f * (noise_height(setup, x + 1, z - 1) + noise_height(setup, x - 1, z + 1));
+                float other = 0.5f * (noise_height(setup, x + 1, z + 1) + noise_height(setup, x - 1, z - 1));
+                if (math::abs(other - parent) < 0.5f * MORPH_MIN_POP) continue;
             } else if (odd_x) {
-                parent = 0.5f * (noise_height(x - 1, z) + noise_height(x + 1, z));
+                parent = 0.5f * (noise_height(setup, x - 1, z) + noise_height(setup, x + 1, z));
             } else {
-                parent = 0.5f * (noise_height(x, z - 1) + noise_height(x, z + 1));
+                parent = 0.5f * (noise_height(setup, x, z - 1) + noise_height(setup, x, z + 1));
             }
-            float pop = noise_height(x, z) - parent;
+
+            float pop = noise_height(setup, x, z) - parent;
             if (math::abs(pop) >= MORPH_MIN_POP) return { .texel_x = x, .texel_z = z, .pop = pop };
         }
     }
@@ -372,41 +409,28 @@ fn float surface_change_across_split(MorphFixture* fixture, VertexProbe probe) @
 
 fn void test_morphing_split_keeps_depth_continuous() @test {
     VertexProbe[3] probes = {
-        find_probe(true, true),
-        find_probe(true, false),
-        find_probe(false, true),
+        find_probe(DEPTH_SETUP, true, true),
+        find_probe(DEPTH_SETUP, true, false),
+        find_probe(DEPTH_SETUP, false, true),
     };
     {
         MorphFixture fixture;
-        create_morph_fixture(&fixture, MORPH_BAND, DEPTH_SIZE, AntiAliasing.NONE)!!;
+        create_morph_fixture(&fixture, DEPTH_SETUP, MORPH_BAND, DEPTH_SIZE, AntiAliasing.NONE)!!;
         defer destroy_morph_fixture(&fixture);
 
         foreach (probe : probes) {
             float change = surface_change_across_split(&fixture, probe);
-            io::printfn(
-                "Morphing on: probe (%s, %s), parent offset %s m, surface change %s m",
-                probe.texel_x,
-                probe.texel_z,
-                probe.pop,
-                change,
-            );
-            assert(math::abs(change) <= CONTINUITY_TOLERANCE, "Surface changed by %s m across the split.", change);
+            bool continuous = math::abs(change) <= CONTINUITY_TOLERANCE;
+            assert(continuous, "Probe (%s, %s) changed by %s m across the split.", probe.texel_x, probe.texel_z, change);
         }
         check_morph_validation(&fixture.renderer);
     }
     {
         MorphFixture fixture;
-        create_morph_fixture(&fixture, 0, DEPTH_SIZE, AntiAliasing.NONE)!!;
+        create_morph_fixture(&fixture, DEPTH_OFF_SETUP, 0, DEPTH_SIZE, AntiAliasing.NONE)!!;
         defer destroy_morph_fixture(&fixture);
 
         float change = surface_change_across_split(&fixture, probes[0]);
-        io::printfn(
-            "Morphing off: probe (%s, %s), parent offset %s m, surface change %s m",
-            probes[0].texel_x,
-            probes[0].texel_z,
-            probes[0].pop,
-            change,
-        );
         assert(math::abs(change) >= 0.5f * MORPH_MIN_POP, "Without morphing the surface changed by only %s m.", change);
         check_morph_validation(&fixture.renderer);
     }
@@ -416,7 +440,7 @@ fn float decode_velocity(float shown) @local => (shown - 0.5f) * 2 * VELOCITY_RA
 
 fn void test_morph_velocity_matches_camera_motion() @test {
     MorphFixture fixture;
-    create_morph_fixture(&fixture, MORPH_BAND, VELOCITY_SIZE, AntiAliasing.TAA)!!;
+    create_morph_fixture(&fixture, VELOCITY_SETUP, MORPH_BAND, VELOCITY_SIZE, AntiAliasing.TAA)!!;
     defer destroy_morph_fixture(&fixture);
     float centre = (float)(MORPH_TEXELS - 1) * MORPH_CELL_SIZE * 0.5f;
     float split = find_split_altitudes(&fixture, centre, centre)!![0];
@@ -461,13 +485,6 @@ fn void test_morph_velocity_matches_camera_motion() @test {
             worst = math::max(worst, math::max(math::abs(error_x), math::abs(error_y)));
         }
     }
-    io::printfn(
-        "Descent from %s m: split at frame %s of %s, worst velocity error %s px",
-        split + VELOCITY_ABOVE,
-        split_frame,
-        frames,
-        worst,
-    );
     assert(split_frame > 1 && split_frame < frames, "The root split at frame %s of %s.", split_frame, frames);
     assert(worst <= VELOCITY_TOLERANCE, "Velocity strayed %s px from the camera's reprojection.", worst);
     check_morph_validation(&fixture.renderer);
