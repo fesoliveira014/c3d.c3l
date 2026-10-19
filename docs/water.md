@@ -256,8 +256,19 @@ writes the target into `Water.desc.waves` and `WaterRuntime.desc.waves` (`wave_c
 the blend as starting. Water that is still pending only receives the target in `Water.desc`. A saved scene keeps the
 target; the blend is not saved, so a loaded body starts at its target.
 
-**The table.** A fully developed Pierson-Moskowitz sea of wind speed `U` (clamped to 25 m/s) has a peak wavelength
-`2π U² / (0.877² g)` (about `0.83 U²` metres) and a significant height `0.21 U² / g`. Four bands sit relative to it:
+**The table.** The sea is fetch-limited. The fetch `F` is the length of the rest rectangle through its centre along
+the wind, in world metres with the node's scale included; a pending body with application geometry has no rectangle
+yet and gets the fully developed sea. With `U` the wind speed (clamped to 25 m/s) and `g` = 9.81 m/s², the standard
+JONSWAP relations give the significant height `Hs` and the peak period `Tp`, each capped at its fully developed
+Pierson-Moskowitz value:
+
+- `g · Hs / U² = min(1.6 × 10⁻³ · (g · F / U²)^½, 0.21)`;
+- `g · Tp / U = min(0.286 · (g · F / U²)^⅓, 2π / 0.877)`;
+- the peak wavelength is the deep-water `λp = g · Tp² / 2π`.
+
+The caps are reached at `g · F / U²` of about 17,000 and 16,000: at 14 m/s a fetch of about 340 km. A 120 m lake at
+14 m/s has `Hs` 0.08 m and `λp` 0.9 m, and a 2 km body `Hs` 0.32 m and `λp` 5.6 m. Four bands sit relative to
+`Hs` and `λp`:
 
 | Band | Wavelength | Amplitude | Direction off the wind |
 | ---: | ---: | ---: | ---: |
@@ -268,9 +279,11 @@ target; the blend is not saved, so a loaded body starts at its target.
 
 The squares of the amplitude shares sum to 0.116, near the 1/8 four sine waves carry of a sea of that height. Each wave
 runs at the deep-water speed `√(g λ / 2π)` and has the steepness that makes its crest shift twice its amplitude, the
-ratio of the default calm waves. Wavelengths floor at two cells of a built grid, else at 1 m, so the written target is
-always a valid desc; a calm wind therefore gives waves of the grid's shortest length and almost no height. Lengths
-are the node's local metres: node scale scales them like any wave. The heading is the wind in the node's frame.
+ratio of the default calm waves, at most 0.9 so the mean steepness stays below 1 at any fetch. Wavelengths floor at two
+cells of a built grid, else at 1 m, so the written target is always a valid desc; a small body therefore gets waves of
+the grid's shortest length and a few centimetres of height. The sea is sized in world metres: the node's scale is
+divided out of the written lengths and amplitudes, so a scaled node draws the same sea. The heading is the wind in the
+node's frame.
 
 **The blend.** `update` advances it. Amplitude, wavelength, speed and steepness blend linearly from the set drawn
 when `set_sea_state` ran, with each direction turned along the shorter arc. The mean steepness of the blend stays
@@ -293,9 +306,8 @@ surface runs the stage's code and agrees in and out of a blend.
 The stretch limit: a changing wavelength stretches the pattern about the node origin, because `dot(d, p) / λ` scales
 with the distance. A point at distance `r` sees `r · |1/λ_from − 1/λ_to|` extra crests pass during the blend, so the
 per-frame height step grows with the distance from the node origin, and a longer `transition_seconds` spreads it over
-more frames. On the 200 m body of the continuity test a two second blend from the default waves to a 12 m/s sea
-stepped the height by 0.02 to 0.04 m per frame within 3 m of the origin and by up to 0.42 m per frame at 85 m. The
-wavelength blends linearly: blending `1/λ` linearly steps further (up to 0.99 m in the same measurement).
+more frames. Near the origin the step is the motion of the waves themselves. The wavelength blends linearly: blending
+`1/λ` linearly steps further.
 
 **Motion vectors.** `WaterParams` also holds the waves of the update before, and the velocity form draws a rest
 point at the previous frame's time with them: during a blend the vectors are the reprojection of the surface that
@@ -565,7 +577,8 @@ targets panel previews the mirror and capture targets.
 change of the heading or speed calls `set_sea_state` with a four-second blend for every body. The calm-waves switch
 is not shown then, and the benchmark and `--shot` apply the sea state of `--wind` before their first frame, so the
 benchmark's still segment checks that a sea state leaves no uploads behind. `--wind SPEED` sets the initial wind
-speed in m/s (6 by default, at most 20), for the ripples, the foliage and, with `--sea-state`, the waves.
+speed in m/s (6 by default, at most 20), for the ripples, the foliage and, with `--sea-state`, the waves. The 120 m
+lake limits the sea to centimetres at any wind in that range, so the ripples carry the look of the wind there.
 `--shot FILE.png` renders eight frames offscreen with the still camera of the benchmark and writes the last as a PNG
 at `--width` by `--height`; it needs no window.
 
