@@ -148,7 +148,7 @@ const ZString[MAX_BODIES][MAX_VIEWERS] MIRROR_LABELS @local = { // by viewer, th
 };
 const String[Segment::len] SEGMENT_NAMES @local = { "still", "orbit", "waves", "settle" };
 
-const Pass[9] REPORTED_PASSES @local = {
+const Pass[10] REPORTED_PASSES @local = {
     Pass.DEPTH_PREPASS,
     Pass.GBUFFER,
     Pass.SHADOW_ATLAS,
@@ -156,6 +156,7 @@ const Pass[9] REPORTED_PASSES @local = {
     Pass.LIGHTING,
     Pass.SCENE_SNAPSHOT,
     Pass.SCENE_READ,
+    Pass.FOG,
     Pass.VELOCITY,
     Pass.TEMPORAL_AA,
 };
@@ -1849,6 +1850,7 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
                 );
             }
             foreach (pass : REPORTED_PASSES) {
+                if (options.sky && pass == Pass.FOG) continue; // the sky passes report it, with the mirror's
                 double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
                 io::printfn("gpu_ms view=main segment=%s pass=%s median=%.4f", name, pass, median);
             }
