@@ -174,11 +174,12 @@ struct BenchmarkResult @local {
     bool          timestamps;
 }
 
-// The collider as docs/terrain.md builds it: the node's transform places both.
-fn void? add_terrain_collider(Demo* demo, Node* node, TerrainDesc desc) @local {
+// The node's transform places the collider and the drawn surface alike.
+fn void? add_terrain_collider(Demo* demo, Node* node) @local {
+    TerrainCollisionInput input = terrain::collision_input(demo.scene, node.id)!;
     ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
-    collider.height_field = { .source = TEXTURE, .texture = desc.height_map };
-    collider.local.scale = { desc.cell_size, desc.height_scale, desc.cell_size };
+    collider.height_field = { .source = TEXTURE, .texture = input.height_map };
+    collider.local.scale = input.scale;
     if (!demo.options.collision_window) {
         return demo.physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1]);
     }
@@ -194,7 +195,7 @@ fn void? add_terrain_collider(Demo* demo, Node* node, TerrainDesc desc) @local {
 
 fn void? add_terrain_colliders(Demo* demo) @local {
     foreach (node : demo.ground.terrain_nodes()) {
-        add_terrain_collider(demo, node, demo.scene.get(node, Terrain).desc)!;
+        add_terrain_collider(demo, node)!;
     }
 }
 
@@ -830,9 +831,9 @@ fn double? time_bounds_build(Demo* demo, BenchmarkResult* result) @local {
 fn double? time_whole_field_cook(Demo* demo) @local {
     Node* probe = demo.scene.add_node(name: "whole_field_probe")!;
     ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
-    TerrainDesc desc = demo.scene.get(demo.ground.node, Terrain).desc;
-    collider.height_field = { .source = TEXTURE, .texture = desc.height_map };
-    collider.local.scale = { desc.cell_size, desc.height_scale, desc.cell_size };
+    TerrainCollisionInput input = terrain::collision_input(demo.scene, demo.ground.node.id)!;
+    collider.height_field = { .source = TEXTURE, .texture = input.height_map };
+    collider.local.scale = input.scale;
 
     time::Clock started = clock::now();
     demo.physics.add_body(probe, physics::default_body_desc(STATIC), (&collider)[:1])!;
