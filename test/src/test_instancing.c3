@@ -1032,6 +1032,44 @@ fn void test_quadtree_rejects_malformed_parents() @test {
     assert(mirroring_batch.quadtree.parents.len == 0 && mirroring_batch.quadtree.revision == 0);
 }
 
+fn void test_quadtree_ranges_reject_out_of_bound_parameters() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[5] transforms = { at({ 0, 0, 0 }), at({ 3, 0, 0 }), at({ 6, 0, 0 }), at({ 9, 0, 0 }), at({ 12, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 5, transforms[..])!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    batch.trace = false;
+    uint[5] parents = { scene::QUADTREE_ROOT, 0, 0, 1, 1 };
+    fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)!!;
+    assert(batch.quadtree.depth_count == 3);
+
+    QuadtreeLevel[3] levels = {{ .extent = 8, .diagonal = 12 }, { .extent = 4, .diagonal = 6 }, { .extent = 2, .diagonal = 3 }};
+    uint topology = batch.quadtree.revision;
+    uint parameters = batch.quadtree.parameter_revision;
+    fixture.scene.set_quadtree_ranges(node, levels[..], 0.375f)!!;
+    assert(batch.quadtree.metric == QuadtreeMetric.BOX_RANGES && batch.quadtree.levels[2].extent == 2);
+    assert(batch.quadtree.revision == topology && batch.quadtree.parameter_revision != parameters);
+
+    QuadtreeLevel[3] flat = levels;
+    flat[1].extent = 0;
+    QuadtreeLevel[3] unbounded = levels;
+    unbounded[2].diagonal = float::inf;
+    assert(@catch(fixture.scene.set_quadtree_ranges(node, levels[:2], 0.25f)) == c3d::INVALID_ARGUMENT);
+    assert(@catch(fixture.scene.set_quadtree_ranges(node, levels[..], 0.4f)) == c3d::INVALID_ARGUMENT);
+    assert(@catch(fixture.scene.set_quadtree_ranges(node, flat[..], 0.25f)) == c3d::INVALID_ARGUMENT);
+    assert(@catch(fixture.scene.set_quadtree_ranges(node, unbounded[..], 0.25f)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.morph_band == 0.375f && batch.quadtree.levels[1].extent == 4);
+
+    fixture.scene.set_instance_quadtree(node, parents[..], 100, 1)!!;
+    assert(batch.quadtree.metric == QuadtreeMetric.SPHERE_PIXELS);
+    assert(@catch(fixture.scene.set_quadtree_ranges(node, levels[..], 0)) == c3d::INVALID_ARGUMENT);
+
+    fixture.scene.set_instance_quadtree(node, parents[..], 100, 0.25f)!!;
+    fixture.scene.set_quadtree_ranges(node, levels[..], 0.25f)!!;
+    fixture.scene.set_quadtree_ranges(node, {}, 0)!!;
+    assert(batch.quadtree.metric == QuadtreeMetric.SPHERE_PIXELS && batch.quadtree.morph_band == 0);
+}
+
 fn void test_quadtree_leaf_mask_and_revision() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);

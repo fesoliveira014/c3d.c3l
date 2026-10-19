@@ -219,6 +219,7 @@ fn void? Scene.set_instances(&self, Node* node, Transform[] transforms, Vec4[] c
 
 <*
  Copy the batch's quadtree topology and advance its topology revision; empty parents disable the mode.
+ Returns the selection rule to SPHERE_PIXELS, because the level bounds describe one topology.
  @param [&in] node : "Carries an InstancedMesh."
  @param parents : "One per live instance."
  @param split_pixels : "Finite and not negative when parents are given."
@@ -262,9 +263,48 @@ fn void? Scene.set_instance_quadtree(
         if (leaf) quadtree.leaf_count++;
     }
 
+    quadtree.depth_count = 0;
+    for (uint instance = 0; instance < quadtree.parents.len; instance++) {
+        quadtree.depth_count = math::max(quadtree.depth_count, quadtree.depth_of(instance) + 1);
+    }
+
     quadtree.split_pixels = split_pixels;
     quadtree.hysteresis = hysteresis;
-    quadtree.revision = quadtree.revision == uint::max ? 1 : quadtree.revision + 1;
+    quadtree.metric = QuadtreeMetric.SPHERE_PIXELS;
+    quadtree.morph_band = 0;
+    quadtree.levels = {};
+    quadtree.parameter_revision = next_revision(quadtree.parameter_revision);
+    quadtree.revision = next_revision(quadtree.revision);
+}
+
+<*
+ Switch the batch to box-range selection with these level bounds; empty levels return it to SPHERE_PIXELS.
+ Advances the parameter revision, never the topology revision, so every view keeps its history.
+ @param [&in] node : "Carries an InstancedMesh."
+ @param levels : "One per depth of the tree, indexed by depth."
+ @param morph_band : "Share of a range over which vertices morph; at most (1 - hysteresis) / 2."
+ @return? c3d::INVALID_ARGUMENT
+ @require self.has(node, InstancedMesh)
+*>
+fn void? Scene.set_quadtree_ranges(&self, Node* node, QuadtreeLevel[] levels, float morph_band) {
+    InstanceQuadtree* quadtree = &self.get(node, InstancedMesh).quadtree;
+    InstanceQuadtree candidate = *quadtree;
+    candidate.metric = QuadtreeMetric.SPHERE_PIXELS;
+    candidate.morph_band = 0;
+    candidate.levels = {};
+    if (levels.len) {
+        if (levels.len != quadtree.depth_count) return c3d::INVALID_ARGUMENT~;
+
+        candidate.metric = QuadtreeMetric.BOX_RANGES;
+        candidate.morph_band = morph_band;
+        candidate.levels[:levels.len] = levels[..];
+        check_quadtree_ranges(&candidate)!;
+    }
+
+    quadtree.metric = candidate.metric;
+    quadtree.morph_band = candidate.morph_band;
+    quadtree.levels = candidate.levels;
+    quadtree.parameter_revision = next_revision(quadtree.parameter_revision);
 }
 
 <*
@@ -585,7 +625,11 @@ fn void advance_revision(InstancedMesh* batch) @local {
 }
 
 fn void step_revision(InstancedMesh* batch) @local {
-    batch.revision = batch.revision == uint::max ? 1 : batch.revision + 1;
+    batch.revision = next_revision(batch.revision);
+}
+
+fn uint next_revision(uint revision) @local {
+    return revision == uint::max ? 1 : revision + 1;
 }
 
 fn void free_morph_weights(Entity entity, void* component, void* user) @local {
