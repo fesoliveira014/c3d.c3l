@@ -138,7 +138,8 @@ fn WaterSample? sample_surface_detail(
     RestPoint rest = rest_point(view, local, drawn_time)!;
     WaveGpu[] waves = view.waves[:view.wave_count];
     SurfaceFrame frame = wave_frame(waves, rest.point, drawn_time);
-    float height = maths::transform_point(view.world, { local.x, wave_height(waves, rest.point, drawn_time), local.z }).y;
+    float local_height = wave_height(waves, rest.point, drawn_time);
+    float height = maths::transform_point(view.world, { local.x, local_height, local.z }).y;
 
     return {
         .height   = height,
@@ -160,9 +161,11 @@ fn RestPoint? rest_point(SurfaceView* view, Vec3 local, float drawn_time) @priva
         rest = next;
         if (residual < WATER_QUERY_TOLERANCE) break;
     }
+
     if (rest.x < view.rest_min.x || rest.y < view.rest_min.y || rest.x > view.rest_max.x || rest.y > view.rest_max.y) {
         return NOT_FOUND~;
     }
+
     return { .point = rest, .residual = residual };
 }
 

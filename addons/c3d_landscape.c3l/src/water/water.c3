@@ -17,12 +17,12 @@ const uint MAX_WAVES = 4; // 32 B and one vertex term each; mirrored as WATER_MA
 <*
  Horizontal step in metres under which a query's inversion stops.
 *>
-const float WATER_QUERY_TOLERANCE = 0.0001f; // metres: 0.1 mm, well under the 1 cm drawn-surface agreement
+const float WATER_QUERY_TOLERANCE = 0.0001f; // metres: 0.1 mm, well under the 1 cm drawn-surface agreement; the loop's exit, a smaller value costs more steps
 
 <*
  Fixed-point steps a query runs to invert the crest shift, at most.
 *>
-const uint MAX_INVERSION_ITERATIONS = 8; // steepness < 1 makes the step contract; the cap bounds a query's cost near the steep limit
+const uint MAX_INVERSION_ITERATIONS = 8; // the cost bound per query; a query stopped here reports its residual
 
 <*
  Cells along one side of a built grid, at most.

@@ -183,9 +183,9 @@ the height with the stage's float operations. A point whose rest position falls 
 The steps converge while the mean steepness stays below 1, which validation enforces. With `k` the mean
 steepness, the rest point a query returns is within `residual · k / (1 − k)` of the true one, and the height
 within the waves' height slope `Σ a · 2π / λ` times that. `WaterSample.residual` is the length of the last step
-in metres. A query that reaches the tolerance reports a residual under it; near the steep limit the cap can end
-a query first, and its residual says how far it stopped. The drawn surface agrees with `sample_surface` within
-1 cm; the device test checks it.
+in metres. Any query can stop at the cap before it reaches the tolerance, whatever the steepness; its residual
+then says how far it stopped, and the bound above covers both cases. The drawn surface agrees with `sample_surface`
+within 1 cm; the device test checks it.
 
 ## Surface detail
 
@@ -207,10 +207,7 @@ it, and the velocity is `∂P/∂t` at fixed `p`, the orbital velocity of the wa
 phase rate `ω = 2π · c / λ`, the point moves by `(s · λ / (2π · N) · d · sin θ · ω, −a · cos θ · ω)` per second.
 
 The kinematic condition `velocity.y − velocity.xz · ∇h = ∂h/∂t` holds against central differences of
-`sample_surface`, and the normal is parallel to `(−∂h/∂x, 1, −∂h/∂z)`. On the calm set they agree within
-1.7e-4 m/s and 4.4e-5 (the test bounds are 5e-4 m/s and 2e-4). One sample of the choppy set at steepness 0.8
-costs 227 ns against 196 ns for `sample_surface` (c3c 0.8.3 `-O3`, WSL, one thread, minimum of 7 runs of 655,360
-samples).
+`sample_surface`, and the normal is parallel to `(−∂h/∂x, 1, −∂h/∂z)`.
 
 ## Time
 
