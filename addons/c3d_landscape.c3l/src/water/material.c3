@@ -94,6 +94,7 @@ fn ShaderId? water_shader(AssetStore* assets, bool* created = null) @private {
             .depth    = landscape::WATER_VERTEX_DEPTH_ONLY_SPIRV[..],
             .velocity = landscape::WATER_VERTEX_VELOCITY_SPIRV[..],
         },
+        .trace_pose       = { .single = landscape::WATER_TRACE_POSE_SPIRV[..], .reads_time = true },
         .param_block_size = WaterParams::size,
         .scene_reads      = { .color, .depth },
     };
@@ -121,16 +122,19 @@ fn GeometryId? water_grid(
     return grid;
 }
 
+// The normals stream carries the posed normals of a traced body: a stream the rest geometry lacks is never written.
 fn Geometry grid_geometry(Allocator allocator, float extent, uint cells) @private {
     uint row = cells + 1;
     Geometry grid = {
         .topology  = TRIANGLES,
         .positions = alloc::new_array(allocator, Vec3, (sz)row * row),
+        .normals   = alloc::new_array(allocator, Vec3, (sz)row * row),
         .indices   = alloc::new_array(allocator, uint, (sz)QUAD_INDICES * cells * cells),
     };
     for (uint z = 0; z < row; z++) {
         for (uint x = 0; x < row; x++) {
             grid.positions[z * row + x] = { ((float)x / cells - 0.5f) * extent, 0, ((float)z / cells - 0.5f) * extent };
+            grid.normals[z * row + x] = { 0, 1, 0 };
         }
     }
     usz slot;

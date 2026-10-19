@@ -17,6 +17,7 @@
     { "shader": "water_vertex", "source": "water.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "water_vertex", "source": "water.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },
     { "shader": "water_vertex", "source": "water.vert.glsl", "stage": "vert", "defines": ["VELOCITY"] },
+    { "shader": "water_trace_pose", "source": "water_trace_pose.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "water_fragment", "source": "water.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "water_fragment", "source": "water.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
     { "shader": "water_fragment", "source": "water.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] }

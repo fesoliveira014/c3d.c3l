@@ -83,6 +83,7 @@ struct WaterDesc {
     bool            march_reflections;     // screen-space march where the planar sample is missing
     uint            max_mirrors;           // mirror slots, one per viewing view, in [1, MAX_MIRRORS]
     uint            reflection_view_slot;  // view texture the material samples, below material::MAX_VIEW_TEXTURES
+    bool            trace;                 // scene traces see the displaced surface, posed again every frame
 }
 
 <*
@@ -243,6 +244,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .geometry            = surface,
         .material            = owned,
         .receive_shadow      = true,
+        .trace               = desc.trace,
         .has_bounds_override = true,
         .local_bounds        = drawn_bounds(rest, &desc),
     });
@@ -317,6 +319,7 @@ fn void? set_desc(
     Aabb rest = rest_bounds(assets, &desc);
     Mesh* mesh = scene.get(node, Mesh);
     mesh.geometry = surface;
+    mesh.trace = desc.trace;
     mesh.local_bounds = drawn_bounds(rest, &desc);
     runtime.grid = surface;
     runtime.rest_min = { rest.min.x, rest.min.z };
