@@ -7,6 +7,7 @@ import std::time;
 import std::time::clock;
 import c3d;
 import c3d::asset;
+import c3d::asset::image;
 import c3d::camera;
 import c3d::geometry;
 import c3d::gui;
@@ -84,6 +85,8 @@ const float CRATE_ROUGHNESS @local = 0.7f;
 const float STEADY_WIND_SPEED @local = 6;
 const float WIND_HEADING_DEGREES @local = 30;
 const float MAX_WIND_SPEED @local = 20;
+const float SEA_TRANSITION_SECONDS @local = 4; // a gust takes a few wave periods to raise or flatten the sea
+const uint SHOT_FRAMES @local = 8; // the sea state switches at the first, the crates and the mirror settle after
 
 const uint SKY_WIDTH @local = 256; // equirectangular; 512 KiB of RGBA32_FLOAT
 const uint SKY_HEIGHT @local = 128;
@@ -208,6 +211,9 @@ struct Options @local {
     bool        traced;
     bool        capture;
     bool        ripples;
+    bool        sea_state;
+    float       wind_speed;
+    String      shot;
     uint        width;
     uint        height;
 }
@@ -768,6 +774,19 @@ fn void? set_calm(Demo* demo, bool calm) @local {
     }
 }
 
+// The desc copy follows the library's write, so later edits through set_desc keep the sea.
+fn void? apply_sea_state(Demo* demo, Vec3 wind, float transition_seconds) @local {
+    foreach (&body : demo.bodies[:demo.body_count]) {
+        water::set_sea_state(
+            scene:              demo.scene,
+            node:               body.node.id,
+            wind_velocity:      { wind.x, wind.z },
+            transition_seconds: transition_seconds,
+        )!;
+        body.desc = demo.scene.get(body.node, Water).desc;
+    }
+}
+
 fn void? set_ripples(Demo* demo, bool ripples) @local {
     foreach (&body : demo.bodies[:demo.body_count]) {
         body.desc.ripples = ripples ? demo.ripples : (MaterialId){};
@@ -1102,6 +1121,7 @@ fn Options? parse_options(String[] args) @local {
         .mirror_scale   = MIRROR_RENDER_SCALE,
         .crates         = DEFAULT_CRATES,
         .ripples        = true,
+        .wind_speed     = STEADY_WIND_SPEED,
     };
     for (usz index = 1; index < args.len; index++) {
         switch (args[index]) {
@@ -1158,6 +1178,11 @@ fn Options? parse_options(String[] args) @local {
                     case "off": options.ripples = false;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
+            case "--sea-state": options.sea_state = true;
+            case "--wind":
+                options.wind_speed = option_value(args, &index)!.to_float()!;
+                if (!(options.wind_speed >= 0 && options.wind_speed <= MAX_WIND_SPEED)) return c3d::INVALID_ARGUMENT~;
+            case "--shot": options.shot = option_value(args, &index)!;
             case "--sky": options.sky = true;
             case "--volumetric-fog": options.volumetric_fog = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
@@ -1167,8 +1192,10 @@ fn Options? parse_options(String[] args) @local {
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.benchmark && options.current != (Vec3){}) return c3d::INVALID_ARGUMENT~;
-    if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
-    if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
+    if (options.shot.len && options.benchmark) return c3d::INVALID_ARGUMENT~;
+    bool offscreen = options.benchmark || options.shot.len;
+    if (!options.width) options.width = offscreen ? BENCHMARK_WIDTH : WINDOW_WIDTH;
+    if (!options.height) options.height = offscreen ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
 }
 
@@ -1194,7 +1221,7 @@ fn void? water_panel(
         if (imgui::radio_button("Environment", controls.reflection == Reflection.ENV)) controls.reflection = ENV;
         imgui::checkbox("Full-resolution mirror", &controls.full_mirror);
         imgui::separator_text("Surface");
-        imgui::checkbox("Calm waves (off: zero amplitudes)", &controls.calm);
+        if (!demo.options.sea_state) imgui::checkbox("Calm waves (off: zero amplitudes)", &controls.calm);
         imgui::checkbox("Ripples", &controls.ripples);
         imgui::slider_float(
             label: "Wind heading",
@@ -1232,6 +1259,15 @@ fn void? water_panel(
     }
     if (controls.calm != before.calm) set_calm(demo, controls.calm)!;
     if (controls.ripples != before.ripples) set_ripples(demo, controls.ripples)!;
+    bool wind_changed = controls.wind_speed != before.wind_speed
+        || controls.wind_heading_degrees != before.wind_heading_degrees;
+    if (demo.options.sea_state && wind_changed) {
+        apply_sea_state(
+            demo:               demo,
+            wind:               wind_velocity(controls.wind_speed, controls.wind_heading_degrees),
+            transition_seconds: SEA_TRANSITION_SECONDS,
+        )!;
+    }
 }
 
 fn void view_stats_panel(Demo* demo, Renderer* renderer) @local {
@@ -1345,8 +1381,15 @@ fn void? run_interactive(Options options) @local {
         .calm                 = true,
         .ripples              = options.ripples,
         .wind_heading_degrees = WIND_HEADING_DEGREES,
-        .wind_speed           = STEADY_WIND_SPEED,
+        .wind_speed           = options.wind_speed,
     };
+    if (options.sea_state) {
+        apply_sea_state(
+            demo:               &demo,
+            wind:               wind_velocity(controls.wind_speed, controls.wind_heading_degrees),
+            transition_seconds: 0,
+        )!;
+    }
     renderer.prepare_scene(&scene)!;
     Brush brush;
     bool painting;
@@ -1541,7 +1584,7 @@ fn void? run_segments(
     uint measured = measured_frames(options);
     uint settle_start = segment_start(options, Segment.SETTLE);
     uint settle_frames = segment_frames(options, Segment.SETTLE);
-    Vec3 wind = wind_velocity(STEADY_WIND_SPEED, WIND_HEADING_DEGREES);
+    Vec3 wind = wind_velocity(options.wind_speed, WIND_HEADING_DEGREES);
 
     for (uint frame = 0; frame < WARMUP_FRAMES + measured + render::FRAMES_IN_FLIGHT; frame++) {
         bool timed = frame >= WARMUP_FRAMES && frame < WARMUP_FRAMES + measured;
@@ -1827,6 +1870,13 @@ fn bool? run_benchmark(Options options) @local {
     };
     defer alloc::free(mem, demo.crates.ptr);
     build_demo(&demo)!;
+    if (options.sea_state) {
+        apply_sea_state(
+            demo:               &demo,
+            wind:               wind_velocity(options.wind_speed, WIND_HEADING_DEGREES),
+            transition_seconds: 0,
+        )!;
+    }
     foreach (index, &viewer : demo.viewers[:demo.viewer_count]) viewer.view = main_views[index];
     print_header(options);
     pose_segment(
@@ -1858,7 +1908,93 @@ fn bool? run_benchmark(Options options) @local {
     return print_results(&demo, &result);
 }
 
-<* Water over a generated landscape with floating crates, interactively or as the scripted benchmark. *>
+<* Render a few frames offscreen and write the last one as a PNG. *>
+fn void? run_shot(Options options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Renderer renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &assets,
+        desc:      renderer_desc(options, options.validation, "c3d_water_shot"),
+    )!;
+    defer render::destroy_renderer(&renderer);
+    RenderTargetId target = render::create_render_target(
+        renderer: &renderer,
+        desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
+    )!;
+    ViewDesc view_desc = main_view_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options);
+    view_desc.post.anti_aliasing = AntiAliasing.NONE;
+    ViewId main_view = render::create_view(renderer: &renderer, desc: view_desc)!;
+    Scene scene = create_demo_scene(options);
+    defer scene::destroy_scene(&scene);
+    terrain::register_terrain(&scene, &assets)!;
+    foliage::register_foliage(&scene)!;
+    water::register_water(&scene, &assets)!;
+    physics::register_physics(&scene)!;
+    PhysicsWorld physics = physics::create_physics_world(
+        allocator: mem,
+        assets:    &assets,
+        scene:     &scene,
+        desc:      physics::default_physics_desc(),
+    )!;
+    defer physics::destroy_physics_world(&physics);
+
+    Demo demo = {
+        .options      = options,
+        .assets       = &assets,
+        .scene        = &scene,
+        .physics      = &physics,
+        .mirror_scale = options.mirror_scale,
+        .crates       = alloc::new_array(mem, Node*, (sz)options.crates),
+    };
+    defer alloc::free(mem, demo.crates.ptr);
+    build_demo(&demo)!;
+    demo.viewers[0].view = main_view;
+    Vec3 wind = wind_velocity(options.wind_speed, WIND_HEADING_DEGREES);
+    if (options.sea_state) {
+        apply_sea_state(
+            demo:               &demo,
+            wind:               wind,
+            transition_seconds: 0,
+        )!;
+    }
+    pose_segment(
+        demo:    &demo,
+        segment: Segment.STILL,
+        step:    0,
+        frames:  options.segment_frames,
+    )!;
+    prepare_views(&demo, &renderer, { options.width, options.height })!;
+    renderer.prepare_scene(&scene)!;
+
+    for (uint frame = 0; frame < SHOT_FRAMES; frame++) {
+        step_scene(
+            demo:     &demo,
+            renderer: &renderer,
+            wind:     wind,
+            time:     frame_time(frame),
+            delta:    TIME_STEP,
+        )!;
+        render_offscreen(
+            demo:     &demo,
+            renderer: &renderer,
+            frame:    frame,
+        )!;
+    }
+    render::wait_frames(&renderer)!;
+
+    char[] pixels = alloc::new_array(mem, char, (sz)options.width * options.height * RGBA8_BYTES);
+    defer alloc::free(mem, pixels.ptr);
+    renderer.read_render_target(target, pixels)!;
+    image::write_png(
+        path:   options.shot,
+        width:  options.width,
+        height: options.height,
+        pixels: pixels,
+    )!;
+}
+
+<* Water over a generated landscape with floating crates, interactively, as the scripted benchmark or as one frame. *>
 fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
@@ -1867,11 +2003,18 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
               "[--current X,Z] [--ssgi] [--traced] [--capture] [--split] [--ripples on|off] [--width W] [--height H] "
-              "[--sky] [--volumetric-fog].");
+              "[--sky] [--volumetric-fog] [--sea-state] [--wind SPEED] [--shot FILE.png].");
         }
         return 1;
     }
     Options options = parsed;
+    if (options.shot.len) {
+        if (catch excuse = run_shot(options)) {
+            io::eprintfn("water shot failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
     if (!options.benchmark) {
         if (catch excuse = run_interactive(options)) {
             io::eprintfn("water example failed: %s", excuse);
