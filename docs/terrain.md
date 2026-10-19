@@ -187,8 +187,9 @@ of the whole extent, built from the same height map and independent of any view.
   only the chunks it touches before the new global maximum is taken.
 - **A drawn level.** A view that draws a coarser chunk level than 0 differs from the full resolution surface by that
   level's own error, and the grid does not follow the selection. The bounds build measures that error for every level the
-  same way (`TerrainRuntime.drawn_deviation`, in metres per level, kept per node in `drawn_node_deviation` for a dirty
-  rectangle). `lod_threshold = 0` draws the full resolution surface.
+  same way (`TerrainRuntime.drawn_deviation`, in metres per level). Cells of every level tile a finest chunk, so each
+  finest chunk keeps its gap per level in `drawn_chunk_deviation` (height texels), and a dirty rectangle recomputes only
+  the chunks it touches before the per-level maxima are taken. `lod_threshold = 0` draws the full resolution surface.
 - **Edits.** A height-map revision poses the whole grid again: one dispatch and, on the hardware trace kind, one new
   bottom level, because a first pose from flat geometry would leave a poor tree to update; the software kind refits.
   A frame with no revision poses nothing. A tile's ring revision does the same for its own grid.
@@ -200,9 +201,8 @@ of the whole extent, built from the same height map and independent of any view.
   `Stats.trace_posed_bytes` totals the slot. The shared rest geometry adds about 48 B per vertex on the CPU and on the
   GPU. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow`
   ([capacity](scene_trace.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
-  refreshes, which at preparation is every texel, and one more for each coarser level, which touches every texel again
-  per level. On the WSL host (i9-14900K, `-O3`) `add_terrain` takes 9.9 ms at 1025 texels and 43 ms at 2049 with `trace`,
-  against 0.6 ms and 0.8 ms without.
+  refreshes for the grid and one for each coarser level; at preparation that is every chunk, so preparing a traced
+  terrain costs one pass over the map per level.
 - **Proxy skip.** The grid is a [trace proxy](scene_trace.md#trace-proxies). A traced ray still starts a fixed 0.02 m
   above the drawn surface, so where the grid sits higher the surface would shadow itself. The fragment stage raises
   `trace_proxy_skip_height` to the larger of `trace_error` and `drawn_deviation` of the chunk's level, and of the parent

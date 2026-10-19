@@ -126,7 +126,7 @@ struct TerrainRuntime {
     float                    trace_error;      // metres: largest gap between the trace grid and the full surface
     float[]                  trace_deviation;  // per finest chunk: largest gap in height texels; empty without trace
     float[MAX_TERRAIN_LEVELS] drawn_deviation; // metres per level: largest gap between its drawn chunks and the surface
-    float[]                  drawn_node_deviation; // per node: that gap in height texels; empty without trace
+    float[]                  drawn_chunk_deviation; // per level above 0 and finest chunk: gap in texels; empty untraced
 }
 
 <*

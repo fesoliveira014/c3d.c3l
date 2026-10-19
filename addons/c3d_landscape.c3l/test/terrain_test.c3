@@ -201,7 +201,7 @@ fn void assert_same_bounds(TerrainRuntime* edited, TerrainRuntime* fresh) @local
     assert(mem::equals(edited.minimum, fresh.minimum));
     assert(mem::equals(edited.maximum, fresh.maximum));
     assert(mem::equals(edited.trace_deviation, fresh.trace_deviation) && edited.trace_error == fresh.trace_error);
-    assert(mem::equals(edited.drawn_node_deviation, fresh.drawn_node_deviation));
+    assert(mem::equals(edited.drawn_chunk_deviation, fresh.drawn_chunk_deviation));
     assert(edited.drawn_deviation == fresh.drawn_deviation);
 }
 
@@ -450,6 +450,11 @@ fn void test_terrain_drawn_deviation_per_level() @test {
     assert(math::abs(runtime.drawn_deviation[1] - whole / 2) <= TRACE_ERROR_TOLERANCE);
     assert(math::abs(runtime.drawn_deviation[2] - whole) <= TRACE_ERROR_TOLERANCE);
     foreach (deviation : runtime.drawn_deviation[runtime.level_count..]) assert(deviation == 0);
+
+    // A terrain of one chunk has no coarser level to measure.
+    TerrainDesc one_chunk = traced_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED), level: 0);
+    Node* single = add_terrain_node(&fixture, one_chunk);
+    foreach (deviation : fixture.scene.get(single, TerrainRuntime).drawn_deviation) assert(deviation == 0);
 
     // The block the fragment stage reads follows the runtime, and an untraced terrain leaves it zero.
     char[] block = fixture.assets.material(runtime.material).data.custom.param_block;
