@@ -120,6 +120,12 @@ const TileTerm[3] FOAM_TERMS @local = {
     { .cycles_u = 7, .cycles_v = 6, .weight = 0.5f, .phase = 1.1f },
 };
 
+const float DIVE_BACK @local = 18; // metres from the lake's centre: inside the bowl, 4.5 m of water over the bed
+const float DIVE_START_HEIGHT @local = 2; // metres over the water
+const float DIVE_DEPTH @local = 3; // metres under it
+const float DIVE_START_PITCH @local = -0.1f;
+const float DIVE_END_PITCH @local = 0.9f; // radians up: the window's edge at 41 degrees of elevation is in the frame
+const float DIVE_SECONDS @local = 8; // seconds for one descent; the loop goes down, then up
 const float STILL_BACK @local = 0.4f; // share of the lake's extent the still camera stands back from the centre
 const float STILL_HEIGHT @local = 6;
 const float STILL_PITCH @local = -0.12f;
@@ -216,6 +222,8 @@ struct Options @local {
     bool        ripples;
     bool        sea_state;
     bool        ocean;
+    bool        dive;
+    float       dive_at;    // share of the descent a shot stands at; negative follows the clock
     float       wind_speed;
     String      shot;
     uint        width;
@@ -227,6 +235,7 @@ struct Mirror @local {
     ViewId         view;
     uint           width;
     uint           height;
+    MirrorState    state;  // BELOW while the viewer is under the water: the view is not rendered
 }
 
 struct Capture @local {
@@ -1065,7 +1074,7 @@ fn void? prepare_views(Demo* demo, Renderer* renderer, uint[<2>] output_size) @l
 fn void? place_mirrors(Demo* demo) @local {
     foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
         foreach (&body : demo.bodies[:demo.body_count]) {
-            water::update_mirror(
+            body.mirrors[viewer_index].state = water::update_mirror(
                 scene:          demo.scene,
                 body:           body.node.id,
                 slot:           (uint)viewer_index,
@@ -1137,8 +1146,8 @@ fn void? render_views(Demo* demo, Renderer* renderer) @local {
     foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
         foreach (&body : demo.bodies[:demo.body_count]) {
             RenderTargetId target;
-            if (demo.reflection == Reflection.PLANAR) {
-                Mirror* mirror = &body.mirrors[viewer_index];
+            Mirror* mirror = &body.mirrors[viewer_index];
+            if (demo.reflection == Reflection.PLANAR && mirror.state == MirrorState.PLACED) {
                 render_mirror(
                     renderer:       renderer,
                     scene:          demo.scene,
@@ -1242,6 +1251,16 @@ fn Options? parse_options(String[] args) @local {
                 }
             case "--sea-state": options.sea_state = true;
             case "--ocean": options.ocean = true;
+            case "--dive":
+                options.dive = true;
+                options.dive_at = -1;
+                if (index + 1 < args.len) {
+                    if (try share = args[index + 1].to_float()) {
+                        if (!(share >= 0 && share <= 1)) return c3d::INVALID_ARGUMENT~;
+                        options.dive_at = share;
+                        index++;
+                    }
+                }
             case "--wind":
                 options.wind_speed = option_value(args, &index)!.to_float()!;
                 if (!(options.wind_speed >= 0 && options.wind_speed <= MAX_WIND_SPEED)) return c3d::INVALID_ARGUMENT~;
@@ -1260,6 +1279,7 @@ fn Options? parse_options(String[] args) @local {
         options.crates = 0;
     }
     if (options.benchmark && options.current != (Vec3){}) return c3d::INVALID_ARGUMENT~;
+    if (options.dive && options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (options.shot.len && options.benchmark) return c3d::INVALID_ARGUMENT~;
     bool offscreen = options.benchmark || options.shot.len;
     if (!options.width) options.width = offscreen ? BENCHMARK_WIDTH : WINDOW_WIDTH;
@@ -1497,18 +1517,22 @@ fn void? run_interactive(Options options) @local {
         // The terrain example's stroke end: the collider re-cooks once the brush lifts.
         if (painting && !held) scene.get(demo.ground.node, PhysicsBody).mark_changed();
         painting = held;
-        landscape_ground::apply_fly_camera(
-            fly_camera: &fly_camera,
-            input:      input,
-            view:       &view,
-            delta:      delta,
-        );
-        landscape_ground::place_camera(
-            camera_node: demo.viewers[0].camera_node,
-            position:    fly_camera.position,
-            yaw:         fly_camera.yaw,
-            pitch:       fly_camera.pitch,
-        );
+        if (options.dive) {
+            place_dive(&demo, dive_share(options, window.clock.total));
+        } else {
+            landscape_ground::apply_fly_camera(
+                fly_camera: &fly_camera,
+                input:      input,
+                view:       &view,
+                delta:      delta,
+            );
+            landscape_ground::place_camera(
+                camera_node: demo.viewers[0].camera_node,
+                position:    fly_camera.position,
+                yaw:         fly_camera.yaw,
+                pitch:       fly_camera.pitch,
+            );
+        }
         physics_us = step_scene(
             demo:     &demo,
             renderer: &renderer,
@@ -1568,6 +1592,28 @@ fn Segment segment_of(Options options, uint step) @local {
         if (step >= segment_start(options, candidate)) segment = candidate;
     }
     return segment;
+}
+
+// The dive's camera at a share of the descent: from over the water, looking across it, to under it, looking up.
+fn void place_dive(Demo* demo, float share) @local {
+    float eased = share * share * (3 - 2 * share);
+    Vec3 centre = demo.bodies[0].centre;
+    Vec3 position = centre - (Vec3){ DIVE_BACK, 0, 0 };
+    position.y += DIVE_START_HEIGHT - (DIVE_START_HEIGHT + DIVE_DEPTH) * eased;
+    landscape_ground::place_camera(
+        camera_node: demo.viewers[0].camera_node,
+        position:    position,
+        yaw:         (float)math::PI / 2,
+        pitch:       DIVE_START_PITCH + (DIVE_END_PITCH - DIVE_START_PITCH) * eased,
+    );
+}
+
+// A shot stands at its share; the loop descends and rises once per two DIVE_SECONDS.
+fn float dive_share(Options options, double time) @local {
+    if (options.dive_at >= 0) return options.dive_at;
+    float cycle = (float)(time / DIVE_SECONDS);
+    float phase = cycle - math::floor(cycle * 0.5f) * 2;
+    return phase < 1 ? phase : 2 - phase;
 }
 
 fn void? pose_segment(
@@ -2031,12 +2077,16 @@ fn void? run_shot(Options options) @local {
             transition_seconds: 0,
         )!;
     }
-    pose_segment(
-        demo:    &demo,
-        segment: Segment.STILL,
-        step:    0,
-        frames:  options.segment_frames,
-    )!;
+    if (options.dive) {
+        place_dive(&demo, dive_share(options, 0));
+    } else {
+        pose_segment(
+            demo:    &demo,
+            segment: Segment.STILL,
+            step:    0,
+            frames:  options.segment_frames,
+        )!;
+    }
     prepare_views(&demo, &renderer, { options.width, options.height })!;
     renderer.prepare_scene(&scene)!;
 
@@ -2076,7 +2126,7 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
               "[--current X,Z] [--ssgi] [--traced] [--capture] [--split] [--ripples on|off] [--width W] [--height H] "
-              "[--sky] [--volumetric-fog] [--sea-state] [--ocean] [--wind SPEED] [--shot FILE.png].");
+              "[--sky] [--volumetric-fog] [--sea-state] [--ocean] [--dive [SHARE]] [--wind SPEED] [--shot FILE.png].");
         }
         return 1;
     }
