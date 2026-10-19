@@ -39,6 +39,7 @@ const float EDIT_RAISE @local = 13107; // texels at the center of the edit: a fi
 const uint EDIT_RADIUS @local = 50; // texels; the raise falls to zero at this distance
 const bool[2] TRACE_KINDS @local = { false, true }; // ray_queries: software walk, then ray queries
 const ShadingPath[2] SHADINGS @local = { ShadingPath.FORWARD, ShadingPath.DEFERRED };
+const usz TRACE_ERROR_OFFSET @local = 28; // in the material block, after the border edges, projection and sharpness
 const uint SHADE_SIZE @local = 256;
 const usz SHADE_BYTES @local = (usz)SHADE_SIZE * SHADE_SIZE * 4;
 const float SHADE_HEIGHT_SCALE @local = 100; // metres: hills 24 m high, steep enough to shadow their valleys
@@ -134,8 +135,8 @@ fn TextureId add_rough_map(AssetStore* assets, uint side) @local {
     return texture;
 }
 
-// Hills a few hundred metres across, with a ripple the trace grid misses and a patch of rough ground in a far corner.
-// Three incommensurate waves make the ripple: a regular lattice puts the grid's largest gap at every crest.
+// Hills a few hundred metres across, with a regular ripple the trace grid misses and a patch of rough ground in a far
+// corner. The ripple is a lattice, which puts the grid's largest gap at every crest and trough.
 fn TextureId add_hills_map(AssetStore* assets, uint side, float ripple, bool patch) @local {
     TextureId texture;
     @pool() {
@@ -144,9 +145,7 @@ fn TextureId add_hills_map(AssetStore* assets, uint side, float ripple, bool pat
             for (uint x = 0; x < side; x++) {
                 float wave = 0.5f + HILL_AMPLITUDE * math::sin((float)x * 0.05f)
                   + HILL_AMPLITUDE * math::cos((float)z * 0.07f)
-                  + ripple * (math::sin((float)x * 1.3f + (float)z * 0.4f)
-                    + math::sin((float)z * 0.9f - (float)x * 0.7f + 1)
-                    + math::sin((float)x * 2.1f - (float)z * 1.7f)) / 3;
+                  + ripple * math::sin((float)x * 1.3f) * math::cos((float)z * 1.1f);
                 bool in_patch = x >= PATCH_FIRST && x <= PATCH_LAST && z >= PATCH_FIRST && z <= PATCH_LAST;
                 if (patch && in_patch) wave += PATCH_AMPLITUDE * math::sin((float)x * (float)math::PI * 0.5f);
                 texels[z * side + x] = (ushort)(wave * (float)ushort::max);
@@ -405,6 +404,7 @@ struct ShadeDesc @local {
     Vec3        camera;         // looks straight down
     float       fov_degrees;
     Vec3        sun_direction;
+    bool        without_skip;   // publishes no gaps, so no hit on the trace grid is skipped
 }
 
 struct ShadeRig @local {
@@ -416,6 +416,15 @@ struct ShadeRig @local {
     RenderTargetId target;
     ViewId       view;
     char[]       pixels;
+}
+
+fn void drop_published_gaps(ShadeRig* rig) @local {
+    MaterialId material = rig.scene.get(rig.terrain_node, TerrainRuntime).material;
+    char[] block = rig.assets.material(material).data.custom.param_block;
+
+    // The trace error and the per-level drawn deviations are one run of floats in the block.
+    mem::clear(block.ptr + TRACE_ERROR_OFFSET, float::size * (1 + terrain::MAX_TERRAIN_LEVELS));
+    rig.assets.mark_material_dirty(material);
 }
 
 fn void? create_shade_rig(ShadeRig* rig, ShadeDesc* shade) @local {
@@ -445,6 +454,8 @@ fn void? create_shade_rig(ShadeRig* rig, ShadeDesc* shade) @local {
         node:   rig.terrain_node,
         desc:   desc,
     )!;
+
+    if (shade.without_skip) drop_published_gaps(rig);
 
     Light sun = light::directional({ 1, 0.95f, 0.85f }, 3);
     sun.shadow.ray_traced = true;
@@ -529,7 +540,13 @@ fn Speckle measure_speckle(ShadeRig* rig) @local {
     return { .mean_laplacian = total / (float)count, .edges = edges };
 }
 
-fn Speckle render_speckle(bool ray_queries, ShadingPath shading, uint trace_level, float lod_threshold) @local {
+fn Speckle render_speckle(
+    bool        ray_queries,
+    ShadingPath shading,
+    uint        trace_level,
+    float       lod_threshold,
+    bool        without_skip = false,
+) @local {
     ShadeDesc shade = {
         .ray_queries   = ray_queries,
         .shading       = shading,
@@ -538,6 +555,7 @@ fn Speckle render_speckle(bool ray_queries, ShadingPath shading, uint trace_leve
         .camera        = SPECKLE_CAMERA,
         .fov_degrees   = SPECKLE_FOV_DEGREES,
         .sun_direction = RIDGE_SUN,
+        .without_skip  = without_skip,
     };
     ShadeRig rig;
     create_shade_rig(&rig, &shade)!!;
@@ -563,7 +581,12 @@ const SpeckleCase[3] SPECKLE_CASES @local = {
 fn void test_traced_terrain_does_not_shadow_itself() @test {
     foreach (ray_queries : TRACE_KINDS) {
         foreach (shading : SHADINGS) {
-            Speckle floor = render_speckle(ray_queries, shading, 0, FINEST_LOD);
+            Speckle floor = render_speckle(
+                ray_queries:   ray_queries,
+                shading:       shading,
+                trace_level:   0,
+                lod_threshold: FINEST_LOD,
+            );
             foreach (&speckle_case : SPECKLE_CASES) {
                 Speckle speckle = render_speckle(
                     ray_queries:   ray_queries,
@@ -574,6 +597,31 @@ fn void test_traced_terrain_does_not_shadow_itself() @test {
                 assert(speckle.mean_laplacian <= SPECKLE_LAPLACIAN_RATIO * floor.mean_laplacian);
                 assert((float)speckle.edges <= SPECKLE_PIXEL_RATIO * (float)floor.edges);
             }
+        }
+    }
+}
+
+// The same view with the gaps removed: the skip is what keeps the trace grid from shadowing the terrain.
+fn void test_speckle_measure_catches_a_missing_proxy_skip() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        foreach (shading : SHADINGS) {
+            Speckle floor = render_speckle(
+                ray_queries:   ray_queries,
+                shading:       shading,
+                trace_level:   0,
+                lod_threshold: FINEST_LOD,
+            );
+            Speckle speckle = render_speckle(
+                ray_queries:   ray_queries,
+                shading:       shading,
+                trace_level:   TRACE_LEVEL,
+                lod_threshold: FINE_LOD,
+                without_skip:  true,
+            );
+            assert(
+                speckle.mean_laplacian > SPECKLE_LAPLACIAN_RATIO * floor.mean_laplacian
+                || (float)speckle.edges > SPECKLE_PIXEL_RATIO * (float)floor.edges
+            );
         }
     }
 }
