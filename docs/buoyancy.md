@@ -123,7 +123,7 @@ Applying a force wakes a sleeping body but does not reset an awake body's sleep 
 rest sleeps for one step every 0.5 s and the next step's lift wakes it; its pose does not change while it
 sleeps. A body with no submerged cell receives no force and no wake, and sleeps normally.
 
-## Tests and cost
+## Tests
 
 `physics_test`'s buoyancy group runs over an analytic surface: a light box settles at its density line, a
 heavy one sinks, bodies out of the fluid sleep while floaters never sleep through two consecutive steps, every
@@ -132,11 +132,3 @@ alike, and a body of two colliders floats at its summed volume. Quadratic drag i
 terminal speed at two fixed steps; the limit keeps a strongly dragged body from overshooting a current; a
 floating body drifts at the speed of a uniform current and stays put at equilibrium; and a height-only surface
 and a zero-velocity sampler give bitwise-equal bodies in one run.
-
-`physics.update` per fixed step on WSL (`-O3`, one thread, medians of three runs), 1 m boxes at density 600
-over the water example's calm waves through the water adapter:
-
-| Bodies | Calm waves | Choppy waves (4, 2.5 m shortest) |
-| --- | ---: | ---: |
-| 16 | 10.9 µs | 15.1 µs |
-| 256 | 162.6 µs | 253.5 µs |
