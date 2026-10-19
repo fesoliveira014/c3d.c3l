@@ -198,7 +198,7 @@ bool met = trace_scene_with_back_faces(scene, origin, direction, 1.0e30, TRACE_M
 
 A built-in shader that serves both kinds is compiled twice through the `SCENE_TRACE_BVH` flag of `shaders/variants.json`: the source defines `SCENE_TRACE_RAY_QUERY` unless the flag is set (for traced shadows `shadows.glsl` does it under `RT_SHADOWS`, and a custom stage's traced forms follow the same rule; see [custom shaders](custom_shaders.md#traced-shadows)), and the renderer picks the variant from `caps.ray_queries.enabled`, the same bit that selects the prepared kind. Every built-in consumer does: traced shadows in the `standard`, `physical`, `toon` and `lighting_resolve` fragment stages, ray-traced ambient occlusion, ray-traced reflections and the probe update. A renderer created without ray queries therefore runs every traced effect on the software walk; the path tracer alone needs ray-tracing pipelines.
 
-The instance mask selects rows: every row carries `TRACE_MASK_ALL`, and rows of meshes with `cast_shadow` also carry `TRACE_MASK_SHADOW_CASTER`. A row whose mask shares no bit with the argument is skipped.
+The instance mask selects rows: every row of a drawn mesh carries `TRACE_MASK_ALL`, and rows of meshes with `cast_shadow` also carry `TRACE_MASK_SHADOW_CASTER`. A [trace proxy](#trace-proxies) carries `TRACE_MASK_PROXY` and, with `cast_shadow`, `TRACE_MASK_PROXY_SHADOW_CASTER` instead, and the entry points reach it through the matching proxy bit of the mask they are given. A row whose mask shares no bit with the argument is skipped. A shader that calls `traceRayEXT` itself passes the proxy bits to see proxies.
 
 `SceneHit` carries:
 
@@ -230,11 +230,13 @@ its proxy may sit above its surface raises `trace_proxy_skip_height` before it s
 `trace_proxy_t_min(skip_height, direction, normal)` gives the distance along a ray at which it has risen that far above
 the plane of the surface at its origin. `trace_scene`, `trace_scene_any` and `trace_scene_query` take it as a
 `proxy_t_min` argument before the hit (or after the instance mask, for `trace_scene_any`): a hit on a proxy nearer than
-it is ignored, on both kinds. The kinds agree: the software walk skips the triangle, and the hardware kind makes proxy
-rows non-opaque and rejects the candidate in the shader. Every other instance, a box on the terrain among them, keeps
-counting from the ray's start, so contact shadows stay. Every `trace_only` mesh is a proxy and a pixel's skip height
-applies to all of them: a trace-only occluder standing on the terrain loses its contact shadow within that height of the
-surface. Without the argument the entry points behave as before.
+it is ignored, on both kinds. The kinds agree: the software walk skips the triangle, and the hardware kind keeps proxy
+rows opaque under their own mask bits and runs a second query over them from `proxy_t_min`, bounded by the first query's
+hit. A `trace_scene_any` ray skips the second query once the first has hit. Every other instance, a box on the terrain
+among them, keeps counting from the ray's start, so contact shadows stay. Every `trace_only` mesh is a proxy and a pixel's
+skip height applies to all of them: a trace-only occluder standing on the terrain loses its contact shadow within that
+height of the surface. `SceneTraceRoot.proxy_count` is the number of proxy rows in the frame's trace set; a frame without
+proxies pays no proxy query. Without the argument the entry points behave as before.
 
 The forward shadow paths read `trace_proxy_skip_height` themselves. A deferred view carries it per pixel: `write_gbuffer`
 packs it into the upper 16 bits of the flags channel as centimetres, rounded up and clamped at 655.35 m, and the
