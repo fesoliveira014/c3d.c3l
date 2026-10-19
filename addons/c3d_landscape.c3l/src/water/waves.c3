@@ -28,8 +28,6 @@ $assert WaveGpu::size == 32;
 struct WaterParams @private {
     WaveGpu[MAX_WAVES] waves; // mirrored as WaterParams in landscape/water_waves.glsl
     WaveGpu[MAX_WAVES] previous; // the waves of the update before; the velocity form reads them
-    Vec4               absorption;
-    Vec4               scatter;
     Vec4               scroll_origin;
     Vec4               scroll_velocity;
     uint               wave_count;
@@ -40,9 +38,13 @@ struct WaterParams @private {
     float              foam_crest;
     uint               flags;
     float              cell_size; // metres between the finest vertices of an ocean; zero for a body
+    float              roughness;
+    float              _pad0;
+    float              _pad1;
+    float              _pad2;
 }
 
-$assert WaterParams::size == 352;
+$assert WaterParams::size == 336;
 
 <*
  World-space copy of one water body's waves and pose at the moment it was taken.
@@ -220,11 +222,7 @@ fn WaveGpu pack_wave(Wave* wave, uint wave_count) @private {
 
 // The scroll segment and the phase offsets belong to update: a desc edit keeps them.
 fn WaterParams pack_params(WaterDesc* desc, WaterParams kept) @private {
-    Vec3 absorption = desc.absorption_color;
-    Vec3 scatter = desc.scatter_color;
     WaterParams params = {
-        .absorption            = { absorption.x, absorption.y, absorption.z, desc.absorption_distance },
-        .scatter               = { scatter.x, scatter.y, scatter.z, desc.roughness },
         .scroll_origin         = kept.scroll_origin,
         .scroll_velocity       = kept.scroll_velocity,
         .wave_count            = desc.wave_count,
@@ -235,6 +233,7 @@ fn WaterParams pack_params(WaterDesc* desc, WaterParams kept) @private {
         .foam_crest            = desc.foam_crest,
         .flags                 = desc.march_reflections ? MARCH_FLAG : 0,
         .cell_size             = desc.mode == WaterMode.OCEAN ? desc.cell_size : 0,
+        .roughness             = desc.roughness,
     };
     for (uint index = 0; index < desc.wave_count; index++) {
         params.waves[index] = pack_wave(&desc.waves[index], desc.wave_count);

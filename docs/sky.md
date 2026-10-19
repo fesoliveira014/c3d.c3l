@@ -363,7 +363,7 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
 A `MediumVolume` is a box of participating medium that the view ray crosses: water, murk, smoke. It hangs below its
 node. In the node's local frame it covers `[center.x ± half_extent.x] × [−depth, 0] × [center.y ± half_extent.y]`, so
 the local XZ plane at y = 0 is its top face. The node's world matrix may be any affine transform without shear; the
-box moves, turns and scales with it.
+box moves, turns and scales with it. A [water body](water.md#underwater) writes one from its desc.
 
 | Field | Meaning |
 | --- | --- |

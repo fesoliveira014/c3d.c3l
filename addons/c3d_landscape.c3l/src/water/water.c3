@@ -57,7 +57,7 @@ const uint MAX_OCEAN_CHUNKS = 1 << scene::MAX_QUADTREE_DEPTH; // 87,381 nodes: 4
 <*
  Metres below the rest plane a water body reaches when the desc sets none.
 *>
-const float DEFAULT_WATER_DEPTH = 40; // ten default absorption distances: under 3e-5 of the light is left by then
+const float DEFAULT_WATER_DEPTH = 40; // ten default absorption distances: spends red, keeps green and blue
 
 const Wave[2] CALM_WAVES @private = {
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
@@ -70,6 +70,14 @@ const Wave[2] CALM_WAVES @private = {
 enum WaterMode {
     BODY,  // one grid or application geometry; waves in the node's local space
     OCEAN, // a quadtree of chunks selected per view; waves anchored to the world
+}
+
+<*
+ What update_mirror did to a mirror slot.
+*>
+enum MirrorState {
+    PLACED, // the slot's camera reflects the viewing camera; render its view
+    BELOW,  // the viewing camera is under the rest plane; the slot's camera draws nothing and its view is not needed
 }
 
 <*
@@ -119,18 +127,19 @@ struct Water {
 }
 
 <*
- Checked desc, material, grid, mirror cameras and clip plane of a water body, written by the library.
+ Checked desc, material, grid, mirror cameras, medium node and clip plane of a water body, written by the library.
 *>
 struct WaterRuntime {
-    WaterDesc           desc;       // checked preparation or set_desc snapshot; later Water edits never reach it
-    MaterialId          material;   // owned; removed with the runtime
-    GeometryId          grid;       // the built grid, shared per store key, or the desc's geometry
-    Entity[MAX_MIRRORS] mirrors;    // root camera nodes by slot; zero where none stands
-    Plane               clip_plane; // world; the mirror views' ViewDesc.clip_plane
-    Vec2                rest_min;   // node-local XZ of the rest surface
+    WaterDesc           desc;        // checked preparation or set_desc snapshot; later Water edits never reach it
+    MaterialId          material;    // owned; removed with the runtime
+    GeometryId          grid;        // the built grid, shared per store key, or the desc's geometry
+    Entity[MAX_MIRRORS] mirrors;     // root camera nodes by slot; zero where none stands
+    Entity              medium_node; // child of the body carrying its MediumVolume; owned, removed with the runtime
+    Plane               clip_plane;  // world; the mirror views' ViewDesc.clip_plane
+    Vec2                rest_min;    // node-local XZ of the rest surface
     Vec2                rest_max;
-    SeaBlend            sea;        // the sea-state blend set_sea_state started; idle without one
-    OceanState          ocean;      // zero for a BODY
+    SeaBlend            sea;         // the sea-state blend set_sea_state started; idle without one
+    OceanState          ocean;       // zero for a BODY
 }
 
 <*
@@ -272,11 +281,14 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     }
     TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
     slots[REFLECTION_SLOT] = reflection_slot(desc.reflection_view_slot);
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.double_sided = true;
     MaterialId owned = assets.add_material(material::custom(
         shader:      shader,
         param_block: material::@as_bytes(params),
         slots:       slots,
         references:  { [RIPPLE_REFERENCE] = desc.ripples, [FOAM_REFERENCE] = desc.foam },
+        common:      common,
     ))!;
     defer catch assets.remove_material(owned);
     if (ocean) {
@@ -290,6 +302,8 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         )!;
     }
     defer catch if (ocean) scene.remove_component(node, InstancedMesh);
+    Node* medium_node = scene.add_node(node, "water_medium")!;
+    defer catch scene.remove(medium_node);
     Entity[MAX_MIRRORS] mirrors;
     add_mirrors(scene, node.id, mirrors[:desc.max_mirrors])!;
 
@@ -305,15 +319,17 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         });
     }
     scene.add(node, (WaterRuntime){
-        .desc       = desc,
-        .material   = owned,
-        .grid       = surface,
-        .mirrors    = mirrors,
-        .clip_plane = mirror_clip_plane(node.world, total_amplitude(desc.waves[:desc.wave_count])),
-        .rest_min   = { rest.min.x, rest.min.z },
-        .rest_max   = { rest.max.x, rest.max.z },
-        .ocean      = layout,
+        .desc        = desc,
+        .material    = owned,
+        .grid        = surface,
+        .mirrors     = mirrors,
+        .medium_node = medium_node.id,
+        .clip_plane  = mirror_clip_plane(node.world, total_amplitude(desc.waves[:desc.wave_count])),
+        .rest_min    = { rest.min.x, rest.min.z },
+        .rest_max    = { rest.max.x, rest.max.z },
+        .ocean       = layout,
     });
+    write_medium(scene, node, scene.get(node, WaterRuntime));
 }
 
 <*
@@ -341,7 +357,8 @@ fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
 
 <*
  Replace a water body's desc; the grid is rebuilt only when its shape changed.
- Ends a running sea-state blend. Invalidates Camera pointers when max_mirrors shrinks.
+ Ends a running sea-state blend and writes the body's MediumVolume again.
+ Invalidates Camera pointers when max_mirrors shrinks.
  An ocean keeps its mode, extent and cell size; remove and add the body to change them.
  @param [&inout] scene
  @param [&inout] assets : "The store given to register_water."
@@ -406,6 +423,7 @@ fn void? set_desc(
     runtime.rest_max = { rest.max.x, rest.max.z };
     runtime.desc = desc;
     scene.get(node, Water).desc = desc;
+    write_medium(scene, node, runtime);
     if (ocean) {
         place_ocean_bounds(
             scene: scene,
@@ -425,16 +443,18 @@ fn void? set_desc(
 
 <*
  Place one mirror slot's camera to reflect the viewing camera across the water's rest plane.
- Writes WaterRuntime.clip_plane; creates the slot's camera after release_mirror.
+ Writes WaterRuntime.clip_plane; creates the slot's camera after release_mirror. A viewing camera under the rest
+ plane leaves the clip plane and the camera's pose as they were and puts the camera on no layer.
  @param [&inout] scene : "World matrices current."
  @param body : "Node carrying prepared water."
  @param slot : "Mirror slot of the viewing view, below the body's max_mirrors."
  @param viewing_camera : "Root node carrying the Camera the mirror reflects."
+ @return "BELOW when the viewing camera is under the rest plane."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require !scene.world.is_alive(body) || !scene.world.has(body, WaterRuntime) || slot < scene.world.get(body, WaterRuntime).desc.max_mirrors
  @require !scene.world.is_alive(viewing_camera) || (scene.world.has(viewing_camera, Camera) && scene.node(viewing_camera).parent == scene.root)
 *>
-fn void? update_mirror(
+fn MirrorState? update_mirror(
     Scene* scene,
     Entity body,
     uint slot,
@@ -499,6 +519,7 @@ fn void update(
             wind_velocity: wind_velocity,
             time:          time,
         );
+        scene.node(runtime.medium_node).layers = node.layers;
         OceanMove move = ocean_move(scene, node, runtime);
         advance_sea(
             scene:   scene,
@@ -532,6 +553,8 @@ fn void remove_orphans(Scene* scene) @private {
         } else {
             scene.remove_component(node, Mesh);
         }
+        Entity medium_node = scene.get(node, WaterRuntime).medium_node;
+        if (scene.world.is_alive(medium_node)) scene.remove(scene.node(medium_node));
         scene.remove_component(node, WaterRuntime);
     }
     while (true) {

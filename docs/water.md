@@ -11,9 +11,12 @@ is a Gerstner surface of up to four waves in the node's local XZ, drawn by the p
 custom material the library owns. The vertex stage displaces a grid and supplies the depth and velocity forms, and a
 compute twin poses the grid for [scene traces](#scene-traces);
 the fragment stage reads the scene's colour and depth snapshots after opaque (a scene-read material, see
-[custom shaders](custom_shaders.md)), refracts and absorbs what lies behind the surface, reflects from a
+[custom shaders](custom_shaders.md)), refracts what lies behind the surface, reflects from a
 planar mirror target, else a screen-space march over the snapshot, else the environment or the frame's
-ambient, adds lit foam, and shades sun glints through the public Standard parts. Ripple normals and foam colour
+ambient, adds lit foam, and shades sun glints through the public Standard parts. The body writes a core
+[medium volume](sky.md#medium-volumes) that absorbs and scatters the light in the water, from above and from below,
+and the surface seen from under it shows Snell's window and total internal reflection ([Underwater](#underwater)).
+Ripple normals and foam colour
 come from referenced Standard materials; the application's wind scrolls the ripples, and `set_sea_state` turns a
 wind into the waves ([Sea state](#sea-state)). A CPU twin of the stage answers world-space height queries, and
 `update_mirror` places a mirror camera per water body and viewing view for the reflection the application renders.
@@ -81,13 +84,13 @@ water::update(
     wind_velocity: wind,
     time:          now,
 );
-water::update_mirror(
+MirrorState mirror_state = water::update_mirror(
     scene:          &scene,
     body:           lake.id,
     slot:           0,
     viewing_camera: camera.id,
 )!;
-// the mirror view's clip plane (The mirror)
+// the mirror view's clip plane, and no mirror view while mirror_state is BELOW (The mirror)
 lake_fluid = { .view = water::surface_view(&scene, &assets, lake.id)!, .time = now, .current = current };
 physics.update(delta);
 scene.update_world();
@@ -98,23 +101,25 @@ scene.update_world();
   the runtime's remove hook with the store; the store outlives the scene.
 - `add_water` attaches a water body to a node without `Mesh`, `Water` or `WaterRuntime` whose world matrix is
   current. It checks the desc, finds or adds the shared shader, finds or builds the grid, adds the owned
-  material (its reflection slot a view texture at `reflection_view_slot`), `max_mirrors` mirror camera nodes and
-  the node's `Mesh` (an `InstancedMesh` for an [ocean](#ocean)), all or nothing: a fault leaves the node, the scene's
-  free nodes and the store's free materials as they were.
+  material (double-sided, its reflection slot a view texture at `reflection_view_slot`), the child node of its
+  [medium](#underwater), `max_mirrors` mirror camera nodes and the node's `Mesh` (an `InstancedMesh` for an
+  [ocean](#ocean)), all or nothing: a fault leaves the node, the scene's free nodes and the store's free materials as
+  they were.
 - `set_desc` is the only way to change a water body. It checks the new desc before it writes anything: a fault
   keeps the old desc, the payload, the material revision, the mesh and the grid. `WaterRuntime.desc` holds the
   checked copy; `update`, the mirror and the queries read it, so an edit of `Water.desc` itself has no effect
-  until it goes through `set_desc`. It ends a running sea-state blend and applies the desc's waves at once. An
-  ocean keeps its `mode`, `extent` and `cell_size`: a change faults `INVALID_ARGUMENT` and leaves the body as it was.
+  until it goes through `set_desc`. It ends a running sea-state blend, applies the desc's waves at once and writes
+  the [medium](#underwater) again. An ocean keeps its `mode`, `extent` and `cell_size`: a change faults `INVALID_ARGUMENT` and leaves the body as it was.
 - `set_sea_state(scene, assets, node, wind_velocity, transition_seconds)` sets the waves from a wind
   ([Sea state](#sea-state)). It writes the target into `Water.desc` and `WaterRuntime.desc` and returns; the
   next `update` starts the blend.
 - `update` runs every frame with the `FrameInfo.time` the frame renders with. It tears down removed water
-  bodies, with their mirror cameras, scrolls the ripples, advances sea-state blends and re-anchors oceans whose node
-  moved. It places no mirror and takes no camera; the material reads its reflection from a view texture, so no
-  target is set on the body.
+  bodies, with their mirror cameras and medium nodes, scrolls the ripples, keeps each medium node on its body's layers,
+  advances sea-state blends and re-anchors oceans whose node moved. It places no mirror and takes no camera; the material reads its reflection from a view texture,
+  so no target is set on the body.
 - `update_mirror(scene, body, slot, viewing_camera)` places the mirror camera of one slot of one body for one
-  viewing camera ([The mirror](#the-mirror)). It reads the camera's `local`, which must be a root node, so it
+  viewing camera ([The mirror](#the-mirror)) and returns `PLACED`, or `BELOW` when the viewing camera is under the rest
+  plane and the mirror is not needed. It reads the camera's `local`, which must be a root node, so it
   may run before or after `update_world`; the body's world matrix is read as the last `update_world` left it.
 - `release_mirror(scene, body, slot)` frees the slot's camera node, for a viewing view that goes away. The next
   `update_mirror` of that slot adds the camera again.
@@ -133,8 +138,8 @@ references. Every rule below is a fault, not a contract: descs come from files a
 | steepness | Σ steepness < `wave_count`: the mean steepness stays below 1 (one wave may pass 1 when others are lower) |
 | `geometry` | Zero builds a grid; else a live geometry whose bounds lie at y = 0. An ocean takes none |
 | `extent`, `cell_size` | A built grid only: both positive and finite, at most `MAX_GRID_CELLS` (512) cells per side, every wavelength at least two cells. An ocean: both positive and finite, at most `MAX_OCEAN_CHUNKS` (256) chunks of `cell_size * OCEAN_CHUNK_CELLS` per side, every wavelength at least four cells of the finest level |
-| `absorption_color`, `absorption_distance` | Transmittance after the distance, each channel in (0, 1]; the distance positive and finite |
-| `scatter_color` | Non-negative and finite: the albedo of the water body under ambient and indirect light |
+| `absorption_color`, `absorption_distance` | Transmittance after the distance, each channel in (0, 1]; the distance positive and finite. They set the [medium](#underwater)'s absorption; 1 on every channel is clear water, with no medium |
+| `scatter_color` | Non-negative and finite: the single-scattering albedo of the medium, clamped to `MAX_SCATTER_ALBEDO` (0.98) |
 | `roughness` | In [0, 1] |
 | `refraction_strength`, `reflection_distortion` | Non-negative: screen uv per unit of normal tilt |
 | `foam_depth` | Non-negative metres of water under which shore foam shows; 0 turns shore foam off |
@@ -146,13 +151,13 @@ references. Every rule below is a fault, not a contract: descs come from files a
 | `reflection_view_slot` | Below `material::MAX_VIEW_TEXTURES` (4): the [view texture](views.md#view-textures) the material samples |
 | `trace` | Scene traces see the displaced surface, posed every frame ([Scene traces](#scene-traces)); off by default; an ocean cannot trace |
 | `mode` | `BODY` (default) or `OCEAN` ([Ocean](#ocean)) |
-| `depth` | Positive and finite metres below the rest plane (`DEFAULT_WATER_DEPTH`, 40 m, by default). Validated and saved; nothing reads it yet |
+| `depth` | Positive and finite metres below the rest plane (`DEFAULT_WATER_DEPTH`, 40 m, by default): where the [medium](#underwater)'s box ends. Water not deeper than its troughs has no medium |
 
 ## Surface geometry
 
 A built grid has `ceil(extent / cell_size)` cells per side centred on the node, a position and a +Y normal per
-vertex, two counter-clockwise triangles per cell facing +Y, and is shared per shape through the store key
-`c3d_landscape/water_grid/<extent>/<cell_size>` with both values as exact hex floats (120 m at 1.25 m is
+vertex, two counter-clockwise triangles per cell facing +Y (the material draws both faces), and is shared per shape
+through the store key `c3d_landscape/water_grid/<extent>/<cell_size>` with both values as exact hex floats (120 m at 1.25 m is
 `c3d_landscape/water_grid/0x1.ep+6/0x1.4p+0`). A grid stays in the store for the store's lifetime when no body
 uses it any more. Past 254 cells per side (65,535 vertices) the renderer switches to 32-bit indices: 120 m at
 1.25 m is 9,409 vertices and 55,296 16-bit indices. The normals stream is not read by the drawn surface, which
@@ -428,20 +433,79 @@ scene.update_world();
 
 The fragment stage composes public parts only: `prepare_surface` with an F0 of 0.02, `fresnel_schlick` for the
 reflection weight, `evaluate_standard_lights` for sun glints and lit foam, `indirect_diffuse_irradiance` and
-`standard_ambient_fill` for the water body and the foam, and the scene snapshot reads:
+`standard_ambient_fill` for the foam, the scene snapshot reads and `apply_fog_refracted`. Seen from above:
 
 ```
-color      = evaluate_standard_lights(surface) + F · reflection
-           + (1 − F) · ((1 − foam) · refraction + ambient(foam albedo) + E · foam albedo / π)
-refraction = snapshot · T + scatter · (1 − T),  T = absorption_color ^ (path / absorption_distance)
-scatter    = ambient(scatter_color) + E · scatter_color / π
-foam       = max(crest ramp above foam_crest, 1 − depth gap / foam_depth), with a foam reference only
+color = evaluate_standard_lights(surface) + F · reflection + (1 − F) · (ambient(foam albedo) + E · foam albedo / π)
+      + (1 − F) · (1 − foam) · fog_behind(snapshot)
+foam  = max(crest ramp above foam_crest, 1 − depth gap / foam_depth), with a foam reference only
 ```
 
-The refraction sample shifts by the normal's tilt in view space times `refraction_strength`, scaled by the
-water behind the surface up to 1 m, and falls back to the direct sample when the shifted one lands in front of
-the water; a background texel has no bed and absorbs everything. The reflection is the only specular
-environment term. Traced forms of the fragment stage let a traced sun shadow the water.
+`fog_behind` is the view's fog from the surface to the depth of the refracted sample: the [medium](#underwater) and
+any air fog. The water has no absorption of its own. The refraction sample shifts by the normal's tilt in view
+space times `refraction_strength`, scaled by the water behind the surface up to 1 m, and falls back to the direct
+sample when the shifted one lands in front of the water; a background texel has no bed, so the medium takes the ray as
+far as its box reaches ([Underwater](#underwater)).
+The reflection is the only specular environment term. Traced forms of the fragment stage let a traced sun shadow the
+water. The sun lights glints and foam; the water's own colour is the medium's in-scatter.
+
+## Underwater
+
+A water body owns one child node, `WaterRuntime.medium_node`, named `water_medium`, that carries one core
+[`MediumVolume`](sky.md#medium-volumes), so the view's fog pass absorbs and scatters through the water and a camera can
+stand in it.
+
+- **Mapping.** Per colour channel, from the desc:
+  - `absorption = −ln(absorption_color) / absorption_distance`, per metre;
+  - `scattering = absorption · a / (1 − a)` with `a = min(scatter_color, MAX_SCATTER_ALBEDO)` read as single-scattering
+    albedo, so the medium's own albedo `scattering / (absorption + scattering)` is `a`;
+  - `anisotropy = MEDIUM_ANISOTROPY` (0.6): the Henyey-Greenstein `g` of the sun term, forward-leaning as suspended
+    particles are, though not as sharply as real water, which would show the sun term only toward the sun;
+  - `center` and `half_extent` are the middle and half sizes of the rest rectangle in the node's XZ
+    (`WaterRuntime.rest_min` and `rest_max`): the built grid's, the application geometry's bounds, or an ocean's whole
+    tree.
+- **Placement.** The fog pass applies a medium to every surface it fogs, and cannot tell water from a submerged rock.
+  The box's top is therefore not the rest plane: the medium node hangs `offset = total amplitude + MEDIUM_SKIN` under it
+  in the body's frame, with the bounding total amplitude of a running sea-state blend as the mirror's clip plane uses,
+  so no drawn surface falls inside the box, a trough or flat water a depth-precision sliver low included. The node's
+  `depth` is the desc's less `offset`, so the box's bottom stays `WaterDesc.depth` under the rest plane. Water not
+  deeper than `offset` has no medium. Absorption and scattering are per world metre; the extents, the depth and the
+  offset are in the node's frame. The water between the surface and the box's top is not absorbed: a bed seen through a
+  crest misses up to about twice the amplitude of absorption.
+- **Layers.** The medium node carries the body's layers, and `update` and `set_desc` copy them again, so a view that
+  does not see the body does not take its medium. Node layers do not inherit; the copy is the library's.
+- **Clear water.** `absorption_color` of 1 on every channel writes no medium, and `scatter_color` does nothing then.
+- **Lifecycle.** `add_water` and `prepare` add the node and write the medium. `set_desc` writes it again, adding the
+  `MediumVolume` when the water turns murky and removing it when the water turns clear; a sea-state blend writes it
+  when it starts and when it ends. The `update` that removes the body's `Mesh` removes the node. The medium node is the
+  library's: do not edit or remove it. A `MediumVolume` the application put on the body's own node is its own: it adds
+  to the water's where they overlap and stays when the body goes. The serialization adapter omits the medium node, and
+  the loaded body adds it when it is prepared.
+- **Absorbed once.** The fragment stage has no absorption of its own. The view's fog pass fogs the path from the camera
+  to the surface, and the refracted sample goes through `apply_fog_refracted`, which fogs the path from the surface to
+  what lies behind it along the view ray to the depth of that sample. The bed is absorbed by the medium once, with the
+  camera above or below the surface.
+- **Where the medium applies.** Main, split and mirror views that keep the node (its layers meet the view's) take it,
+  and the nearest four media of a view are kept ([medium volumes](sky.md#medium-volumes)). A mirror view clips it at its
+  plane, so a mirror camera inside the box is not darkened by it. The mirror cameras leave out the body's own layer, so
+  the body's medium is not in its own mirror either way. Probe updates, reflection captures and the path tracer take no
+  media: a water surface they draw shows what lies behind it unabsorbed.
+
+**From below.** The material is double-sided, and a back face, the surface seen from under the water, shades as follows:
+
+- The camera ray refracts with the index ratio 1.33 to 1. Inside the critical angle (48.75° from the normal) the
+  refracted direction leaves the water. It is projected into the view: the scene snapshot there shows what lies above
+  the surface (Snell's window), and a direction outside the frame or behind the camera shows the environment in that
+  direction. The sample is fogged by `apply_fog_refracted` as above, over the air.
+- Outside the critical angle the ray reflects back into the water (total internal reflection). The reflected ray marches
+  the snapshot when `march_reflections` is on, else it reads the environment, and the medium fogs it from the surface to
+  the hit, or to the end of the medium for a miss. The planar mirror is not used.
+- The weight of the reflection is Schlick's fit on the refracted angle, which reaches 1 at the critical angle, so the
+  window's edge fades into the reflection.
+- Sun glints, lit foam and the surface's own lighting do not run from below: the surface shows only what it passes and
+  what it reflects, fogged by the medium on the way to the camera.
+
+The waves bend the window and the reflection with the surface normal, ripples included.
 
 ## Reflections
 
@@ -469,7 +533,16 @@ mirror.
 reflected across the image of the node's local XZ plane, gives it the viewing camera's lens with the water node's
 layers removed, and writes `WaterRuntime.clip_plane`: the rest plane lowered by the total amplitude, so everything
 above the deepest trough stays. The plane belongs to the body, so every slot of it is the same. The application
-owns the targets, the views and the order. The example renders a mirror at
+owns the targets, the views and the order.
+
+A viewing camera under the rest plane has nothing to reflect: the surface seen from under the water reads no mirror
+([Underwater](#underwater)). `update_mirror` then returns `BELOW`, leaves the slot's camera pose and
+`WaterRuntime.clip_plane` as they were and puts the camera on no layer. The application skips that mirror view, which
+saves its cost, and clears the viewing view's texture at the body's slot, as the lines below do. The next
+`update_mirror` with the camera above the plane places the slot again and returns `PLACED`. The test is the rest plane,
+not the waves: a camera within the amplitude of it takes the plane's side ([Limits](#limits)).
+
+The example renders a mirror at
 
 ```c3
 // A quarter of the pixels: on an RTX 4090 at 2560 x 1440 the mirror view takes 0.721 against 0.815 ms still,
@@ -503,15 +576,20 @@ if (clip_plane.normal != current.clip_plane.normal || clip_plane.d != current.cl
 scene.get(viewing_camera, Camera).aspect = (float)viewer_size.x / (float)viewer_size.y;
 
 // In the frame, for each viewing view: the mirror, fitted to the viewing camera, its texture, then the view.
-Node* mirror = scene.node(scene.get(lake, WaterRuntime).mirrors[slot]);
-renderer.render_view(
-    scene:         scene,
-    camera_node:   mirror,
-    view:          mirror_view,
-    shadow_camera: viewing_camera,
-)!;
-renderer.finish_view(mirror_view)!;
-renderer.set_view_texture(view, lake_desc.reflection_view_slot, mirror_target)!;
+// A viewer under the water (BELOW) renders no mirror and gets no texture at the slot.
+RenderTargetId target;
+if (mirror_state == MirrorState.PLACED) {
+    Node* mirror = scene.node(scene.get(lake, WaterRuntime).mirrors[slot]);
+    renderer.render_view(
+        scene:         scene,
+        camera_node:   mirror,
+        view:          mirror_view,
+        shadow_camera: viewing_camera,
+    )!;
+    renderer.finish_view(mirror_view)!;
+    target = mirror_target;
+}
+renderer.set_view_texture(view, lake_desc.reflection_view_slot, target)!;
 renderer.render_view(scene, viewing_camera, view)!;
 renderer.finish_view(view)!;
 ```
@@ -566,6 +644,14 @@ does not apply and the row carries `TRACE_MASK_ALL`.
   both. Traced shadows on the water work as before.
 - **Hits.** A hit on the water shades as any custom material hit does, grey under Lambert lighting; foam, refraction,
   reflection and ripples do not run there.
+- **From below.** The material is double-sided, and a trace row takes its facing from the material, so the row is
+  double-sided too: a ray from under the surface hits it as a front face. Keeping the row single-sided needs a switch
+  in core that no other surface has asked for, so the rows follow the material. The consequences, for a traced body:
+  ray-traced ambient occlusion of a submerged bed sees the surface as an occluder when the bed lies within the AO
+  radius; ray-traced reflections from underwater surfaces reflect the grey surface instead of passing through it; a
+  [probe](probe_volumes.md) under the rest plane hits the surface as a front face and reads it lit, where a
+  single-sided row would have counted it as a back face and excluded the probe as inside geometry; and a path-traced
+  view from under the water sees the grey surface. Untraced water has no row, so none of this applies.
 - **Bounds.** The pose stays inside `Mesh.local_bounds`, the rest bounds grown by the total amplitude and the crest
   shift ([Surface geometry](#surface-geometry)).
 
@@ -593,9 +679,10 @@ does not fault.
 ## Removal
 
 Remove `Water`, or the node. The runtime's remove hook removes the owned material; the next `update` removes
-the node's `Mesh` (`InstancedMesh` for an ocean) and `WaterRuntime` and every mirror camera node whose water body is
-gone. Removing `WaterRuntime` or a mirror node directly is unsupported (`release_mirror` frees one slot's camera);
-call `update` between removing and adding a water body on the same node. Destroy the scene before the store.
+the node's `Mesh` (`InstancedMesh` for an ocean), its medium node and `WaterRuntime` and every mirror camera node
+whose water body is gone. Removing `WaterRuntime` or a mirror node directly is unsupported (`release_mirror` frees one
+slot's camera); call `update` between removing and adding a water body on the same node. Destroy the scene before the
+store.
 
 ## Faults
 
@@ -605,7 +692,7 @@ call `update` between removing and adding a water body on the same node. Destroy
 | `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included, `max_mirrors` outside [1, `MAX_MIRRORS`], `reflection_view_slot` at `MAX_VIEW_TEXTURES` or above, a `depth` that is not positive and finite); application geometry off y = 0; an ocean with geometry, with `trace`, wider than `MAX_OCEAN_CHUNKS` chunks, or with a wave under four finest cells; a reference that is not `STANDARD`; a shared key naming another asset kind |
 | `set_desc` | `c3d::INVALID_ARGUMENT` | A `mode`, and for an ocean an `extent` or `cell_size`, that differs from the prepared body's |
 | `add_water`, `set_desc` | `c3d::INVALID_ID` | A dead geometry or reference |
-| `add_water`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool full, or no scene node left for the mirrors |
+| `add_water`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool full, or no scene node left for the medium's node or the mirrors |
 | `update_mirror` | `c3d::INVALID_ID` | A dead body, a node without prepared water or a dead viewing camera |
 | `update_mirror` | `c3d::INVALID_ARGUMENT` | The viewing camera's local transform is not finite |
 | `update_mirror` | `c3d::CAPACITY_EXCEEDED` | No scene node left to add the camera of a slot freed by `release_mirror` |
@@ -654,9 +741,20 @@ call `update` between removing and adding a water body on the same node. Destroy
   follows the aliasing rule by itself.
 - **References**: the ripple material contributes its normal map only; foam shows only with a foam reference;
   `uv0` is the rest position in metres.
-- **Lighting**: the sun lights glints and foam, not the water body; scatter takes ambient and indirect light.
-- **Seen from below** the surface is culled; underwater views are out of scope.
-- **No fog** on the water.
+- **Lighting**: the sun lights glints and foam. The water body's own colour is the medium's in-scatter: the ambient
+  and the sun through the column above each point, with no occluder shadowing and no indirect light. Surfaces under
+  water are lit as in air ([medium limits](sky.md#limits)), so the bed takes no sun attenuation.
+- **Waterline**: the medium's top lies `total amplitude + MEDIUM_SKIN` under the rest plane, under the deepest trough,
+  and the mirror's side test is the rest plane. A camera in the band from the box's top to a crest (`amplitude + skin`
+  under the rest plane to `amplitude` over it) can stand under the water and outside the medium, unfogged, and its mirror
+  follows the plane's side, not the waves'. The water between the surface and the box's top is not absorbed: a bed seen
+  through a crest misses up to about twice the amplitude of absorption.
+- **Underwater views**: no light shafts and no caustics. The window and the reflection show this view's snapshot and the
+  environment elsewhere, so near the frame's edge the window changes from the snapshot to the environment. The surface
+  shows no glints or foam from below.
+- **Frames without media** (probe updates, reflection captures, the path tracer) show the bed through the water
+  unabsorbed.
+- **Tracing from below**: the trace row is double-sided ([Scene traces](#scene-traces)).
 - **Buoyancy**: eight cells over the colliders' box; a tilted body is approximated; a floating body at rest may
   sleep for one step each 0.5 s and wakes on the next; rendered crates lag the simulation by up to one fixed
   step (pose interpolation), visible as a bob offset on fast waves.
@@ -692,6 +790,13 @@ lake limits the sea to centimetres at any wind in that range, so the ripples car
 `--shot FILE.png` renders eight frames offscreen with the still camera of the benchmark and writes the last as a PNG
 at `--width` by `--height`; it needs no window.
 
+`--dive [SHARE]` replaces the fly camera with a path that crosses the surface, 18 m from the lake's centre, looking
+along +X: it descends from 2 m over the water, looking across the lake, to 3 m under it, looking 52° up, with a
+smoothstep ease. Interactively it loops, down and up, in 16 s; with `--shot`, `SHARE` in [0, 1] is the point of the
+descent the shot stands at (0 above, 1 below; 0 by default). The mirror view is not rendered
+while the camera is under the rest plane ([The mirror](#the-mirror)). It does not combine with `--benchmark`, whose
+gates assume the still camera.
+
 `--ocean` replaces the lake with an [ocean](#ocean): the ground sinks until its highest point lies 12 m under the sea,
 and the sea is a 20 km body (256 chunks of 80 m, 87,381 nodes) at the default cell size and a depth of 200 m, on its
 own layer bit like the lake. Each frame its node follows the camera in steps of `ocean_snap_step`. It implies
@@ -722,8 +827,8 @@ the crates' bob needs to decay.
 
 It prints the header, `sample_ns` (100,000 `sample_surface` calls before the segments), and per segment the
 mirror view's summed passes, shadow atlas and shadow share of the frame (planar, still and orbit), the main
-view's passes with `--gpu-timings` (with `--traced`, also the frame's `TRACE_POSE` and `ACCELERATION_BUILD`
-passes as `gpu_ms view=frame`), the frame time, `shadow_sets segment=<name> recorded=<n> shared=<n>` (the
+view's passes with `--gpu-timings`, `FOG` among them because the water's medium turns the fog pass on (with `--traced`,
+also the frame's `TRACE_POSE` and `ACCELERATION_BUILD` passes as `gpu_ms view=frame`), the frame time, `shadow_sets segment=<name> recorded=<n> shared=<n>` (the
 last frame's shadow sets), `buoyancy_us` (the physics step time per fixed step in
 `waves`, at the crate count) and the still segment's upload bytes. Two gates exit 1 when they fail:
 
@@ -739,12 +844,12 @@ and the march off), `--mirror-scale 0.5|1`, `--crates 16|256`, `--ssgi` (SSGI on
 `--traced` (the main view path-traced, with the water traced: a grey surface that follows the waves; without
 `trace` it is absent), `--capture` (a second view on a 384² target whose
 camera leaves out the water's layer and has no mirror), `--ripples on|off`, `--sea-state`, `--wind SPEED`,
-`--ocean`, `--shot FILE.png`, `--width W --height H` (2560 × 1440 by default in benchmark and shot modes) and `--sky`
+`--ocean`, `--dive [SHARE]`, `--shot FILE.png`, `--width W --height H` (2560 × 1440 by default in benchmark and shot modes) and `--sky`
 (an [atmosphere](sky.md) on the sun, which replaces the generated sky, and a haze
 pooling in the valleys, off by default; with `--gpu-timings` the main and mirror views print `SKY_VIEW`,
 `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a [froxel volume](sky.md#volumetric-fog)
 for the main and mirror views; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`). Interactive runs always validate. Under `--sky` the water needs no fog code:
-the view's fog pass fogs its surface at its depth, its absorption covers the path to the bed, and the mirror
+the view's fog pass fogs its surface at its depth, its medium covers the path to the bed, and the mirror
 view fogs only the path behind its clip plane ([sky](sky.md#where-fog-applies)).
 
 ## Measured cost

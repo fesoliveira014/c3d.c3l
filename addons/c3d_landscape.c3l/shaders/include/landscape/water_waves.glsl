@@ -23,8 +23,6 @@ struct WaterWave {
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer WaterParams {
     WaterWave waves[WATER_MAX_WAVES];
     WaterWave previous[WATER_MAX_WAVES];
-    vec4 absorption;
-    vec4 scatter;
     vec4 scroll_origin;
     vec4 scroll_velocity;
     uint wave_count;
@@ -35,6 +33,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Wa
     float foam_crest;
     uint flags;
     float cell_size;
+    float roughness;
+    float _pad0;
+    float _pad1;
+    float _pad2;
 };
 
 struct WaterSurfacePoint {

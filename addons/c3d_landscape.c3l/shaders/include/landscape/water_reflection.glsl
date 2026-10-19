@@ -53,8 +53,9 @@ bool water_planar(
 }
 
 // The snapshot holds opaque, masked and sky only, from this view: blends, off-screen geometry and anything behind
-// the camera are never hit. Explicit-lod reads only: hits differ per pixel.
-bool water_march(FrameRoot frame, vec3 origin, vec3 direction, out vec3 radiance) {
+// the camera are never hit. Explicit-lod reads only: hits differ per pixel. The hit distance is where the sample lies
+// along the ray.
+bool water_march(FrameRoot frame, vec3 origin, vec3 direction, out vec3 radiance, out float hit_distance) {
     float reach = WATER_MARCH_REACH * -(frame.view * vec4(origin, 1.0)).z;
     for (uint march_step = 1u; march_step <= WATER_MARCH_STEPS; march_step++) {
         // Quadratic spacing: fine steps near the surface, where contact reflections need them.
@@ -69,10 +70,16 @@ bool water_march(FrameRoot frame, vec3 origin, vec3 direction, out vec3 radiance
         float behind = -(frame.view * vec4(point, 1.0)).z - view_distance(frame, depth);
         if (depth > 0.0 && behind > 0.0 && behind < WATER_MARCH_THICKNESS * step_length) {
             radiance = sample_texture_2d_lod(frame.scene_color, frame.scene_sampler, uv, 0.0).rgb;
+            hit_distance = reach * share * share;
             return true;
         }
     }
     return false;
+}
+
+bool water_march(FrameRoot frame, vec3 origin, vec3 direction, out vec3 radiance) {
+    float hit_distance;
+    return water_march(frame, origin, direction, radiance, hit_distance);
 }
 
 // Planar where the view provides the slot (uniform per draw) and the sample stays in frame (per pixel); else the

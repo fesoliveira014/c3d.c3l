@@ -228,6 +228,7 @@ fn Wave[] bounding_waves(WaterRuntime* runtime) @private {
 }
 
 fn void place_bounds(Scene* scene, Node* node, WaterRuntime* runtime) @private {
+    write_medium(scene, node, runtime);
     if (runtime.desc.mode == WaterMode.OCEAN) {
         place_ocean_bounds(
             scene: scene,

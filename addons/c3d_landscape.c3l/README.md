@@ -10,7 +10,7 @@ description. LOD cells own one core instanced group; all parts share scatter,
 tint, sway and fade. The null descriptor keeps the single-mesh path.
 See [whole-object LOD](../../docs/lod.md) for ownership and selection contracts.
 
-The terrain's material and grid, its [trace grid](../../docs/terrain.md#scene-traces) node, a tile's border ring, and the water material, are owned by their components. Do not
+The terrain's material and grid, its [trace grid](../../docs/terrain.md#scene-traces) node, a tile's border ring, and the water material and medium, are owned by their components. Do not
 replace or edit them. The height map and control map belong to the application: replacing the height map with the
 same side length refreshes the whole map; another side length hides the batch until a conforming revision.
 
@@ -46,7 +46,7 @@ attempt created, preserving shared assets used by prior owners.
 
 Ordinary updates skip pending owners. A pending terrain has no generated
 `InstancedMesh` or trace grid, pending foliage has no generated cells, and pending water has
-no generated `Mesh` (`InstancedMesh` for an ocean) or mirror camera. They produce no generated draws. Existing
+no generated `Mesh` (`InstancedMesh` for an ocean), medium node or mirror camera. They produce no generated draws. Existing
 `add_terrain`, `add_foliage` and `add_water` combine attachment and preparation,
 retaining their immediate-ready behavior and rollback on failure.
 

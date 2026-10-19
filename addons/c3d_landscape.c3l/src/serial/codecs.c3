@@ -988,6 +988,15 @@ fn void? collect_water(void* component, serial::WriteContext* context) @private 
         }
         context.omit_component(context.node, ecs::slot_of(Mesh)!)!;
     }
+    if (!context.scene.world.is_alive(runtime.medium_node)) return c3d::INVALID_ARGUMENT~;
+    Node* medium_node = context.scene.node(runtime.medium_node);
+    if (medium_node.parent != context.node) return c3d::INVALID_ARGUMENT~;
+    if (context.contains_node(medium_node)) {
+        if (context.scene.has(medium_node, MediumVolume)) {
+            context.omit_component(medium_node, ecs::slot_of(MediumVolume)!)!;
+        }
+        context.omit_node(medium_node)!;
+    }
     foreach (slot, mirror_id : runtime.mirrors) {
         if (!mirror_id.generation) continue;
         if (!context.scene.world.is_alive(mirror_id)) return c3d::INVALID_ARGUMENT~;
