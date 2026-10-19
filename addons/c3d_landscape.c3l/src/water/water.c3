@@ -15,9 +15,14 @@ import std::math;
 const uint MAX_WAVES = 4; // 32 B and one vertex term each; mirrored as WATER_MAX_WAVES in landscape/water_waves.glsl
 
 <*
- Fixed-point steps that invert the horizontal crest shift in a query.
+ Horizontal step in metres under which a query's inversion stops.
 *>
-const uint WAVE_INVERSION_ITERATIONS = 3; // 1.0 mm calm, 6.7 mm choppy; about 110 ns per sample
+const float WATER_QUERY_TOLERANCE = 0.0001f; // metres: 0.1 mm, well under the 1 cm drawn-surface agreement
+
+<*
+ Fixed-point steps a query runs to invert the crest shift, at most.
+*>
+const uint MAX_INVERSION_ITERATIONS = 8; // steepness < 1 makes the step contract; the cap bounds a query's cost near the steep limit
 
 <*
  Cells along one side of a built grid, at most.

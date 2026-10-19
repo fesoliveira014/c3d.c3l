@@ -175,22 +175,17 @@ float height = water::sample_surface(
 `surface_view` copies the packed waves the stage reads, bit for bit, and the node's pose; it faults
 `INVALID_ID` for a dead node, a node without a water body or a removed owned material, and requires a node with
 translation and rotation about Y only. `sample_surface` returns the world height of the drawn surface on the
-vertical through a point: it inverts the horizontal shift with `WAVE_INVERSION_ITERATIONS` (3) fixed-point steps
-`p ← q − D(p)`, which converge while the mean steepness stays below 1, then evaluates the height with the stage's
-float operations. A point whose rest position falls outside the rest rectangle is `NOT_FOUND`. The view is a
-value: several threads may query it.
+vertical through a point: it inverts the horizontal shift with fixed-point steps `p ← q − D(p)` until a step is
+shorter than `WATER_QUERY_TOLERANCE` (0.1 mm) or `MAX_INVERSION_ITERATIONS` (8) steps have run, then evaluates
+the height with the stage's float operations. A point whose rest position falls outside the rest rectangle is
+`NOT_FOUND`. The view is a value: several threads may query it.
 
-Error against 64 iterations, maximum over a 256² grid of points over 64 m at 8 times (c3c 0.8.3 `-O3`, WSL,
-one thread):
-
-| Wave set | Total amplitude | No inversion | 1 | 2 | 3 iterations |
-| --- | --- | --- | --- | --- | --- |
-| Calm: 2 waves, 6 m and 3.5 m, steepness 0.5 | 0.19 m | 74.6 mm | 14.3 mm | 3.6 mm | 1.04 mm |
-| Choppy: 4 waves, 12 m to 2 m, steepness 0.8 | 0.73 m | 331 mm | 71.6 mm | 20.3 mm | 6.66 mm |
-| Choppy at steepness 0.95 | 0.73 m | 390 mm | 103 mm | 35.1 mm | 13.9 mm |
-
-The test bounds are 1.1 mm (calm) and 6.8 mm (choppy); the device test checks the drawn surface against
-`sample_surface` within 1 cm. One sample of the choppy set costs 91 to 109 ns with three iterations.
+The steps converge while the mean steepness stays below 1, which validation enforces. With `k` the mean
+steepness, the rest point a query returns is within `residual · k / (1 − k)` of the true one, and the height
+within the waves' height slope `Σ a · 2π / λ` times that. `WaterSample.residual` is the length of the last step
+in metres. A query that reaches the tolerance reports a residual under it; near the steep limit the cap can end
+a query first, and its residual says how far it stopped. The drawn surface agrees with `sample_surface` within
+1 cm; the device test checks it.
 
 ## Surface detail
 
@@ -204,18 +199,18 @@ WaterSample sample = water::sample_surface_detail(
 ```
 
 `sample_surface_detail` returns, with the same inversion and the same faults as `sample_surface`, the world
-`height` (equal to `sample_surface` bit for bit), the unit `normal` and the `velocity` of the surface point in
-metres per second. Both are analytic derivatives of the drawn map at the inverted rest point `p`, in the
-node's frame turned to world space: the tangents are `∂P/∂p.x` and `∂P/∂p.y`, the normal is the normalised
-cross product of the second with the first, as the stage computes it, and the velocity is `∂P/∂t` at fixed `p`,
-the orbital velocity of the water at that point. For a wave with phase rate `ω = 2π · c / λ`, the point moves by
-`(s · λ / (2π · N) · d · sin θ · ω, −a · cos θ · ω)` per second.
+`height` (equal to `sample_surface` bit for bit), the unit `normal`, the `velocity` of the surface point in
+metres per second and the inversion's `residual`. The normal and the velocity are analytic derivatives of the
+drawn map at the inverted rest point `p`, in the node's frame turned to world space: the tangents are `∂P/∂p.x`
+and `∂P/∂p.y`, the normal is the normalised cross product of the second with the first, as the stage computes
+it, and the velocity is `∂P/∂t` at fixed `p`, the orbital velocity of the water at that point. For a wave with
+phase rate `ω = 2π · c / λ`, the point moves by `(s · λ / (2π · N) · d · sin θ · ω, −a · cos θ · ω)` per second.
 
 The kinematic condition `velocity.y − velocity.xz · ∇h = ∂h/∂t` holds against central differences of
 `sample_surface`, and the normal is parallel to `(−∂h/∂x, 1, −∂h/∂z)`. On the calm set they agree within
-2.1 mm/s and 0.0017 (the test bounds are 4 mm/s and 0.004); the residual is the inversion's, which falls to
-about 2e-5 at steepness 0.05. One sample of the choppy set costs 129 ns against 101 ns for `sample_surface`
-(c3c 0.8.3 `-O3`, WSL, one thread, 400,000 samples, one run).
+1.7e-4 m/s and 4.4e-5 (the test bounds are 5e-4 m/s and 2e-4). One sample of the choppy set at steepness 0.8
+costs 227 ns against 196 ns for `sample_surface` (c3c 0.8.3 `-O3`, WSL, one thread, minimum of 7 runs of 655,360
+samples).
 
 ## Time
 
@@ -414,7 +409,8 @@ between removing and adding a water body on the same node. Destroy the scene bef
 - **Wave edits** give one rendering of wrong wave motion vectors: the velocity form evaluates the new waves at
   the previous time. Queries follow once `surface_view` is retaken.
 - **Long sessions**: core's float time limit; wrap the clock and call `render::reset_view_history`.
-- **Query accuracy**: three inversions: 1.05 mm on the calm set, 6.7 mm at mean steepness 0.8, 13.9 mm at 0.95.
+- **Query accuracy**: the inversion stops at 0.1 mm or after 8 steps; `residual` reports where it stopped, and
+  the drawn surface agrees within 1 cm.
 - **Transforms**: drawing takes any node transform (waves scale and rotate with the node; the mirror reflects
   across the image of the local XZ plane); queries require translation plus rotation about Y.
 - **One body per lake**: waves are node-local, so two water nodes do not match at a shared edge.

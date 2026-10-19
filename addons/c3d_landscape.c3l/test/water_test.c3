@@ -11,8 +11,9 @@ import c3d::maths;
 import c3d::material;
 import c3d::scene;
 
-const float CALM_BOUND @local = 0.0011f; // metres: the calm set's measured 1.05 mm after three steps, rounded up
-const float CHOPPY_BOUND @local = 0.0068f; // metres: the choppy set's measured 6.71 mm, rounded up
+const float GENTLE_STEEPNESS @local = 0.3f; // 0.3^7 of a first step under 0.3 m is below the tolerance
+const float STEEP_STEEPNESS @local = 0.95f; // near the validated limit of 1: the slowest contraction the test checks
+const float ROUNDING_SLACK @local = 0.00002f; // metres: float spacing of 64 m positions and phases, carried through the height
 const uint ERROR_GRID @local = 64; // rest points per side, one metre apart
 const uint ERROR_TIMES @local = 8;
 const double ERROR_TIME_STEP @local = 0.37;
@@ -20,8 +21,8 @@ const float QUERY_TOLERANCE @local = 0.0001f; // metres; float rounding of the r
 const float MATRIX_TOLERANCE @local = 0.00001f;
 const float SCROLL_TOLERANCE @local = 0.0001f; // texture-space periods; float rounding of the segment change
 const float DIFFERENCE_STEP @local = 0.015625f; // 2^-6 metres and seconds: exact in float, no rounding of its own
-const float KINEMATIC_TOLERANCE @local = 0.004f; // metres per second; measures 2.1e-3, the inversion residual
-const float NORMAL_TOLERANCE @local = 0.004f; // length of a unit vector difference; measures 1.7e-3
+const float KINEMATIC_TOLERANCE @local = 0.0005f; // metres per second; measures 1.7e-4
+const float NORMAL_TOLERANCE @local = 0.0002f; // length of a unit vector difference; measures 4.4e-5
 const Vec2[3] DETAIL_POINTS @local = { { 1, 2 }, { -7, 4.5f }, { 9.5f, -9.5f } }; // node-local metres
 const double[2] DETAIL_TIMES @local = { 2.25, 6.5 }; // seconds, exact in float
 const Vec3 CURRENT @local = { 0.5f, 0, -0.25f }; // metres per second
@@ -62,13 +63,13 @@ fn WaterDesc calm_desc() @local {
     return desc;
 }
 
-fn WaterDesc choppy_desc() @local {
+fn WaterDesc choppy_desc(float steepness) @local {
     WaterDesc desc = calm_desc();
     desc.waves = {
-        { .amplitude = 0.35f, .wavelength = 12, .speed = 2.5f, .direction = { 1, 0 }, .steepness = 0.8f },
-        { .amplitude = 0.2f, .wavelength = 7, .speed = 1.9f, .direction = { 0.8f, 0.6f }, .steepness = 0.8f },
-        { .amplitude = 0.12f, .wavelength = 4, .speed = 1.4f, .direction = { 0.28f, 0.96f }, .steepness = 0.8f },
-        { .amplitude = 0.06f, .wavelength = 2, .speed = 1.0f, .direction = { -0.6f, 0.8f }, .steepness = 0.8f },
+        { .amplitude = 0.35f, .wavelength = 12, .speed = 2.5f, .direction = { 1, 0 }, .steepness = steepness },
+        { .amplitude = 0.2f, .wavelength = 7, .speed = 1.9f, .direction = { 0.8f, 0.6f }, .steepness = steepness },
+        { .amplitude = 0.12f, .wavelength = 4, .speed = 1.4f, .direction = { 0.28f, 0.96f }, .steepness = steepness },
+        { .amplitude = 0.06f, .wavelength = 2, .speed = 1.0f, .direction = { -0.6f, 0.8f }, .steepness = steepness },
     };
     desc.wave_count = 4;
     return desc;
@@ -203,10 +204,34 @@ fn WaterSample detail_at(SurfaceView* view, Vec3 point, double time) @local {
     )!!;
 }
 
-fn float largest_inversion_error(Fixture* fixture, WaterDesc desc) @local {
+struct InversionReport @local {
+    float largest_residual;
+    float largest_excess; // metres by which a height error passed the bound its residual gives
+}
+
+// Mean steepness bounds the Jacobian of the horizontal map, so it is the contraction factor.
+fn float mean_steepness(WaterDesc* desc) @local {
+    float total;
+    foreach (&wave : desc.waves[:desc.wave_count]) total += wave.steepness;
+    return total / desc.wave_count;
+}
+
+// Metres of height per metre of rest position, at most.
+fn float height_slope(WaterDesc* desc) @local {
+    float total;
+    foreach (&wave : desc.waves[:desc.wave_count]) total += wave.amplitude * 2 * (float)math::PI / wave.wavelength;
+    return total;
+}
+
+fn InversionReport inversion_report(Fixture* fixture, WaterDesc desc) @local {
     Node* node = add_water_node(fixture, desc);
     SurfaceView view = water::surface_view(&fixture.scene, &fixture.assets, node.id)!!;
-    float worst;
+
+    // The iterate of a k-contraction lies within k / (1 - k) times its last step of the fixed point.
+    float contraction = mean_steepness(&desc);
+    float height_error_per_residual = height_slope(&desc) * contraction / (1 - contraction);
+    InversionReport report = { .largest_excess = -float::max };
+
     for (uint sample = 0; sample < ERROR_TIMES; sample++) {
         double time = (double)sample * ERROR_TIME_STEP;
         for (uint row = 0; row < ERROR_GRID; row++) {
@@ -217,21 +242,28 @@ fn float largest_inversion_error(Fixture* fixture, WaterDesc desc) @local {
                     rest_z: (double)row,
                     time:   time,
                 );
-                float height = height_at(&view, (float)point.x, (float)point.z, time)!!;
-                worst = max(worst, (float)math::abs(height - point.y));
+
+                WaterSample detail = detail_at(&view, { (float)point.x, 0, (float)point.z }, time);
+                float error = (float)math::abs(detail.height - point.y);
+
+                report.largest_residual = max(report.largest_residual, detail.residual);
+                report.largest_excess = max(report.largest_excess, error - detail.residual * height_error_per_residual);
             }
         }
     }
-    return worst;
+    return report;
 }
 
-fn void test_inversion_error_stays_under_the_stated_bound() @test {
+fn void test_inversion_converges_to_the_tolerance() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
 
-    assert(largest_inversion_error(&fixture, calm_desc()) <= CALM_BOUND);
-    assert(largest_inversion_error(&fixture, choppy_desc()) <= CHOPPY_BOUND);
+    InversionReport gentle = inversion_report(&fixture, choppy_desc(GENTLE_STEEPNESS));
+    assert(gentle.largest_residual <= water::WATER_QUERY_TOLERANCE, "residual %e", gentle.largest_residual);
+
+    InversionReport steep = inversion_report(&fixture, choppy_desc(STEEP_STEEPNESS));
+    assert(steep.largest_excess <= ROUNDING_SLACK, "height error passed its residual bound by %e", steep.largest_excess);
 }
 
 fn void test_invalid_desc_values_are_invalid_argument() @test {
