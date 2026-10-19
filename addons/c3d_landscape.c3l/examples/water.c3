@@ -68,7 +68,7 @@ const float POOL_EXTENT @local = 60; // metres along each side; 49 x 49 vertices
 const float POOL_BASIN_RADIUS @local = 27; // metres; inside the pool's square
 const float POOL_SEARCH_DISTANCE @local = 110; // metres between the pool's and the lake's centres at least
 const float POOL_LEVEL_GAP @local = 3; // metres under the lake's water at least; the lake's grass line clears the pool
-const float OCEAN_EXTENT @local = 20000; // metres: 128 chunks of 160 m, 21,845 nodes; reaches past the far plane
+const float OCEAN_EXTENT @local = 20000; // metres: 256 chunks of 80 m, 87,381 nodes; reaches past the far plane
 const float OCEAN_DEPTH @local = 200; // metres below the sea: past the deepest ground under it
 const float OCEAN_BED_CLEARANCE @local = 12; // metres between the sea and the highest ground under it
 const float BASIN_DEPTH @local = 6; // metres of water over the bed at the centre
@@ -597,6 +597,7 @@ fn void? add_body(
     if (demo.options.ocean) {
         desc.mode = OCEAN;
         desc.depth = OCEAN_DEPTH;
+        desc.wave_count = 0; // flat until the sea state: the lake's 3.5 m wave is under an ocean's four-cell floor
     }
     desc.ripples = demo.options.ripples ? demo.ripples : (MaterialId){};
     desc.foam = demo.foam;
@@ -1253,7 +1254,7 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
-    if (options.ocean && (options.benchmark || options.split || options.traced)) return c3d::INVALID_ARGUMENT~;
+    if (options.ocean && (options.split || options.traced)) return c3d::INVALID_ARGUMENT~;
     if (options.ocean) {
         options.sea_state = true;
         options.crates = 0;
@@ -1861,9 +1862,11 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
         result.settle_worst,
         expected,
     );
-    bool density_gate = result.settle_count > 0 && math::abs(result.settle_worst - expected) <= GATE_TOLERANCE;
+    bool crated = demo.crates.len > 0;
+    bool density_gate = !crated
+      || (result.settle_count > 0 && math::abs(result.settle_worst - expected) <= GATE_TOLERANCE);
     io::printfn("gate steady_uploads %s", steady_gate ? "pass" : "fail");
-    io::printfn("gate crates_at_density_line %s", density_gate ? "pass" : "fail");
+    io::printfn("gate crates_at_density_line %s", !crated ? "skipped: no crates" : (density_gate ? "pass" : "fail"));
     return steady_gate && density_gate;
 }
 
@@ -1877,7 +1880,7 @@ fn String reflection_name(Reflection reflection) @local {
 
 fn void print_header(Options options) @local {
     io::printfn(
-        "# water size=%d shading=%s reflection=%s mirror_scale=%g crates=%d ripples=%s foliage=both ssgi=%s "
+        "# water size=%d shading=%s reflection=%s mirror_scale=%g crates=%d ripples=%s foliage=%s ssgi=%s "
           "extent=%dx%d frames=%d sky=%s volumetric_fog=%s split=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
@@ -1885,6 +1888,7 @@ fn void print_header(Options options) @local {
         options.mirror_scale,
         options.crates,
         options.ripples ? "on" : "off",
+        options.ocean ? "none" : "both",
         options.ssgi ? "on" : "off",
         options.width,
         options.height,

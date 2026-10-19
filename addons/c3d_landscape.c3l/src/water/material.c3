@@ -14,6 +14,7 @@ const uint FOAM_REFERENCE @private = 1; // mirrored as WATER_FOAM in water.frag.
 const uint QUAD_INDICES @private = 6;
 const float DIRECTION_TOLERANCE @private = 0.001f; // unit directions written by hand or read from files
 const float NYQUIST_CELLS @private = 2; // grid cells per wavelength below which a wave aliases
+const float FADE_FULL_CELLS @private = 4; // mirrored as WATER_FADE_FULL_CELLS in water_waves.glsl; an ocean's floor
 const String SHADER_KEY @private = "c3d_landscape/water_shader";
 const String GRID_KEY_PREFIX @private = "c3d_landscape/water_grid";
 
@@ -44,7 +45,7 @@ fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
         if (!(desc.extent / (desc.cell_size * (float)OCEAN_CHUNK_CELLS) <= (float)MAX_OCEAN_CHUNKS)) {
             return c3d::INVALID_ARGUMENT~;
         }
-        if (desc.wave_count && !(shortest >= NYQUIST_CELLS * desc.cell_size)) return c3d::INVALID_ARGUMENT~;
+        if (desc.wave_count && !(shortest >= FADE_FULL_CELLS * desc.cell_size)) return c3d::INVALID_ARGUMENT~;
     } else if (desc.geometry.generation) {
         if (!assets.geometries.is_live(desc.geometry)) return c3d::INVALID_ID~;
         Aabb bounds = assets.geometries.get(desc.geometry).data.bounds;

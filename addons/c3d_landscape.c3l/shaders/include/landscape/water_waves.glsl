@@ -5,7 +5,7 @@
 
 const uint WATER_MAX_WAVES = 4u; // mirrored as MAX_WAVES in water/water.c3
 const uint WATER_MARCH = 1u; // mirrored as MARCH_FLAG in water/waves.c3
-const float WATER_FADE_FULL_CELLS = 4.0; // a wave at least this many vertex spacings long draws in full
+const float WATER_FADE_FULL_CELLS = 4.0; // mirrored as FADE_FULL_CELLS in water/material.c3; drawn whole
 const float WATER_FADE_NONE_CELLS = 2.0; // mirrored as NYQUIST_CELLS in water/material.c3; a wave this short is gone
 
 // Mirrors WaveGpu in water/waves.c3.

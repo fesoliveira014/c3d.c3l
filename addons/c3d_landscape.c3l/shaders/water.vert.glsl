@@ -8,7 +8,7 @@
 #ifdef INSTANCED
 GPU_DECLARE_READONLY_ARRAY_REF(WaterDepthArray, uint);
 
-const int WATER_CHUNK_CELLS = 128; // mirrored as OCEAN_CHUNK_CELLS in water/water.c3
+const int WATER_CHUNK_CELLS = 64; // mirrored as OCEAN_CHUNK_CELLS in water/water.c3
 
 // A chunk of the ocean: its origin and edge in lattice cells of the finest level, from the node's centre.
 struct WaterChunk {

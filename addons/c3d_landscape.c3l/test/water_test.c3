@@ -45,8 +45,8 @@ const Vec2 FETCH_WIND @local = { 14, 0 }; // metres per second along world x
 const Vec2 LIGHT_WIND @local = { 1, 0 }; // metres per second: a fully developed sea at 2 km
 const float FULLY_DEVELOPED_HEIGHT @local = 0.21f; // g Hs / U^2 of a sea that has stopped growing
 const float GRAVITY @local = 9.81f;
-const float OCEAN_CELL_SIZE @local = 0.5f; // metres: 64 m chunks, and the finest cell passes waves of 1 m and more
-const float OCEAN_EXTENT @local = 256; // four chunks per side: three levels
+const float OCEAN_CELL_SIZE @local = 0.5f; // metres: 32 m chunks; the finest level passes waves of 2 m and more
+const float OCEAN_EXTENT @local = 256; // eight chunks per side: four levels
 const float ANCHOR_TOLERANCE @local = 0.0005f; // metres: float rounding of two local frames' positions and phases
 const float ANCHOR_CONTRAST @local = 0.02f; // metres: node-local waves of two bodies differ at least this much here
 const Vec3 FIRST_OCEAN @local = { 10, 0, 20 };
@@ -1156,7 +1156,9 @@ fn void test_sea_state_target_is_a_valid_desc_whatever_the_grid_and_wind() @test
     application.geometry = plane;
     application.extent = 0;
 
-    WaterDesc[3] bodies = { sea_desc(SMALL_BODY_EXTENT), sea_desc(BODY_EXTENT), application };
+    WaterDesc ocean = sea_desc(BODY_EXTENT);
+    ocean.mode = OCEAN;
+    WaterDesc[4] bodies = { sea_desc(SMALL_BODY_EXTENT), sea_desc(BODY_EXTENT), application, ocean };
     Vec2[4] winds = { {}, { 0.5f, 0 }, { 14, 0 }, { 40, 30 } };
     foreach (&body : bodies) {
         Node* node = add_water_node(&fixture, *body);
@@ -1359,13 +1361,18 @@ fn void test_ocean_desc_limits_are_invalid_argument() @test {
     rejected[2].geometry = plane;
     rejected[3].extent = 0;
     rejected[4].cell_size = float::nan;
-    rejected[5].waves[1].wavelength = 0.99f * OCEAN_CELL_SIZE * 2;
+    rejected[5].waves[1].wavelength = 3 * OCEAN_CELL_SIZE; // a body takes two cells; an ocean draws four whole
     rejected[6].depth = -1;
     rejected[7].depth = float::inf;
     foreach (desc : rejected) {
         assert_fault(@catch(try_add(&fixture, node, desc)), c3d::INVALID_ARGUMENT, "A rejected ocean desc");
     }
     assert(!fixture.scene.has(node, Water) && !fixture.scene.has(node, InstancedMesh));
+
+    WaterDesc four_cells = ocean_desc();
+    four_cells.waves[1].wavelength = 4 * OCEAN_CELL_SIZE;
+    try_add(&fixture, node, four_cells)!!;
+    fixture.scene.remove(node);
 
     WaterDesc largest = ocean_desc();
     largest.extent = chunk * (float)water::MAX_OCEAN_CHUNKS;

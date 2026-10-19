@@ -146,7 +146,11 @@ fn Wave[MAX_WAVES] sea_waves(
     float vertical_scale = maths::transform_dir(world, { 0, 1, 0 }).length();
     float speed = min(wind_velocity.length(), SEA_WIND_LIMIT);
     float shortest = SEA_SHORTEST_WAVELENGTH;
-    if (!desc.geometry.generation) shortest = max(shortest, NYQUIST_CELLS * desc.cell_size);
+    if (desc.mode == WaterMode.OCEAN) {
+        shortest = max(shortest, FADE_FULL_CELLS * desc.cell_size);
+    } else if (!desc.geometry.generation) {
+        shortest = max(shortest, NYQUIST_CELLS * desc.cell_size);
+    }
 
     float significant_height;
     float peak_wavelength;

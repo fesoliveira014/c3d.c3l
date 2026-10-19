@@ -8,7 +8,7 @@ import std::math;
 import std::math::quaternion;
 
 const uint MAX_OCEAN_LEVELS @private = scene::MAX_QUADTREE_DEPTH + 1;
-const float OCEAN_LOD_THRESHOLD @private = 512; // pixels: the terrain's; a chunk splits at 4 px per cell
+const float OCEAN_LOD_THRESHOLD @private = 512; // pixels: the terrain's; the ranges' clamp sets the finest reach
 const float OCEAN_LOD_HYSTERESIS @private = 0.25f; // the terrain's: merges below 410 px
 const float OCEAN_MORPH_BAND @private = 0.25f; // at most (1 - hysteresis) / 2; wide enough to hide a pop
 const float MIN_NODE_HEIGHT @private = 0.001f; // metres: instance culling and picking invert the instance matrix

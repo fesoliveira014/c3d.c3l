@@ -47,7 +47,7 @@ const float RIPPLE_CROSS_ANGLE = 0.6f; // crossing scrolls never line up, so the
 <*
  Cells along one chunk edge of an ocean at every level.
 *>
-const uint OCEAN_CHUNK_CELLS = 128; // mirrored as WATER_CHUNK_CELLS in water.vert.glsl; 16,641 vertices, 16-bit indices
+const uint OCEAN_CHUNK_CELLS = 64; // twin WATER_CHUNK_CELLS; smaller chunks shorten the finest reach, 4x the nodes
 
 <*
  Chunks along one side of an ocean's finest level, at most.

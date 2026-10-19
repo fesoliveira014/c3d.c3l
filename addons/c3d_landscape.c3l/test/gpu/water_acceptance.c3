@@ -27,7 +27,7 @@ const float TWIN_CELL_SIZE @local = 0.05f; // triangulation error under 0.2 mm o
 const float SURFACE_TOLERANCE @local = 0.01f; // metres, the render and physics contract
 const Vec3 OCEAN_POSITION @local = { 1.7f, 0, -2.3f }; // off the origin, so the anchor's fold is not zero
 const float OCEAN_SPLIT_PIXELS @local = 16; // small: the whole 12.8 m ocean draws at its finest level
-const float LEVELS_CELL_SIZE @local = 0.05f; // 6.4 m chunks
+const float LEVELS_CELL_SIZE @local = 0.1f; // 6.4 m chunks
 const uint LEVELS_CHUNKS @local = 16; // five levels over 102.4 m
 const Vec3 LEVELS_CAMERA @local = { -30, 3, -30 }; // in a corner of the ocean: the nearer levels cover a quarter plane
 const uint LEVELS_VIEW_SIZE @local = 64;
@@ -36,15 +36,15 @@ const uint LEVELS_FRAMES @local = 3; // the view's selection history is valid fr
 const uint MINIMUM_LEVEL_SPAN @local = 2; // the camera sees at least three levels
 const float ADJACENT_TOLERANCE @local = 0.001f; // metres: shared edges of boxes computed from the same lattice
 const float SEAM_SPLIT_PIXELS @local = 1e9f; // the natural ranges vanish: the levels follow the camera position alone
-const uint ZOOM_SIZE @local = 128;
-const float ZOOM_FOV_DEGREES @local = 3; // 4.2 mm per pixel along a seam at 11 m, twice that across it
-const uint SEAM_POINTS @local = 32; // pixels along a line across the seam
-const float SEAM_POINT_STEP @local = 0.01f; // metres between them: a coarse cell is 0.1 m
+const uint ZOOM_SIZE @local = 256;
+const float ZOOM_FOV_DEGREES @local = 3; // 2.1 mm per pixel along a seam at 11 m, twice that across it
+const uint SEAM_POINTS @local = 48; // pixels along a line across the seam
+const float SEAM_POINT_STEP @local = 0.005f; // metres between them: the coarse cell is 0.2 m
 const uint SEAM_LINES @local = 8; // lines along the seam
-const float SEAM_LINE_STEP @local = 0.1f; // metres between lines: a quarter of the waves' 0.4 m
+const float SEAM_LINE_STEP @local = 0.08f; // metres between lines: an eighth of the waves' 0.8 m
 const float SEAM_SLACK @local = 0.0005f; // metres of depth reconstruction noise
 const Vec3 SEAM_CAMERA @local = { -30, 8, -30 }; // high enough that the waves' slope stays under the line of sight
-const Vec3 OCEAN_FOLLOW @local = { -1.6f, 0, 1 }; // metres a node follows the view by: 0.1 m steps of its 0.1 m snap
+const Vec3 OCEAN_FOLLOW @local = { -1.6f, 0, 1 }; // metres a node follows the view by: eight steps of its 0.2 m snap
 const double[3] TWIN_TIMES @local = { 0.5, 4.8, 65540.8 }; // 4.8 s puts wave 0's largest crest shift at the origin
 const Vec3 POST_HALF_EXTENTS @local = { 0.05f, 0.5f, 0.05f }; // a slender crate: its eight cells see one surface
 const float POST_DENSITY @local = 600;
@@ -750,8 +750,8 @@ fn bool tile_contains(OceanTile tile, Vec3 point) @local {
 fn WaterDesc seam_desc() @local {
     WaterDesc desc = levels_desc();
     // Four cells of the level above the finest, along x and along z, so a seam has waves running along it.
-    desc.waves[0] = { .amplitude = 0.025f, .wavelength = 0.4f, .speed = 0, .direction = { 1, 0 }, .steepness = 0.1f };
-    desc.waves[1] = { .amplitude = 0.025f, .wavelength = 0.4f, .speed = 0, .direction = { 0, 1 }, .steepness = 0.1f };
+    desc.waves[0] = { .amplitude = 0.025f, .wavelength = 0.8f, .speed = 0, .direction = { 1, 0 }, .steepness = 0.1f };
+    desc.waves[1] = { .amplitude = 0.025f, .wavelength = 0.8f, .speed = 0, .direction = { 0, 1 }, .steepness = 0.1f };
     return desc;
 }
 

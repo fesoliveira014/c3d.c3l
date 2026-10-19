@@ -132,7 +132,7 @@ references. Every rule below is a fault, not a contract: descs come from files a
 | `waves`, `wave_count` | At most `MAX_WAVES` (4). Per wave: amplitude ≥ 0, wavelength > 0, finite speed, a unit direction within 0.001, steepness ≥ 0 |
 | steepness | Σ steepness < `wave_count`: the mean steepness stays below 1 (one wave may pass 1 when others are lower) |
 | `geometry` | Zero builds a grid; else a live geometry whose bounds lie at y = 0. An ocean takes none |
-| `extent`, `cell_size` | A built grid only: both positive and finite, at most `MAX_GRID_CELLS` (512) cells per side, every wavelength at least two cells. An ocean: both positive and finite, at most `MAX_OCEAN_CHUNKS` (256) chunks of `cell_size * OCEAN_CHUNK_CELLS` per side, every wavelength at least two cells of the finest level |
+| `extent`, `cell_size` | A built grid only: both positive and finite, at most `MAX_GRID_CELLS` (512) cells per side, every wavelength at least two cells. An ocean: both positive and finite, at most `MAX_OCEAN_CHUNKS` (256) chunks of `cell_size * OCEAN_CHUNK_CELLS` per side, every wavelength at least four cells of the finest level |
 | `absorption_color`, `absorption_distance` | Transmittance after the distance, each channel in (0, 1]; the distance positive and finite |
 | `scatter_color` | Non-negative and finite: the albedo of the water body under ambient and indirect light |
 | `roughness` | In [0, 1] |
@@ -291,11 +291,11 @@ The caps are reached at `g · F / U²` of about 17,000 and 16,000: at 14 m/s a f
 The squares of the amplitude shares sum to 0.116, near the 1/8 four sine waves carry of a sea of that height. Each wave
 runs at the deep-water speed `√(g λ / 2π)` and has the steepness that makes its crest shift twice its amplitude, the
 ratio of the default calm waves, at most 0.9 so the mean steepness stays below 1 at any fetch. Wavelengths floor at two
-cells of a built grid, else at 1 m, so the written target is always a valid desc. A band whose wavelength falls below
-the floor is drawn at the floor and keeps its amplitude, so a small body gets waves of the grid's shortest length and a
-few centimetres of height. The sea is sized in world metres: the node's scale is
-divided out of the written lengths and amplitudes, so a scaled node draws the same sea. The heading is the wind in the
-node's frame.
+cells of a built grid, four cells of an ocean's finest level, else at 1 m, so the written target is always a valid
+desc. A band whose wavelength falls below the floor is drawn at the floor and keeps its amplitude, so a small body
+gets waves of the grid's shortest length and a few centimetres of height. The sea is sized in world metres: the node's
+scale is divided out of the written lengths and amplitudes, so a scaled node draws the same sea. The heading is the
+wind in the node's frame.
 
 **The blend.** `update` advances it. Amplitude, wavelength, speed and steepness blend linearly from the set drawn
 when `set_sea_state` ran, with each direction turned along the shorter arc. The mean steepness of the blend stays
@@ -336,7 +336,7 @@ once, keeps each wave's `φ`, and copies the waves into the previous set.
 
 `WaterDesc.mode = OCEAN` draws a sea that reaches the horizon. The body is an `InstancedMesh` quadtree under
 [box ranges](instancing.md#box-ranges), like the [terrain](terrain.md) of the same package: every node is an instance
-of one shared unit chunk of `OCEAN_CHUNK_CELLS` (128) cells per side, and each view selects the nodes it draws. The
+of one shared unit chunk of `OCEAN_CHUNK_CELLS` (64) cells per side, and each view selects the nodes it draws. The
 node's local XZ plane is the rest plane, as for a body, and mirrors, the clip plane, `surface_view`, the queries and
 `fluid_sample` work on it as before.
 
@@ -346,7 +346,7 @@ desc.mode = OCEAN;
 desc.extent = 20000;   // metres
 desc.cell_size = 1.25f;
 desc.depth = 200;
-desc.waves = ...;      // or water::set_sea_state after add_water
+desc.wave_count = 0;   // flat until water::set_sea_state: the default's 3.5 m wave is under the four-cell floor
 water::add_water(
     scene:  &scene,
     assets: &assets,
@@ -363,10 +363,13 @@ scene.update_world();
 - **Extent.** A chunk is `cell_size * OCEAN_CHUNK_CELLS` metres wide at the finest level and twice that at each level
   above. The tree has the next power of two of chunks per side at or above `extent / chunk` (at most `MAX_OCEAN_CHUNKS`,
   256), so the body covers up to twice the requested extent, centred on the node; `WaterRuntime.rest_min` and `rest_max`
-  hold what it covers, and queries outside answer `NOT_FOUND`. At the default 1.25 m cell a chunk is 160 m: 64 chunks
-  cover 10 km and 256 cover 41 km. A 10 km sea has seven levels and 5,461 nodes. The largest tree has nine levels and
+  hold what it covers, and queries outside answer `NOT_FOUND`. At the default 1.25 m cell a chunk is 80 m: 128 chunks
+  cover 10 km and 256 cover 20 km. A 10 km sea has eight levels and 21,845 nodes. The largest tree has nine levels and
   87,381 nodes: 4.9 MiB of instance records on the CPU, 11 MiB on the device, 1.4 MB of selection state shared by the
   views and 0.7 MB more for each ([instancing](instancing.md#quadtree-selection)).
+- **Chunk size.** The box ranges of a level grow with its chunk's diagonal, so large chunks draw their finest cells far
+  past the distance where a cell is a pixel. A chunk of 64 cells keeps that reach short. The price is four times the
+  nodes for an extent that 128-cell chunks would cover, and half the extent at the cap for a cell size.
 - **Per-view levels.** The split threshold is 512 px, the hysteresis 0.25 and the morph band 0.25, constants of the
   package (the terrain's defaults). An application tunes the threshold in place on the node's
   `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing.md#quadtree-selection)); it survives `set_desc`.
@@ -384,8 +387,9 @@ scene.update_world();
   keeps its full amplitude and crest shift at `λ ≥ 4c`, loses them linearly and is gone at `λ ≤ 2c`. Far levels
   therefore draw a filtered surface, calm of the shortest waves. **CPU queries return the unfiltered surface.** The
   drawn and the queried surface agree within 1 cm where every wave of the sum is at least four cells of the vertex's
-  level long: at the finest level, waves of four finest cells or more. A wave of two to four finest cells is drawn
-  attenuated even there. Validation therefore asks for two cells of the finest level and no more.
+  level long. Validation asks for four cells of the finest level, and the sea-state table floors its wavelengths
+  there, so the finest level draws every wave whole and buoyancy sees what the viewer sees near the camera; a body
+  keeps its two-cell rule.
 - **Anchoring.** An ocean's waves are anchored to the world. The stage evaluates `dot(d, p) / λ` on the node-local rest
   position `p`, as for a body; the CPU adds the node's absolute position `A` to `φ`: `φ += dot(g, A) / λ`, with `g`
   the gradient of the local phase in world space, `(M⁻¹)ᵀ d` for the node's world matrix `M` (the direction itself for a
@@ -598,7 +602,7 @@ call `update` between removing and adding a water body on the same node. Destroy
 | Where | Fault | When |
 | --- | --- | --- |
 | `register_water` | `c3d::CAPACITY_EXCEEDED` | No component type slot left |
-| `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included, `max_mirrors` outside [1, `MAX_MIRRORS`], `reflection_view_slot` at `MAX_VIEW_TEXTURES` or above, a `depth` that is not positive and finite); application geometry off y = 0; an ocean with geometry, with `trace`, or wider than `MAX_OCEAN_CHUNKS` chunks; a reference that is not `STANDARD`; a shared key naming another asset kind |
+| `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included, `max_mirrors` outside [1, `MAX_MIRRORS`], `reflection_view_slot` at `MAX_VIEW_TEXTURES` or above, a `depth` that is not positive and finite); application geometry off y = 0; an ocean with geometry, with `trace`, wider than `MAX_OCEAN_CHUNKS` chunks, or with a wave under four finest cells; a reference that is not `STANDARD`; a shared key naming another asset kind |
 | `set_desc` | `c3d::INVALID_ARGUMENT` | A `mode`, and for an ocean an `extent` or `cell_size`, that differs from the prepared body's |
 | `add_water`, `set_desc` | `c3d::INVALID_ID` | A dead geometry or reference |
 | `add_water`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool full, or no scene node left for the mirrors |
@@ -635,7 +639,7 @@ call `update` between removing and adding a water body on the same node. Destroy
 - **Sea-state stretch**: a blend that changes wavelengths stretches the pattern about the node origin, so the
   per-frame height step grows with the distance from it; a longer transition spreads it
   ([Phase continuity](#sea-state)). An ocean stretches about its node instead ([Blend and drift](#ocean)).
-- **Ocean**: finite, 41 km at most at the default cell size, and the application moves it with the view; far levels
+- **Ocean**: finite, 20 km at most at the default cell size, and the application moves it with the view; far levels
   draw a filtered surface that queries do not; no tracing, no depth read yet; two oceans drift apart during a blend
   ([Ocean](#ocean)).
 - **Long sessions**: core's float time limit; wrap the clock and call `render::reset_view_history`. The wave phase
@@ -689,11 +693,11 @@ lake limits the sea to centimetres at any wind in that range, so the ripples car
 at `--width` by `--height`; it needs no window.
 
 `--ocean` replaces the lake with an [ocean](#ocean): the ground sinks until its highest point lies 12 m under the sea,
-and the sea is a 20 km body (128 chunks of 160 m, 21,845 nodes) at the default cell size and a depth of 200 m, on its
+and the sea is a 20 km body (256 chunks of 80 m, 87,381 nodes) at the default cell size and a depth of 200 m, on its
 own layer bit like the lake. Each frame its node follows the camera in steps of `ocean_snap_step`. It implies
 `--sea-state`, so the waves are the JONSWAP sea of `--wind` (the 20 km body has a fully developed sea; try `--wind
-12`) and the wind controls blend them in four seconds. There is no basin, grass, tree or crate, and no `--benchmark`,
-`--split` or `--traced`. `--shot FILE.png --size 1025` renders it headless.
+12`) and the wind controls blend them in four seconds. There is no basin, grass, tree or crate, and no `--split` or
+`--traced`. `--shot FILE.png --size 1025` renders it headless, and `--benchmark` runs the segments over the sea.
 
 `--split` draws two viewing cameras side by side in the same output, each with its own viewport, terrain levels,
 mirror views and targets, and adds a second water body: a 60 m pool on the flattest ground whose water lies at
@@ -726,7 +730,7 @@ last frame's shadow sets), `buoyancy_us` (the physics step time per fixed step i
 - `gate steady_uploads`: the still segment uploads nothing after its first frame (water, foliage and crates
   included);
 - `gate crates_at_density_line`: every crate's submerged fraction over the settle segment's last 60 frames lies
-  within 0.02 of 0.6.
+  within 0.02 of 0.6. With no crates (`--ocean`) it prints `skipped: no crates` and does not fail the run.
 
 Switches: `--split`, `--gpu-timings` (build with `python3 scripts/build.py --target water --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--validation`, `--shading
