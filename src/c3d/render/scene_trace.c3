@@ -1245,6 +1245,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
 
     usz node_bytes = top.nodes.len * BvhNodeGpu::size;
     usz instance_bytes = records.len * TraceInstanceGpu::size;
+    uint proxy_count = count_trace_proxies(records);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = slot.upload.take(
         device:    &renderer.device,
@@ -1257,7 +1258,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
         .instance_count = (uint)records.len,
         .top_node_count = (uint)top.nodes.len,
         .tlas_index     = tlas_index,
-        .proxy_count    = count_trace_proxies(records),
+        .proxy_count    = proxy_count,
     };
     mem::copy(staging.bytes.ptr + SceneTraceRoot::size, top.nodes.ptr, (sz)node_bytes);
     TraceInstanceGpu* rows = (TraceInstanceGpu*)(staging.bytes.ptr + SceneTraceRoot::size + node_bytes);
@@ -1286,7 +1287,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     trace.baseline[:records.len] = records[..];
     trace.baseline_count = (uint)records.len;
     trace.top_node_count = (uint)top.nodes.len;
-    trace.proxy_count = count_trace_proxies(records);
+    trace.proxy_count = proxy_count;
     trace.tlas_index = tlas_index;
     trace.scene = scene.identity;
     trace.origin = renderer.frame_origin;
