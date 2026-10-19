@@ -49,7 +49,8 @@ Reflections read the deferred G-buffer, so they apply to the view's G-buffer sur
 materials and Physical materials without clearcoat, sheen, anisotropy, transmission or specular
 overrides. Materials the G-buffer cannot encode keep their forward shading and the environment
 reflection. A pixel traces when it has geometry, a specular weight above zero and a roughness at
-or below `max_reflection_roughness`.
+or below `max_reflection_roughness`. On a deferred view with one sample per pixel a ray also ignores the hits on
+[trace proxies](scene_trace.md#trace-proxies) that its pixel's G-buffer flags name.
 
 Each such pixel casts `reflection_rays` rays (one by default), each sampled from the GGX distribution of visible
 normals (Dupuy and Benyoub 2023) around the G-buffer normal, and averages their radiance. Ray `n` of a frame uses

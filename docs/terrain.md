@@ -186,7 +186,9 @@ of the whole extent, built from the same height map and independent of any view.
   keeps its own maximum, in `TerrainRuntime.trace_deviation` as height texels, so a `mark_dirty` rectangle recomputes
   only the chunks it touches before the new global maximum is taken.
 - **A drawn level.** A view that draws a coarser chunk level than 0 differs from the full resolution surface by that
-  level's own error, and the grid does not follow the selection. `lod_threshold = 0` draws the full resolution surface.
+  level's own error, and the grid does not follow the selection. The bounds build measures that error for every level the
+  same way (`TerrainRuntime.drawn_deviation`, in metres per level, kept per node in `drawn_node_deviation` for a dirty
+  rectangle). `lod_threshold = 0` draws the full resolution surface.
 - **Edits.** A height-map revision poses the whole grid again: one dispatch and, on the hardware trace kind, one new
   bottom level, because a first pose from flat geometry would leave a poor tree to update; the software kind refits.
   A frame with no revision poses nothing. A tile's ring revision does the same for its own grid.
@@ -198,11 +200,20 @@ of the whole extent, built from the same height map and independent of any view.
   `Stats.trace_posed_bytes` totals the slot. The shared rest geometry adds about 48 B per vertex on the CPU and on the
   GPU. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow`
   ([capacity](scene_trace.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
-  refreshes, which at preparation is every texel.
-- **Shadows.** A traced shadow ray starts a fixed 0.02 m above the drawn surface, so where the trace grid sits higher,
-  by up to `trace_error`, the surface can shadow itself. The speckle follows the grid's cells and tracks the larger of
-  `trace_error` and the error of the drawn level; `lod_threshold = 0` removes the second. Coarser levels suit effects
-  that tolerate the error, such as reflections and probes.
+  refreshes, which at preparation is every texel, and one more for each coarser level, which touches every texel again
+  per level. On the WSL host (i9-14900K, `-O3`) `add_terrain` takes 9.9 ms at 1025 texels and 43 ms at 2049 with `trace`,
+  against 0.6 ms and 0.8 ms without.
+- **Proxy skip.** The grid is a [trace proxy](scene_trace.md#trace-proxies). A traced ray still starts a fixed 0.02 m
+  above the drawn surface, so where the grid sits higher the surface would shadow itself. The fragment stage raises
+  `trace_proxy_skip_height` to the larger of `trace_error` and `drawn_deviation` of the chunk's level, and of the parent
+  level while the chunk morphs toward it; the stage takes the level from the chunk record's span. A traced ray then
+  ignores the grid's hits that lie less than that above the plane of the surface it left. The terrain's occlusion lower
+  than that above the surface is lost, and its own shadows from taller ridges stay. Contact shadows from other objects
+  stay too: a box on the terrain keeps its shadow at its base, since only the grid is skipped. The values reach the stage
+  through the material's parameter block, which an edit republishes only when a gap changed; an untraced terrain writes
+  zero. The deferred path carries the height per pixel in the G-buffer flags (centimetres, rounded up), so the lighting
+  resolve and the ray-traced ambient occlusion and reflections of a deferred view apply the same rule; a forward view's
+  ambient occlusion and reflections, which have no flags channel, start their rays as before.
 - **Hits.** Traced terrain shades grey and ignores layers, the control map and decals, like any custom material hit.
 - **Lifetime.** The grid is runtime-owned: removing the `Terrain` component or the node removes it at the next `update`
   or with the node. It is never serialized; `prepare` creates it again after a read. Each tile of a [set](#tile-sets)

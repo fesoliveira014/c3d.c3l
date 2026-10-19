@@ -361,6 +361,12 @@ route by those terms; a forward stage that calls `shade_standard_surface` with t
 weight its G-buffer stage writes matches that route, as the Standard twin does.
 `examples/shaders/custom/pulse_gbuffer.frag.glsl` is the reference.
 
+`write_gbuffer` also packs `trace_proxy_skip_height` into the upper 16 bits of the flags output
+(`GBUFFER_PROXY_SKIP_SHIFT`, in steps of `GBUFFER_PROXY_SKIP_UNIT`), so a stage that writes location 4 itself keeps those
+bits for the lighting resolve and the traced effects. A material whose traced stand-in may sit above its surface raises the
+height before shading, as the forward and the G-buffer stage of terrain do; see
+[trace proxies](scene_trace.md#trace-proxies). It stays zero otherwise.
+
 On a `DEFERRED` view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the stage writes the multisample
 G-buffer: the sample count is pipeline state, the stage source does not change, and it still shades once per pixel
 and primitive. The resolve lights each sample from its own channels.

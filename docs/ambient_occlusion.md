@@ -127,7 +127,9 @@ applies to `SSAO` and `RAY_TRACED`, with or without `temporal`.
 ## Ray traced
 
 `RAY_TRACED` replaces the screen-space estimate with rays against the traced scene
-([scene tracing](scene_trace.md)); everything after the estimate is shared.
+([scene tracing](scene_trace.md)); everything after the estimate is shared. On a deferred view with one sample per
+pixel the rays of a pixel ignore the hits on [trace proxies](scene_trace.md#trace-proxies) that its G-buffer flags name;
+other views start their rays at the surface.
 
 ```c3
 Renderer renderer = render::create_renderer(mem, &assets, { .ray_queries = true })!;

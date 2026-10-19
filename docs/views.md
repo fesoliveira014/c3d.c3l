@@ -867,7 +867,7 @@ The deferred view owns five images at its working extent, allocated by `create_v
 | `gbuffer_normal_roughness` | `RGBA16_FLOAT` | octahedral normal, roughness, occlusion |
 | `gbuffer_emissive_specular` | `RGBA16_FLOAT` | emissive, specular weight |
 | `gbuffer_layers` | `R32_UINT` | receiver layer mask |
-| `gbuffer_flags` | `R32_UINT` | receive-shadow bit |
+| `gbuffer_flags` | `R32_UINT` | receive-shadow bit; the [proxy skip height](scene_trace.md#trace-proxies) in centimetres in bits 16 to 31 |
 
 Pass order on a deferred view: uploads, shadow atlas (with [colored shadows](shadows.md#colored-shadows), a layer that holds
 translucent casters adds a translucent depth and a transmittance pass), light culling, `DEPTH_PREPASS` over both opaque

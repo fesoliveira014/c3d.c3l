@@ -18,7 +18,7 @@ An instance enters the trace when all of these hold:
 - the material's alpha mode is `OPAQUE` or `MASK`;
 - the material has no custom vertex stage, or its shader poses the trace geometry in the row's form ([custom trace poses](#custom-trace-poses)).
 
-`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace collection takes it like any traced mesh, so its node must be effectively visible. Picking, the scene index and impostor capture skip it: its rest geometry is not what it traces as.
+`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace collection takes it like any traced mesh, so its node must be effectively visible. Picking, the scene index and impostor capture skip it: its rest geometry is not what it traces as. Its row is a [trace proxy](#trace-proxies).
 
 A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces like any other. Every row carries its node's `layers`, which hit shading tests against `Light.layers`.
 
@@ -220,6 +220,26 @@ A triangle's front is its counter-clockwise side in the geometry's local space: 
 - `trace_scene_with_back_faces` keeps both faces of every triangle, and `surface_from_hit` sets `TraceSurface.back_face` for a single-sided triangle hit from behind. The probe update uses it, because a probe inside geometry must read dark.
 
 The instance mask and the alpha test apply to all three, after the facing test. Both kinds give the same hits. `trace_scene` and `trace_scene_any` counted both faces before the software path for traced effects landed; a shader that relied on that uses `trace_scene_with_back_faces` for a nearest hit. CPU picking applies `PickOptions.faces`, whose default `MATERIAL` matches `trace_scene`.
+
+### Trace proxies
+
+A trace-only mesh stands in for geometry that raster draws another way, so its triangles may sit above the drawn surface:
+a coarse grid for terrain is above it wherever the surface dips. A ray from a drawn surface starts `TRACE_SURFACE_OFFSET`
+along the normal whatever it meets, and a proxy under that start would otherwise block it. A material that knows how far
+its proxy may sit above its surface raises `trace_proxy_skip_height` before it shades, in metres above the surface;
+`trace_proxy_t_min(skip_height, direction, normal)` gives the distance along a ray at which it has risen that far above
+the plane of the surface at its origin. `trace_scene`, `trace_scene_any` and `trace_scene_query` take it as a
+`proxy_t_min` argument before the hit (or after the instance mask, for `trace_scene_any`): a hit on a proxy nearer than
+it is ignored, on both kinds. The kinds agree: the software walk skips the triangle, and the hardware kind makes proxy
+rows non-opaque and rejects the candidate in the shader. Every other instance, a box on the terrain among them, keeps
+counting from the ray's start, so contact shadows stay. Without the argument the entry points behave as before.
+
+The forward shadow paths read `trace_proxy_skip_height` themselves. A deferred view carries it per pixel: `write_gbuffer`
+packs it into the upper 16 bits of the flags channel as centimetres, rounded up and clamped at 655.35 m, and the
+lighting resolve, [ray-traced ambient occlusion](ambient_occlusion.md#ray-traced) and
+[ray-traced reflections](reflections.md) read it back. A forward view's ambient occlusion and reflections, and any
+multisampled view's, have no flags channel to read and start rays as before. A material that never sets it writes zero.
+The path tracer starts its rays at trace hits and is unaffected.
 
 ### Hit surfaces
 
