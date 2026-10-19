@@ -519,8 +519,9 @@ The Terrain payload is version 4, which adds `trace` and `trace_level`. Version 
 added `morph_band` and version 2 added `slope_projection` and `triplanar_sharpness`;
 version 1 payloads in both encodings read `TOP`, the default sharpness, no
 morphing and tracing off, version 2 payloads no morphing and tracing off, and
-version 3 payloads tracing off. The Foliage payload is version 2, which adds
-`rules.slope_normal`; version 1 payloads in both encodings read `FACE`.
+version 3 payloads tracing off. The Foliage payload is version 3, which adds
+`trace_sway`. Version 2 added `rules.slope_normal`; version 1 payloads in both
+encodings read `FACE` and no swayed tracing, and version 2 payloads read no swayed tracing.
 Foliage cells, water mirrors and a terrain's trace grid are omitted only through
 verified ownership.
 See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).

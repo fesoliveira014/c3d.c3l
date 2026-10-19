@@ -7,6 +7,7 @@ import std::time;
 import std::time::clock;
 import c3d;
 import c3d::asset;
+import c3d::asset::image;
 import c3d::camera;
 import c3d::gui;
 import c3d::landscape::foliage;
@@ -22,6 +23,7 @@ import landscape_ground;
 
 const uint FIXED_NODES @local = 16; // root, terrain, sun, camera and two layer nodes, with room to spare
 const uint TRACE_INSTANCE_CAPACITY @local = 16384; // traced trees at every map size; 3.4 MiB of trace table
+const uint POSED_INSTANCE_CAPACITY @local = 1536; // software slots fill the device tables near 1,900 in this scene
 const float CAMERA_FOV_DEGREES @local = 60;
 const float CAMERA_NEAR @local = 0.1f; // blades brush the eye at walking height
 const float CAMERA_FAR @local = 8000; // covers the 4 km diagonal of the largest map from its middle
@@ -59,6 +61,10 @@ const float MEADOW_SEARCH_LOW @local = 0.2f; // share of the extent; keeps the m
 const float MEADOW_SEARCH_HIGH @local = 0.8f;
 const uint MEADOW_SEARCH_STEPS @local = 13;
 const uint MEADOW_RADIUS_TEXELS @local = 8; // control texels around a search point; 16 m at 2049
+const float CAPTURE_DISTANCE @local = 9; // metres from the shadow tip, across the shadow
+const float CAPTURE_HEIGHT @local = 3; // camera metres above the shadow tip
+const float CAPTURE_SHADOW_REACH @local = 7; // metres from the trunk to the point the camera aims at
+const uint CAPTURE_SETTLE_FRAMES @local = 8; // uploads, history and the first poses settle on a still camera
 const Vec2 PANEL_POSITION @local = { 16, 16 };
 const Vec2 PANEL_SIZE @local = { 440, 330 };
 const Vec2 STATS_PANEL_POSITION @local = { 16, 362 };
@@ -106,6 +112,11 @@ enum Metric @local {
     INSTANCES_TESTED,
     INSTANCES_VISIBLE,
     FRAME_MS,
+    TRACE_POSED_INSTANCES,
+    TRACE_POSES,
+    TRACE_REFITS,
+    TRACE_SWAY_AT_REST,
+    BLAS_UPDATES,
 }
 
 struct Options @local {
@@ -115,6 +126,8 @@ struct Options @local {
     bool          validation;
     ShadingPath   shading;
     bool          traced_shadows;
+    bool          trace_sway;
+    String        capture;
     bool          sky;
     bool          volumetric_fog;
     uint          size;
@@ -149,6 +162,15 @@ struct WindControls @local {
     bool  gust;
 }
 
+struct TraceCounts @local {
+    uint posed_instances;
+    uint poses;
+    uint refits;
+    uint sway_at_rest;
+    uint blas_updates;
+    usz  posed_bytes;
+}
+
 struct FrameRecord @local {
     double                    cpu_record_ms;
     double                    update_us;
@@ -157,6 +179,7 @@ struct FrameRecord @local {
     uint                      upload_bytes;
     uint                      instances_tested;
     uint                      instances_visible;
+    TraceCounts               trace;
     uint                      placed_cells;
     bool                      cells_revised;
     bool                      stamped;
@@ -306,6 +329,7 @@ fn Demo? build_demo(Options options, AssetStore* assets, Scene* scene) @local {
     }
     if (options.foliage == BOTH) {
         FoliageDesc desc = landscape_foliage::tree_layer_desc(assets, &ground, options.tree_fade_end)!;
+        desc.trace_sway = options.trace_sway;
         demo.layers[demo.layer_count++] = add_layer(
             scene:  scene,
             assets: assets,
@@ -346,12 +370,13 @@ fn uint scene_node_budget(Options options, float extent) @local {
 fn RendererDesc renderer_desc(Options options, bool validation, ZString application_name) @local {
     float extent = (float)(options.size - 1) * landscape_ground::CELL_SIZE;
     return {
-        .validation           = validation,
-        .gpu_timings          = options.gpu_timings,
-        .application_name     = application_name,
-        .ray_queries          = options.traced_shadows,
-        .max_trace_instances  = options.traced_shadows ? TRACE_INSTANCE_CAPACITY : 0,
-        .max_instance_batches = scene_node_budget(options, extent) - FIXED_NODES + 1,
+        .validation                = validation,
+        .gpu_timings               = options.gpu_timings,
+        .application_name          = application_name,
+        .ray_queries               = options.traced_shadows,
+        .max_trace_instances       = options.traced_shadows ? TRACE_INSTANCE_CAPACITY : 0,
+        .max_posed_trace_instances = options.trace_sway ? POSED_INSTANCE_CAPACITY : 0,
+        .max_instance_batches      = scene_node_budget(options, extent) - FIXED_NODES + 1,
     };
 }
 
@@ -366,6 +391,17 @@ fn double percentile(double[] samples, float share) @local {
     return samples[(usz)math::round(share * (float)(samples.len - 1))];
 }
 
+fn TraceCounts trace_counts(Stats* stats) @local {
+    return {
+        .posed_instances = stats.trace_posed_instances,
+        .poses           = stats.trace_poses,
+        .refits          = stats.trace_refits,
+        .sway_at_rest    = stats.trace_sway_at_rest,
+        .blas_updates    = stats.blas_updates,
+        .posed_bytes     = stats.trace_posed_bytes,
+    };
+}
+
 fn double metric_value(FrameRecord* record, Metric metric) @local {
     switch (metric) {
         case CPU_RECORD_MS: return record.cpu_record_ms;
@@ -375,6 +411,11 @@ fn double metric_value(FrameRecord* record, Metric metric) @local {
         case INSTANCES_TESTED: return (double)record.instances_tested;
         case INSTANCES_VISIBLE: return (double)record.instances_visible;
         case FRAME_MS: return record.frame_ms;
+        case TRACE_POSED_INSTANCES: return (double)record.trace.posed_instances;
+        case TRACE_POSES: return (double)record.trace.poses;
+        case TRACE_REFITS: return (double)record.trace.refits;
+        case TRACE_SWAY_AT_REST: return (double)record.trace.sway_at_rest;
+        case BLAS_UPDATES: return (double)record.trace.blas_updates;
     }
 }
 
@@ -435,6 +476,8 @@ fn Options? parse_options(String[] args) @local {
                     case "traced": options.traced_shadows = true;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
+            case "--trace-sway": options.trace_sway = true;
+            case "--capture": options.capture = option_value(args, &index)!;
             case "--size":
                 options.size = option_value(args, &index)!.to_uint()!;
                 if (!landscape_ground::is_map_size(options.size)) return c3d::INVALID_ARGUMENT~;
@@ -456,6 +499,12 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
+    if (options.trace_sway && (!options.traced_shadows || options.foliage != FoliageChoice.BOTH)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    if (options.capture.len && (options.benchmark || options.foliage != FoliageChoice.BOTH)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -859,6 +908,7 @@ fn void? run_segments(
                 .upload_bytes      = renderer.stats.upload_bytes,
                 .instances_tested  = renderer.stats.instances_tested,
                 .instances_visible = renderer.stats.instances_visible,
+                .trace             = trace_counts(&renderer.stats),
                 .placed_cells      = placed_cells(demo),
                 .cells_revised     = cell_revision_sum(demo) != revisions,
                 .stamped           = stamped,
@@ -907,6 +957,22 @@ fn void print_edit_results(FrameRecord[] edit, double[] scratch) @local {
     );
 }
 
+fn void print_trace_counts(String segment_name, FrameRecord[] records, double[] scratch) @local {
+    usz posed_bytes;
+    foreach (record : records) posed_bytes = max(posed_bytes, record.trace.posed_bytes);
+    io::printfn(
+        "trace segment=%s posed_median=%.0f poses_median=%.0f refits_median=%.0f blas_updates_median=%.0f "
+          "sway_at_rest_median=%.0f posed_bytes_max=%d",
+        segment_name,
+        percentile(gather(records, TRACE_POSED_INSTANCES, scratch), 0.5f),
+        percentile(gather(records, TRACE_POSES, scratch), 0.5f),
+        percentile(gather(records, TRACE_REFITS, scratch), 0.5f),
+        percentile(gather(records, BLAS_UPDATES, scratch), 0.5f),
+        percentile(gather(records, TRACE_SWAY_AT_REST, scratch), 0.5f),
+        posed_bytes,
+    );
+}
+
 fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     uint frames = demo.options.segment_frames;
     io::printfn("rescatter_ms %.4f", result.rescatter_ms);
@@ -947,6 +1013,7 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
             io::printfn("cell_revisions segment=%s %d", name, revised_frames);
             if (revised_frames) steady_gate = false;
         }
+        if (demo.options.traced_shadows) print_trace_counts(name, records, result.scratch);
         double tested = percentile(gather(records, INSTANCES_TESTED, result.scratch), 0.5f);
         double visible = percentile(gather(records, INSTANCES_VISIBLE, result.scratch), 0.5f);
         io::printfn("instances segment=%s tested_median=%.0f visible_median=%.0f", name, tested, visible);
@@ -983,7 +1050,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
     uint tree_cells = options.foliage == BOTH ? grid_cells(demo.ground.extent, landscape_foliage::TREE_CELL_SIZE) : 0;
     io::printfn(
         "# vegetation size=%d shading=%s shadows=%s foliage=%s tree_fade_end=%g extent=%dx%d frames=%d "
-          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s volumetric_fog=%s",
+          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s volumetric_fog=%s trace_sway=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
@@ -998,6 +1065,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
         max_instance_batches,
         options.sky ? "on" : "off",
         options.volumetric_fog ? "on" : "off",
+        options.trace_sway ? "on" : "off",
     );
     foreach (&layer : active_layers(demo)) {
         FoliageRuntime* runtime = demo.scene.get(layer.node, FoliageRuntime);
@@ -1022,6 +1090,7 @@ fn bool? run_benchmark(Options options) @local {
         desc:      desc,
     )!;
     defer render::destroy_renderer(&renderer);
+
     RenderTargetId target = render::create_render_target(
         renderer: &renderer,
         desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
@@ -1030,6 +1099,7 @@ fn bool? run_benchmark(Options options) @local {
         renderer: &renderer,
         desc:     configure_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options),
     )!;
+
     Scene scene = create_demo_scene(options);
     defer scene::destroy_scene(&scene);
     terrain::register_terrain(&scene, &assets)!;
@@ -1071,19 +1141,117 @@ fn bool? run_benchmark(Options options) @local {
     return print_results(&demo, &result);
 }
 
-<* View vegetation over a generated terrain interactively, or run the scripted benchmark. *>
+// ----------------------------------------------------------------------------- capture
+
+// Trees past the posed capacity trace at rest; the renderer admits them in cell order, so only the first count.
+fn Vec3 nearest_posed_tree(Demo* demo, Vec3 point) @local {
+    Layer* trees = &demo.layers[demo.layer_count - 1];
+    Vec3 nearest;
+    float nearest_distance = float::max;
+    uint admitted;
+    foreach (cell : demo.scene.get(trees.node, FoliageRuntime).cells) {
+        if (!cell.generation) continue;
+
+        Node* node = demo.scene.node(cell);
+        InstancedMesh* batch = demo.scene.get(node, InstancedMesh);
+        for (uint index = 0; index < batch.count && admitted < POSED_INSTANCE_CAPACITY; index++, admitted++) {
+            Vec3 base = maths::transform_point(node.world.mul(batch.transforms[index].to_mat4()), { 0, 0, 0 });
+            float distance = base.distance(point);
+            if (distance < nearest_distance) {
+                nearest_distance = distance;
+                nearest = base;
+            }
+        }
+    }
+    return nearest;
+}
+
+// Looks across the tree's shadow, and the wind blows across it, so a still shadow and a swaying tree part.
+fn Vec3 pose_capture(Demo* demo) @local {
+    Vec3 sun = landscape_ground::SUN_DIRECTION;
+    Vec3 along = ((Vec3){ sun.x, 0, sun.z }).normalize();
+    Vec3 across = { along.z, 0, -along.x };
+    Vec3 tree = nearest_posed_tree(demo, extent_point(demo, demo.meadow));
+    Vec3 aim = tree + along * CAPTURE_SHADOW_REACH;
+    Vec3 eye = aim + across * CAPTURE_DISTANCE + (Vec3){ 0, CAPTURE_HEIGHT, 0 };
+    demo.camera_node.local.position = eye;
+    demo.camera_node.local.rotation = maths::look_rotation((aim - eye).normalize(), { 0, 1, 0 });
+    return across;
+}
+
+fn void? run_capture(Options options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Renderer renderer = render::create_renderer(
+        allocator: mem,
+        assets:    &assets,
+        desc:      renderer_desc(options, true, "c3d_vegetation_capture"),
+    )!;
+    defer render::destroy_renderer(&renderer);
+
+    RenderTargetId target = render::create_render_target(
+        renderer: &renderer,
+        desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
+    )!;
+    ViewDesc view_desc = configure_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options);
+    view_desc.post.anti_aliasing = AntiAliasing.NONE;
+    ViewId view = render::create_view(&renderer, view_desc)!;
+
+    Scene scene = create_demo_scene(options);
+    defer scene::destroy_scene(&scene);
+    terrain::register_terrain(&scene, &assets)!;
+    foliage::register_foliage(&scene)!;
+
+    Demo demo = build_demo(options, &assets, &scene)!;
+    Vec3 across = pose_capture(&demo);
+    Vec3 wind = across * MAX_WIND_SPEED;
+    scene.update_world();
+    renderer.prepare_scene(&scene)!;
+
+    for (uint frame = 0; frame < CAPTURE_SETTLE_FRAMES; frame++) {
+        terrain::update(&scene, &assets)!;
+        foliage::update(&scene, &assets, wind)!;
+        render_offscreen(
+            renderer:    &renderer,
+            scene:       &scene,
+            camera_node: demo.camera_node,
+            view:        view,
+            frame:       frame,
+        )!;
+    }
+    render::wait_frames(&renderer)!;
+
+    char[] pixels = alloc::new_array(mem, char, (sz)options.width * options.height * RGBA8_BYTES);
+    defer alloc::free(mem, pixels.ptr);
+    renderer.read_render_target(target, pixels)!;
+    image::write_png(
+        path:   options.capture,
+        width:  options.width,
+        height: options.height,
+        pixels: pixels,
+    )!;
+}
+
+<* View vegetation over a generated terrain interactively, run the scripted benchmark, or capture one frame. *>
 fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--size 1025|2049|4097] [--foliage both|grass|none] "
-              "[--tree-fade-end METRES] [--width W] [--height H] [--sky] [--volumetric-fog].");
+              "[--shadows atlas|traced] [--trace-sway] [--size 1025|2049|4097] [--foliage both|grass|none] "
+              "[--tree-fade-end METRES] [--width W] [--height H] [--capture FILE.png] [--sky] [--volumetric-fog].");
         }
         return 1;
     }
     Options options = parsed;
+    if (options.capture.len) {
+        if (catch excuse = run_capture(options)) {
+            io::eprintfn("vegetation capture failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
     if (!options.benchmark) {
         if (catch excuse = run_interactive(options)) {
             io::eprintfn("vegetation example failed: %s", excuse);

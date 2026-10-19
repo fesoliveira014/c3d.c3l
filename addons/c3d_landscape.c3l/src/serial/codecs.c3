@@ -23,7 +23,8 @@ const ulong SCATTER_V1_LAYOUT @private = 0x788326d1092caa6b;
 const ulong SCATTER_LAYOUT @private = 0x40955fefc693491e;
 const ulong SWAY_LAYOUT @private = 0x750cddc9cb008976;
 const ulong FOLIAGE_V1_LAYOUT @private = 0x20330122082bd780;
-const ulong FOLIAGE_LAYOUT @private = 0x797c3ed45915c1ed;
+const ulong FOLIAGE_V2_LAYOUT @private = 0x797c3ed45915c1ed;
+const ulong FOLIAGE_LAYOUT @private = 0xbf8d67f654870b2c;
 const ulong WAVE_LAYOUT @private = 0xb7ea583c7a255cb9;
 const ulong WATER_V1_LAYOUT @private = 0x74434d01389bb922;
 const ulong WATER_V2_LAYOUT @private = 0x718815cf64669e4e;
@@ -159,7 +160,7 @@ struct FoliageAuthoringV1 @private {
     bool trace;
 }
 
-struct FoliageAuthoring @private {
+struct FoliageAuthoringV2 @private {
     GeometryId geometry;
     MaterialId material;
     LodDesc[] lod;
@@ -173,10 +174,26 @@ struct FoliageAuthoring @private {
     bool trace;
 }
 
-serial::BinaryCompatibility[1] foliage_binary_compatibility @local = {
+struct FoliageAuthoring @private {
+    GeometryId geometry;
+    MaterialId material;
+    LodDesc[] lod;
+    Entity ground;
+    float cell_size;
+    ScatterRules rules;
+    SwayTemplate sway;
+    InstanceFade fade;
+    bool cast_shadow;
+    bool receive_shadow;
+    bool trace;
+    bool trace_sway;
+}
+
+serial::BinaryCompatibility[2] foliage_binary_compatibility @local = {
     { .version = 1, .read = &read_foliage_v1 },
+    { .version = 2, .read = &read_foliage_v2 },
 };
-uint[1] foliage_text_default_versions @local = { 1 };
+uint[2] foliage_text_default_versions @local = { 1, 2 };
 
 <*
  Register landscape authoring codecs and generated-state ownership.
@@ -213,10 +230,17 @@ fn void? register_serial_codecs() {
     register_value(ScatterRules, SCATTER_LAYOUT, &defaults_scatter)!;
     register_value(SwayTemplate, SWAY_LAYOUT, &defaults_sway)!;
     register_value(FoliageAuthoringV1, FOLIAGE_V1_LAYOUT, &defaults_foliage_v1)!;
+    describe::register_reflected(FoliageAuthoringV2)!;
+    serial::register_described_type(
+        $Type: FoliageAuthoringV2,
+        version: 2,
+        layout: FOLIAGE_V2_LAYOUT,
+        defaults: &defaults_foliage_v2,
+    )!;
     describe::register_reflected(FoliageAuthoring)!;
     serial::register_described_type(
         $Type: FoliageAuthoring,
-        version: 2,
+        version: 3,
         layout: FOLIAGE_LAYOUT,
         defaults: &defaults_foliage,
     )!;
@@ -387,6 +411,9 @@ fn void defaults_sway(void* value) @private => *(SwayTemplate*)value = foliage::
 fn void defaults_foliage_v1(void* value) @private {
     *(FoliageAuthoringV1*)value = foliage_authoring_v1(foliage_value(foliage::default_foliage_desc()));
 }
+fn void defaults_foliage_v2(void* value) @private {
+    *(FoliageAuthoringV2*)value = foliage_authoring_v2(foliage_value(foliage::default_foliage_desc()));
+}
 fn void defaults_foliage(void* value) @private {
     *(FoliageAuthoring*)value = foliage_value(foliage::default_foliage_desc());
 }
@@ -506,6 +533,7 @@ fn FoliageAuthoring foliage_value(FoliageDesc desc) @private {
         .cast_shadow = desc.cast_shadow,
         .receive_shadow = desc.receive_shadow,
         .trace = desc.trace,
+        .trace_sway = desc.trace_sway,
     };
 }
 
@@ -522,6 +550,7 @@ fn FoliageDesc foliage_desc(FoliageAuthoring* value) @private {
         .cast_shadow = value.cast_shadow,
         .receive_shadow = value.receive_shadow,
         .trace = value.trace,
+        .trace_sway = value.trace_sway,
     };
 }
 
@@ -570,6 +599,38 @@ fn FoliageAuthoringV1 foliage_authoring_v1(FoliageAuthoring value) @private {
         .cast_shadow    = value.cast_shadow,
         .receive_shadow = value.receive_shadow,
         .trace          = value.trace,
+    };
+}
+
+fn FoliageAuthoringV2 foliage_authoring_v2(FoliageAuthoring value) @private {
+    return {
+        .geometry       = value.geometry,
+        .material       = value.material,
+        .lod            = value.lod,
+        .ground         = value.ground,
+        .cell_size      = value.cell_size,
+        .rules          = value.rules,
+        .sway           = value.sway,
+        .fade           = value.fade,
+        .cast_shadow    = value.cast_shadow,
+        .receive_shadow = value.receive_shadow,
+        .trace          = value.trace,
+    };
+}
+
+fn FoliageAuthoring foliage_authoring_from_v2(FoliageAuthoringV2 legacy) @private {
+    return {
+        .geometry       = legacy.geometry,
+        .material       = legacy.material,
+        .lod            = legacy.lod,
+        .ground         = legacy.ground,
+        .cell_size      = legacy.cell_size,
+        .rules          = legacy.rules,
+        .sway           = legacy.sway,
+        .fade           = legacy.fade,
+        .cast_shadow    = legacy.cast_shadow,
+        .receive_shadow = legacy.receive_shadow,
+        .trace          = legacy.trace,
     };
 }
 
@@ -720,6 +781,13 @@ fn void? attach_foliage(void* value, serial::ReadContext* context) @private {
 fn void? read_foliage_v1(serial::Reader* reader, serial::ReadContext* context) @private {
     FoliageAuthoringV1* legacy = context.read_value(FoliageAuthoringV1, reader)!;
     FoliageAuthoring source = foliage_authoring_from_v1(*legacy);
+    validate_foliage(&source, context)!;
+    attach_foliage(&source, context)!;
+}
+
+fn void? read_foliage_v2(serial::Reader* reader, serial::ReadContext* context) @private {
+    FoliageAuthoringV2* legacy = context.read_value(FoliageAuthoringV2, reader)!;
+    FoliageAuthoring source = foliage_authoring_from_v2(*legacy);
     validate_foliage(&source, context)!;
     attach_foliage(&source, context)!;
 }

@@ -37,8 +37,9 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(landscape::TerrainSetAuthoring)!!.layout == 0x6b17270c6b53663f);
     assert(serial::described_type(ScatterRules)!!.layout == 0x40955fefc693491e);
     assert(serial::described_type(SwayTemplate)!!.layout == 0x750cddc9cb008976);
-    assert(serial::described_type(landscape::FoliageAuthoring)!!.version == 2);
-    assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0x797c3ed45915c1ed);
+    assert(serial::described_type(landscape::FoliageAuthoring)!!.version == 3);
+    assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0xbf8d67f654870b2c);
+    assert(serial::described_type(landscape::FoliageAuthoringV2)!!.layout == 0x797c3ed45915c1ed);
     assert(serial::described_type(Wave)!!.layout == 0xb7ea583c7a255cb9);
     assert(serial::described_type(WaterDesc)!!.version == 3);
     assert(serial::described_type(WaterDesc)!!.layout == 0x90996b184cb03fab);
@@ -246,7 +247,7 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 assert(restored_water.trace);
                 FoliageDesc* desc = &fixture.destination.get(plants, Foliage).desc;
                 assert(c3d::same_id(desc.ground, ground.id) && (desc.lod != null) == with_lod);
-                assert(desc.rules.slope_normal == SMOOTH);
+                assert(desc.rules.slope_normal == SMOOTH && desc.trace && desc.trace_sway);
                 if (with_lod) {
                     assert(desc.lod.parts[0].local.m00 == -1 && desc.lod.parts[0].local.m01 == 0.25f);
                     assert(desc.lod.parts[0].local.m03 == 2 && desc.lod.parts[0].local.m13 == 3

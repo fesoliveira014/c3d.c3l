@@ -175,6 +175,7 @@ fn void create_fixture(
     plants.cast_shadow = true;
     plants.receive_shadow = false;
     plants.trace = true;
+    plants.trace_sway = true;
     foliage::attach_foliage(
         scene: &fixture.source,
         assets: &fixture.assets,
