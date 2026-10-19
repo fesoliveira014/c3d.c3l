@@ -97,6 +97,7 @@ ground, the spacing and the seed are the application's. `add_foliage` checks eve
 | `sway` | The wind template, below; amplitude, frequency, wavelength and variation non-negative and finite, `full_bend_speed` positive, `lean` in [0, 1] |
 | `fade` | Core's `InstanceFade`; zero is off, else `0 <= start < end` |
 | `cast_shadow`, `receive_shadow`, `trace` | Copied onto every cell's `InstancedMesh` |
+| `trace_sway` | With `trace`: copied onto every cell's `InstancedMesh` or `LodGroup`, so traced views see each swaying instance at its swayed pose ([below](#tracing-swaying-layers)); inert without `trace` |
 
 The desc is captured during preparation: `FoliageRuntime.desc` keeps the checked copy the cells follow, so an edit
 of `Foliage.desc` has no effect. To change a seed, a rule, the template, the fade or the shadow and trace flags,
@@ -216,6 +217,35 @@ nothing is stored in the scene. Each layer maps it onto its cells' `InstanceSway
   one store per cell per frame and uploads nothing: sway edits need no mark. Crests run across cells as one
   field, since every cell of a layer carries the same sway and the phase follows world position.
 
+## Tracing swaying layers
+
+A traced layer shows its cells to traced views in their rest pose, so a ray-traced shadow of a swaying tree stays
+still while the drawn tree moves. `FoliageDesc.trace_sway` poses each instance of a swaying cell for the trace the
+way the vertex stage poses it for the draw ([custom trace poses](scene_trace.md#custom-trace-poses)): ray-traced
+shadows, ambient occlusion, reflections, probe updates and path tracing follow the wind. The pose takes the layer's
+sway at the frame's time and applies no fade, so every instance of the layer traces, near the camera, off the screen
+or past the fade end.
+
+- **Cost.** Each instance takes one posed slot of the renderer: its own posed vertex streams, one pose
+  dispatch, 320 bytes of the frame's upload ring, and a refit copy of the geometry's triangle tree on the
+  software kind or a bottom level on the hardware kind. While wind blows, the sway moves with the
+  frame time, so every slot poses again every frame: the software kind refits every tree and the hardware kind
+  updates every bottom level in place. A calm layer, or a template amplitude of zero, poses nothing and
+  traces at rest. A layer of 4,000 trees takes 4,000 slots and as many dispatches and updates per frame.
+- **Capacity.** Slots are `RendererDesc.max_posed_trace_instances` (64 by default), shared with skinned and
+  morphed meshes and crowds, so size it for the instances that must follow the wind. Instances are admitted in
+  collection order, not by distance. Swayed rows claim after every other kind, so a character that appears later
+  still gets a slot. Slots also draw on the device's 4,096-entry allocation and acceleration structure tables,
+  shared with every other resource: in the example's scene the hardware kind held 3,500 slots and faulted
+  `gpu::SLOT_TABLE_FULL` at 4,000, and the software kind, whose slots hold more buffers, held 1,900 and faulted
+  at 2,048. Keep the capacity well below those.
+- **At capacity.** An instance without a slot traces at rest, as without `trace_sway`, and each cell holding
+  such an instance counts once in `Stats.trace_sway_at_rest`. The error is bounded by the sway reach.
+  `Stats.trace_posed_instances` counts the posed instances.
+- **Alpha.** Coverage tests the material's cut-out with the instance's own texture coordinates: sway moves
+  positions only. A `VERTEX_ALPHA` layer takes its bend weight from vertex alpha, and coverage ignores that alpha
+  on every row of the layer, posed or at rest, as the draw does, so a `MASK` material is cut by its texture alone.
+
 ## Grass and trees
 
 The example's two layers show the intended settings:
@@ -264,7 +294,8 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
   example uses it.
 - **Traced layers.** Every instance of a traced cell is an entry of the scene trace:
   `RendererDesc.max_trace_instances` (4,096 by default) must hold them with the scene's other traced
-  instances, or traced views fault `CAPACITY_EXCEEDED`.
+  instances, or traced views fault `CAPACITY_EXCEEDED`. With `trace_sway`, instances also take posed slots
+  (`RendererDesc.max_posed_trace_instances`, [above](#tracing-swaying-layers)).
 - **CPU memory**: 8 B per grid cell for the runtime's table, 56 B per instance of capacity for the arrays, and
   a scene node per non-empty cell.
 
@@ -288,10 +319,11 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
 - The amplitude is in world units, the same for every instance whatever its scale.
 - Normals are not bent: a bent blade or canopy shades as its rest pose.
 - Traced views see a layer only with `trace` set, and then in its rest pose, counted in `Stats.trace_sway_at_rest`
-  ([scene trace](scene_trace.md#what-traces)): under a ray-traced sun a swaying
+  ([scene trace](scene_trace.md#what-traces)), unless `trace_sway` is set: under a ray-traced sun a swaying
   tree casts a still shadow while atlas shadows sway, and ray-traced ambient occlusion, reflections, probes and
-  path tracing see the rest pose too. A swaying `LodGroup` with `trace` set traces at rest the same way. Grass stays
-  untraced by default, so it casts no traced shadow. A traced
+  path tracing see the rest pose too. A swaying `LodGroup` with `trace` set traces at rest the same way. With
+  `trace_sway` the layer follows the wind up to the posed capacity and costs a slot per instance
+  ([above](#tracing-swaying-layers)). Grass stays untraced by default, so it casts no traced shadow. A traced
   layer's cells walk every instance each frame in a view that traces.
 - One material per layer: merge bark and leaves into one masked atlas with bark alpha at 1.
 - One terrain node per layer; a [tiled world](#tiled-worlds) takes one layer per tile. Candidates outside the
@@ -357,7 +389,11 @@ fail:
 
 Switches: `--gpu-timings` (build with `python3 scripts/build.py --target vegetation --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading forward|deferred`,
-`--shadows atlas|traced`, `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,
+`--shadows atlas|traced`, `--trace-sway` (with `--shadows traced` and both layers: the tree layer sets
+`trace_sway` and the renderer holds 2,048 posed slots; a benchmark prints a `trace` line per segment with the
+medians of posed rows, pose dispatches, refits, bottom-level updates and batches traced at rest),
+`--capture FILE.png` (one frame at a fixed pose looking across a tree's shadow, in a wind of 25 m/s blowing across it,
+with the same options), `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,
 `--width W --height H` (2560 × 1440 by default in benchmark mode), `--validation` and `--sky` (an
 [atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the pass
 lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a
