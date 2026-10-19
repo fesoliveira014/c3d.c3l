@@ -52,6 +52,8 @@ const uint WARMUP_FRAMES @local = 60; // history, caches and the first uploads s
 const uint FRAMES_PER_SECOND @local = 60;
 const float TIME_STEP @local = 1.0f / FRAMES_PER_SECOND;
 const uint BOUNDS_BUILD_RUNS @local = 5;
+const uint STAMP_TEXELS @local = 49; // a brush stamp's height-map footprint
+const uint CONTROL_STAMP_TEXELS @local = 32; // its control-map footprint at the default map
 const uint STAMP_PERIOD @local = 30; // frames between brush stamps in the edit segment
 const float STILL_ALTITUDE @local = 40;
 const float SWEEP_ALTITUDE @local = 20;
@@ -170,6 +172,8 @@ struct BenchmarkResult @local {
     FrameRecord[] records;
     double[]      scratch;
     double        bounds_build_ms;
+    double        control_upload_ms;
+    double        height_upload_ms;
     double        physics_recook_ms;
     double        physics_whole_recook_ms;
     uint          physics_recook_windows;
@@ -840,6 +844,32 @@ fn double? time_bounds_build(Demo* demo, BenchmarkResult* result) @local {
     return percentile(runs, 0.5f);
 }
 
+// A region mark and the upload that follows it, as a stroke frame pays them.
+fn double? time_region_upload(
+    Demo* demo,
+    Renderer* renderer,
+    TextureId texture,
+    uint texels,
+    double[] runs,
+) @local {
+    TextureAsset* record = demo.assets.texture(texture);
+    TextureRegion region = {
+        .x      = (record.desc.width - texels) / 2,
+        .y      = (record.desc.height - texels) / 2,
+        .width  = texels,
+        .height = texels,
+        .depth  = 1,
+    };
+    renderer.upload(texture)!;
+    foreach (&run : runs) {
+        demo.assets.mark_texture_region_dirty(texture, 0, region)!;
+        time::Clock started = clock::now();
+        renderer.upload(texture)!;
+        *run = elapsed_ms(started);
+    }
+    return percentile(runs, 0.5f);
+}
+
 // What a stroke would repeat with one collider over the whole map: a cook of every sample.
 fn double? time_whole_field_cook(Demo* demo) @local {
     Node* probe = demo.scene.add_node(name: "whole_field_probe")!;
@@ -958,6 +988,9 @@ fn void print_edit_results(BenchmarkResult* result, FrameRecord[] edit) @local {
 fn bool print_results(Options options, BenchmarkResult* result) @local {
     uint frames = options.segment_frames;
     io::printfn("bounds_build_ms %.4f", result.bounds_build_ms);
+    io::printfn("control_region_upload_ms %.4f", result.control_upload_ms);
+    io::printfn("height_region_upload_ms %.4f", result.height_upload_ms);
+    io::printfn("control_filter_ms %.4f", max(result.control_upload_ms - result.height_upload_ms, 0.0));
     print_edit_results(result, result.records[Segment.EDIT.ordinal * frames:frames]);
     io::printfn("physics_recook_ms %.4f", result.physics_recook_ms);
     if (options.collision_window) {
@@ -1092,6 +1125,20 @@ fn bool? run_benchmark(Options options) @local {
     defer alloc::free(mem, result.scratch.ptr);
     renderer.prepare_scene(&scene)!;
     result.bounds_build_ms = time_bounds_build(&demo, &result)!;
+    result.control_upload_ms = time_region_upload(
+        demo:     &demo,
+        renderer: &renderer,
+        texture:  demo.ground.desc.control_map,
+        texels:   CONTROL_STAMP_TEXELS,
+        runs:     result.scratch[:BOUNDS_BUILD_RUNS],
+    )!;
+    result.height_upload_ms = time_region_upload(
+        demo:     &demo,
+        renderer: &renderer,
+        texture:  demo.ground.desc.height_map,
+        texels:   STAMP_TEXELS,
+        runs:     result.scratch[:BOUNDS_BUILD_RUNS],
+    )!;
 
     io::printfn(
         "# terrain size=%d layers=%d shading=%s shadows=%s lod_threshold=%g hysteresis=%g extent=%dx%d frames=%d "

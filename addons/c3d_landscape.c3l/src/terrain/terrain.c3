@@ -33,6 +33,11 @@ const float DEFAULT_LOD_THRESHOLD = 512; // drawn cells under 2.8 px; halving it
 const float DEFAULT_LOD_HYSTERESIS = 0.25f; // merges below 410 px; wider re-selects less, keeps finer chunks longer
 
 <*
+ Refreshes a terrain remembers.
+*>
+const uint REFRESH_HISTORY = 4; // 88 B per terrain; older refreshes merge, which widens what a late reader re-places
+
+<*
  Smallest normal-weight exponent of a triplanar terrain.
 *>
 const float MIN_TRIPLANAR_SHARPNESS = 1;
@@ -66,12 +71,20 @@ struct TexelRect {
 }
 
 <*
- Height-map revisions around a terrain's last accepted refresh and the texels it covered.
+ Texels an accepted in-place refresh covered and the height-map revision it produced.
 *>
-struct TerrainRefresh {
-    uint      revision_before;
-    uint      revision_after;
-    TexelRect rect;            // the whole map unless the refresh took a mark_dirty rectangle
+struct TerrainRefreshMark {
+    uint      revision;
+    TexelRect rect;
+}
+
+<*
+ Recent in-place refreshes of a terrain, oldest first; a whole-map refresh empties it.
+*>
+struct TerrainRefreshLog {
+    uint                                base_revision; // revision before the first mark; read only while count > 0
+    uint                                count;
+    TerrainRefreshMark[REFRESH_HISTORY] marks;
 }
 
 <*
@@ -120,7 +133,7 @@ struct TerrainRuntime {
     uint[MAX_TERRAIN_LEVELS] level_offset;     // first node of each level, which is also its instance index
     ushort[]                 minimum;          // per node: lowest texel of its footprint
     ushort[]                 maximum;          // per node: highest texel of its footprint
-    TerrainRefresh           last_refresh;     // kept until the next accepted refresh
+    TerrainRefreshLog        refreshes;        // in-place refreshes since the last whole-map one
     Entity                   trace_grid;       // owned trace-only child node; zero generation without trace
     uint                     trace_level;      // the desc's level, set with trace
     float                    trace_error;      // metres: largest gap between the trace grid and the full surface
@@ -256,11 +269,6 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     runtime.border_ring = ring;
     runtime.revision = height_map.header.revision;
     runtime.pixels = height_map.pixels.ptr;
-    runtime.last_refresh = {
-        .revision_before = runtime.revision,
-        .revision_after  = runtime.revision,
-        .rect            = whole_map(texels),
-    };
     refresh_bounds(
         runtime:      &runtime,
         texels:       height_texels(height_map),
@@ -324,21 +332,50 @@ fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
 }
 
 <*
- Record texels written in place since the last update.
+ Record texels written in place since the last update and mark them in the height map.
  @param [&inout] scene
- @param [&in] node : "Carries a terrain."
+ @param [&inout] assets : "Receives the height map's region mark."
+ @param [&in] node : "Carries a prepared terrain."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
  @require scene.has(node, TerrainRuntime), rect.columns > 0 && rect.rows > 0
  @require rect.x + rect.columns <= scene.get(node, TerrainRuntime).texels
  @require rect.z + rect.rows <= scene.get(node, TerrainRuntime).texels
 *>
-fn void mark_dirty(Scene* scene, Node* node, TexelRect rect) {
+fn void? mark_dirty(
+    Scene* scene,
+    AssetStore* assets,
+    Node* node,
+    TexelRect rect,
+) {
     TerrainRuntime* runtime = scene.get(node, TerrainRuntime);
-    if (!runtime.has_pending) {
-        runtime.pending = rect;
-        runtime.has_pending = true;
-        return;
-    }
-    runtime.pending = union_rect(runtime.pending, rect);
+    TextureId height_map = scene.get(node, Terrain).desc.height_map;
+    if (!assets.textures.is_live(height_map)) return c3d::INVALID_ID~;
+
+    // The mark checks the texture's own extent; the bounds are built for the side the terrain accepted.
+    TextureDesc* desc = &assets.texture(height_map).desc;
+    if (desc.width != runtime.texels || desc.height != runtime.texels) return c3d::INVALID_ARGUMENT~;
+
+    assets.mark_texture_region_dirty(
+        height_map,
+        0,
+        { .x = rect.x, .y = rect.z, .width = rect.columns, .height = rect.rows, .depth = 1 },
+    )!;
+    runtime.pending = runtime.has_pending ? union_rect(runtime.pending, rect) : rect;
+    runtime.has_pending = true;
+}
+
+<*
+ Texels refreshed after a height-map revision.
+ @param [&in] scene
+ @param [&in] node : "Carries a prepared terrain."
+ @param revision : "A height-map revision the caller's data was built at."
+ @return "The union of the refreshes after it; empty when none followed."
+ @return? NOT_FOUND
+ @require scene.has(node, TerrainRuntime)
+*>
+fn TexelRect? refreshed_since(Scene* scene, Node* node, uint revision) {
+    TerrainRuntime* runtime = scene.get(node, TerrainRuntime);
+    return refreshes_since(&runtime.refreshes, runtime.revision, revision);
 }
 
 <*
@@ -400,6 +437,32 @@ fn TexelRect union_rect(TexelRect first, TexelRect second) @private {
     return { .x = x, .z = z, .columns = end_x - x, .rows = end_z - z };
 }
 
+// The oldest two marks merge when the log is full, so a reader behind them still gets a covering rectangle.
+fn void append_refresh(TerrainRefreshLog* log, uint base_revision, TerrainRefreshMark mark) @private {
+    if (!log.count) log.base_revision = base_revision;
+
+    if (log.count == REFRESH_HISTORY) {
+        log.marks[1].rect = union_rect(log.marks[0].rect, log.marks[1].rect);
+        for (uint index = 1; index < log.count; index++) log.marks[index - 1] = log.marks[index];
+
+        log.count--;
+    }
+
+    log.marks[log.count++] = mark;
+}
+
+fn TexelRect? refreshes_since(TerrainRefreshLog* log, uint current, uint revision) @private {
+    if (revision == current) return {};
+    if (!log.count || revision < log.base_revision) return NOT_FOUND~;
+
+    TexelRect reached;
+    foreach (mark : log.marks[:log.count]) {
+        if (mark.revision > revision) reached = reached.columns ? union_rect(reached, mark.rect) : mark.rect;
+    }
+
+    return reached;
+}
+
 fn TexelRect whole_map(uint texels) @private {
     return { .columns = texels, .rows = texels };
 }
@@ -426,11 +489,12 @@ fn void? refresh_changed_bounds(AssetStore* assets, TerrainDesc* desc, TerrainRu
         height_scale: desc.height_scale,
     );
     publish_trace_params(assets, runtime);
-    runtime.last_refresh = {
-        .revision_before = runtime.revision,
-        .revision_after  = texture.header.revision,
-        .rect            = refreshed,
-    };
+    if (in_place) {
+        TerrainRefreshMark mark = { .revision = texture.header.revision, .rect = refreshed };
+        append_refresh(&runtime.refreshes, runtime.revision, mark);
+    } else {
+        runtime.refreshes = {};
+    }
     runtime.pixels = texture.pixels.ptr;
     runtime.rejected = false;
     runtime.has_pending = false;

@@ -255,6 +255,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     FoliageRuntime runtime = create_runtime(scene.allocator, cells_per_side, desc)!;
     defer catch free_runtime(&runtime);
     runtime.sway = layer_sway(desc.sway, {});
+    CellRange[1] everything = { whole_grid(&runtime) };
     rescatter(
         scene:   scene,
         assets:  assets,
@@ -262,6 +263,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         desc:    &desc,
         frame:   &frame,
         runtime: &runtime,
+        ranges:  everything[..],
     )!;
     runtime.placed = inputs;
 
@@ -444,26 +446,16 @@ fn void? refresh_layer(
         node:   node,
         desc:   desc,
     )!;
-
-    CellRange[1 + RING_STRIPS] ranges;
-    usz count;
-    if (ground_changed) {
-        TerrainRefresh refresh = scene.get(scene.node(desc.ground), TerrainRuntime).last_refresh;
-        // Only the last refresh is kept: a layer that missed an earlier one re-places whole.
-        ranges[count++] = placed.ground_revision == refresh.revision_before
-          ? cells_meeting(&frame, runtime, refresh.rect)
-          : whole_grid(runtime);
-    }
-    if (ring_changed) {
-        // An edge that lost its neighbour read the ring when it was placed.
-        TexelRect[RING_STRIPS] strips = terrain::ring_strips(
-            frame.ground.texels_per_side,
-            placed.ring_edges | current.ring_edges,
-        );
-        foreach (strip : strips) {
-            if (strip.columns) ranges[count++] = cells_meeting(&frame, runtime, strip);
-        }
-    }
+    CellRange[MAX_CHANGED_RANGES] ranges;
+    usz count = changed_ranges(
+        scene:   scene,
+        assets:  assets,
+        desc:    desc,
+        frame:   &frame,
+        runtime: runtime,
+        current: current,
+        ranges:  ranges[..],
+    );
 
     place_ranges(
         scene:   scene,
@@ -474,6 +466,52 @@ fn void? refresh_layer(
     placed.ground_revision = current.ground_revision;
     placed.ring_revision = current.ring_revision;
     placed.ring_edges = current.ring_edges;
+}
+
+// Cells that an input changed since the layer was placed; the whole grid when an input cannot say which.
+fn usz changed_ranges(
+    Scene* scene,
+    AssetStore* assets,
+    FoliageDesc* desc,
+    ScatterFrame* frame,
+    FoliageRuntime* runtime,
+    ScatterInputs current,
+    CellRange[] ranges,
+) @private {
+    ScatterInputs* placed = &runtime.placed;
+    bool whole = current.layer_world != placed.layer_world || current.ground_world != placed.ground_world;
+    usz count;
+    if (current.density_revision != placed.density_revision) {
+        TextureRegion[1] regions;
+        TextureAsset* density = assets.texture(desc.rules.density_map);
+        if (density.regions_since(placed.density_revision, regions[..]) == REGIONS) {
+            ranges[count++] = cells_meeting_density(frame, runtime, regions[0]);
+        } else {
+            whole = true;
+        }
+    }
+    if (placed.ground_revision != current.ground_revision) {
+        TexelRect? refreshed = terrain::refreshed_since(scene, scene.node(desc.ground), placed.ground_revision);
+        if (try refreshed) {
+            ranges[count++] = cells_meeting(frame, runtime, refreshed);
+        } else {
+            whole = true;
+        }
+    }
+    if (placed.ring_revision != current.ring_revision || placed.ring_edges != current.ring_edges) {
+        // An edge that lost its neighbour read the ring when it was placed.
+        TexelRect[RING_STRIPS] strips = terrain::ring_strips(
+            frame.ground.texels_per_side,
+            placed.ring_edges | current.ring_edges,
+        );
+        foreach (strip : strips) {
+            if (strip.columns) ranges[count++] = cells_meeting(frame, runtime, strip);
+        }
+    }
+    if (!whole) return count;
+
+    ranges[0] = whole_grid(runtime);
+    return 1;
 }
 
 // A count pass costs milliseconds, so a failed re-scatter waits for an input or the free node count to change.
@@ -494,6 +532,7 @@ fn void? rescatter_layer(
         node:    node,
         desc:    desc,
         runtime: runtime,
+        current: current,
     )) {
         runtime.rejection = excuse;
         runtime.rejected = current;
@@ -510,6 +549,7 @@ fn void? rescatter_from(
     Node* node,
     FoliageDesc* desc,
     FoliageRuntime* runtime,
+    ScatterInputs current,
 ) @private {
     ScatterFrame frame = scatter_frame(
         scene:  scene,
@@ -517,6 +557,16 @@ fn void? rescatter_from(
         node:   node,
         desc:   desc,
     )!;
+    CellRange[MAX_CHANGED_RANGES] ranges;
+    usz count = changed_ranges(
+        scene:   scene,
+        assets:  assets,
+        desc:    desc,
+        frame:   &frame,
+        runtime: runtime,
+        current: current,
+        ranges:  ranges[..],
+    );
     return rescatter(
         scene:   scene,
         assets:  assets,
@@ -524,6 +574,7 @@ fn void? rescatter_from(
         desc:    desc,
         frame:   &frame,
         runtime: runtime,
+        ranges:  ranges[:count],
     );
 }
 
@@ -542,7 +593,7 @@ fn ScatterInputs? current_inputs(
     ScatterInputs inputs = {
         .layer_world      = node.world,
         .ground_world     = ground.world,
-        .ground_revision  = ground_runtime.last_refresh.revision_after,
+        .ground_revision  = ground_runtime.revision,
         .density_revision = assets.textures.get(desc.rules.density_map).header.revision,
     };
 

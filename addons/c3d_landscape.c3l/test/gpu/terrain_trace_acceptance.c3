@@ -359,8 +359,12 @@ fn void raise_hill(TraceRig* rig, Vec2 center) @local {
             texels[z * TRACE_TEXELS + x] = (ushort)min(raised, (float)ushort::max);
         }
     }
-    rig.assets.mark_texture_dirty(rig.height_map);
-    terrain::mark_dirty(&rig.scene, rig.terrain_node, rect);
+    terrain::mark_dirty(
+        scene:  &rig.scene,
+        assets: &rig.assets,
+        node:   rig.terrain_node,
+        rect:   rect,
+    )!!;
 }
 
 fn void test_height_edit_poses_the_trace_grid_once() @test {

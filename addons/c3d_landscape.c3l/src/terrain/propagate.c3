@@ -23,7 +23,7 @@ struct EdgeWrite @private {
 
 <*
  Copy a tile edit's edge texels into its neighbours and refresh the rings that read them.
- Call after writing the tile's texels, marking its height map dirty and calling mark_dirty on the tile.
+ Call after writing the tile's texels and calling mark_dirty on the tile.
  Call mark_changed on the bodies of the edited tile and of the neighbours in the result.
  @param [&inout] scene : "Registered with register_terrain."
  @param [&inout] assets : "The store given to register_terrain."
@@ -72,8 +72,12 @@ fn uint? TerrainSet.propagate_edit(
             if (!changed) continue;
 
             Node* node = scene.node(neighbour);
-            assets.mark_texture_dirty(scene.get(node, Terrain).desc.height_map);
-            mark_dirty(scene, node, strip.target);
+            mark_dirty(
+                scene:  scene,
+                assets: assets,
+                node:   node,
+                rect:   strip.target,
+            )!;
             writes[count] = { .neighbour = neighbour, .target = strip.target };
             count++;
             changed_neighbours |= (uint)1 << direction.ordinal;

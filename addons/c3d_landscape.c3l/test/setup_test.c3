@@ -334,8 +334,12 @@ fn void test_terrain_physics_and_navigation_agree() @test {
     TextureId height_map = fixture.scene.get(node, Terrain).desc.height_map;
     ushort* texels = (ushort*)fixture.assets.texture(height_map).pixels.ptr;
     texels[EDIT_TEXEL * TEXELS + EDIT_TEXEL] = ushort::max;
-    fixture.assets.mark_texture_dirty(height_map);
-    terrain::mark_dirty(&fixture.scene, node, { .x = EDIT_TEXEL, .z = EDIT_TEXEL, .columns = 1, .rows = 1 });
+    terrain::mark_dirty(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   node,
+        rect:   { .x = EDIT_TEXEL, .z = EDIT_TEXEL, .columns = 1, .rows = 1 },
+    )!!;
     terrain::update(&fixture.scene, &fixture.assets)!!;
     TerrainHeightRange edited = terrain::height_range(&fixture.scene, node.id)!!;
     assert(math::abs(edited.maximum - (TERRAIN_POSITION.y + HEIGHT_SCALE)) <= RANGE_TOLERANCE);

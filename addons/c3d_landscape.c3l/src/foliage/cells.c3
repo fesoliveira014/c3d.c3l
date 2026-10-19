@@ -10,6 +10,8 @@ import std::math;
 
 const float EDIT_REACH_TEXELS @private = 2; // a texel reaches one texel in face normals and two in smooth normals
 const usz RING_STRIPS @private = 4; // one per border of a tile; twin of BorderEdge::len, the length ring_strips returns
+const usz MAX_CHANGED_RANGES @private = 2 + RING_STRIPS; // density region, ground refresh and the ring strips
+const uint NOT_COUNTED @private = uint::max; // a cell outside the ranges of a partial re-scatter
 
 struct CellRange @private {
     uint first_column;
@@ -63,14 +65,47 @@ fn CellRange whole_grid(FoliageRuntime* runtime) @private {
 // Cells whose candidates can sample a texel of the rectangle, through both node transforms.
 fn CellRange cells_meeting(ScatterFrame* frame, FoliageRuntime* runtime, TexelRect rect) @private {
     float texel = frame.ground.cell_size;
-    float first_x = ((float)rect.x - EDIT_REACH_TEXELS) * texel;
-    float first_z = ((float)rect.z - EDIT_REACH_TEXELS) * texel;
-    float last_x = ((float)(rect.x + rect.columns) + EDIT_REACH_TEXELS) * texel;
-    float last_z = ((float)(rect.z + rect.rows) + EDIT_REACH_TEXELS) * texel;
+    Vec2 first = { ((float)rect.x - EDIT_REACH_TEXELS) * texel, ((float)rect.z - EDIT_REACH_TEXELS) * texel };
+    Vec2 last = {
+        ((float)(rect.x + rect.columns) + EDIT_REACH_TEXELS) * texel,
+        ((float)(rect.z + rect.rows) + EDIT_REACH_TEXELS) * texel,
+    };
+    return cells_meeting_extent(
+        frame:   frame,
+        runtime: runtime,
+        first:   first,
+        last:    last,
+    );
+}
+
+// Cells whose candidates can sample a texel of the density region, widened as an edit is; the map spans the ground.
+fn CellRange cells_meeting_density(ScatterFrame* frame, FoliageRuntime* runtime, TextureRegion region) @private {
+    float texel_x = frame.extent / (float)frame.density_width;
+    float texel_z = frame.extent / (float)frame.density_height;
+    Vec2 first = { ((float)region.x - EDIT_REACH_TEXELS) * texel_x, ((float)region.y - EDIT_REACH_TEXELS) * texel_z };
+    Vec2 last = {
+        ((float)(region.x + region.width) + EDIT_REACH_TEXELS) * texel_x,
+        ((float)(region.y + region.height) + EDIT_REACH_TEXELS) * texel_z,
+    };
+    return cells_meeting_extent(
+        frame:   frame,
+        runtime: runtime,
+        first:   first,
+        last:    last,
+    );
+}
+
+// The corners are metres in the ground's space.
+fn CellRange cells_meeting_extent(
+    ScatterFrame* frame,
+    FoliageRuntime* runtime,
+    Vec2 first,
+    Vec2 last,
+) @private {
     Mat4 layer_from_ground = maths::inverse_affine(frame.layer_world).mul(frame.ground.world);
     Vec2 low = { float::max, float::max };
     Vec2 high = { -float::max, -float::max };
-    Vec2[4] corners = { { first_x, first_z }, { last_x, first_z }, { first_x, last_z }, { last_x, last_z } };
+    Vec2[4] corners = { { first.x, first.y }, { last.x, first.y }, { first.x, last.y }, { last.x, last.y } };
     foreach (corner : corners) {
         Vec3 local = maths::transform_point(layer_from_ground, { corner.x, 0, corner.y });
         low = { math::min(low.x, local.x), math::min(low.y, local.z) };
@@ -87,25 +122,6 @@ fn CellRange cells_meeting(ScatterFrame* frame, FoliageRuntime* runtime, TexelRe
         .end_column   = (uint)end_column,
         .end_row      = (uint)end_row,
     };
-}
-
-fn void place_cells(
-    Scene* scene,
-    ScatterFrame* frame,
-    FoliageRuntime* runtime,
-    CellRange range,
-) @private {
-    for (uint row = range.first_row; row < range.end_row; row++) {
-        for (uint column = range.first_column; column < range.end_column; column++) {
-            place_existing_cell(
-                scene:   scene,
-                frame:   frame,
-                runtime: runtime,
-                column:  column,
-                row:     row,
-            );
-        }
-    }
 }
 
 // Each cell once, where ranges overlap.
@@ -189,17 +205,22 @@ fn void? rescatter(
     FoliageDesc* desc,
     ScatterFrame* frame,
     FoliageRuntime* runtime,
+    CellRange[] ranges,
 ) @private {
-    uint side = runtime.cells_per_side;
     runtime.count_passes++;
     @pool() {
         uint[] counts = alloc::new_array(tmem, uint, (sz)runtime.cells.len);
+        counts[..] = NOT_COUNTED;
         uint new_nodes;
-        for (uint row = 0; row < side; row++) {
-            for (uint column = 0; column < side; column++) {
-                uint index = row * side + column;
-                counts[index] = count_cell(frame, column, row);
-                if (counts[index] && !runtime.cells[index].generation) new_nodes++;
+        foreach (range_index, range : ranges) {
+            for (uint row = range.first_row; row < range.end_row; row++) {
+                for (uint column = range.first_column; column < range.end_column; column++) {
+                    if (in_ranges(ranges[:range_index], column, row)) continue;
+
+                    usz index = (usz)row * runtime.cells_per_side + column;
+                    counts[index] = count_cell(frame, column, row);
+                    if (counts[index] && !runtime.cells[index].generation) new_nodes++;
+                }
             }
         }
         if (new_nodes > scene.world.entities.free_count) return c3d::CAPACITY_EXCEEDED~;
@@ -220,11 +241,11 @@ fn void? rescatter(
             staged:  staged,
         );
     };
-    place_cells(
+    place_ranges(
         scene:   scene,
         frame:   frame,
         runtime: runtime,
-        range:   whole_grid(runtime),
+        ranges:  ranges,
     );
 }
 
@@ -244,7 +265,7 @@ fn void? stage_cells(
 ) @private {
     defer catch release_staged(scene, staged);
     foreach (index, count : counts) {
-        if (count <= capacity_of(scene, runtime.cells[index])) continue;
+        if (count == NOT_COUNTED || count <= capacity_of(scene, runtime.cells[index])) continue;
         if (runtime.desc.lod) {
             staged[index].lod = scene::create_lod_group(
                 allocator: scene.allocator,
@@ -290,6 +311,8 @@ fn void commit_cells(
     StagedCell[] staged,
 ) @private {
     foreach (index, count : counts) {
+        if (count == NOT_COUNTED) continue;
+
         Entity cell = runtime.cells[index];
         StagedCell* grown = &staged[index];
         if (!count) {

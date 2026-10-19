@@ -743,8 +743,12 @@ fn TexelRect? stamp_brush(
         .columns = (uint)(last_x - first_x + 1),
         .rows    = (uint)(last_z - first_z + 1),
     };
-    assets.mark_texture_dirty(height_map);
-    terrain::mark_dirty(scene, terrain_node, stamped);
+    terrain::mark_dirty(
+        scene:  scene,
+        assets: assets,
+        node:   terrain_node,
+        rect:   stamped,
+    )!;
     return stamped;
 }
 
