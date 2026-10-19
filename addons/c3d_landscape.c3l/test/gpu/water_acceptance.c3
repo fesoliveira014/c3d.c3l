@@ -646,8 +646,6 @@ fn WaterDesc levels_desc() @local {
     WaterDesc desc = surface_desc(EXAMPLE_WAVES[..], 0, LEVELS_CELL_SIZE);
     desc.mode = OCEAN;
     desc.extent = (float)LEVELS_CHUNKS * LEVELS_CELL_SIZE * (float)water::OCEAN_CHUNK_CELLS;
-    desc.waves[0].wavelength = 4 * 0.4f; // four cells of the coarsest level of the sea below
-    desc.waves[1].wavelength = 4 * 0.4f;
     return desc;
 }
 
@@ -751,7 +749,7 @@ fn bool tile_contains(OceanTile tile, Vec3 point) @local {
 
 fn WaterDesc seam_desc() @local {
     WaterDesc desc = levels_desc();
-    // Four cells of the level that borders the finest, along x and along z, so a seam has waves running along it.
+    // Four cells of the level above the finest, along x and along z, so a seam has waves running along it.
     desc.waves[0] = { .amplitude = 0.025f, .wavelength = 0.4f, .speed = 0, .direction = { 1, 0 }, .steepness = 0.1f };
     desc.waves[1] = { .amplitude = 0.025f, .wavelength = 0.4f, .speed = 0, .direction = { 0, 1 }, .steepness = 0.1f };
     return desc;

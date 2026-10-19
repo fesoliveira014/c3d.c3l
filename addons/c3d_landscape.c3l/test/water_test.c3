@@ -56,7 +56,7 @@ const double ANCHOR_TIME @local = 3.7;
 const Vec3 OCEAN_SNAP @local = { 24, 0, -16 }; // metres a node follows the view by: 28.8 m
 const uint OCEAN_MOVE_FRAME @local = 40; // blend frame on which the node moves
 const float OCEAN_REACH @local = 33; // metres from the moved anchor to the farthest test point: snap plus 4 m
-const uint OCEAN_BODY_NODES @local = 87381; // nodes of the largest ocean: levels of 256², 128², ... 1 chunks
+const uint LARGEST_OCEAN_NODES @local = 87381; // nodes of the largest ocean: levels of 256², 128², ... 1 chunks
 const uint OCEAN_LEVELS @local = 9;
 
 struct Fixture @local {
@@ -1370,7 +1370,7 @@ fn void test_ocean_desc_limits_are_invalid_argument() @test {
     largest.extent = chunk * (float)water::MAX_OCEAN_CHUNKS;
     Node* sea = add_water_node(&fixture, largest);
     InstancedMesh* batch = fixture.scene.get(sea, InstancedMesh);
-    assert(batch.count == OCEAN_BODY_NODES && batch.quadtree.depth_count == OCEAN_LEVELS);
+    assert(batch.count == LARGEST_OCEAN_NODES && batch.quadtree.depth_count == OCEAN_LEVELS);
     assert(!fixture.scene.has(sea, Mesh));
     WaterRuntime* runtime = fixture.scene.get(sea, WaterRuntime);
     assert(runtime.rest_max.x == largest.extent / 2 && runtime.rest_min.y == -largest.extent / 2);
@@ -1382,7 +1382,7 @@ fn void test_ocean_desc_limits_are_invalid_argument() @test {
     assert(math::abs(water::ocean_snap_step(&rounded) - 4 * OCEAN_CELL_SIZE) == 0);
 }
 
-fn void test_ocean_set_desc_keeps_its_shape_and_removal_frees_the_batch() @test {
+fn void test_ocean_set_desc_keeps_its_shape() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
@@ -1408,8 +1408,31 @@ fn void test_ocean_set_desc_keeps_its_shape_and_removal_frees_the_batch() @test 
     finer.cell_size /= 2;
     assert_fault(@catch(try_set_desc(&fixture, node, finer)), c3d::INVALID_ARGUMENT, "A cell size change");
     assert(fixture.scene.get(node, WaterRuntime).desc.extent == OCEAN_EXTENT);
+}
 
+fn void test_ocean_batch_is_freed_on_failure_and_on_removal() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    fixture.assets = asset::create_asset_store(&tracking, asset::default_asset_store_desc());
+    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 3 });
+    water::register_water(&fixture.scene, &fixture.assets)!!;
+    fixture.camera = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    Node* node = fixture.scene.add_node()!!;
+    fixture.scene.update_world();
+
+    WaterDesc crowded = ocean_desc();
+    crowded.max_mirrors = 2;
+    assert(@catch(try_add(&fixture, node, crowded)) == c3d::CAPACITY_EXCEEDED);
+    assert(!fixture.scene.has(node, Water) && !fixture.scene.has(node, InstancedMesh));
+    assert(fixture.scene.count(WaterMirror) == 0);
+
+    try_add(&fixture, node, ocean_desc())!!;
+    assert(fixture.scene.has(node, InstancedMesh));
     fixture.scene.remove_component(node, Water);
     update_water(&fixture);
     assert(!fixture.scene.has(node, InstancedMesh) && !fixture.scene.has(node, WaterRuntime));
+    teardown(&fixture);
+    assert(!tracking.has_leaks());
 }

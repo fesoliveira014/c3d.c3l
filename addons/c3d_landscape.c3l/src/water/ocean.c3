@@ -33,8 +33,9 @@ struct OceanMove @private {
 }
 
 <*
- Metres a node following the view moves by, so that every level's vertices keep their world positions.
- @param [&in] desc : "An OCEAN desc that passed check_desc."
+ Metres an ocean node moves by so every level's vertices keep their world positions.
+ @param [&in] desc : "A checked desc."
+ @require desc.mode == WaterMode.OCEAN
 *>
 fn float ocean_snap_step(WaterDesc* desc) {
     return desc.cell_size * (float)ocean_chunks(desc.extent, desc.cell_size);
