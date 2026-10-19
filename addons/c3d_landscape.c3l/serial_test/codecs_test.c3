@@ -19,12 +19,15 @@ const char[*] TERRAIN_V2_BINARY @private = $embed("fixtures/terrain_v2.bin");
 const char[*] TERRAIN_V2_TEXT @private = $embed("fixtures/terrain_v2.json");
 const char[*] TERRAIN_V3_BINARY @private = $embed("fixtures/terrain_v3.bin");
 const char[*] TERRAIN_V3_TEXT @private = $embed("fixtures/terrain_v3.json");
+const float OCEAN_DEPTH @private = 12.5f;
 const uint TRACE_TEXELS @private = 257; // two quadtree levels, so a trace level above 0 is valid
 const uint TRACE_LEVEL @private = 1;
 const char[*] WATER_V1_BINARY @private = $embed("fixtures/water_v1.bin");
 const char[*] WATER_V1_TEXT @private = $embed("fixtures/water_v1.json");
 const char[*] WATER_V2_BINARY @private = $embed("fixtures/water_v2.bin");
 const char[*] WATER_V2_TEXT @private = $embed("fixtures/water_v2.json");
+const char[*] WATER_V3_BINARY @private = $embed("fixtures/water_v3.bin");
+const char[*] WATER_V3_TEXT @private = $embed("fixtures/water_v3.json");
 
 fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
@@ -41,8 +44,9 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0xbf8d67f654870b2c);
     assert(serial::described_type(landscape::FoliageAuthoringV2)!!.layout == 0x797c3ed45915c1ed);
     assert(serial::described_type(Wave)!!.layout == 0xb7ea583c7a255cb9);
-    assert(serial::described_type(WaterDesc)!!.version == 3);
-    assert(serial::described_type(WaterDesc)!!.layout == 0x90996b184cb03fab);
+    assert(serial::described_type(WaterDesc)!!.version == 4);
+    assert(serial::described_type(WaterDesc)!!.layout == 0x80dcad9164b35ea9);
+    assert(serial::described_type(landscape::WaterDescV3)!!.layout == 0x90996b184cb03fab);
     assert(serial::described_type(landscape::WaterDescV2)!!.layout == 0x718815cf64669e4e);
     assert(serial::described_type(landscape::WaterDescV1)!!.layout == 0x74434d01389bb922);
     @pool() {
@@ -177,6 +181,57 @@ fn void test_water_v2_fixtures_read_with_tracing_off() @test {
             WaterDesc* desc = &fixture.destination.get(lake, Water).desc;
             assert(desc.roughness == 0.2f && desc.wave_count == 3);
             assert(desc.max_mirrors == 2 && desc.reflection_view_slot == 2 && !desc.trace);
+        };
+    }
+}
+
+fn void test_water_v3_fixtures_read_as_a_body_with_the_default_depth() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(
+                fixture:   &fixture,
+                allocator: mem,
+                capacity:  32,
+                with_lod:  false,
+            );
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? WATER_V3_TEXT[..] : WATER_V3_BINARY[..];
+            Node* lake = decode(&fixture, bytes, text_mode)!!;
+            WaterDesc* desc = &fixture.destination.get(lake, Water).desc;
+            assert(desc.roughness == 0.2f && desc.wave_count == 3 && desc.max_mirrors == 2 && desc.trace);
+            assert(desc.mode == WaterMode.BODY && desc.depth == water::DEFAULT_WATER_DEPTH);
+        };
+    }
+}
+
+fn void test_ocean_water_round_trips_and_exports_alike_before_and_after_preparation() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(
+                fixture:   &fixture,
+                allocator: mem,
+                capacity:  32,
+                with_lod:  true,
+            );
+            defer destroy_fixture(&fixture);
+
+            WaterDesc* authored = &fixture.source.get(fixture.water_node, Water).desc;
+            authored.mode = OCEAN;
+            authored.depth = OCEAN_DEPTH;
+            authored.trace = false;
+            char[] pending = encode(&fixture.source, &fixture.assets, fixture.water_node, text_mode)!!;
+            prepare_all(&fixture.source, &fixture.assets, fixture.root);
+            assert(fixture.source.has(fixture.water_node, InstancedMesh));
+            assert(!fixture.source.has(fixture.water_node, Mesh));
+            assert(pending == encode(&fixture.source, &fixture.assets, fixture.water_node, text_mode)!!);
+
+            Node* lake = decode(&fixture, pending, text_mode)!!;
+            WaterDesc* restored = &fixture.destination.get(lake, Water).desc;
+            assert(restored.mode == WaterMode.OCEAN && restored.depth == OCEAN_DEPTH && !restored.trace);
+            assert(!water::is_prepared(&fixture.destination, lake) && fixture.destination.count(InstancedMesh) == 0);
         };
     }
 }

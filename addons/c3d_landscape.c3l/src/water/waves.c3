@@ -39,7 +39,7 @@ struct WaterParams @private {
     float              foam_depth;
     float              foam_crest;
     uint               flags;
-    float              _pad0;
+    float              cell_size; // metres between the finest vertices of an ocean; zero for a body
 }
 
 $assert WaterParams::size == 352;
@@ -234,6 +234,7 @@ fn WaterParams pack_params(WaterDesc* desc, WaterParams kept) @private {
         .foam_depth            = desc.foam_depth,
         .foam_crest            = desc.foam_crest,
         .flags                 = desc.march_reflections ? MARCH_FLAG : 0,
+        .cell_size             = desc.mode == WaterMode.OCEAN ? desc.cell_size : 0,
     };
     for (uint index = 0; index < desc.wave_count; index++) {
         params.waves[index] = pack_wave(&desc.waves[index], desc.wave_count);

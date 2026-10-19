@@ -129,7 +129,7 @@ fn void blend_to(
     runtime.desc.wave_count = MAX_WAVES;
     water.desc.waves = target;
     water.desc.wave_count = MAX_WAVES;
-    place_bounds(scene.get(scene.node(node), Mesh), runtime);
+    place_bounds(scene, scene.node(node), runtime);
 }
 
 fn Wave[MAX_WAVES] sea_waves(
@@ -223,29 +223,55 @@ fn Wave[] bounding_waves(WaterRuntime* runtime) @private {
     return runtime.desc.waves[:runtime.desc.wave_count];
 }
 
-fn void place_bounds(Mesh* mesh, WaterRuntime* runtime) @private {
+fn void place_bounds(Scene* scene, Node* node, WaterRuntime* runtime) @private {
+    if (runtime.desc.mode == WaterMode.OCEAN) {
+        place_ocean_bounds(
+            scene: scene,
+            node:  node,
+            ocean: &runtime.ocean,
+            desc:  &runtime.desc,
+            waves: bounding_waves(runtime),
+        );
+        return;
+    }
+
     Aabb rest = {
         .min = { runtime.rest_min.x, 0, runtime.rest_min.y },
         .max = { runtime.rest_max.x, 0, runtime.rest_max.y },
     };
-    mesh.local_bounds = drawn_bounds(rest, bounding_waves(runtime));
+    scene.get(node, Mesh).local_bounds = drawn_bounds(rest, bounding_waves(runtime));
 }
 
 // Uploads the blended waves each update while a blend runs, then once more so the previous waves catch up.
+// A move of an ocean's anchor folds into the previous waves too, so the velocity form sees the same world surface.
 fn void advance_sea(
     Scene* scene,
     AssetStore* assets,
     Node* node,
     WaterRuntime* runtime,
     double time,
+    OceanMove move,
 ) @private {
     SeaBlend* blend = &runtime.sea;
-    if (blend.stage == SeaStage.IDLE) return;
+    if (blend.stage == SeaStage.IDLE && !move.moved) return;
 
     WaterParams* params = assets.@custom_params(runtime.material, WaterParams);
     params.previous = params.waves;
-    if (blend.stage == SeaStage.SETTLING) {
+    if (move.moved) {
+        anchor_waves(params.previous[:params.wave_count], move.inverse, move.delta);
+        anchor_ripples(
+            assets:  assets,
+            runtime: runtime,
+            params:  params,
+            move:    move,
+        );
+    }
+
+    if (blend.stage == SeaStage.IDLE) {
+        params.waves = params.previous;
+    } else if (blend.stage == SeaStage.SETTLING) {
         blend.stage = SeaStage.IDLE;
+        if (move.moved) params.waves = params.previous;
     } else {
         if (blend.stage == SeaStage.STARTING) start_blend(blend, params, time);
         blend_step(
@@ -253,8 +279,9 @@ fn void advance_sea(
             target: runtime.desc.waves[:MAX_WAVES],
             params: params,
             time:   time,
+            move:   move,
         );
-        if (blend.stage == SeaStage.SETTLING) place_bounds(scene.get(node, Mesh), runtime);
+        if (blend.stage == SeaStage.SETTLING) place_bounds(scene, node, runtime);
     }
     assets.mark_material_dirty(runtime.material);
 }
@@ -274,6 +301,7 @@ fn void blend_step(
     Wave[] target,
     WaterParams* params,
     double time,
+    OceanMove move,
 ) @private {
     double step = max(time - blend.last_time, 0.0);
     blend.last_time = time;
@@ -287,6 +315,7 @@ fn void blend_step(
 
         WaveGpu next = pack_wave(&blend.drawn[index], MAX_WAVES);
         blend.phase[index] += step * 0.5 * ((double)packed.cycles_per_second + (double)next.cycles_per_second);
+        if (move.moved) blend.phase[index] -= anchor_cycles(&next, move.inverse, move.delta);
         double cycles = drawn_time * (double)next.cycles_per_second - blend.phase[index];
         next.phase_offset = (float)(cycles - math::floor(cycles));
         *packed = next;

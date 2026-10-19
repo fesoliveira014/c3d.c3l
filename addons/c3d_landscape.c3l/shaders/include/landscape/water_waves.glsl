@@ -5,6 +5,8 @@
 
 const uint WATER_MAX_WAVES = 4u; // mirrored as MAX_WAVES in water/water.c3
 const uint WATER_MARCH = 1u; // mirrored as MARCH_FLAG in water/waves.c3
+const float WATER_FADE_FULL_CELLS = 4.0; // a wave at least this many vertex spacings long draws in full
+const float WATER_FADE_NONE_CELLS = 2.0; // mirrored as NYQUIST_CELLS in water/material.c3; a wave this short is gone
 
 // Mirrors WaveGpu in water/waves.c3.
 struct WaterWave {
@@ -32,7 +34,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Wa
     float foam_depth;
     float foam_crest;
     uint flags;
-    float _pad0;
+    float cell_size;
 };
 
 struct WaterSurfacePoint {
@@ -55,12 +57,28 @@ vec3 water_displacement(WaterWave wave, float angle) {
     return vec3(shift.x, wave.amplitude * sin(angle), shift.y);
 }
 
-WaterSurfacePoint water_surface_point(WaterParams params, vec2 rest, float time) {
+// The wave as a vertex spacing of cell metres resolves it: amplitude and crest shift fade out as the wavelength falls
+// from FULL to NONE spacings. A zero spacing keeps every wave whole.
+WaterWave water_faded(WaterWave wave, float cell) {
+    if (cell > 0.0) {
+        float spacings = 1.0 / (wave.cycles_per_metre * cell);
+        float share = clamp(
+            (spacings - WATER_FADE_NONE_CELLS) / (WATER_FADE_FULL_CELLS - WATER_FADE_NONE_CELLS),
+            0.0,
+            1.0
+        );
+        wave.amplitude *= share;
+        wave.shift *= share;
+    }
+    return wave;
+}
+
+WaterSurfacePoint water_surface_point(WaterParams params, vec2 rest, float time, float cell) {
     vec3 offset = vec3(0.0);
     vec2 slope = vec2(0.0);
     mat2 jacobian = mat2(1.0);
     for (uint index = 0u; index < params.wave_count; index++) {
-        WaterWave wave = params.waves[index];
+        WaterWave wave = water_faded(params.waves[index], cell);
         float angle = water_wave_angle(wave, rest, time);
         float sine = sin(angle);
         float cosine = cos(angle);
@@ -79,14 +97,25 @@ WaterSurfacePoint water_surface_point(WaterParams params, vec2 rest, float time)
     return point;
 }
 
-// Where the previous update's waves drew a rest point at the previous frame's time.
-vec3 water_previous_position(WaterParams params, vec2 rest, float time) {
+WaterSurfacePoint water_surface_point(WaterParams params, vec2 rest, float time) {
+    return water_surface_point(params, rest, time, 0.0);
+}
+
+// Where the waves of the current or the previous update draw a rest point at a time, position only.
+vec3 water_displaced_position(WaterParams params, bool previous, vec2 rest, float time, float cell) {
     vec3 offset = vec3(0.0);
     for (uint index = 0u; index < params.wave_count; index++) {
-        WaterWave wave = params.previous[index];
+        WaterWave wave = params.waves[index];
+        if (previous) wave = params.previous[index];
+        wave = water_faded(wave, cell);
         offset += water_displacement(wave, water_wave_angle(wave, rest, time));
     }
     return vec3(rest.x, 0.0, rest.y) + offset;
+}
+
+// Where the previous update's waves drew a rest point at the previous frame's time.
+vec3 water_previous_position(WaterParams params, vec2 rest, float time) {
+    return water_displaced_position(params, true, rest, time, 0.0);
 }
 
 #endif

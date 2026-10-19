@@ -44,10 +44,33 @@ const float DEFAULT_CELL_SIZE = 1.25f; // 96 cells over a 120 m lake; waves down
 *>
 const float RIPPLE_CROSS_ANGLE = 0.6f; // crossing scrolls never line up, so the ripples show no stripes
 
+<*
+ Cells along one chunk edge of an ocean at every level.
+*>
+const uint OCEAN_CHUNK_CELLS = 128; // mirrored as WATER_CHUNK_CELLS in water.vert.glsl; 16,641 vertices, 16-bit indices
+
+<*
+ Chunks along one side of an ocean's finest level, at most.
+*>
+const uint MAX_OCEAN_CHUNKS = 1 << scene::MAX_QUADTREE_DEPTH; // 87,381 nodes: 4.9 MiB of records, 11 MiB on the device
+
+<*
+ Metres below the rest plane a water body reaches when the desc sets none.
+*>
+const float DEFAULT_WATER_DEPTH = 40; // ten default absorption distances: under 3e-5 of the light is left by then
+
 const Wave[2] CALM_WAVES @private = {
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
     { .amplitude = 0.07f, .wavelength = 3.5f, .speed = 0.9f, .direction = { 0.6f, 0.8f }, .steepness = 0.5f },
 };
+
+<*
+ Surface a water body draws.
+*>
+enum WaterMode {
+    BODY,  // one grid or application geometry; waves in the node's local space
+    OCEAN, // a quadtree of chunks selected per view; waves anchored to the world
+}
 
 <*
  One directional Gerstner wave in the node's local XZ.
@@ -84,6 +107,8 @@ struct WaterDesc {
     uint            max_mirrors;           // mirror slots, one per viewing view, in [1, MAX_MIRRORS]
     uint            reflection_view_slot;  // view texture the material samples, below material::MAX_VIEW_TEXTURES
     bool            trace;                 // scene traces see the displaced surface, posed again every frame
+    WaterMode       mode;                  // OCEAN builds its chunks: no geometry or trace
+    float           depth;                 // metres below the rest plane the body reaches; finite and positive
 }
 
 <*
@@ -105,6 +130,7 @@ struct WaterRuntime {
     Vec2                rest_min;   // node-local XZ of the rest surface
     Vec2                rest_max;
     SeaBlend            sea;        // the sea-state blend set_sea_state started; idle without one
+    OceanState          ocean;      // zero for a BODY
 }
 
 <*
@@ -134,6 +160,7 @@ fn WaterDesc default_water_desc() {
         .ripple_drift          = 0.03f,
         .march_reflections     = true,
         .max_mirrors           = 1,
+        .depth                 = DEFAULT_WATER_DEPTH,
     };
 }
 
@@ -157,7 +184,8 @@ fn void? register_water(Scene* scene, AssetStore* assets) {
  @param [&in] node : "World matrix current; the mirror excludes its layers."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require scene.world.is_registered(WaterRuntime)
- @require !scene.has(node, Mesh) && !scene.has(node, Water) && !scene.has(node, WaterRuntime)
+ @require !scene.has(node, Mesh) && !scene.has(node, InstancedMesh)
+ @require !scene.has(node, Water) && !scene.has(node, WaterRuntime)
 *>
 fn void? add_water(
     Scene* scene,
@@ -182,7 +210,8 @@ fn void? add_water(
  @param [&in] node : "Receives the pending water component."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
  @require scene.world.is_registered(WaterRuntime)
- @require !scene.has(node, Mesh) && !scene.has(node, Water) && !scene.has(node, WaterRuntime)
+ @require !scene.has(node, Mesh) && !scene.has(node, InstancedMesh)
+ @require !scene.has(node, Water) && !scene.has(node, WaterRuntime)
 *>
 fn void? attach_water(
     Scene* scene,
@@ -217,8 +246,11 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     bool shader_created, grid_created;
     ShaderId shader = water_shader(assets, &shader_created)!;
     defer catch if (shader_created) assets.remove_shader(shader);
+    bool ocean = desc.mode == WaterMode.OCEAN;
     GeometryId surface = desc.geometry;
-    if (!surface.generation) {
+    if (ocean) {
+        surface = ocean_chunk(assets, &grid_created)!;
+    } else if (!surface.generation) {
         surface = water_grid(
             assets: assets,
             extent: desc.extent,
@@ -227,7 +259,17 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         )!;
     }
     defer catch if (grid_created) assets.remove_geometry(surface);
+    OceanState layout = ocean ? ocean_layout(&desc) : (OceanState){};
     WaterParams params = pack_params(&desc, {});
+    if (ocean) {
+        layout.anchor = ocean_anchor(scene, node);
+        anchor_waves(
+            waves:   params.waves[:desc.wave_count],
+            inverse: maths::inverse_affine(node.world),
+            delta:   layout.anchor,
+        );
+        params.previous = params.waves;
+    }
     TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
     slots[REFLECTION_SLOT] = reflection_slot(desc.reflection_view_slot);
     MaterialId owned = assets.add_material(material::custom(
@@ -237,18 +279,31 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         references:  { [RIPPLE_REFERENCE] = desc.ripples, [FOAM_REFERENCE] = desc.foam },
     ))!;
     defer catch assets.remove_material(owned);
+    if (ocean) {
+        add_ocean_batch(
+            scene:    scene,
+            node:     node,
+            ocean:    &layout,
+            desc:     &desc,
+            surface:  surface,
+            material: owned,
+        )!;
+    }
+    defer catch if (ocean) scene.remove_component(node, InstancedMesh);
     Entity[MAX_MIRRORS] mirrors;
     add_mirrors(scene, node.id, mirrors[:desc.max_mirrors])!;
 
     Aabb rest = rest_bounds(assets, &desc);
-    scene.add(node, (Mesh){
-        .geometry            = surface,
-        .material            = owned,
-        .receive_shadow      = true,
-        .trace               = desc.trace,
-        .has_bounds_override = true,
-        .local_bounds        = drawn_bounds(rest, desc.waves[:desc.wave_count]),
-    });
+    if (!ocean) {
+        scene.add(node, (Mesh){
+            .geometry            = surface,
+            .material            = owned,
+            .receive_shadow      = true,
+            .trace               = desc.trace,
+            .has_bounds_override = true,
+            .local_bounds        = drawn_bounds(rest, desc.waves[:desc.wave_count]),
+        });
+    }
     scene.add(node, (WaterRuntime){
         .desc       = desc,
         .material   = owned,
@@ -257,6 +312,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .clip_plane = mirror_clip_plane(node.world, total_amplitude(desc.waves[:desc.wave_count])),
         .rest_min   = { rest.min.x, rest.min.z },
         .rest_max   = { rest.max.x, rest.max.z },
+        .ocean      = layout,
     });
 }
 
@@ -286,6 +342,7 @@ fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
 <*
  Replace a water body's desc; the grid is rebuilt only when its shape changed.
  Ends a running sea-state blend. Invalidates Camera pointers when max_mirrors shrinks.
+ An ocean keeps its mode, extent and cell size; remove and add the body to change them.
  @param [&inout] scene
  @param [&inout] assets : "The store given to register_water."
  @param [&in] node : "Carries a water body."
@@ -300,8 +357,14 @@ fn void? set_desc(
 ) {
     check_desc(assets, &desc)!;
     WaterRuntime* runtime = scene.get(node, WaterRuntime);
+    bool ocean = runtime.desc.mode == WaterMode.OCEAN;
+    if (desc.mode != runtime.desc.mode) return c3d::INVALID_ARGUMENT~;
+    if (ocean && (desc.extent != runtime.desc.extent || desc.cell_size != runtime.desc.cell_size)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
     GeometryId surface = runtime.grid;
-    if (!same_shape(&runtime.desc, &desc)) {
+    if (!ocean && !same_shape(&runtime.desc, &desc)) {
         surface = desc.geometry.generation ? desc.geometry : water_grid(assets, desc.extent, desc.cell_size)!;
     }
 
@@ -311,23 +374,53 @@ fn void? set_desc(
 
     MaterialAsset* record = assets.material(runtime.material);
     WaterParams* params = assets.@custom_params(runtime.material, WaterParams);
-    *params = pack_params(&desc, *params);
+    WaterParams before = *params;
+    OceanMove move = ocean_move(scene, node, runtime);
+    if (move.moved) {
+        anchor_waves(before.waves[:before.wave_count], move.inverse, move.delta);
+        anchor_ripples(
+            assets:  assets,
+            runtime: runtime,
+            params:  &before,
+            move:    move,
+        );
+    }
+    *params = pack_params(&desc, before);
+    if (ocean) {
+        anchor_changed_waves(
+            params:  params,
+            before:  &before,
+            inverse: maths::inverse_affine(node.world),
+            anchor:  runtime.ocean.anchor,
+        );
+    }
     record.data.custom.references[RIPPLE_REFERENCE] = desc.ripples;
     record.data.custom.references[FOAM_REFERENCE] = desc.foam;
     record.data.custom.slots[REFLECTION_SLOT] = reflection_slot(desc.reflection_view_slot);
     assets.mark_material_dirty(runtime.material);
 
     Aabb rest = rest_bounds(assets, &desc);
-    Mesh* mesh = scene.get(node, Mesh);
-    mesh.geometry = surface;
-    mesh.trace = desc.trace;
-    mesh.local_bounds = drawn_bounds(rest, desc.waves[:desc.wave_count]);
     runtime.sea = {};
     runtime.grid = surface;
     runtime.rest_min = { rest.min.x, rest.min.z };
     runtime.rest_max = { rest.max.x, rest.max.z };
     runtime.desc = desc;
     scene.get(node, Water).desc = desc;
+    if (ocean) {
+        place_ocean_bounds(
+            scene: scene,
+            node:  node,
+            ocean: &runtime.ocean,
+            desc:  &runtime.desc,
+            waves: desc.waves[:desc.wave_count],
+        );
+        return;
+    }
+
+    Mesh* mesh = scene.get(node, Mesh);
+    mesh.geometry = surface;
+    mesh.trace = desc.trace;
+    mesh.local_bounds = drawn_bounds(rest, desc.waves[:desc.wave_count]);
 }
 
 <*
@@ -381,8 +474,8 @@ fn void release_mirror(Scene* scene, Entity body, uint slot) {
 }
 
 <*
- Tear down removed water bodies, scroll the ripples with the wind and advance sea-state blends.
- Invalidates Mesh and WaterRuntime pointers when a Water was removed.
+ Tear down removed water bodies, scroll the ripples with the wind, advance sea-state blends and re-anchor oceans.
+ Invalidates Mesh, InstancedMesh and WaterRuntime pointers when a Water was removed.
  @param [&inout] scene : "World matrices current; pending water is skipped unchanged."
  @param [&inout] assets : "The store given to register_water."
  @param wind_velocity : "World metres per second; zero is calm."
@@ -397,20 +490,23 @@ fn void update(
 ) {
     remove_orphans(scene);
     scene.@each(WaterRuntime; entity, runtime) {
+        Node* node = scene.node(entity);
         follow_wind(
             assets:        assets,
-            node:          scene.node(entity),
+            node:          node,
             desc:          &runtime.desc,
             runtime:       runtime,
             wind_velocity: wind_velocity,
             time:          time,
         );
+        OceanMove move = ocean_move(scene, node, runtime);
         advance_sea(
             scene:   scene,
             assets:  assets,
-            node:    scene.node(entity),
+            node:    node,
             runtime: runtime,
             time:    time,
+            move:    move,
         );
     };
 }
@@ -431,7 +527,11 @@ fn void remove_orphans(Scene* scene) @private {
         };
         if (!orphan.generation) break;
         Node* node = scene.node(orphan);
-        scene.remove_component(node, Mesh);
+        if (scene.get(node, WaterRuntime).desc.mode == WaterMode.OCEAN) {
+            scene.remove_component(node, InstancedMesh);
+        } else {
+            scene.remove_component(node, Mesh);
+        }
         scene.remove_component(node, WaterRuntime);
     }
     while (true) {

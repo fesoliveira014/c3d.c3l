@@ -22,6 +22,8 @@ fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
     if (desc.wave_count > MAX_WAVES) return c3d::INVALID_ARGUMENT~;
     if (desc.max_mirrors == 0 || desc.max_mirrors > MAX_MIRRORS) return c3d::INVALID_ARGUMENT~;
     if (desc.reflection_view_slot >= material::MAX_VIEW_TEXTURES) return c3d::INVALID_ARGUMENT~;
+    if (!(desc.depth > 0) || !math::is_finite(desc.depth)) return c3d::INVALID_ARGUMENT~;
+    if (desc.mode == WaterMode.OCEAN && desc.trace) return c3d::INVALID_ARGUMENT~;
     float steepness_sum;
     float shortest = float::max;
     foreach (&wave : desc.waves[:desc.wave_count]) {
@@ -35,7 +37,15 @@ fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
     }
     // The inversion converges while the horizontal map contracts: its Jacobian is at most the mean steepness.
     if (desc.wave_count && !(steepness_sum < (float)desc.wave_count)) return c3d::INVALID_ARGUMENT~;
-    if (desc.geometry.generation) {
+    if (desc.mode == WaterMode.OCEAN) {
+        if (desc.geometry.generation) return c3d::INVALID_ARGUMENT~;
+        if (!(desc.extent > 0) || !math::is_finite(desc.extent)) return c3d::INVALID_ARGUMENT~;
+        if (!(desc.cell_size > 0) || !math::is_finite(desc.cell_size)) return c3d::INVALID_ARGUMENT~;
+        if (!(desc.extent / (desc.cell_size * (float)OCEAN_CHUNK_CELLS) <= (float)MAX_OCEAN_CHUNKS)) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+        if (desc.wave_count && !(shortest >= NYQUIST_CELLS * desc.cell_size)) return c3d::INVALID_ARGUMENT~;
+    } else if (desc.geometry.generation) {
         if (!assets.geometries.is_live(desc.geometry)) return c3d::INVALID_ID~;
         Aabb bounds = assets.geometries.get(desc.geometry).data.bounds;
         if (bounds.min.y != 0 || bounds.max.y != 0) return c3d::INVALID_ARGUMENT~;
@@ -90,9 +100,12 @@ fn ShaderId? water_shader(AssetStore* assets, bool* created = null) @private {
             .software = landscape::WATER_FRAGMENT_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..],
         },
         .vertex           = {
-            .shaded   = landscape::WATER_VERTEX_SPIRV[..],
-            .depth    = landscape::WATER_VERTEX_DEPTH_ONLY_SPIRV[..],
-            .velocity = landscape::WATER_VERTEX_VELOCITY_SPIRV[..],
+            .shaded             = landscape::WATER_VERTEX_SPIRV[..],
+            .depth              = landscape::WATER_VERTEX_DEPTH_ONLY_SPIRV[..],
+            .instanced_shaded   = landscape::WATER_VERTEX_INSTANCED_SPIRV[..],
+            .instanced_depth    = landscape::WATER_VERTEX_DEPTH_ONLY_INSTANCED_SPIRV[..],
+            .velocity           = landscape::WATER_VERTEX_VELOCITY_SPIRV[..],
+            .instanced_velocity = landscape::WATER_VERTEX_INSTANCED_VELOCITY_SPIRV[..],
         },
         .trace_pose       = { .single = landscape::WATER_TRACE_POSE_SPIRV[..], .reads_time = true },
         .param_block_size = WaterParams::size,
@@ -154,6 +167,9 @@ fn Geometry grid_geometry(Allocator allocator, float extent, uint cells) @privat
 fn Aabb rest_bounds(AssetStore* assets, WaterDesc* desc) @private {
     if (desc.geometry.generation) return assets.geometries.get(desc.geometry).data.bounds;
     float half = desc.extent / 2;
+    if (desc.mode == WaterMode.OCEAN) {
+        half = (float)ocean_chunks(desc.extent, desc.cell_size) * (float)OCEAN_CHUNK_CELLS * desc.cell_size / 2;
+    }
     return { .min = { -half, 0, -half }, .max = { half, 0, half } };
 }
 
