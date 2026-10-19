@@ -10,6 +10,16 @@ import std::math;
 const String TRACE_GRID_KEY_PREFIX @private = "c3d_landscape/terrain_trace_grid";
 const String TRACE_GRID_NAME @private = "terrain_trace";
 
+// A grid is one dispatch of one thread per vertex, so the device's group limit caps it.
+fn void? check_trace_grid(TerrainDesc* desc, uint texels) @private {
+    if (!desc.trace) return;
+
+    if (desc.trace_level >= level_count_of(texels)!) return c3d::INVALID_ARGUMENT~;
+
+    uint side = ((texels - 1) >> desc.trace_level) + 1;
+    if (side * side > MAX_TRACE_VERTICES) return c3d::INVALID_ARGUMENT~;
+}
+
 // Vertices along one edge of the trace grid: one per 2^trace_level texels, and both ends.
 fn uint trace_side(TerrainRuntime* runtime) @private => ((runtime.texels - 1) >> runtime.trace_level) + 1;
 

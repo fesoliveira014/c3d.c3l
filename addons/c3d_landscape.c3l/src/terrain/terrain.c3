@@ -18,6 +18,11 @@ const uint CHUNK_CELLS = 128; // 17,157 grid and skirt vertices keep 16-bit indi
 const uint MAX_TERRAIN_LEVELS = 6; // 4097 texels: 1,365 nodes, each a bounds entry and a 128 B instance record
 
 <*
+ Most vertices a trace grid may have.
+*>
+const uint MAX_TRACE_VERTICES = 65535 * 64; // one thread per vertex: 65,535 groups of 64, the dispatch limit
+
+<*
  Projected node diameter, in pixels of a view's working extent, above which a node splits.
 *>
 const float DEFAULT_LOD_THRESHOLD = 512; // drawn cells under 2.8 px; halving it quadruples near chunks

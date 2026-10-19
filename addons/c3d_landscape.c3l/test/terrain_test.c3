@@ -14,6 +14,7 @@ import c3d::scene;
 const uint SMALL_TEXELS @local = 129; // one chunk, one level
 const uint TWO_LEVEL_TEXELS @local = 257; // 2 x 2 finest chunks under one root
 const uint FOUR_LEVEL_TEXELS @local = 1025; // 8 x 8 finest chunks, four levels
+const uint LARGE_TEXELS @local = 2049; // a level-0 trace grid of 4,198,401 vertices, past MAX_TRACE_VERTICES
 const float CELL_SIZE @local = 0.5f;
 const float HEIGHT_SCALE @local = 20;
 const float HEIGHT_TOLERANCE @local = 0.001f; // metres; float rounding of the rotated node and box3d's ray
@@ -435,18 +436,23 @@ fn void test_terrain_trace_error_bound() @test {
     assert_same_bounds(fixture.scene.get(edited, TerrainRuntime), fixture.scene.get(fresh, TerrainRuntime));
 }
 
-fn void test_trace_level_past_the_level_count_is_invalid_argument() @test {
+fn void test_trace_grids_past_a_limit_are_invalid_argument() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
     Node* node = fixture.scene.add_node()!!;
 
-    TerrainDesc desc = traced_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED), level: 2);
-    assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::INVALID_ARGUMENT);
+    TerrainDesc levels = traced_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED), level: 2);
+    assert(@catch(try_add_terrain(&fixture, node, levels)) == c3d::INVALID_ARGUMENT);
     assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, TerrainRuntime));
 
-    desc.trace_level = 1;
-    try_add_terrain(&fixture, node, desc)!!;
+    // A grid of 2049 by 2049 vertices is more threads than one dispatch can pose.
+    TerrainDesc crowded = traced_desc(&fixture, add_height_map(&fixture, LARGE_TEXELS, SEED), level: 0);
+    assert(@catch(terrain::attach_terrain(&fixture.scene, &fixture.assets, node, crowded)) == c3d::INVALID_ARGUMENT);
+    assert(!fixture.scene.has(node, Terrain));
+
+    levels.trace_level = 1;
+    try_add_terrain(&fixture, node, levels)!!;
 }
 
 fn void test_trace_grid_is_a_trace_only_child_that_leaves_with_its_terrain() @test {

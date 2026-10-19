@@ -46,9 +46,7 @@ fn uint? check_terrain_desc(AssetStore* assets, TerrainDesc* desc) @private {
     if (desc.slope_projection == TRIPLANAR && !sharpness_valid) return c3d::INVALID_ARGUMENT~;
     if (!assets.textures.is_live(desc.height_map)) return c3d::INVALID_ID~;
     check_height_map(assets.texture(desc.height_map))!;
-    if (desc.trace && desc.trace_level >= level_count_of(assets.texture(desc.height_map).desc.width)!) {
-        return c3d::INVALID_ARGUMENT~;
-    }
+    check_trace_grid(desc, assets.texture(desc.height_map).desc.width)!;
     if (desc.control_map.generation) {
         if (!assets.textures.is_live(desc.control_map)) return c3d::INVALID_ID~;
         // The stage samples weights through the float heap, unconverted.
