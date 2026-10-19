@@ -97,7 +97,8 @@
         "test_posed_trace.c3",
         "test_custom_trace_pose.c3",
         "test_texture_fidelity.c3",
-        "test_texture_regions.c3"
+        "test_texture_regions.c3",
+        "test_vertex_fetch.c3"
       ]
     }
   }

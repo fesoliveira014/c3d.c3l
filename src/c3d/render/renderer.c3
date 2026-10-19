@@ -830,7 +830,12 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .acceleration_structure_build = caps.ray_queries.enabled,
         .ray_tracing = pipelines,
     };
-    gpu::TextureState sampled_state = gpu::sampled_at({ .fragment_shader, .compute, .ray_tracing = pipelines });
+    gpu::TextureState sampled_state = gpu::sampled_at({
+        .vertex_shader,
+        .fragment_shader,
+        .compute,
+        .ray_tracing = pipelines,
+    });
 
     uint max_shadow_layers = desc.max_shadow_layers ? desc.max_shadow_layers : DEFAULT_MAX_SHADOW_LAYERS;
     bool timestamps_enabled;
