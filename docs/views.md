@@ -332,6 +332,9 @@ provides nothing for it reads it as absent, and the stage's own fallback runs.
   faults `INVALID_ARGUMENT`.
 - **Cost.** 16 bytes of `FrameRoot` per view per frame. The material block is unchanged and is written
   once per revision.
+- **Use.** A [water](water.md#the-mirror) body samples its planar reflection at the view texture slot of its
+  `reflection_view_slot`, so each viewing view is given the target of its own mirror view: the application renders
+  each mirror, calls `set_view_texture(viewing_view, slot, mirror_target)`, then renders the viewing view.
 
 ## Reading a target back
 
@@ -530,7 +533,8 @@ renderer.render_view(&scene, camera_node, main_view)!;
   the sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
 - World-space overlay items draw in a mirror view when their layers match its camera, reflected as the view shows them
   ([World-space items](overlay.md#world-space-items)).
-- Water from the landscape add-on places its mirror camera and clip plane for you; see [water](water.md#the-mirror).
+- Water from the landscape add-on places its mirror cameras and clip plane for you and reads each reflection from a
+  view texture; see [water](water.md#the-mirror).
 - Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
   from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
   reflection carries the reflected path's fog once. The mirror view owns its own sky tables.

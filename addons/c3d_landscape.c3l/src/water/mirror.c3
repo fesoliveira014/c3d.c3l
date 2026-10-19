@@ -8,7 +8,7 @@ import c3d::material;
 import c3d::scene;
 import std::math;
 
-// A valid lens on no layer: the mirror draws nothing until update copies the viewing camera.
+// A valid lens on no layer: the mirror draws nothing until update_mirror copies the viewing camera.
 const Camera MIRROR_PLACEHOLDER @private = { .projection = PERSPECTIVE, .fov_y = 1, .near = 1, .layers = 0 };
 
 // The image of the node's local XZ plane: the plane the waves rest on and the mirror reflects across.
@@ -26,22 +26,40 @@ fn Plane mirror_clip_plane(Mat4 world, float amplitude) @private {
     return { .normal = rest.normal, .d = rest.d + lowered };
 }
 
+fn Entity? add_mirror(Scene* scene, Entity water, uint slot) @private {
+    Node* mirror = scene.add_camera(MIRROR_PLACEHOLDER, name: "water_mirror")!;
+    scene.add(mirror, (WaterMirror){ .water = water, .slot = slot });
+    return mirror.id;
+}
+
+// All or nothing: a fault removes the cameras already added.
+fn void? add_mirrors(Scene* scene, Entity water, Entity[] mirrors) @private {
+    foreach (slot, &mirror : mirrors) {
+        Entity? added = add_mirror(scene, water, (uint)slot);
+        if (catch excuse = added) {
+            foreach (earlier : mirrors[:slot]) scene.remove(scene.node(earlier));
+            return excuse~;
+        }
+        *mirror = added;
+    }
+}
+
 fn void? place_mirror(
     Scene* scene,
     Node* node,
-    WaterDesc* desc,
     WaterRuntime* runtime,
+    uint slot,
     Node* viewing,
-    Camera camera,
 ) @private {
     Mat4 mirrored = maths::reflection_matrix(rest_plane(node.world)).mul(viewing.local.to_mat4());
-    Node* mirror = scene.node(runtime.mirror);
+    Node* mirror = scene.node(runtime.mirrors[slot]);
     mirror.local = maths::transform_from_affine(mirrored)!;
     // The value update_world writes for a root node, so the mirror is current whichever runs first.
     mirror.world = mirror.local.to_mat4();
+    Camera camera = *scene.get(viewing, Camera);
     camera.layers &= ~node.layers;
     *scene.get(mirror, Camera) = camera;
-    runtime.clip_plane = mirror_clip_plane(node.world, total_amplitude(desc));
+    runtime.clip_plane = mirror_clip_plane(node.world, total_amplitude(&runtime.desc));
 }
 
 // Repacks only when the node-local scroll velocities change; the offset stays continuous across the change.

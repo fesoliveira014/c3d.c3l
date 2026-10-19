@@ -19,6 +19,8 @@ const char[*] TERRAIN_V2_BINARY @private = $embed("fixtures/terrain_v2.bin");
 const char[*] TERRAIN_V2_TEXT @private = $embed("fixtures/terrain_v2.json");
 const uint TRACE_TEXELS @private = 257; // two quadtree levels, so a trace level above 0 is valid
 const uint TRACE_LEVEL @private = 1;
+const char[*] WATER_V1_BINARY @private = $embed("fixtures/water_v1.bin");
+const char[*] WATER_V1_TEXT @private = $embed("fixtures/water_v1.json");
 
 fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
@@ -33,13 +35,15 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(landscape::FoliageAuthoring)!!.version == 2);
     assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0x797c3ed45915c1ed);
     assert(serial::described_type(Wave)!!.layout == 0xb7ea583c7a255cb9);
-    assert(serial::described_type(WaterDesc)!!.layout == 0x74434d01389bb922);
+    assert(serial::described_type(WaterDesc)!!.version == 2);
+    assert(serial::described_type(WaterDesc)!!.layout == 0x718815cf64669e4e);
+    assert(serial::described_type(landscape::WaterDescV1)!!.layout == 0x74434d01389bb922);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("terrain") && schema.contains("foliage") && schema.contains("water"));
         assert(schema.contains("terrain_set") && schema.contains("terrain_tile"));
         assert(schema.contains("density_channel") && schema.contains("lod_threshold")
-          && schema.contains("ripple_drift"));
+          && schema.contains("ripple_drift") && schema.contains("reflection_view_slot"));
     };
 }
 
@@ -110,6 +114,27 @@ fn void test_trace_fields_round_trip_and_the_trace_grid_stays_out_of_exports() @
     }
 }
 
+fn void test_water_v1_fixtures_read_with_one_mirror_on_view_slot_zero() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(
+                fixture:   &fixture,
+                allocator: mem,
+                capacity:  32,
+                with_lod:  false,
+            );
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? WATER_V1_TEXT[..] : WATER_V1_BINARY[..];
+            Node* lake = decode(&fixture, bytes, text_mode)!!;
+            WaterDesc* desc = &fixture.destination.get(lake, Water).desc;
+            assert(desc.roughness == 0.2f && desc.foam_depth == 0.8f && desc.wave_count == 3);
+            assert(desc.max_mirrors == 1 && desc.reflection_view_slot == 0);
+        };
+    }
+}
+
 fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @test {
     foreach (text_mode : (bool[2]){ false, true }) {
         foreach (with_lod : (bool[2]){ false, true }) {
@@ -170,6 +195,8 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 assert(fixture.assets.geometries.free_count == free_geometry
                   && fixture.assets.materials.free_count == free_materials);
                 assert(child_named(ground, "authored-child") != null);
+                WaterDesc* restored_water = &fixture.destination.get(lake, Water).desc;
+                assert(restored_water.max_mirrors == 2 && restored_water.reflection_view_slot == 2);
                 FoliageDesc* desc = &fixture.destination.get(plants, Foliage).desc;
                 assert(c3d::same_id(desc.ground, ground.id) && (desc.lod != null) == with_lod);
                 assert(desc.rules.slope_normal == SMOOTH);
@@ -199,9 +226,14 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 water::update(
                     scene: &fixture.destination,
                     assets: &fixture.assets,
-                    viewing_camera: camera.id,
                     wind_velocity: { 2, 0, 1 },
                     time: 0.5,
+                );
+                water::update_mirror(
+                    scene: &fixture.destination,
+                    body: lake.id,
+                    slot: 1,
+                    viewing_camera: camera.id,
                 )!!;
                 assert(fixture.destination.get(ground, InstancedMesh).count > 0);
                 assert(fixture.destination.get(plants, FoliageRuntime).cell_nodes > 0);
@@ -287,7 +319,7 @@ fn void test_landscape_generated_nodes_reject_roots_and_authored_additions() @te
             prepare_all(&fixture.source, &fixture.assets, fixture.root);
             Entity cell_id = fixture.source.get(fixture.foliage_node, FoliageRuntime).cells[0];
             Node* cell = fixture.source.node(cell_id);
-            Node* mirror = fixture.source.node(fixture.source.get(fixture.water_node, WaterRuntime).mirror);
+            Node* mirror = fixture.source.node(fixture.source.get(fixture.water_node, WaterRuntime).mirrors[1]);
             assert(@catch(encode(
                 scene: &fixture.source,
                 assets: &fixture.assets,

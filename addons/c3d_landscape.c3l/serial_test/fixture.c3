@@ -211,6 +211,8 @@ fn void create_fixture(
     water_desc.ripples = layer;
     water_desc.foam = layer;
     water_desc.march_reflections = false;
+    water_desc.max_mirrors = 2;
+    water_desc.reflection_view_slot = 2;
     water::attach_water(
         scene: &fixture.source,
         assets: &fixture.assets,
