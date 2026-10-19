@@ -23,6 +23,7 @@ struct InstanceEffectsView @private {
     Vec3                 fade_origin;
     LodSelection[]       lod;
     QuadtreeSelection[]  quadtrees;
+    SelectionCamera      selection; // the view's, which its shadow layers also use
 }
 
 <*
@@ -122,7 +123,8 @@ fn float instance_fade_scale(InstanceFade fade, float seed, float distance) {
 fn uint batch_effect_flags(MeshCandidate* candidate) @private {
     if (candidate.lod) return instance_effect_flags(candidate.lod.state.effects.sway, candidate.lod.state.effects.fade);
     if (!candidate.batch) return 0;
-    return instance_effect_flags(candidate.batch.sway, candidate.batch.fade);
+    return instance_effect_flags(candidate.batch.sway, candidate.batch.fade)
+      | (candidate.quadtree ? shader::DRAW_QUADTREE : 0);
 }
 
 fn gpu::GpuAddress? resolve_instance_effects(
@@ -131,9 +133,9 @@ fn gpu::GpuAddress? resolve_instance_effects(
     MeshCandidate* candidate,
     GpuGeometry* geometry,
 ) @private {
-    if ((batch_effect_flags(candidate) & (shader::DRAW_SWAY | shader::DRAW_DISTANCE_FADE)) == 0) {
-        return (gpu::GpuAddress)0;
-    }
+    uint block_flags = shader::DRAW_SWAY | shader::DRAW_DISTANCE_FADE | shader::DRAW_QUADTREE;
+    if ((batch_effect_flags(candidate) & block_flags) == 0) return (gpu::GpuAddress)0;
+
     ulong key = (ulong)(uptr)candidate.node;
     if (try existing = effects_view.blocks.get(key)) return existing;
     InstancedMesh* batch = candidate.batch;
@@ -169,6 +171,10 @@ fn gpu::GpuAddress? resolve_instance_effects(
         origin:        renderer.frame_origin,
         world_shift:   world_shift,
     );
+    if (QuadtreeSelection* quadtree = candidate.quadtree) {
+        block.instance_quadtree = quadtree.instances.quadtree_params;
+        block.instance_depths = quadtree.instances.quadtree_depths;
+    }
     gpu::GpuAddress address = upload_bytes(renderer, &block, InstanceEffectsGpu::size)!;
     effects_view.blocks.set(key, address);
     return address;

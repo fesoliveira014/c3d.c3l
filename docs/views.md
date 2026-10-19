@@ -161,9 +161,9 @@ The default 16 × 9 × 24 grid has 3,456 cells. Its additional decal storage is:
 
 `DecalGpu` holds frame-relative inverse and forward affine rows, projection/fade
 data, tangent/handedness, weights and material/layer fields. Transform rebasing
-precedes inverse and bound construction. `FrameRoot` is 608 bytes with `decals`
-at offset 528, `decal_count` at 536, the optional `light_spatial` address at 576 and the four
-[view textures](#view-textures) at 584. `ClusterGpu` is 160 bytes;
+precedes inverse and bound construction. `FrameRoot` is 640 bytes with `decals`
+at offset 528, `decal_count` at 536, the optional `light_spatial` address at 576, the four
+[view textures](#view-textures) at 584 and the [selection cameras](#selection-camera) at 608 and 624. `ClusterGpu` is 160 bytes;
 `ClusterCounterGpu` remains 16 bytes with separate light and decal overflow counts and a
 skipped-cell count. The buffer ends with one `float` per tile (576 bytes at the default grid)
 for the pruning bound; it is reserved whether pruning is on or off.
@@ -335,6 +335,16 @@ provides nothing for it reads it as absent, and the stage's own fallback runs.
 - **Use.** A [water](water.md#the-mirror) body samples its planar reflection at the view texture slot of its
   `reflection_view_slot`, so each viewing view is given the target of its own mirror view: the application renders
   each mirror, calls `set_view_texture(viewing_view, slot, mirror_target)`, then renders the viewing view.
+
+## Selection camera
+
+`FrameRoot.selection_camera` holds the camera that selected the pass's [quadtree](instancing.md#quadtree-selection) levels: `xyz` is its position relative to the frame origin and `w` its pixel scale, `working_height / (2 tan(fov_y / 2))` for a perspective camera and `working_height / ortho_height` for an orthographic one. The working height includes `render_scale`. `FrameRoot.previous_selection_camera` is the same camera one rendering earlier. A vertex stage that morphs a quadtree batch reads both, so the surface it draws agrees with the selection, and with the previous rendering's surface for motion vectors.
+
+- **Main view.** It writes its own camera. Its depth prepass, G-buffer, velocity and scene-read passes share its frame root.
+- **Shadow layers.** A layer is drawn for a view, so it writes the owning view's camera, not the light's: the casters it draws are the nodes the view selected. A layer shared by several views carries the camera of the view that recorded it.
+- **Mirror views.** A mirror view is a view that selects for itself and writes its own camera.
+- **Closed frames.** The path tracer writes its own camera. A probe update has no camera and writes zero in both fields; it draws no quadtree batch.
+- **Previous camera.** A temporal view keeps the camera of its last published rendering and moves it to the current frame origin. Without a valid history, which a camera cut or `reset_view_history` leaves, and for a view that keeps none, it equals the current camera.
 
 ## Reading a target back
 

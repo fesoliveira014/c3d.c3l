@@ -99,6 +99,23 @@ fn float lod_screen_size(
     return math::exp2(math::log2(size) + bias);
 }
 
+fn Sphere lod_size_sphere(
+    AssetStore* assets,
+    Node* node,
+    LodGroupState* state,
+    Aabb world,
+    Vec3 origin,
+) @private {
+    // An animated ModelInstance without a bounds override has posed per-part bounds and no single rigid transform to size by.
+    if (state.animated && !state.desc.has_bounds_override) return maths::aabb_sphere(world);
+
+    return maths::transformed_box_sphere(
+        local: state.placement_bounds(assets),
+        model: maths::rebase(node.world, origin),
+        reach: state.effects.sway.reach(),
+    );
+}
+
 fn LodSelection select_lod_group(
     LodHistoryEntry* history,
     Scene* scene,
@@ -118,6 +135,13 @@ fn LodSelection select_lod_group(
         origin: origin,
         scene: scene,
     );
+    Sphere size_sphere = lod_size_sphere(
+        assets: assets,
+        node: node,
+        state: state,
+        world: world,
+        origin: origin,
+    );
     LodHistoryValue previous = history.committed;
     bool valid = previous.valid && previous.scene == scene.identity
       && c3d::same_id(previous.owner, node.id) && previous.identity == state.identity
@@ -131,7 +155,7 @@ fn LodSelection select_lod_group(
         screen_size: lod_screen_size(
             camera: camera,
             camera_position: camera_position,
-            bounds: maths::aabb_sphere(world),
+            bounds: size_sphere,
             bias: bias,
         ),
         min_screen_sizes: thresholds[:choices],

@@ -182,6 +182,7 @@ fn void discard_uploads(Renderer* renderer) @private {
     foreach (index : renderer.pending_instance_uploads) {
         renderer.instances.slots[index].revision = 0;
         renderer.instances.slots[index].quadtree_revision = 0;
+        renderer.instances.slots[index].quadtree_parameter_revision = 0;
     }
     renderer.pending_instance_uploads.clear();
 

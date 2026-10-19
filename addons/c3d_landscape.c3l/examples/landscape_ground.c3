@@ -409,6 +409,8 @@ fn TerrainDesc? ground_desc(
     AssetStore* assets,
     uint layers,
     float lod_threshold,
+    float morph_band,
+    SlopeProjection slope_projection,
     bool trace,
     uint trace_level,
 ) @local {
@@ -421,6 +423,8 @@ fn TerrainDesc? ground_desc(
     desc.cell_size = CELL_SIZE;
     desc.height_scale = HEIGHT_SCALE;
     desc.lod_threshold = lod_threshold;
+    desc.morph_band = morph_band;
+    desc.slope_projection = slope_projection;
     return desc;
 }
 
@@ -431,6 +435,8 @@ fn TerrainDesc? ground_desc(
  @param size : "Height-map texels per side."
  @param layers : "Material layers generated, grass first."
  @param lod_threshold : "Chunk split threshold in output pixels."
+ @param morph_band : "Share of a range over which chunk vertices morph; zero for none."
+ @param slope_projection : "How the layers project onto steep ground."
  @param trace : "Scene traces see the terrain through its trace grid."
  @param trace_level : "Level of the trace grid; 0 is the finest."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
@@ -443,15 +449,19 @@ fn Ground? add_ground(
     uint size,
     uint layers,
     float lod_threshold,
+    float morph_band = 0,
+    SlopeProjection slope_projection = TOP,
     bool trace = false,
     uint trace_level = 0,
 ) {
     TerrainDesc desc = ground_desc(
-        assets:        assets,
-        layers:        layers,
-        lod_threshold: lod_threshold,
-        trace:         trace,
-        trace_level:   trace_level,
+        assets:           assets,
+        layers:           layers,
+        lod_threshold:    lod_threshold,
+        morph_band:       morph_band,
+        slope_projection: slope_projection,
+        trace:            trace,
+        trace_level:      trace_level,
     )!;
     desc.height_map = add_height_map(assets, size)!;
     TextureAsset* heights = assets.texture(desc.height_map);
@@ -511,6 +521,8 @@ fn TextureId? add_height_tile(
  @param size : "Height-map texels per side of the whole landscape."
  @param layers : "Material layers generated, grass first."
  @param lod_threshold : "Chunk split threshold in output pixels."
+ @param morph_band : "Share of a range over which chunk vertices morph; zero for none."
+ @param slope_projection : "How the layers project onto steep ground."
  @param trace : "Scene traces see every tile through its trace grid."
  @param trace_level : "Level of every tile's trace grid; 0 is the finest."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
@@ -523,15 +535,19 @@ fn Ground? add_ground_tiles(
     uint size,
     uint layers,
     float lod_threshold,
+    float morph_band = 0,
+    SlopeProjection slope_projection = TOP,
     bool trace = false,
     uint trace_level = 0,
 ) {
     TerrainDesc desc = ground_desc(
-        assets:        assets,
-        layers:        layers,
-        lod_threshold: lod_threshold,
-        trace:         trace,
-        trace_level:   trace_level,
+        assets:           assets,
+        layers:           layers,
+        lod_threshold:    lod_threshold,
+        morph_band:       morph_band,
+        slope_projection: slope_projection,
+        trace:            trace,
+        trace_level:      trace_level,
     )!;
     TextureId whole = add_height_map(assets, size)!;
     defer assets.remove_texture(whole);

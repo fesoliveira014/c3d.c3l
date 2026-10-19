@@ -147,7 +147,7 @@ fn void? check_tile(
         if (link.x == tile.x && link.z == tile.z) return c3d::INVALID_ARGUMENT~;
         TerrainDesc* peer = &scene.get(scene.node(link.tile), Terrain).desc;
         if (peer.lod_threshold != desc.lod_threshold || peer.lod_hysteresis != desc.lod_hysteresis
-            || !same_layers(peer, desc)) {
+            || peer.morph_band != desc.morph_band || !same_layers(peer, desc)) {
             return c3d::INVALID_ARGUMENT~;
         }
     }
@@ -219,6 +219,8 @@ fn void release_rings(Scene* scene, Entity tile, TerrainSetLink departed) @priva
         z:      departed.z,
         edges:  ALL_BORDER_EDGES,
     );
+    apply_set_ranges(scene, set);
+    restore_own_ranges(scene, node);
 }
 
 fn void unlink_tile(Scene* scene, Entity tile) @private {
@@ -266,6 +268,7 @@ fn void? relink_tile(Scene* scene, AssetStore* assets, Node* node) @private {
     }
     link_tile(scene, assets, node)!;
     refresh_tile_rings(scene, assets, node);
+    apply_set_ranges(scene, parent_set(scene, node));
     // A tile that changed cells leaves its old neighbours holding rows toward it.
     if (try link = departed) {
         refresh_edge_neighbours(

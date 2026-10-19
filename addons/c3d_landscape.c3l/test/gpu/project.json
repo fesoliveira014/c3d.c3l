@@ -21,7 +21,7 @@
   "targets": {
     "terrain_acceptance": {
       "type": "test",
-      "sources": [ "terrain_acceptance.c3", "terrain_trace_acceptance.c3" ]
+      "sources": [ "terrain_acceptance.c3", "morph_acceptance.c3", "terrain_trace_acceptance.c3" ]
     },
     "water_acceptance": {
       "type": "test",

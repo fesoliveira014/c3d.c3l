@@ -35,7 +35,12 @@ non-finite `split_pixels` or `hysteresis`, a traced batch or a mirrored instance
 fail the read. Writing a batch that breaks the same contract faults
 `INVALID_ARGUMENT`. Version-1 binary and JSONC payloads have no
 quadtree and read as batches without one. Version 3 adds `trace_sway`; version-1 and version-2
-payloads read it as false.
+payloads read it as false. Version 4 adds the batch's selection metric: `metric`, `morph_band` and the
+`levels` of a `BOX_RANGES` batch (`depth_count` entries, empty under `SPHERE_PIXELS`). Reading calls
+`Scene.set_quadtree_ranges` after `Scene.set_instance_quadtree`, so the setter's `INVALID_ARGUMENT` faults
+propagate and remove the batch; a `BOX_RANGES` payload without parents or levels, or levels or a band under
+`SPHERE_PIXELS`, fail the read the same way. Version-1, version-2 and version-3 payloads read as
+`SPHERE_PIXELS`.
 
 LodGroup authoring version 3 restores in BINDINGS, after its source owners. Its common effects
 carry `trace_sway`; version-1 and version-2 binary and JSONC payloads read it as false.
@@ -149,7 +154,7 @@ A `BinaryCompatibility` entry may also carry an `upgrade`. `ReadContext.authored
 version with `UNSUPPORTED`, so an owner that other owners inspect before attachment, as a body is inspected by
 ragdolls and breakable anchors, supplies an `upgrade` that decodes the older payload into the current authoring
 type. The result lives until the subtree read finishes: acquire retained storage with `read_owned`. Mesh version 1,
-InstancedMesh versions 1 and 2 and LodGroup versions 1 and 2 supply one, and their `read` callbacks reuse it, so a
+InstancedMesh versions 1 to 3 and LodGroup versions 1 and 2 supply one, and their `read` callbacks reuse it, so a
 Cloth or an Animator preflight sees the current Mesh whatever version was stored.
 
 Finite floats/doubles preserve their bits with nine/seventeen significant digits
@@ -510,10 +515,11 @@ fields in VALUE; the set's neighbour links are runtime state, rebuilt when the
 tiles prepare. Foliage restores its ground reference and copied
 scatter, sway, fade, render and optional LOD authoring in OWNER. Prepare terrain
 before foliage, and publish world matrices before dependent preparation.
-The Terrain payload is version 3, which adds `trace` and `trace_level`; version 2
-payloads in both encodings read tracing off. Version 2 added `slope_projection`
-and `triplanar_sharpness`; version 1 payloads read `TOP` and the default
-sharpness. The Foliage payload is version 2, which adds
+The Terrain payload is version 4, which adds `trace` and `trace_level`. Version 3
+added `morph_band` and version 2 added `slope_projection` and `triplanar_sharpness`;
+version 1 payloads in both encodings read `TOP`, the default sharpness, no
+morphing and tracing off, version 2 payloads no morphing and tracing off, and
+version 3 payloads tracing off. The Foliage payload is version 2, which adds
 `rules.slope_normal`; version 1 payloads in both encodings read `FACE`.
 Foliage cells, water mirrors and a terrain's trace grid are omitted only through
 verified ownership.

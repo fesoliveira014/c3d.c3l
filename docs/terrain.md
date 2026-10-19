@@ -59,8 +59,8 @@ renderer.render_view(&scene, camera, view)!;
   instance for every quadtree node and the [quadtree](#level-of-detail) installed. It faults as listed under
   [Faults](#faults) and then leaves the node and store as they were.
 - `update` runs every frame before the frame's first `render_view`, after height edits. It refreshes changed
-  bounds, rewrites the node records when the bounds changed and applies the `lod_threshold`, `lod_hysteresis`
-  and shadow fields of `Terrain`. It takes no camera and no output size: the views select their own levels. It
+  bounds, rewrites the node records when the bounds changed and applies the `lod_threshold`, `lod_hysteresis`,
+  `morph_band` and shadow fields of `Terrain`. It takes no camera and no output size: the views select their own levels. It
   allocates nothing on an ordinary frame and marks a batch only when its bounds changed, so a still frame
   uploads nothing. A fault from one terrain does not stop the others; `update` returns the first one.
 
@@ -69,8 +69,8 @@ renderer.render_view(&scene, camera, view)!;
 
 ## TerrainDesc
 
-`terrain::default_terrain_desc()` sets `lod_threshold = 512`, `lod_hysteresis = 0.25`, `slope_projection = TOP`,
-`triplanar_sharpness = 4`, both shadow flags and `trace = false`; the maps, scales and layers are the application's. Every value is checked by `add_terrain` and faults rather
+`terrain::default_terrain_desc()` sets `lod_threshold = 512`, `lod_hysteresis = 0.25`, `morph_band = 0`,
+`slope_projection = TOP`, `triplanar_sharpness = 4`, both shadow flags and `trace = false`; the maps, scales and layers are the application's. Every value is checked by `add_terrain` and faults rather
 than asserts, since descs also come from files.
 
 | Field | Rule |
@@ -82,6 +82,7 @@ than asserts, since descs also come from files.
 | `layers` | Up to four live `STANDARD` materials, leading; zero ids after the last one |
 | `lod_threshold` | Projected node diameter, in pixels of the view's working extent, above which a node splits; finite, zero or more |
 | `lod_hysteresis` | A split node merges below `lod_threshold / (1 + lod_hysteresis)`; finite, zero or more |
+| `morph_band` | Share of each selection range over which chunk vertices morph toward their parent level ([morphing](#morphing)); finite, zero or more, and at most `(1 - lod_hysteresis) / 2`. Zero keeps level changes abrupt; above zero it also needs a `lod_threshold` above zero |
 | `slope_projection` | `TOP` projects the layers from above; `TRIPLANAR` projects them along all three axes ([slope projection](#slope-projection)) |
 | `triplanar_sharpness` | Exponent of the plane weights: `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read and checked only under `TRIPLANAR` |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update`; `cast_shadow` also onto the [trace grid](#scene-traces) |
@@ -145,9 +146,11 @@ ancestor splits and it does not, so the drawn nodes partition the extent. The si
 the sphere through the corners of the node's box, in pixels of the view's working extent with `render_scale`
 included. The sphere does not depend on the node's rotation: a terrain turned about Y selects the levels it
 selected unturned. The selection reads no camera rotation, so turning in place never re-selects. A change of
-`lod_threshold` or `lod_hysteresis` keeps every view's history. `update` checks the edited values: when either is
-negative or not finite it faults `INVALID_ARGUMENT` and leaves the terrain as it was, so the batch never holds a
-value the [quadtree contract](instancing.md#quadtree-selection) rejects.
+`lod_threshold`, `lod_hysteresis` or `morph_band` keeps every view's history. `update` checks the edited values: when
+`lod_threshold` or `lod_hysteresis` is negative or not finite, or `morph_band` is outside its limit, it faults
+`INVALID_ARGUMENT` and leaves the terrain as it was, so the batch never holds a value the [quadtree
+contract](instancing.md#quadtree-selection) rejects. The sphere rule above is the one of a terrain with `morph_band`
+zero; above zero, selection follows [box ranges](#morphing).
 
 - Two views of one terrain, such as a split screen or a mirror, draw different levels when their cameras are at
   different distances, and a shadow layer draws the levels of the view it belongs to.
@@ -205,6 +208,48 @@ of the whole extent, built from the same height map and independent of any view.
   or with the node. It is never serialized; `prepare` creates it again after a read. Each tile of a [set](#tile-sets)
   owns its grid. A terrain takes two scene nodes and one `Mesh`.
 
+## Morphing
+
+With `morph_band` above zero a level change neither pops nor leaves a seam: a chunk's vertices move onto the surface of
+the level that will replace it before it is replaced. `add_terrain` and `update` switch the batch to the
+[box-range](instancing.md#box-ranges) metric, with the extent of a node of each depth and the largest diagonal of the
+boxes of that depth, so every node of a depth shares one selection range and the vertex stage computes the morph from
+the same ranges. The ranges keep two conditions: a node merges only once its vertices have fully morphed, and nodes
+that touch differ by at most one level. `morph_band <= (1 - lod_hysteresis) / 2` is what keeps them.
+
+- **What moves.** Only the height of a vertex whose position in the chunk's 129 × 129 grid is odd along `x`, `z` or
+  both; the even vertices are the parent level's. An edge-odd vertex moves to the mean height of its two even neighbours
+  along that axis. A doubly-odd vertex lies at the centre of a parent cell and moves to the mean of the cell's
+  `(+x, -z)` and `(-x, +z)` corners, the diagonal the chunk index buffer splits every cell along, so the morphed chunk
+  and the parent level draw one surface. `x` and `z` never change. Skirts hang from the edge vertices and follow them.
+- **How much.** A vertex of a chunk is unmorphed up to `(1 - morph_band)` of its parent depth's range from the view's
+  selection camera and fully morphed at the range, measured to the vertex on its own texel height. A view, its depth
+  prepass and its shadow layers read the same camera from `FrameRoot.selection_camera`, so they draw one surface.
+- **Bounds.** A morphed height lies between the fine and parent surfaces, which the texel minimum and maximum of the
+  chunk already contain. Nothing about culling, picking or the queries changes: the CPU queries keep the full-resolution
+  surface.
+- **Motion vectors.** The velocity forms run the same morph against `FrameRoot.previous_selection_camera`, so a split, a
+  merge and a steady morph carry no motion beyond the camera's. A camera cut makes the previous camera the current one.
+  The node's own motion moves the previous position but not the previous morph amount. A height edit, and an edit of
+  `lod_threshold`, `lod_hysteresis` or `morph_band`, give one frame of approximate motion, since no previous height
+  texture or previous parameters are kept.
+- **Selection.** The ranges follow the largest diagonal of the boxes of a depth, so a height edit that raises a level's
+  tallest box lengthens that level's ranges: `update` sets them again, only when a value changed. A tile of a
+  [set](#tile-sets) follows the largest diagonal over the whole set. The batch returns to
+  the sphere rule when `morph_band` is edited to zero. The ranges are set again whenever the quadtree is installed
+  again, after a rejected height-map revision.
+- **Cost.** About three quarters of a chunk's vertices are odd. With a band above zero each reads the quadtree block
+  and the depth of its node, and a vertex inside a morph reads two more heights. With the band at zero an odd vertex of
+  a quadtree draw still loads the effects block and the batch's quadtree block and returns before any morph work; its
+  output is what it was.
+
+**Limits.** Selection and morph measure distance, which an orthographic view does not have: every node of a depth takes
+the level its extent gives and the stage morphs nothing in the view's own passes. A shadow layer cannot tell that its
+view is orthographic and morphs by distance, so keep `morph_band` zero for terrain drawn into orthographic views. Tiles
+of a [set](#tile-sets) morph each in their own quadtree and share one `morph_band`. They also share one set of ranges:
+every linked tile takes the largest box diagonal of each depth over the set, so the edge vertices of neighbouring tiles
+morph alike. A height edit, a link or an unlink in the set sets the ranges of every linked tile again.
+
 ## The node
 
 The node's world transform places texel (0, 0) at its origin, with texel columns along its x axis and rows
@@ -243,7 +288,7 @@ foreach (tile : tiles) {
 
 - be a direct child of a node that carries `TerrainSet`;
 - have a height map of exactly the set's `texels`, and the set's `cell_size` and `height_scale`;
-- have the same `lod_threshold`, `lod_hysteresis` and `layers` as every tile already linked;
+- have the same `lod_threshold`, `lod_hysteresis`, `morph_band` and `layers` as every tile already linked;
 - have a `PARENT`-space transform relative to the set node that is a pure translation to
   `(x · tile_extent, 0, z · tile_extent)`: no rotation and unit scale, within 1e-4;
 - not share its `(x, z)` with a linked tile. The first tile prepared at a coordinate keeps it.
@@ -482,13 +527,13 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::UNSUPPORTED` | Height map not `R16_UINT`, not a `MIP_ZERO` source, or a layered, 3D or cube texture |
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
-| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count or whose grid has more than `MAX_TRACE_VERTICES` vertices, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `morph_band` that is negative, not finite or above `(1 - lod_hysteresis) / 2`, a positive `morph_band` with a zero `lod_threshold`, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count or whose grid has more than `MAX_TRACE_VERTICES` vertices, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain`, `prepare`, `update` | `c3d::UNSUPPORTED` | The node carries a `LodGroup`, which cannot share a batch with a quadtree |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
 | `TerrainSet.neighbour` | `NOT_FOUND` | The tile is not linked, or has no linked neighbour in the direction |
 | `update` | `c3d::INVALID_ID` | The height map was removed |
-| `update` | `c3d::INVALID_ARGUMENT` | A revision whose side differs from the accepted one; an edited `lod_threshold` or `lod_hysteresis` that is negative or not finite |
+| `update` | `c3d::INVALID_ARGUMENT` | A revision whose side differs from the accepted one; an edited `lod_threshold` or `lod_hysteresis` that is negative or not finite, or an edited `morph_band` outside the limits above |
 | `sample_height`, `sample_normal`, `sample_smooth_normal` | `NOT_FOUND` | The point is outside the extent |
 
 ## Limits
@@ -497,9 +542,9 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   `trace`, ridges do not shadow valleys under traced shadows, though other objects still cast onto the terrain, and
   ray-traced ambient occlusion, reflections, probes and path tracing do not see it. With `trace` they see the
   [trace grid](#scene-traces) at `trace_level`.
-- Level changes pop and carry no motion vector; temporal history rejection handles them. The velocity forms
-  ignore per-instance previous matrices: a chunk's shape comes from its record, so only node motion and the
-  camera produce velocity.
+- With `morph_band` zero, level changes pop and carry no motion vector; temporal history rejection handles them.
+  [Morphing](#morphing) removes both. The velocity forms ignore per-instance previous matrices: a chunk's shape
+  comes from its record, so only node motion, the camera and the morph produce velocity.
 - The velocity pass redraws every chunk on temporal views. A frame after a bounds change uploads 128 B per node
   and, on temporal views, 64 B per node of previous matrices the stage ignores: up to 170 KiB and 85 KiB at 4097
   texels.
@@ -528,6 +573,9 @@ default is the finest the size allows: 0 at 1025 texels, 1 at 2049 and 2 at 4097
 
 The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
 `--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.
+
+`--morph` sets `morph_band` to 0.25 and `--triplanar` selects `TRIPLANAR` projection; the panel's slider changes the
+band while running, and the slope projection is chosen at start. Both apply to `--tiles` and `--capture` too.
 
 `--tiles 2x2` builds the same landscape as a [tile set](#tile-sets) of four tiles cut from the map with a one-texel
 overlap, each with its own control map and collider. B paints across tile edges: the brush stamps every tile its

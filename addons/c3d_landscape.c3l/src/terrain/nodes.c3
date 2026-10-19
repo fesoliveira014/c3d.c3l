@@ -78,6 +78,7 @@ fn void? install_quadtree(Scene* scene, Node* node, TerrainRuntime* runtime, Ter
             hysteresis:   desc.lod_hysteresis,
         )!;
     };
+    apply_quadtree_ranges(scene, node, runtime, desc)!;
 }
 
 fn void hide_batch(Scene* scene, Node* node) @private {
@@ -117,4 +118,123 @@ fn void apply_lod_tunables(InstancedMesh* batch, TerrainDesc* desc) @private {
 
     batch.quadtree.split_pixels = desc.lod_threshold;
     batch.quadtree.hysteresis = desc.lod_hysteresis;
+}
+
+// Indexed by depth: the root is depth 0, and the finest level is the last entry.
+fn void level_bounds(TerrainRuntime* runtime, TerrainDesc* desc, QuadtreeLevel[] levels) @private {
+    float unit = desc.height_scale / TEXEL_MAX;
+    for (uint level = 0; level < runtime.level_count; level++) {
+        float edge = (float)(CHUNK_CELLS << level) * desc.cell_size;
+        uint first = runtime.level_offset[level];
+        uint end = first + level_side(runtime, level) * level_side(runtime, level);
+
+        // A flat node keeps a nonzero box height, as its record does.
+        float tallest = unit;
+        for (uint index = first; index < end; index++) {
+            tallest = max(tallest, (float)(runtime.maximum[index] - runtime.minimum[index]) * unit);
+        }
+
+        levels[runtime.level_count - 1 - level] = {
+            .extent   = edge,
+            .diagonal = math::sqrt(2 * edge * edge + tallest * tallest),
+        };
+    }
+}
+
+fn bool has_range_inputs(Scene* scene, Node* node) @private {
+    return scene.has(node, Terrain) && scene.has(node, TerrainRuntime) && scene.has(node, InstancedMesh);
+}
+
+fn bool morph_outdated(InstancedMesh* batch, TerrainDesc* desc) @private {
+    InstanceQuadtree* quadtree = &batch.quadtree;
+    if (!quadtree.parents.len) return false;
+    if (!(desc.morph_band > 0)) return quadtree.metric == QuadtreeMetric.BOX_RANGES;
+
+    return quadtree.metric != QuadtreeMetric.BOX_RANGES || quadtree.morph_band != desc.morph_band;
+}
+
+// The batch keeps its parameters when nothing differs: a changed block uploads again for every view.
+fn void? set_batch_ranges(Scene* scene, Node* node, TerrainDesc* desc, QuadtreeLevel[] levels) @private {
+    InstanceQuadtree* quadtree = &scene.get(node, InstancedMesh).quadtree;
+    if (!quadtree.parents.len) return;
+
+    if (!(desc.morph_band > 0)) {
+        if (quadtree.metric == QuadtreeMetric.BOX_RANGES) scene.set_quadtree_ranges(node, {}, 0)!;
+        return;
+    }
+
+    bool unchanged = quadtree.metric == QuadtreeMetric.BOX_RANGES && quadtree.morph_band == desc.morph_band;
+    foreach (depth, level : levels) {
+        unchanged = unchanged && quadtree.levels[depth].extent == level.extent
+            && quadtree.levels[depth].diagonal == level.diagonal;
+    }
+    if (unchanged) return;
+
+    scene.set_quadtree_ranges(node, levels, desc.morph_band)!;
+}
+
+fn void raise_diagonals(QuadtreeLevel[] levels, QuadtreeLevel[] other) @private {
+    foreach (depth, level : other) levels[depth].diagonal = max(levels[depth].diagonal, level.diagonal);
+}
+
+fn void? apply_quadtree_ranges(Scene* scene, Node* node, TerrainRuntime* runtime, TerrainDesc* desc) @private {
+    if (!(desc.morph_band > 0)) return set_batch_ranges(scene, node, desc, {});
+
+    QuadtreeLevel[MAX_TERRAIN_LEVELS] storage;
+    QuadtreeLevel[] levels = storage[:runtime.level_count];
+    level_bounds(runtime, desc, levels);
+
+    return set_batch_ranges(scene, node, desc, levels);
+}
+
+// The ranges of neighbouring tiles must agree, or a seam vertex morphs differently in each tile.
+// Every linked tile therefore takes the largest diagonal of each depth over the set, whenever a tile's relief,
+// band or link changes it.
+fn void apply_set_ranges(Scene* scene, TerrainSet* set) @private {
+    if (!set.state) return;
+
+    QuadtreeLevel[MAX_TERRAIN_LEVELS] storage;
+    QuadtreeLevel[MAX_TERRAIN_LEVELS] peer_storage;
+    QuadtreeLevel[] levels;
+    foreach (link : set.state.links[:set.state.count]) {
+        Node* tile = scene.node(link.tile);
+        if (!has_range_inputs(scene, tile)) continue;
+
+        TerrainRuntime* runtime = scene.get(tile, TerrainRuntime);
+        if (!levels.len) {
+            levels = storage[:runtime.level_count];
+            level_bounds(runtime, &scene.get(tile, Terrain).desc, levels);
+            continue;
+        }
+
+        level_bounds(runtime, &scene.get(tile, Terrain).desc, peer_storage[:levels.len]);
+        raise_diagonals(levels, peer_storage[:levels.len]);
+    }
+
+    foreach (link : set.state.links[:set.state.count]) {
+        Node* tile = scene.node(link.tile);
+        if (!has_range_inputs(scene, tile)) continue;
+
+        // A tile whose edited band the checks refuse keeps its ranges; its own update reports the fault.
+        @catch(set_batch_ranges(scene, tile, &scene.get(tile, Terrain).desc, levels));
+    }
+}
+
+// A linked tile applies its whole set's ranges, since its relief moves the maximum every tile shares.
+fn void? apply_changed_ranges(Scene* scene, Node* node, TerrainRuntime* runtime, TerrainDesc* desc) @private {
+    TerrainSet* set = parent_set(scene, node);
+    if (set && set.is_linked(node.id)) {
+        apply_set_ranges(scene, set);
+        return;
+    }
+
+    return apply_quadtree_ranges(scene, node, runtime, desc);
+}
+
+// A tile that leaves its set draws its own ranges again; a hook cannot report, so a refused edit waits for update.
+fn void restore_own_ranges(Scene* scene, Node* node) @private {
+    if (!has_range_inputs(scene, node)) return;
+
+    TerrainRuntime* runtime = scene.get(node, TerrainRuntime);
+    @catch(apply_quadtree_ranges(scene, node, runtime, &scene.get(node, Terrain).desc));
 }

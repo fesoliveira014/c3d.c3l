@@ -17,6 +17,8 @@ const char[*] TERRAIN_V1_BINARY @private = $embed("fixtures/terrain_v1.bin");
 const char[*] TERRAIN_V1_TEXT @private = $embed("fixtures/terrain_v1.json");
 const char[*] TERRAIN_V2_BINARY @private = $embed("fixtures/terrain_v2.bin");
 const char[*] TERRAIN_V2_TEXT @private = $embed("fixtures/terrain_v2.json");
+const char[*] TERRAIN_V3_BINARY @private = $embed("fixtures/terrain_v3.bin");
+const char[*] TERRAIN_V3_TEXT @private = $embed("fixtures/terrain_v3.json");
 const uint TRACE_TEXELS @private = 257; // two quadtree levels, so a trace level above 0 is valid
 const uint TRACE_LEVEL @private = 1;
 const char[*] WATER_V1_BINARY @private = $embed("fixtures/water_v1.bin");
@@ -24,8 +26,9 @@ const char[*] WATER_V1_TEXT @private = $embed("fixtures/water_v1.json");
 
 fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
-    assert(serial::described_type(TerrainDesc)!!.version == 3);
-    assert(serial::described_type(TerrainDesc)!!.layout == 0x2f4b757be96fae42);
+    assert(serial::described_type(TerrainDesc)!!.version == 4);
+    assert(serial::described_type(TerrainDesc)!!.layout == 0x93bc20cf0d28ef4d);
+    assert(serial::described_type(landscape::TerrainDescV3)!!.layout == 0xa32420a76628fd33);
     assert(serial::described_type(landscape::TerrainDescV2)!!.layout == 0xbbb8c4e5931f82a4);
     assert(serial::described_type(landscape::TerrainDescV1)!!.layout == 0x7638a7507fa65b33);
     assert(serial::described_type(TerrainTile)!!.layout == 0x3fe780c7be5416e1);
@@ -59,11 +62,12 @@ fn void test_terrain_v1_fixtures_read_with_default_projection() @test {
             TerrainDesc* desc = &fixture.destination.get(ground, Terrain).desc;
             assert(desc.height_scale == 4 && desc.lod_threshold == 123 && !desc.cast_shadow);
             assert(desc.slope_projection == TOP && desc.triplanar_sharpness == terrain::DEFAULT_TRIPLANAR_SHARPNESS);
+            assert(desc.morph_band == 0);
         };
     }
 }
 
-fn void test_terrain_v2_fixtures_read_with_tracing_off() @test {
+fn void test_terrain_v2_fixtures_read_without_morphing() @test {
     foreach (text_mode : (bool[2]){ false, true }) {
         @pool() {
             Fixture fixture;
@@ -73,7 +77,24 @@ fn void test_terrain_v2_fixtures_read_with_tracing_off() @test {
             char[] bytes = text_mode ? TERRAIN_V2_TEXT[..] : TERRAIN_V2_BINARY[..];
             Node* ground = decode(&fixture, bytes, text_mode)!!;
             TerrainDesc* desc = &fixture.destination.get(ground, Terrain).desc;
-            assert(desc.height_scale == 4 && desc.lod_threshold == 123 && !desc.cast_shadow);
+            assert(desc.height_scale == 4 && desc.lod_threshold == 123 && desc.lod_hysteresis == 0.4f);
+            assert(desc.slope_projection == TRIPLANAR && desc.triplanar_sharpness == 7);
+            assert(desc.morph_band == 0 && !desc.trace && desc.trace_level == 0);
+        };
+    }
+}
+
+fn void test_terrain_v3_fixtures_read_with_tracing_off() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? TERRAIN_V3_TEXT[..] : TERRAIN_V3_BINARY[..];
+            Node* ground = decode(&fixture, bytes, text_mode)!!;
+            TerrainDesc* desc = &fixture.destination.get(ground, Terrain).desc;
+            assert(desc.height_scale == 4 && desc.lod_threshold == 123 && desc.morph_band == 0.25f);
             assert(desc.slope_projection == TRIPLANAR && desc.triplanar_sharpness == 7);
             assert(!desc.trace && desc.trace_level == 0);
         };
@@ -187,6 +208,7 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 Node* lake = child_named(restored, "water");
                 TerrainDesc* restored_desc = &fixture.destination.get(ground, Terrain).desc;
                 assert(restored_desc.slope_projection == TRIPLANAR && restored_desc.triplanar_sharpness == 7);
+                assert(restored_desc.morph_band == 0.25f);
                 assert(!terrain::is_prepared(&fixture.destination, ground));
                 assert(!foliage::is_prepared(&fixture.destination, plants));
                 assert(!water::is_prepared(&fixture.destination, lake));

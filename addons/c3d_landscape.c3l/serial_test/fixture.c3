@@ -122,6 +122,7 @@ fn void create_fixture(
     terrain_desc.layers[0] = layer;
     terrain_desc.lod_threshold = 123;
     terrain_desc.lod_hysteresis = 0.4f;
+    terrain_desc.morph_band = 0.25f;
     terrain_desc.slope_projection = TRIPLANAR;
     terrain_desc.triplanar_sharpness = 7;
     terrain_desc.cast_shadow = false;

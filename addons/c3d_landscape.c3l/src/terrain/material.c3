@@ -35,6 +35,13 @@ $assert (uint)SlopeProjection.TRIPLANAR.ordinal == 1;
 fn void? check_lod_tunables(TerrainDesc* desc) @private {
     if (!(desc.lod_threshold >= 0) || !math::is_finite(desc.lod_threshold)) return c3d::INVALID_ARGUMENT~;
     if (!(desc.lod_hysteresis >= 0) || !math::is_finite(desc.lod_hysteresis)) return c3d::INVALID_ARGUMENT~;
+    if (!(desc.morph_band >= 0) || !math::is_finite(desc.morph_band)) return c3d::INVALID_ARGUMENT~;
+    if (desc.morph_band == 0) return;
+
+    // The box-range metric needs a positive threshold and a band its ranges can keep without popping.
+    if (!(desc.lod_threshold > 0) || !(desc.morph_band <= (1 - desc.lod_hysteresis) * 0.5f)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
 }
 
 // Descs come from files as well as code, so every value check is a fault; negated so NaN faults too.

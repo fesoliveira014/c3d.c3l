@@ -10,7 +10,8 @@ import std::math;
 
 const ulong INSTANCES_V1_LAYOUT @local = 0x59d3aec48200fec8;
 const ulong INSTANCES_V2_LAYOUT @local = 0x7f422a9bb5bb80ce;
-const ulong INSTANCES_LAYOUT @local = 0x5d8d9a7cc4cd085d;
+const ulong INSTANCES_V3_LAYOUT @local = 0x5d8d9a7cc4cd085d;
+const ulong INSTANCES_LAYOUT @local = 0x538fec02e9ba976c;
 const ulong BILLBOARDS_LAYOUT @local = 0x0e6e17ed81a957bb;
 const ulong LOD_V1_LAYOUT @local = 0xdb17924ea7b43e3f;
 const ulong LOD_V2_LAYOUT @local = 0x8ed85fe0b352d50f;
@@ -52,6 +53,25 @@ struct InstanceAuthoringV2 @private {
     float hysteresis;
 }
 
+struct InstanceAuthoringV3 @private {
+    GeometryId geometry;
+    MaterialId material;
+    uint capacity;
+    Transform[] transforms;
+    Vec4[] colors;
+    bool cast_shadow;
+    bool receive_shadow;
+    bool trace;
+    bool trace_sway;
+    bool has_bounds_override;
+    Aabb local_bounds;
+    InstanceSway sway;
+    InstanceFade fade;
+    uint[] quadtree_parents;
+    float split_pixels;
+    float hysteresis;
+}
+
 struct InstanceAuthoring @private {
     GeometryId geometry;
     MaterialId material;
@@ -69,6 +89,9 @@ struct InstanceAuthoring @private {
     uint[] quadtree_parents;
     float split_pixels;
     float hysteresis;
+    QuadtreeMetric metric;
+    float morph_band;
+    QuadtreeLevel[] levels;
 }
 
 struct BillboardAuthoring @private {
@@ -133,11 +156,12 @@ struct LodAuthoring @private {
     AnimatedLodDescAuthoring animated_desc;
 }
 
-BinaryCompatibility[2] instances_binary_compatibility @local = {
+BinaryCompatibility[3] instances_binary_compatibility @local = {
     { .version = 1, .read = &read_instances_v1, .upgrade = &upgrade_instances_v1 },
     { .version = 2, .read = &read_instances_v2, .upgrade = &upgrade_instances_v2 },
+    { .version = 3, .read = &read_instances_v3, .upgrade = &upgrade_instances_v3 },
 };
-uint[2] instances_text_default_versions @local = { 1, 2 };
+uint[3] instances_text_default_versions @local = { 1, 2, 3 };
 
 BinaryCompatibility[2] lod_binary_compatibility @local = {
     { .version = 1, .read = &read_lod_v1, .upgrade = &upgrade_lod_v1 },
@@ -148,6 +172,7 @@ uint[2] lod_text_default_versions @local = { 1, 2 };
 fn void? register_core_batch_codecs() @private {
     describe::register_reflected(InstanceAuthoringV1)!;
     describe::register_reflected(InstanceAuthoringV2)!;
+    describe::register_reflected(InstanceAuthoringV3)!;
     describe::register_reflected(InstanceAuthoring)!;
     describe::register_reflected(BillboardAuthoring)!;
     describe::register_reflected(LodAuthoringV1)!;
@@ -165,8 +190,14 @@ fn void? register_core_batch_codecs() @private {
         defaults: &defaults_instances_v2,
     )!;
     register_described_type(
-        $Type: InstanceAuthoring,
+        $Type: InstanceAuthoringV3,
         version: 3,
+        layout: INSTANCES_V3_LAYOUT,
+        defaults: &defaults_instances_v3,
+    )!;
+    register_described_type(
+        $Type: InstanceAuthoring,
+        version: 4,
         layout: INSTANCES_LAYOUT,
         defaults: &defaults_instances,
     )!;
@@ -214,6 +245,10 @@ fn void defaults_instances_v1(void* value) @local {
 
 fn void defaults_instances_v2(void* value) @local {
     *(InstanceAuthoringV2*)value = { .capacity = 1, .cast_shadow = true, .receive_shadow = true, .trace = true };
+}
+
+fn void defaults_instances_v3(void* value) @local {
+    *(InstanceAuthoringV3*)value = { .capacity = 1, .cast_shadow = true, .receive_shadow = true, .trace = true };
 }
 
 fn void defaults_instances(void* value) @local {
@@ -271,6 +306,10 @@ fn void? project_instances(void* component, void* value, WriteContext* context) 
         .quadtree_parents = batch.quadtree.parents,
         .split_pixels = has_quadtree ? batch.quadtree.split_pixels : 0,
         .hysteresis = has_quadtree ? batch.quadtree.hysteresis : 0,
+        .metric = has_quadtree ? batch.quadtree.metric : QuadtreeMetric.SPHERE_PIXELS,
+        .morph_band = has_quadtree ? batch.quadtree.morph_band : 0,
+        .levels = has_quadtree && batch.quadtree.metric == QuadtreeMetric.BOX_RANGES
+          ? batch.quadtree.levels[:batch.quadtree.depth_count] : (QuadtreeLevel[]){},
     };
 }
 
@@ -319,6 +358,11 @@ fn void? attach_instances(void* value, ReadContext* context) @local {
     }
     if (!scene::instance_effects_valid(source.sway, source.fade)) return c3d::INVALID_ARGUMENT~;
 
+    bool ranges = source.metric == QuadtreeMetric.BOX_RANGES;
+    if (ranges ? !source.quadtree_parents.len || !source.levels.len : source.levels.len || source.morph_band != 0) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
     add_instances(source, context)!;
     if (!source.quadtree_parents.len) return;
 
@@ -329,6 +373,7 @@ fn void? attach_instances(void* value, ReadContext* context) @local {
         split_pixels: source.split_pixels,
         hysteresis: source.hysteresis,
     )!;
+    if (ranges) context.scene.set_quadtree_ranges(context.node, source.levels, source.morph_band)!;
 }
 
 fn void? add_instances(InstanceAuthoring* source, ReadContext* context) @local {
@@ -532,6 +577,34 @@ fn void? upgrade_instances_v2(Reader* reader, ReadContext* context, void* value)
 fn void? read_instances_v2(Reader* reader, ReadContext* context) @local {
     InstanceAuthoring source;
     upgrade_instances_v2(reader, context, &source)!;
+    attach_instances(&source, context)!;
+}
+
+fn void? upgrade_instances_v3(Reader* reader, ReadContext* context, void* value) @local {
+    InstanceAuthoringV3* legacy = context.read_value(InstanceAuthoringV3, reader)!;
+    *(InstanceAuthoring*)value = {
+        .geometry = legacy.geometry,
+        .material = legacy.material,
+        .capacity = legacy.capacity,
+        .transforms = legacy.transforms,
+        .colors = legacy.colors,
+        .cast_shadow = legacy.cast_shadow,
+        .receive_shadow = legacy.receive_shadow,
+        .trace = legacy.trace,
+        .trace_sway = legacy.trace_sway,
+        .has_bounds_override = legacy.has_bounds_override,
+        .local_bounds = legacy.local_bounds,
+        .sway = legacy.sway,
+        .fade = legacy.fade,
+        .quadtree_parents = legacy.quadtree_parents,
+        .split_pixels = legacy.split_pixels,
+        .hysteresis = legacy.hysteresis,
+    };
+}
+
+fn void? read_instances_v3(Reader* reader, ReadContext* context) @local {
+    InstanceAuthoring source;
+    upgrade_instances_v3(reader, context, &source)!;
     attach_instances(&source, context)!;
 }
 

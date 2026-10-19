@@ -18,6 +18,10 @@ const uint LOD_PLACEMENTS @private = 12;
 const float[3] LOD_DISTANCES @private = { 4, 10, 24 };
 const Vec4[3] LOD_COLORS @private = { RED, GREEN, BLUE };
 const uint LOD_EFFECT_SIZE @private = 512;
+const Vec3 YAW_PLATE_SCALE @private = { 2, 0.1f, 2 };
+const float YAW_DISTANCE @private = 10;
+const float YAW_TURN @private = math::PI / 4;
+const float YAW_SWITCH_SIZE @private = 0.28f; // between the plate's sphere size, 0.245, and its world box size at YAW_TURN, 0.347
 
 struct LodVelocityProbe @private {
     gpu::MappedGpuSpan readback;
@@ -1003,6 +1007,78 @@ fn void test_lod_part_transforms_share_effect_anchor() @test {
         }
         target.scene.remove(reference);
         target.scene.remove(target.mesh);
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn DeformedScene? create_yaw_scene(Fixture* fixture, Node** ordinary) @private {
+    DeformedScene result;
+    result.scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
+    defer catch scene::destroy_scene(&result.scene);
+
+    MaterialId material = fixture.assets.add_material(material::basic({ .color = RED }))!;
+    LodLevel[2] levels = {
+        { .first_part = 0, .part_count = 1, .min_screen_size = YAW_SWITCH_SIZE },
+        { .first_part = 1, .part_count = 1, .min_screen_size = 0 },
+    };
+    LodPart[2] parts;
+    foreach (&part : parts) {
+        *part = { .geometry = fixture.box, .material = material, .local = maths::TRANSFORM_IDENTITY.to_mat4() };
+    }
+    LodDesc desc = { .levels = levels[..], .parts = parts[..] };
+    Transform[1] placement = { maths::TRANSFORM_IDENTITY };
+    result.mesh = result.scene.add_instanced_lod_group(
+        assets: &fixture.assets,
+        desc: desc,
+        capacity: LOD_PLACEMENTS,
+        transforms: placement[..],
+    )!;
+    *ordinary = result.scene.add_lod_group(&fixture.assets, desc)!;
+    Node*[2] nodes = { result.mesh, *ordinary };
+    foreach (node : nodes) {
+        node.local.position = { 0, 0, CAMERA_POSITION.z - YAW_DISTANCE };
+        node.local.scale = YAW_PLATE_SCALE;
+    }
+
+    result.camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
+    result.camera.local.position = CAMERA_POSITION;
+    result.scene.update_world();
+    return result;
+}
+
+fn void test_lod_level_does_not_depend_on_yaw() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Node* ordinary;
+    DeformedScene target = create_yaw_scene(&fixture, &ordinary)!!;
+    defer scene::destroy_scene(&target.scene);
+    gpu::MappedGpuSpan readback = create_lod_readback(&fixture.renderer)!!;
+    defer free_lod_readback(&fixture.renderer, readback);
+    LodHistoryGpu[] history = ((LodHistoryGpu*)readback.bytes.ptr)[:LOD_PLACEMENTS];
+
+    float[2] yaws = { 0, YAW_TURN };
+    uint[2] instanced_levels;
+    uint[2] ordinary_levels;
+    foreach (index, yaw : yaws) {
+        Quat rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, yaw);
+        target.mesh.local.rotation = rotation;
+        ordinary.local.rotation = rotation;
+        for (uint frame = 0; frame < SETTLE_FRAMES; frame++) {
+            render_lod_frame(
+                fixture: &fixture,
+                target: &target,
+                view: fixture.view,
+                readback: readback,
+            )!!;
+        }
+        instanced_levels[index] = history[0].level;
+        ordinary_levels[index] = fixture.renderer.views.get(fixture.view).lod_history.entries[ordinary.id.index].committed.level;
+    }
+
+    foreach (index, level : instanced_levels) {
+        assert(level == 1, "instanced selection must use the sphere, not the yawed world box");
+        assert(ordinary_levels[index] == 1, "ordinary selection must use the sphere, not the yawed world box");
     }
     check_validation(&fixture.renderer);
 }

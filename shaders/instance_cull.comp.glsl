@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "buffer_reference.glsl"
 #include "instance_effects.glsl"
+#include "quadtree_morph.glsl"
 
 layout(local_size_x = INSTANCE_CULL_GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 
@@ -16,6 +17,7 @@ GPU_DECLARE_READONLY_ARRAY_REF(CullBillboards, BillboardGpu);
 GPU_DECLARE_WRITEONLY_ARRAY_REF(VisibleOutput, uint);
 GPU_DECLARE_READONLY_ARRAY_REF(LodMetadata, LodMetadataGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(QuadtreeNodes, QuadtreeNodeGpu);
+GPU_DECLARE_READONLY_ARRAY_REF(QuadtreeDepths, uint);
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer LodHistory {
     LodHistoryGpu values[];
 };
@@ -80,24 +82,24 @@ float sphere_size(InstanceCullRoot root, vec3 center, float radius) {
         : radius * root.lod_projection.x / distance(center, root.lod_camera_bias.xyz));
 }
 
-// Height of the instance's bound sphere, taken from its world bounding box and the sway reach, as a share of the output height.
-float projected_size(InstanceCullRoot root, mat4 model) {
-    vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
-    mat3 axes = mat3(model);
-    mat3 reach = mat3(abs(axes[0]), abs(axes[1]), abs(axes[2]));
-    float radius = length(reach * ((root.bounds_max.xyz - root.bounds_min.xyz) * 0.5) + root.lod_reach.xyz);
-    return sphere_size(root, center, radius);
+// Mirrors the radius of transformed_box_sphere in maths/bounds.c3: turning the instance leaves it unchanged, where its
+// world bounding box grows by up to 1.41 times at 45 degrees. Shear under-bounds; LOD only.
+float bounding_radius(mat4 model, vec3 half_extent, vec3 reach) {
+    vec3 axis_scale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+    return length(axis_scale * half_extent + reach);
 }
 
-// Turning a node must not change its size, while its world bounding box grows by up to 1.41 times at 45 degrees:
-// the radius is the half diagonal of the bound scaled along each axis of the matrix. Shear under-bounds; LOD only.
+// Height of the instance's bound sphere, with the sway reach, as a share of the output height.
+float projected_size(InstanceCullRoot root, mat4 model) {
+    vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
+    vec3 half_extent = (root.bounds_max.xyz - root.bounds_min.xyz) * 0.5;
+    return sphere_size(root, center, bounding_radius(model, half_extent, root.lod_reach.xyz));
+}
+
 float quadtree_size(InstanceCullRoot root, mat4 model) {
     vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
-    mat3 axes = mat3(model);
     vec3 half_extent = (root.bounds_max.xyz - root.bounds_min.xyz) * 0.5;
-    vec3 axis_scale = vec3(length(axes[0]), length(axes[1]), length(axes[2]));
-    float radius = length(axis_scale * half_extent);
-    return sphere_size(root, center, radius);
+    return sphere_size(root, center, bounding_radius(model, half_extent, vec3(0.0)));
 }
 
 void select_lod(InstanceCullRoot root, uint source) {
@@ -123,11 +125,42 @@ void select_lod(InstanceCullRoot root, uint source) {
     atomicAdd(CullCounter(root.counter).lod_selected[level], 1u);
 }
 
+// Distance from a point to the nearest point of the instance's box. Shear under-bounds; LOD only.
+float box_distance(InstanceCullRoot root, mat4 model, vec3 point) {
+    vec3 axis_scale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+    vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
+    vec3 half_extent = (root.bounds_max.xyz - root.bounds_min.xyz) * 0.5 * axis_scale;
+
+    vec3 offset = point - center;
+    vec3 local = abs(vec3(
+        dot(model[0].xyz, offset) / axis_scale.x,
+        dot(model[1].xyz, offset) / axis_scale.y,
+        dot(model[2].xyz, offset) / axis_scale.z
+    ));
+    return length(max(local - half_extent, vec3(0.0)));
+}
+
+bool quadtree_box_splits(InstanceCullRoot root, uint node, bool was_split) {
+    QuadtreeGpu tree = QuadtreeGpu(root.quadtree_params);
+    uint depth = QuadtreeDepths(root.quadtree_depths).values[node];
+    if (root.lod_projection.z != 0.0) {
+        float size = tree.levels[depth].extent * root.quadtree_world_scale * root.quadtree_pixel_scale;
+        return was_split ? size >= tree.split_pixels / (1.0 + tree.hysteresis) : size > tree.split_pixels;
+    }
+
+    float range = quadtree_range(tree, depth, root.quadtree_pixel_scale, root.quadtree_world_scale);
+    float nearest = box_distance(root, CullInstances(root.instances).values[node].model, root.lod_camera_bias.xyz);
+    return nearest < (was_split ? range * (1.0 + tree.hysteresis) : range);
+}
+
 bool quadtree_splits(InstanceCullRoot root, uint node) {
     if (QuadtreeNodes(root.quadtree_nodes).values[node].children == 0u) return false;
-    float size = quadtree_size(root, CullInstances(root.instances).values[node].model) * root.quadtree_height_pixels;
+
     bool was_split = root.quadtree_history_valid != 0u
         && (QuadtreeHistory(root.lod_previous).values[node] & QUADTREE_SPLIT) != 0u;
+    if (root.quadtree_params != 0ul) return quadtree_box_splits(root, node, was_split);
+
+    float size = quadtree_size(root, CullInstances(root.instances).values[node].model) * root.quadtree_height_pixels;
     return was_split ? size >= root.quadtree_split_pixels / (1.0 + root.quadtree_hysteresis)
         : size > root.quadtree_split_pixels;
 }

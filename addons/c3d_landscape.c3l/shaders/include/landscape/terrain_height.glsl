@@ -11,6 +11,7 @@ const uint TERRAIN_BORDER_NORTH = 0u;
 const uint TERRAIN_BORDER_SOUTH = 1u;
 const uint TERRAIN_BORDER_WEST = 2u;
 const uint TERRAIN_BORDER_EAST = 3u;
+const uint TERRAIN_CHUNK_CELLS = 128u; // mirrored as CHUNK_CELLS in terrain/terrain.c3
 const float TERRAIN_TEXEL_MAX = 65535.0; // height = height_scale * texel / 65535, the physics height-field rule
 const uint TERRAIN_PROJECTION_TRIPLANAR = 1u; // mirrored as SlopeProjection.TRIPLANAR in terrain/terrain.c3
 
