@@ -62,6 +62,26 @@ fn Aabb aabb_transform(Aabb bounds, Mat4 model) {
 }
 
 <*
+ Sphere around a local box under a transform; turning the transform leaves it unchanged.
+ @param model : "Affine."
+ @param reach : "Added to each scaled half extent."
+*>
+fn Sphere transformed_box_sphere(Aabb local, Mat4 model, Vec3 reach) {
+    Vec3 center = (local.min + local.max) * 0.5f;
+    Vec3 half_extent = (local.max - local.min) * 0.5f;
+    Vec3 column_x = { model.m00, model.m10, model.m20 };
+    Vec3 column_y = { model.m01, model.m11, model.m21 };
+    Vec3 column_z = { model.m02, model.m12, model.m22 };
+    Vec3 axis_scale = { column_x.length(), column_y.length(), column_z.length() };
+
+    // A shear under-bounds the radius, which level selection tolerates; culling never uses this sphere.
+    return {
+        .center = transform_point(model, center),
+        .radius = (axis_scale * half_extent + reach).length(),
+    };
+}
+
+<*
  Whether the ray meets the box, and how far along it.
  @param [&out] distance : "Entry distance; untouched when there is no hit."
 *>

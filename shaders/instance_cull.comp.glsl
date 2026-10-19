@@ -82,24 +82,24 @@ float sphere_size(InstanceCullRoot root, vec3 center, float radius) {
         : radius * root.lod_projection.x / distance(center, root.lod_camera_bias.xyz));
 }
 
-// Height of the instance's bound sphere, taken from its world bounding box and the sway reach, as a share of the output height.
-float projected_size(InstanceCullRoot root, mat4 model) {
-    vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
-    mat3 axes = mat3(model);
-    mat3 reach = mat3(abs(axes[0]), abs(axes[1]), abs(axes[2]));
-    float radius = length(reach * ((root.bounds_max.xyz - root.bounds_min.xyz) * 0.5) + root.lod_reach.xyz);
-    return sphere_size(root, center, radius);
+// Mirrors the radius of transformed_box_sphere in maths/bounds.c3: turning the instance leaves it unchanged, where its
+// world bounding box grows by up to 1.41 times at 45 degrees. Shear under-bounds; LOD only.
+float bounding_radius(mat4 model, vec3 half_extent, vec3 reach) {
+    vec3 axis_scale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
+    return length(axis_scale * half_extent + reach);
 }
 
-// Turning a node must not change its size, while its world bounding box grows by up to 1.41 times at 45 degrees:
-// the radius is the half diagonal of the bound scaled along each axis of the matrix. Shear under-bounds; LOD only.
+// Height of the instance's bound sphere, with the sway reach, as a share of the output height.
+float projected_size(InstanceCullRoot root, mat4 model) {
+    vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
+    vec3 half_extent = (root.bounds_max.xyz - root.bounds_min.xyz) * 0.5;
+    return sphere_size(root, center, bounding_radius(model, half_extent, root.lod_reach.xyz));
+}
+
 float quadtree_size(InstanceCullRoot root, mat4 model) {
     vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
-    mat3 axes = mat3(model);
     vec3 half_extent = (root.bounds_max.xyz - root.bounds_min.xyz) * 0.5;
-    vec3 axis_scale = vec3(length(axes[0]), length(axes[1]), length(axes[2]));
-    float radius = length(axis_scale * half_extent);
-    return sphere_size(root, center, radius);
+    return sphere_size(root, center, bounding_radius(model, half_extent, vec3(0.0)));
 }
 
 void select_lod(InstanceCullRoot root, uint source) {
