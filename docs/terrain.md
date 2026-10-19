@@ -439,18 +439,30 @@ physics::add_height_field_windows(
 
 ```c3
 // write texels in place, then:
-assets.mark_texture_dirty(desc.height_map);
-terrain::mark_dirty(&scene, ground, { .x = x, .z = z, .columns = columns, .rows = rows });
+terrain::mark_dirty(&scene, &assets, ground, { .x = x, .z = z, .columns = columns, .rows = rows })!;
 ```
 
 The collider and a navigation grid follow in the order given under [Physics and navigation
 setup](#physics-and-navigation-setup).
 
-- `mark_dirty` unions the rectangle into the terrain's pending one; the union must cover every texel written
-  since the last `update`. The next `update` sees the revision change and refreshes only the chunks the
-  rectangle touches and their ancestors, then rewrites the node records and marks the batch, which uploads
-  its records again, up to 170 KiB at 4097 texels. A revision change without `mark_dirty` rebuilds the whole
-  bounds tree, as does a new pixel array. The quadtree keeps its topology, so no view loses its history.
+- `mark_dirty` marks the rectangle as a region of the height map, so it replaces `assets.mark_texture_dirty`
+  after an in-place edit. It advances the height map's revision once and unions the rectangle into the
+  terrain's pending one; the union must cover every texel written since the last `update`. It faults
+  `INVALID_ID` when the height map was removed and `INVALID_ARGUMENT` when a replacement of another side length
+  is in place; neither changes any state.
+- The next `update` sees the revision change and refreshes only the chunks the rectangle touches and their
+  ancestors, then rewrites the node records and marks the batch, which uploads its records again, up to 170 KiB
+  at 4097 texels. A revision change without `mark_dirty` rebuilds the whole bounds tree, as does a new pixel
+  array. The quadtree keeps its topology, so no view loses its history.
+- **Region uploads.** The renderer copies only the marked texels of the height map into its image, so a
+  49 × 49 stamp stages 4,802 B where the whole map is 8 MiB at 2049² and 32 MiB at 4097². Two marks between
+  frames upload the union of their rectangles. A mark followed by `assets.mark_texture_dirty`, a replacement or
+  a pixel release uploads the map whole; see [editing a region](textures.md#editing-a-region) for the
+  conditions and the log each texture keeps.
+- **Control map.** Terrain never reads the control map, so the application marks its edits itself, in control-map
+  texels: `assets.mark_texture_region_dirty(control_map, 0, region)!`. The control map keeps its generated mips,
+  and the renderer filters the whole level plane on the CPU for each region upload before it copies the touched
+  boxes. [Region uploads](#region-uploads) gives the time at 1024² texels.
 - On a [set tile](#tile-sets), `mark_dirty` reaches neither the neighbours' duplicated edge texels nor their border
   rings. After it, call `TerrainSet.propagate_edit`:
 
@@ -466,8 +478,8 @@ setup](#physics-and-navigation-setup).
 
   - It copies the rectangle's edge rows and columns, corners included, into the duplicated texels of each
     neighbour, edges and diagonals. A corner texel reaches all three tiles that share it.
-  - A neighbour whose texels change gets `mark_texture_dirty` and a `mark_dirty` rectangle of the copied strip, so
-    its bounds refresh at the next `update`. A neighbour that already holds the values keeps its revision.
+  - A neighbour whose texels change gets a `mark_dirty` rectangle of the copied strip, so its bounds refresh at
+    the next `update` and only the strip uploads. A neighbour that already holds the values keeps its revision.
   - It then refreshes the [border rings](#tile-sets) that read the changed texels: those of the tile's own
     neighbours, and those beside each neighbour it changed.
   - Only edge strips are copied, so retained state does not grow, and each tile keeps its own revision and
@@ -481,7 +493,6 @@ setup](#physics-and-navigation-setup).
   - A live collider is not re-cooked: mark the windows (or call `mark_changed` on the body) of the edited tile
     and of each tile in the mask, and of no other tile. The copied strip is the neighbour's edge row or column
     across the side, over the same texels as the rectangle along it.
-- The renderer re-uploads the whole height map on each revision (8 MiB at 2049², 32 MiB at 4097²).
 - A live physics body is not re-cooked on a texture revision. `mark_changed` rebuilds the whole field on the
   next `PhysicsWorld.update`; `mark_height_field_windows_changed` rebuilds only the windows whose samples meet the
   rectangle, and a rectangle on a window edge marks both windows. Mark once when a stroke ends: collision is stale
@@ -490,9 +501,17 @@ setup](#physics-and-navigation-setup).
   returns the fault, keeps the old bounds and hides the terrain (batch count 0, quadtree disabled) until a
   conforming revision, which rebuilds everything and installs the quadtree again; each view then selects
   without hysteresis for one frame.
-- `TerrainRuntime.last_refresh` keeps the last accepted refresh until the next one: the height-map revisions
-  before and after it and the rectangle it covered, the whole map unless it took a `mark_dirty` rectangle. A
-  rejected revision leaves it. Consumers that follow the ground, such as [vegetation](vegetation.md), read it.
+- **Refresh log.** `TerrainRuntime.refreshes` keeps the last `REFRESH_HISTORY` (4) in-place refreshes, each with
+  the height-map revision it produced and the rectangle it covered, 88 B per terrain.
+  `terrain::refreshed_since(&scene, node, revision)` returns the union of the rectangles of the refreshes after
+  a revision: an empty rectangle (`columns` 0) when none followed, and `NOT_FOUND` when the log does not reach
+  back to it.
+  - When the log is full, the two oldest marks merge into their bounding box, so a reader older than the merge
+    still gets a rectangle that covers what changed.
+  - A whole-map refresh empties the log: a new pixel array, a replacement, a revision with no `mark_dirty`, or
+    a map that was rejected in between. Every reader older than it gets `NOT_FOUND`.
+  - A rejected revision leaves the log. Consumers that follow the ground, such as [vegetation](vegetation.md),
+    read it.
 
 ## Physics and navigation setup
 
@@ -606,9 +625,9 @@ fn GridHeightSample? tile_height(void* context, float world_x, float world_z) {
 **Height edit.**
 
 1. Write the texels in place.
-2. `assets.mark_texture_dirty(height_map)`.
-3. `terrain::mark_dirty(&scene, node, rect)`.
-4. Physics, once the stroke ends: with windows,
+2. `terrain::mark_dirty(&scene, &assets, node, rect)!`, which marks the height map's region and the terrain's
+   pending rectangle.
+3. Physics, once the stroke ends: with windows,
 
    ```c3
    SampleRect samples = { .x = rect.x, .z = rect.z, .columns = rect.columns, .rows = rect.rows };
@@ -616,11 +635,11 @@ fn GridHeightSample? tile_height(void* context, float world_x, float world_z) {
    ```
 
    or, with one collider, `scene.get(node, PhysicsBody).mark_changed()`.
-5. Navigation: `grid.mark_dirty(cells, revision)`, where `revision` is a `ulong` the application advances with every
+4. Navigation: `grid.mark_dirty(cells, revision)`, where `revision` is a `ulong` the application advances with every
    edit. `cells` is a `GridRange` of every grid cell the change reaches. When the grid lattice is the texel lattice
    shifted by `(first_x, first_z)` texels, it is `nav::grid_vertex_cells` of the rectangle's vertex range minus that
    shift. Otherwise it is `nav::grid_world_cells` of the world bounds of the rectangle grown by one texel.
-6. On a tile set, repeat 4 and 5 for the neighbour strips that `propagate_edit` reports. Navigation needs one world
+5. On a tile set, repeat 3 and 4 for the neighbour strips that `propagate_edit` reports. Navigation needs one world
    rectangle that covers both tiles.
 
 After `terrain::update`, compare `height_range` with the range of the navigation source (see Retaking the range).
@@ -731,8 +750,8 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   on three planes.
 - Under `TOP`, layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
   textures stretch along the fall line. Use [`TRIPLANAR`](#slope-projection) for them.
-- Edits re-upload the whole height map; with a collider, the end of a stroke re-cooks the whole field, or only the
-  windows it touched when the collider is tiled into [windows](#physics-collider).
+- Edits upload only the marked texels of the height map; with a collider, the end of a stroke re-cooks the whole
+  field, or only the windows it touched when the collider is tiled into [windows](#physics-collider).
 - Updates run on the calling thread and change scene structure, so they never run inside a job range;
   `sample_height` and `sample_normal` may.
 
@@ -795,11 +814,30 @@ the GPU inside the instance cull, once per view and batch.
 
 On the CPU an ordinary `update` is a revision compare. After an edit it refreshes the touched bounds and rewrites
 the node records, which takes microseconds; the full bounds build, milliseconds at 4097 texels, runs at load. The
-edit an application pays for is the whole-texture re-upload and, with a collider, the physics re-cook at the end
+edit an application pays for is the upload of the marked texels and, with a collider, the physics re-cook at the end
 of a stroke: the windows it touched, or the whole field when the collider is not tiled.
 
-`--benchmark` prints `update_us`, the instances drawn and the upload bytes per segment; with `--gpu-timings` it
-adds the GPU pass times.
+`--benchmark` prints `update_us`, the instances drawn and the upload bytes per segment, and the
+`control_region_upload_ms`, `height_region_upload_ms` and `control_filter_ms` lines of
+[region uploads](#region-uploads); with `--gpu-timings` it adds the GPU pass times.
+
+### Region uploads
+
+The benchmark's edit stroke stamps a 49 × 49 bump every 30 frames. WSL on the i9-14900K, `--opt O3`, a 160 × 90
+viewport (these lines do not depend on it), 300 frames per segment, three runs each:
+
+| Line | 2049 | 4097 |
+| --- | ---: | ---: |
+| `edit_upload_bytes` median (a stamp frame) | 48,450 | 179,522 |
+| of which the height-map region | 4,802 | 4,802 |
+| of which the node records | 43,648 | 174,720 |
+| `control_filter_ms` | 1.84 to 1.87 | 1.88 to 1.90 |
+
+`control_filter_ms` is the CPU time of a control-map region upload at the example's 1024² `RGBA8_UNORM` map with
+generated mips, less the same measurement on a height-map region: `control_region_upload_ms` less
+`height_region_upload_ms`, each the median of five marks and uploads. It is the filter over the whole level plane
+plus the staging of the touched boxes, and it does not depend on the height-map size. A stroke that also paints
+the control map pays it on each frame it marks one.
 
 ### Collision re-cook
 

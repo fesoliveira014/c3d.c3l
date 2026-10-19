@@ -68,7 +68,7 @@ renderer.render_view(&scene, camera, view)!;
   a translation and a rotation about Y only (a `@require`). It checks the desc, scatters every cell and adds
   the cell nodes, all or nothing: a fault leaves the node, the scene, the store and the allocator as they were.
   It runs once, at load; its time is a load time.
-- `update` runs every frame after `terrain::update`. The terrain's last refresh record is what tells foliage
+- `update` runs every frame after `terrain::update`. The terrain's refresh log is what tells foliage
   which cells an edit touched, and `terrain::update` writes it; called before it, a layer re-places one frame
   late. `update` visits every layer; a fault from one layer does not stop the others, and the first fault
   returns after the loop.
@@ -178,20 +178,31 @@ revision and, for a `SMOOTH` layer, the ground's border ring with those the cell
 | Observed | Work |
 | --- | --- |
 | Ground dead or without `TerrainRuntime`; density map dead | `INVALID_ID`; nothing changes |
-| A pose or the density revision changed | Whole re-scatter: count, node budget, staged arrays, commit |
-| The ground's last refresh follows the placed revision | Re-place the cells meeting its rectangle, widened by two texels |
-| Any other height-map gap (two refreshes since the last update) | Re-place every cell |
+| A pose changed, or a density change that is not a set of region marks | Whole re-scatter: count, node budget, staged arrays, commit |
+| The density map changed by region marks since the cells were placed | Re-scatter the cells meeting the marked region, widened by two density texels |
+| The ground refreshed in place after the placed revision | Re-place the cells meeting the union of those refreshes, widened by two texels |
+| The refresh log does not reach back to the placed revision | Re-place every cell |
 | A `SMOOTH` layer's ground ring changed: a neighbour's edit, or a link or unlink | Re-place the cells meeting the one-texel strip along each border linked when placed or now, widened by two texels |
 
-A ring change and a height-map change in one update re-place the union of their cells once. A `FACE` layer never
-reads the ring, so a ring change re-places nothing for it.
+Edits stay local. A stroke that edits both maps, and a ring change, re-place the union of their cells once. Two
+ground edits between two `foliage::update` calls re-place the cells that meet the union of their rectangles,
+not the whole layer. A `FACE` layer never reads the ring, so a ring change re-places nothing for it.
 
-`TerrainRuntime.last_refresh` keeps the revisions around the terrain's last accepted refresh and its rectangle
-(the whole map unless the refresh took a `mark_dirty` rectangle). A re-place writes arrays in place, never
-allocates, keeps every node and capacity and marks the batch. A re-scatter may change counts: cells that
-empty lose their node, cells that fill gain one, a cell whose count grew gets new arrays in its existing node,
-and capacity never shrinks while a cell is non-empty. It is all or nothing: the node budget is checked before
-any node is created, and every array and node is staged before any cell changes.
+- **Ground edits.** `terrain::refreshed_since(placed revision)` names the texels refreshed since the cells were
+  placed. The terrain keeps its last four refreshes, merged when more arrive, and a whole-map refresh (a new
+  pixel array, a replacement, a revision with no `mark_dirty`) empties them, which re-places every cell.
+- **Density edits.** Mark the texels written with `assets.mark_texture_region_dirty(density_map, 0, region)`,
+  in density-map texels. A layer reads `regions_since(placed revision)` on the map. A region maps through the
+  map's span of the ground to a range of cells, which count, stage and commit again; the other cells keep their
+  nodes and arrays. `assets.mark_texture_dirty`, a replacement or a log that no longer reaches back re-scatter the
+  whole layer. A density map with generated mips filters its whole level plane on the CPU for each upload; the
+  [terrain cost](terrain.md#region-uploads) gives the time for a 1024² map.
+
+A re-place writes arrays in place, never allocates, keeps every node and capacity and marks the batch. A
+re-scatter may change counts: cells that empty lose their node, cells that fill gain one, a cell whose count grew
+gets new arrays in its existing node, and capacity never shrinks while a cell is non-empty. It is all or nothing:
+the node budget is checked before any node is created, and every array and node is staged before any cell changes.
+`TerrainRuntime.refreshes` is described under [terrain edits](terrain.md#edits).
 
 A re-scatter that faults (`CAPACITY_EXCEEDED` past the node budget, a density map that turned unsupported)
 keeps the layer's cells as they were and remembers the attempt: later updates return the same fault without
@@ -333,8 +344,9 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
 - No level of detail: every layer draws one level and relies on its fade.
 - The desc is fixed after `add_foliage`; so are the cells' layer bits, taken from the layer node at creation.
   Change either by removing `Foliage` and adding the layer again.
-- A density revision, a layer move or a ground move re-scatters the whole layer; a moving layer node also
-  re-uploads every cell's records, which are world-space.
+- A whole density mark, a layer move or a ground move re-scatters the whole layer; a moving layer node also
+  re-uploads every cell's records, which are world-space. Region marks on the density map re-scatter only
+  the cells they reach.
 - An edit that changes which candidates of a cell pass, at an equal count, gives that cell one rendering of
   wrong motion vectors: previous matrices pair by record index.
 - Placement runs on the calling thread and changes scene structure, so it never runs inside a job range.
