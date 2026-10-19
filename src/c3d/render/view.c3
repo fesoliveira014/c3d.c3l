@@ -341,12 +341,18 @@ fn void? record_raster_view(
         };
         if (temporal) check_vertex_sources(renderer.assets, candidates)!;
 
+        SelectionCamera selection = selection_camera_of(camera, matrices.position, viewport.y);
+        if (temporal && history_valid) {
+            selection.previous = record.history.previous_selection_camera(renderer.frame_origin);
+        }
+
         InstanceEffectsView effects_view = {
             .scene       = scene,
             .history     = temporal ? &record.history : null,
             .fade_origin = matrices.position,
             .lod = lod,
             .quadtrees = quadtrees,
+            .selection = selection,
         };
         effects_view.blocks.init(tmem);
 
@@ -844,6 +850,7 @@ fn void? record_raster_view(
                 shadow_samples: math::max(record.desc.ray_tracing.shadow_samples, 1u),
                 ao_bent_normals: ambient_occlusion && record.desc.ambient_occlusion.bent_normals,
                 view_textures: view_texture_indices(renderer, record),
+                selection: &selection,
             );
             ((FrameRoot*)frame_span.bytes.ptr).light_spatial = light_spatial;
             if (record.desc.lights == LightSelection.CLUSTERED) {
@@ -1266,6 +1273,7 @@ fn void? record_raster_view(
                     time:         renderer.info.time,
                     origin:       renderer.frame_origin,
                     pre_exposure: pre_exposure,
+                    selection_camera: selection.current,
                 );
             }
         };
@@ -1695,6 +1703,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param shadow_samples : "Rays a pixel casts toward a light with a source extent."
  @param ao_bent_normals : "The AO view holds the world bent normal in its green and blue channels."
  @param view_textures : "Indices of the view's provided textures; zero reads as absent."
+ @param [in] selection : "Camera that selected the pass's quadtree levels; null selects with this root's own camera."
  @require shadow_samples >= 1 && shadow_samples <= MAX_SHADOW_SAMPLES
 *>
 fn void write_frame_root(
@@ -1740,7 +1749,14 @@ fn void write_frame_root(
     uint shadow_samples = 1,
     bool ao_bent_normals = false,
     ViewTextureIndices view_textures = {},
+    SelectionCamera* selection = null,
 ) {
+    SelectionCamera own;
+    if (!selection) {
+        own = selection_camera_of(camera, matrices.position, viewport.y);
+        selection = &own;
+    }
+
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
         .proj            = bitcast(matrices.proj, Mat4f),
@@ -1791,6 +1807,8 @@ fn void write_frame_root(
         .pre_exposure_ratio       = pre_exposure_ratio,
         .cloud_shadow             = cloud_shadow,
         .view_textures            = view_textures,
+        .selection_camera          = selection.current,
+        .previous_selection_camera = selection.previous,
     };
 }
 
@@ -1829,7 +1847,7 @@ fn gpu::GpuAddress? upload_decals(Renderer* renderer, DecalGpu[] decals) @privat
  @param previous_pose : "PreviousPoseGpu of a deformed, vertex-edited or instanced velocity draw; zero otherwise."
  @param skin_stride : "Joints per crowd instance; zero for a shared palette."
  @param instance_indices : "Visible list of a culled or sorted batch range; zero otherwise."
- @param instance_effects : "InstanceEffectsGpu of a batch with sway or fade; zero otherwise."
+ @param instance_effects : "InstanceEffectsGpu of a batch with sway, fade or a quadtree; zero otherwise."
 *>
 fn void write_draw_root(
     DrawRoot* root,
@@ -2011,7 +2029,7 @@ fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @priv
  @param instance_data : "First instance record; zero for a mesh."
  @param skin_stride : "Joints per crowd instance; zero for a shared palette."
  @param instance_indices : "Visible list of a culled batch range; zero otherwise."
- @param instance_effects : "InstanceEffectsGpu of a batch with sway or fade; zero otherwise."
+ @param instance_effects : "InstanceEffectsGpu of a batch with sway, fade or a quadtree; zero otherwise."
 *>
 fn void write_depth_draw_root(
     DrawRoot* root,

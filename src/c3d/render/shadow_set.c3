@@ -181,6 +181,7 @@ fn void? resolve_shadow_set(
                 .fade_origin = shadow_view.matrices.position,
                 .lod         = effects_view.lod,
                 .quadtrees   = effects_view.quadtrees,
+                .selection   = effects_view.selection,
             };
             shadow_effects.blocks.init(tmem);
             set_effects = &shadow_effects;

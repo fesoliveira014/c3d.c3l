@@ -265,6 +265,7 @@ fn void? record_shadow_layer(
     CullRange[] ranges,
     uint layer,
     float bias,
+    SelectionCamera* selection,
     ShadowDraw[] translucent = {},
     CullRange[] translucent_ranges = {},
 ) @private {
@@ -282,6 +283,7 @@ fn void? record_shadow_layer(
         frame_index: renderer.frame_index,
         sky_fog: (gpu::GpuAddress)0,
         origin: renderer.frame_origin,
+        selection: selection,
     );
     gpu::DepthTargetDesc depth = {
         .view = renderer.shadow_atlas.layers[layer].attachment,
@@ -606,6 +608,7 @@ fn void? record_shadows(
                     ranges: layer_ranges[layer][:opaque_count],
                     layer: layer,
                     bias: light.shadow.bias,
+                    selection: &effects_view.selection,
                     translucent: layer_draws[layer][opaque_count..],
                     translucent_ranges: layer_ranges[layer][opaque_count..],
                 )!;

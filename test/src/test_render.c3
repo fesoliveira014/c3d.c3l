@@ -386,6 +386,9 @@ fn void test_frame_root_packs_camera() @test {
     assert(root.camera_params == (Vec4){ 0.1f, 100, 1600, 900 });
     assert(root.jitter_time.z == 12.5f && root.jitter_time.w == 0.25f);
     assert(root.frame_index == 42);
+    float pixel_scale = 900.0f / (2 * math::tan(camera.fov_y * 0.5f));
+    assert(root.selection_camera == (Vec4){ 0, 0, 5, pixel_scale });
+    assert(root.previous_selection_camera == root.selection_camera);
     assert((ulong)root.lights == 0 && root.light_count == 0);
     assert((ulong)root.shadows == 0 && root.shadow_count == 0);
 }

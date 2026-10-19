@@ -162,6 +162,7 @@ struct ViewHistory {
     ulong        serial;
     Mat4         view_proj;
     Vec3         origin;
+    Vec4         selection_camera; // the camera that selected the rendering's quadtree levels, relative to origin
     double       time;
     Mat4[]       models;
     Entity[]     owners;
@@ -234,6 +235,7 @@ fn bool ViewHistory.has_previous_representation(&self, Scene* scene, MeshCandida
  @param time : "FrameInfo.time of this rendering."
  @param origin : "Absolute origin of the supplied view projection."
  @param pre_exposure : "Radiance scale the rendering's stored images carry."
+ @param selection_camera : "Position relative to origin and pixel scale of the camera that selected quadtree levels."
 *>
 fn void ViewHistory.commit(
     &self,
@@ -245,6 +247,7 @@ fn void ViewHistory.commit(
     double time,
     Vec3 origin = {},
     float pre_exposure = 1,
+    Vec4 selection_camera = {},
 ) {
     if (self.models.len != scene.nodes.len) {
         uint sample_index = self.sample_index;
@@ -297,9 +300,25 @@ fn void ViewHistory.commit(
     }
     self.view_proj = view_proj;
     self.origin = origin;
+    self.selection_camera = selection_camera;
     self.time = time;
     self.pending_pre_exposure = pre_exposure;
     self.pending = true;
+}
+
+<*
+ Camera that selected the last published rendering's quadtree levels, relative to the given origin.
+ @param origin : "Absolute origin of the coordinates the result is for."
+ @require self.valid
+*>
+fn Vec4 ViewHistory.previous_selection_camera(&self, Vec3 origin) {
+    Vec3 shift = self.origin - origin;
+    return {
+        self.selection_camera.x + shift.x,
+        self.selection_camera.y + shift.y,
+        self.selection_camera.z + shift.z,
+        self.selection_camera.w,
+    };
 }
 
 <*
