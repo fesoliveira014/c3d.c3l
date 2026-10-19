@@ -315,7 +315,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer SceneTraceRo
     uint instance_count;
     uint top_node_count;
     uint tlas_index;
-    uint _pad1;
+    uint proxy_count;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer TracePoseRoot {

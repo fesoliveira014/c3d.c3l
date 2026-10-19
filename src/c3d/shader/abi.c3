@@ -370,7 +370,7 @@ struct SceneTraceRoot {
     uint       instance_count;
     uint       top_node_count;
     uint       tlas_index;
-    uint       _pad1;
+    uint       proxy_count;
 }
 $assert SceneTraceRoot::size == 32;
 $assert $reflect(SceneTraceRoot.top_nodes).offset == 0;
@@ -378,7 +378,7 @@ $assert $reflect(SceneTraceRoot.instances).offset == 8;
 $assert $reflect(SceneTraceRoot.instance_count).offset == 16;
 $assert $reflect(SceneTraceRoot.top_node_count).offset == 20;
 $assert $reflect(SceneTraceRoot.tlas_index).offset == 24;
-$assert $reflect(SceneTraceRoot._pad1).offset == 28;
+$assert $reflect(SceneTraceRoot.proxy_count).offset == 28;
 
 struct TracePoseRoot {
     GpuAddress source;

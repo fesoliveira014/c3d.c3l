@@ -107,7 +107,7 @@ root SceneTraceRoot {
     uint       instance_count;
     uint       top_node_count;
     uint       tlas_index;
-    uint       _pad1;
+    uint       proxy_count; // trace proxies among the instances; zero skips the proxy query
 }
 
 const uint TRACE_POSE_GROUP_SIZE = 64;

@@ -307,6 +307,30 @@ fn void test_custom_trace_pose_makes_a_custom_stage_traceable() @test {
     assert(@catch(fixture.assets.replace_shader(plain, &without_vertex)) == c3d::INVALID_ARGUMENT);
 }
 
+fn void test_proxy_count_follows_the_trace_only_meshes() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    scene.add_mesh(fixture.box, fixture.opaque, name: "drawn")!!;
+    scene.update_world();
+
+    @pool() {
+        render::TraceInstance[] records = collect(&fixture);
+        assert(records.len == 1 && render::count_trace_proxies(records) == 0);
+        assert(records[0].mask == (shader::TRACE_MASK_ALL | shader::TRACE_MASK_SHADOW_CASTER));
+    };
+
+    Node* helper = scene.add_mesh(fixture.box, fixture.opaque, name: "helper")!!;
+    scene.get(helper, Mesh).trace_only = true;
+    scene.update_world();
+
+    @pool() {
+        render::TraceInstance[] records = collect(&fixture);
+        assert(records.len == 2 && render::count_trace_proxies(records) == 1);
+        assert(records[1].mask == (shader::TRACE_MASK_PROXY | shader::TRACE_MASK_PROXY_SHADOW_CASTER));
+    };
+}
+
 fn void test_trace_only_mesh_traces_and_never_draws() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);

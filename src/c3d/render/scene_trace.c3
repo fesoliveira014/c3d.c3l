@@ -124,6 +124,7 @@ struct SceneTrace @private {
     TraceInstance[]    baseline;
     uint               baseline_count;
     uint               top_node_count;
+    uint               proxy_count;    // as last written to the root
     gpu::GpuAllocation allocation;
     gpu::GpuAddress    root;
     gpu::GpuAddress    top_nodes;
@@ -1225,6 +1226,14 @@ fn void? upload_trace_geometry(
     renderer.stats.upload_bytes += (uint)total_bytes;
 }
 
+fn uint count_trace_proxies(TraceInstance[] records) @private {
+    uint count;
+    foreach (&record : records) {
+        if ((record.flags & shader::TRACE_INSTANCE_PROXY) != 0) count++;
+    }
+    return count;
+}
+
 fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] records, uint tlas_index) @local {
     SceneTrace* trace = &renderer.scene_trace;
     Bvh top;
@@ -1248,6 +1257,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
         .instance_count = (uint)records.len,
         .top_node_count = (uint)top.nodes.len,
         .tlas_index     = tlas_index,
+        .proxy_count    = count_trace_proxies(records),
     };
     mem::copy(staging.bytes.ptr + SceneTraceRoot::size, top.nodes.ptr, (sz)node_bytes);
     TraceInstanceGpu* rows = (TraceInstanceGpu*)(staging.bytes.ptr + SceneTraceRoot::size + node_bytes);
@@ -1276,6 +1286,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     trace.baseline[:records.len] = records[..];
     trace.baseline_count = (uint)records.len;
     trace.top_node_count = (uint)top.nodes.len;
+    trace.proxy_count = count_trace_proxies(records);
     trace.tlas_index = tlas_index;
     trace.scene = scene.identity;
     trace.origin = renderer.frame_origin;
@@ -1292,6 +1303,7 @@ fn void? write_trace_root(Renderer* renderer, uint tlas_index) @local {
         .instance_count = trace.baseline_count,
         .top_node_count = trace.top_node_count,
         .tlas_index     = tlas_index,
+        .proxy_count    = trace.proxy_count,
     };
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, trace.allocation)!;
     renderer.pending_copies.push({

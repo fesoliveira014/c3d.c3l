@@ -60,7 +60,7 @@ bool trace_scene_range(
 }
 
 // Every other instance counts from the ray's start; the proxies a mask reaches count from proxy_t_min, in a second
-// query that a shadow ray skips once the first has hit.
+// query that a scene without proxies, or a shadow ray that has already hit, skips.
 bool trace_scene_query(
     SceneTraceRoot scene,
     vec3 origin,
@@ -72,6 +72,7 @@ bool trace_scene_query(
     out SceneHit hit
 ) {
     bool found = trace_scene_range(scene, origin, direction, 0.0, t_max, instance_mask, ray_flags, hit);
+    if (scene.proxy_count == 0u) return found;
     if (found && (ray_flags & gl_RayFlagsTerminateOnFirstHitEXT) != 0u) return true;
 
     float proxy_far = found ? hit.t : t_max;
