@@ -40,12 +40,12 @@ fn TerrainCollisionInput? collision_input(Scene* scene, Entity node) {
 <*
  World height range of a prepared terrain, current after update.
  @param [&in] scene : "World matrices current."
- @return? c3d::INVALID_ID
+ @return? c3d::INVALID_ID, NOT_PREPARED
  @require !scene.world.is_alive(node) || upright_rigid(scene.node(node).world) : "Translation and rotation about Y."
 *>
 fn TerrainHeightRange? height_range(Scene* scene, Entity node) {
     if (!scene.world.is_alive(node) || !scene.world.has(node, Terrain)) return c3d::INVALID_ID~;
-    if (!scene.world.has(node, TerrainRuntime)) return c3d::INVALID_ID~;
+    if (!scene.world.has(node, TerrainRuntime)) return NOT_PREPARED~;
 
     TerrainRuntime* runtime = scene.world.get(node, TerrainRuntime);
     uint root = runtime.level_offset[runtime.level_count - 1];

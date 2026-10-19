@@ -330,8 +330,8 @@ TerrainHeightRange range = terrain::height_range(&scene, ground.id)!;
   normal there.
 - `height_range` returns the lowest and highest height of a prepared terrain in world metres, the node's world Y
   included, from the texel bounds of the quadtree's root. It reflects the last accepted refresh, so it is current
-  after `update`. It faults `c3d::INVALID_ID` for a dead node, a node without `Terrain` and a pending terrain. It takes
-  the same node transforms as `height_view`.
+  after `update`. It faults `c3d::INVALID_ID` for a dead node and a node without `Terrain`, and `NOT_PREPARED` for a
+  pending terrain. It takes the same node transforms as `height_view`.
 - The view borrows the store's texels. In-place edits keep it valid and it reads the new heights; replacing,
   releasing or removing the height map, or removing the terrain, invalidates it. It keeps the node transform
   and the ring's edge mask of the moment it was taken, and reads the ring in place: take a new view after a
@@ -651,7 +651,8 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `sample_height`, `sample_normal`, `sample_smooth_normal` | `NOT_FOUND` | The point is outside the extent |
 | `collision_input` | `c3d::INVALID_ID` | A dead node or a node without `Terrain` |
 | `collision_input` | `c3d::UNSUPPORTED` | A world axis length of the node differs from 1 by more than 1e-4 |
-| `height_range` | `c3d::INVALID_ID` | A dead node, a node without `Terrain` or a pending terrain |
+| `height_range` | `c3d::INVALID_ID` | A dead node or a node without `Terrain` |
+| `height_range` | `NOT_PREPARED` | A pending terrain |
 
 ## Limits
 

@@ -516,7 +516,7 @@ fn void test_setup_values_refuse_unusable_nodes() @test {
     )!!;
     assert(@ok(terrain::collision_input(&fixture.scene, node.id)));
     assert(@ok(terrain::height_view(&fixture.scene, &fixture.assets, node.id)));
-    assert(@catch(terrain::height_range(&fixture.scene, node.id)) == c3d::INVALID_ID);
+    assert(@catch(terrain::height_range(&fixture.scene, node.id)) == terrain::NOT_PREPARED);
 
     node.local.scale = { SCALED_NODE, SCALED_NODE, SCALED_NODE };
     fixture.scene.update_world();
