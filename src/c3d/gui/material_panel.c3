@@ -166,7 +166,8 @@ fn void show_custom_params(AssetStore* assets, CustomParams* params) @local {
     uint present;
     foreach (slot : params.slots) {
         bool asset_slot = slot.texture.kind == TextureRefKind.ASSET && assets.textures.is_live(slot.texture.asset);
-        if (asset_slot || slot.texture.kind == TextureRefKind.RENDER_TARGET) present++;
+        TextureRefKind kind = slot.texture.kind;
+        if (asset_slot || kind == TextureRefKind.RENDER_TARGET || kind == TextureRefKind.VIEW) present++;
     }
     imgui::text("Texture slots: %u of %u", present, material::MAX_CUSTOM_TEXTURE_SLOTS);
     imgui::text("Payload: %u bytes", (uint)params.param_block.len);

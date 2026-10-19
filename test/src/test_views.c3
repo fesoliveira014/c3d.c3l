@@ -1,6 +1,8 @@
 module c3d::test::views;
 
 import c3d;
+import c3d::material;
+import c3d::pool;
 import c3d::render @public;
 import c3d::render::post;
 import gpu;
@@ -320,4 +322,68 @@ fn void test_view_desc_gates_path_tracing() @test {
     desc = render::default_view_desc();
     desc.path_trace = {};
     render::validate_view_desc(renderer, &desc)!!;
+}
+
+fn void test_view_texture_binding_contract() @test {
+    render::Renderer renderer;
+    renderer.views = pool::create_pool{render::ViewRecord, ViewId}(mem, 2);
+    defer pool::destroy_pool{render::ViewRecord, ViewId}(&renderer.views);
+    renderer.targets = pool::create_pool{render::TargetRecord, RenderTargetId}(mem, 3);
+    defer pool::destroy_pool{render::TargetRecord, RenderTargetId}(&renderer.targets);
+
+    RenderTargetId mirror = renderer.targets.add({})!!;
+    RenderTargetId output = renderer.targets.add({})!!;
+    ViewDesc desc = render::default_view_desc();
+    desc.output = ViewOutput.TEXTURE;
+    desc.target = output;
+    ViewId view = renderer.views.add({ .live = true, .desc = desc })!!;
+    uint last_slot = material::MAX_VIEW_TEXTURES - 1;
+
+    renderer.set_view_texture(view, last_slot, mirror)!!;
+    assert(c3d::same_id(renderer.views.get(view).view_textures[last_slot], mirror));
+    assert(c3d::same_id(renderer.views.get(view).view_textures[0], (RenderTargetId){}));
+
+    renderer.set_view_texture(view, last_slot, (RenderTargetId){})!!;
+    assert(c3d::same_id(renderer.views.get(view).view_textures[last_slot], (RenderTargetId){}));
+
+    if (catch excuse = renderer.set_view_texture(view, 0, output)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a view accepted its own output as a texture");
+    }
+
+    RenderTargetId removed = renderer.targets.add({})!!;
+    renderer.targets.remove(removed);
+    if (catch excuse = renderer.set_view_texture(view, 0, removed)) {
+        assert(excuse == c3d::INVALID_ID);
+    } else {
+        assert(false, "a view accepted a destroyed target");
+    }
+
+    ViewId dead = view;
+    renderer.views.remove(view);
+    if (catch excuse = renderer.set_view_texture(dead, 0, mirror)) {
+        assert(excuse == c3d::INVALID_ID);
+    } else {
+        assert(false, "a dead view accepted a texture");
+    }
+}
+
+fn void test_view_textures_read_absent_once_the_target_is_destroyed() @test {
+    render::Renderer renderer;
+    renderer.targets = pool::create_pool{render::TargetRecord, RenderTargetId}(mem, 2);
+    defer pool::destroy_pool{render::TargetRecord, RenderTargetId}(&renderer.targets);
+
+    gpu::TextureIndex mirror_index = (gpu::TextureIndex)7;
+    RenderTargetId mirror = renderer.targets.add({ .target = { .view = { .index = mirror_index } } })!!;
+    render::ViewRecord record;
+    record.view_textures[1] = mirror;
+
+    render::ViewTextureIndices indices = render::view_texture_indices(&renderer, &record);
+    assert(indices[1] == mirror_index);
+    assert(indices[0] == (gpu::TextureIndex)0);
+
+    renderer.targets.remove(mirror);
+    indices = render::view_texture_indices(&renderer, &record);
+    assert(indices[1] == (gpu::TextureIndex)0);
 }

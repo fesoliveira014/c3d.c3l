@@ -964,4 +964,6 @@ working image; the view's output mode decides whether display processing tone
 maps it (see [views](views.md) and
 [display processing](post.md)). A texture slot may reference a render target with
 `{ .kind = RENDER_TARGET, .target = id }`; a dead target resolves to white, and a
-resized target repacks the material on its own.
+resized target repacks the material on its own. A custom material slot may instead take a
+texture the drawing view supplies, `{ .kind = VIEW, .view_slot = n }` (see
+[view textures](views.md#view-textures)).
