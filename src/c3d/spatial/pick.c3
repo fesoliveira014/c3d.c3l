@@ -104,7 +104,8 @@ fn PickHit[] pick(
     usz count;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && (options.layers & node.layers) != 0 && !animated_lod_owns_node(scene, node)) {
+        bool pickable = node.visible_effective && !mesh.trace_only && (options.layers & node.layers) != 0;
+        if (pickable && !animated_lod_owns_node(scene, node)) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (mesh_is_live(assets, mesh, skin)) {
                 SceneEntry entry = mesh_entry(

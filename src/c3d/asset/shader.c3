@@ -41,6 +41,15 @@ struct WeightedFragment {
 }
 
 <*
+ Compute sources that pose a custom material's trace geometry; empty forms keep it untraced.
+*>
+struct CustomTracePose {
+    char[] single;     // poses a Mesh's trace geometry
+    char[] instanced;  // poses one instance of an InstancedMesh
+    bool   reads_time; // re-pose every frame; otherwise only when the pose inputs change
+}
+
+<*
  User SPIR-V stages, a fragment stage required, and their parameter payload size.
  An empty gbuffer stage routes the material forward on deferred views.
 *>
@@ -50,6 +59,7 @@ struct ShaderDesc {
     TracedFragment   traced_fragment;
     WeightedFragment weighted_fragment;
     CustomVertex     vertex;
+    CustomTracePose  trace_pose;
     usz              param_block_size;
     SceneReads       scene_reads;
 }
@@ -157,6 +167,8 @@ fn void? check_shader_desc(ShaderDesc* desc) @private {
     if (vertex.instanced_velocity.len && (!vertex.instanced_shaded.len || !vertex.velocity.len)) {
         return c3d::INVALID_ARGUMENT~;
     }
+    if (desc.trace_pose.single.len && !vertex.shaded.len) return c3d::INVALID_ARGUMENT~;
+    if (desc.trace_pose.instanced.len && !vertex.instanced_shaded.len) return c3d::INVALID_ARGUMENT~;
     if (desc.gbuffer.len && desc.scene_reads != (SceneReads){}) return c3d::INVALID_ARGUMENT~;
     return;
 }
@@ -196,6 +208,12 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) {
             .instanced_velocity = desc.vertex.instanced_velocity.len
               ? copy_slice(allocator, desc.vertex.instanced_velocity) : (char[]){},
         },
+        .trace_pose = {
+            .single = desc.trace_pose.single.len ? copy_slice(allocator, desc.trace_pose.single) : (char[]){},
+            .instanced = desc.trace_pose.instanced.len
+              ? copy_slice(allocator, desc.trace_pose.instanced) : (char[]){},
+            .reads_time = desc.trace_pose.reads_time,
+        },
         .param_block_size = desc.param_block_size,
         .scene_reads = desc.scene_reads,
     };
@@ -219,5 +237,7 @@ fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) {
     alloc::free(allocator, desc.vertex.instanced_depth.ptr);
     alloc::free(allocator, desc.vertex.velocity.ptr);
     alloc::free(allocator, desc.vertex.instanced_velocity.ptr);
+    alloc::free(allocator, desc.trace_pose.single.ptr);
+    alloc::free(allocator, desc.trace_pose.instanced.ptr);
     *desc = {};
 }

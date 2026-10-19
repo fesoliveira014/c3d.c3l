@@ -116,7 +116,7 @@ StandardMaterialSample impostor_surface(out vec3 world, out vec3 local, out uvec
     if ((draw.flags & DRAW_SWAY) != 0u) {
         InstanceEffectsGpu effects = InstanceEffectsGpu(draw.instance_effects);
         vec3 bend = mat3(inverse_model) * sway_offset(effects.sway, instance_anchor(effects, instance.model), instance.normal_0.w, 1.0);
-        float height = clamp((reference_local.y - effects.anchor.y) * effects.anchor.w, 0.0, 1.0);
+        float height = sqrt(sway_height_weight(effects.anchor, reference_local.y));
         float derivative = 2.0 * height * effects.anchor.w;
         local_direction -= bend * (derivative * local_direction.y / (1.0 + derivative * bend.y));
     }

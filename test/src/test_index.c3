@@ -272,6 +272,29 @@ fn void test_refresh_advances_revision_only_on_change() @test {
     assert(index.revision == 3);
 }
 
+fn void test_trace_only_mesh_is_neither_picked_nor_indexed() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* helper = add_box(&fixture, { 0, 0, -3 });
+    fixture.scene.get(helper, Mesh).trace_only = true;
+    Node* behind = add_box(&fixture, { 0, 0, -6 });
+    fixture.scene.update_world();
+    SceneIndex index = spatial::create_scene_index(mem, 4);
+    defer spatial::destroy_scene_index(&index);
+
+    index.refresh(&fixture.assets, &fixture.scene)!!;
+    assert(index.count == 1);
+
+    @pool() {
+        Ray ray = { .origin = { 0, 0, 0 }, .direction = { 0, 0, -1 } };
+        PickHit[] indexed = index.pick(tmem, &fixture.assets, ray);
+        assert(indexed.len == 1 && indexed[0].node == behind);
+
+        PickHit[] scanned = spatial::pick(tmem, &fixture.assets, &fixture.scene, ray);
+        assert(scanned.len == 1 && scanned[0].node == behind);
+    };
+}
+
 fn void test_refresh_faults_past_capacity() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);

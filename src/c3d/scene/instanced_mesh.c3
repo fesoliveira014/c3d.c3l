@@ -115,6 +115,7 @@ struct InstancedMesh {
     bool              cast_shadow;
     bool              receive_shadow;
     bool              trace;
+    bool              trace_sway; // trace the built-in sway pose per instance; overflow traces at rest
     bool              has_bounds_override;
     Aabb              local_bounds;
     InstanceSway      sway;

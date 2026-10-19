@@ -12,6 +12,8 @@ import std::math;
 
 const char[] INSTANCES_V1_BINARY @local = $embed("../../../test/fixtures/instances_v1/instances-v1.bin");
 const char[] INSTANCES_V1_TEXT @local = $embed("../../../test/fixtures/instances_v1/instances-v1.jsonc");
+const char[] INSTANCES_V2_BINARY @local = $embed("../../../test/fixtures/instances_v2/instances-v2.bin");
+const char[] INSTANCES_V2_TEXT @local = $embed("../../../test/fixtures/instances_v2/instances-v2.jsonc");
 
 fn Node* child_named(Node* parent, String name) @private {
     for (Node* child = parent.first_child; child; child = child.next_sibling) {
@@ -477,7 +479,50 @@ fn void test_instanced_v1_fixtures_read_without_a_quadtree() @test {
 fn void test_instanced_codec_layout_fingerprints() @test {
     describe::register_core_values()!!;
     describe::register_reflected(InstanceAuthoringV1)!!;
+    describe::register_reflected(InstanceAuthoringV2)!!;
     describe::register_reflected(InstanceAuthoring)!!;
     assert(serial::description_layout(describe::get(InstanceAuthoringV1)!!)!! == 0x59d3aec48200fec8);
-    assert(serial::description_layout(describe::get(InstanceAuthoring)!!)!! == 0x7f422a9bb5bb80ce);
+    assert(serial::description_layout(describe::get(InstanceAuthoringV2)!!)!! == 0x7f422a9bb5bb80ce);
+    assert(serial::description_layout(describe::get(InstanceAuthoring)!!)!! == 0x5d8d9a7cc4cd085d);
+}
+
+fn void test_instanced_v2_fixtures_read_the_quadtree_without_trace_sway() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        Geometry geometry = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
+        GeometryId geometry_id = fixture.assets.add_geometry(&geometry, "instances_v2/box")!!;
+        MaterialId material_id = fixture.assets.add_material(material::basic({}), "instances_v2/material")!!;
+
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, INSTANCES_V2_BINARY)!!
+              : serial::read_subtree_text(
+                    scene: &fixture.destination,
+                    assets: &fixture.assets,
+                    text: (String)INSTANCES_V2_TEXT,
+                )!!;
+            InstancedMesh* batch = fixture.destination.get(restored, InstancedMesh);
+            assert(batch.count == 5 && batch.transforms.len == 6 && batch.colors.len == 6);
+            assert(c3d::same_id(batch.geometry, geometry_id) && c3d::same_id(batch.material, material_id));
+            assert(batch.transforms[4].position == (Vec3){ 4, 0, -4 });
+            assert(batch.cast_shadow && !batch.receive_shadow && !batch.trace && !batch.trace_sway);
+            assert(batch.fade.start == 10 && batch.fade.end == 20);
+            assert(restored.local.position == (Vec3){ 3, -1, 5 } && restored.layers == 5);
+
+            uint[5] parents = { scene::QUADTREE_ROOT, 0, 0, 0, 0 };
+            assert(batch.quadtree.parents == parents[..]);
+            assert(batch.quadtree.split_pixels == 96 && batch.quadtree.hysteresis == 0.25f);
+            assert(!batch.is_leaf(0) && batch.is_leaf(4) && batch.leaf_instances() == 4);
+            fixture.destination.remove(restored);
+        }
+    };
 }

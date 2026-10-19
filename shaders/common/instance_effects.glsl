@@ -19,6 +19,12 @@ float instance_fade_scale(InstanceEffectsGpu effects, vec3 anchor, float seed) {
     return clamp((vanish - distance(anchor, effects.fade_origin.xyz)) / effects.fade_transition, 0.0, 1.0);
 }
 
+// Height weight of a vertex under HEIGHT sway; assumes +Y up in geometry space.
+float sway_height_weight(vec4 anchor, float local_y) {
+    float height = clamp((local_y - anchor.y) * anchor.w, 0.0, 1.0);
+    return height * height;
+}
+
 vec3 sway_offset(SwayGpu sway, vec3 anchor, float seed, float bend_weight) {
     vec3 direction = sway.direction_amplitude.xyz;
     float cycles = sway.phase + seed * sway.variation - dot(anchor, direction) * sway.waves_per_unit;

@@ -143,5 +143,6 @@ fn usz shader_desc_bytes(asset::ShaderDesc* desc) @private {
         + desc.weighted_fragment.shaded.len + desc.weighted_fragment.traced.hardware.len
         + desc.weighted_fragment.traced.software.len + vertex.shaded.len + vertex.depth.len
         + vertex.instanced_shaded.len + vertex.instanced_depth.len
-        + vertex.velocity.len + vertex.instanced_velocity.len;
+        + vertex.velocity.len + vertex.instanced_velocity.len + desc.trace_pose.single.len
+        + desc.trace_pose.instanced.len;
 }

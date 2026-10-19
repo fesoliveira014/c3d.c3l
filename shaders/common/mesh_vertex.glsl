@@ -150,10 +150,7 @@ vec3 previous_mesh_position(DrawRoot draw, GeometryRoot geometry, uint index) {
 float instance_bend_weight(DrawRoot draw, vec3 local_position, vec4 color) {
     if ((draw.flags & DRAW_SWAY) == 0u) return 0.0;
     if ((draw.flags & DRAW_SWAY_VERTEX_ALPHA) != 0u) return clamp(color.a, 0.0, 1.0);
-    vec4 anchor = InstanceEffectsGpu(draw.instance_effects).anchor;
-    // Height weight assumes +Y up in geometry space.
-    float height = clamp((local_position.y - anchor.y) * anchor.w, 0.0, 1.0);
-    return height * height;
+    return sway_height_weight(InstanceEffectsGpu(draw.instance_effects).anchor, local_position.y);
 }
 
 vec3 apply_instance_effects(DrawRoot draw, InstanceGpu instance, vec3 world_position, float bend_weight) {

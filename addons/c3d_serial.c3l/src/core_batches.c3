@@ -9,10 +9,12 @@ import c3d::scene;
 import std::math;
 
 const ulong INSTANCES_V1_LAYOUT @local = 0x59d3aec48200fec8;
-const ulong INSTANCES_LAYOUT @local = 0x7f422a9bb5bb80ce;
+const ulong INSTANCES_V2_LAYOUT @local = 0x7f422a9bb5bb80ce;
+const ulong INSTANCES_LAYOUT @local = 0x5d8d9a7cc4cd085d;
 const ulong BILLBOARDS_LAYOUT @local = 0x0e6e17ed81a957bb;
 const ulong LOD_V1_LAYOUT @local = 0xdb17924ea7b43e3f;
-const ulong LOD_LAYOUT @local = 0x8ed85fe0b352d50f;
+const ulong LOD_V2_LAYOUT @local = 0x8ed85fe0b352d50f;
+const ulong LOD_LAYOUT @local = 0xa073cd1a57d78766;
 const ulong ANIMATED_LOD_SKIN_LAYOUT @local = 0x03ef0a55ec3ccd1c;
 const ulong ANIMATED_LOD_PART_LAYOUT @local = 0x67066c59b87af8fe;
 const ulong ANIMATED_LOD_DESC_LAYOUT @local = 0xa65aa93a04287bbc;
@@ -32,6 +34,24 @@ struct InstanceAuthoringV1 @private {
     InstanceFade fade;
 }
 
+struct InstanceAuthoringV2 @private {
+    GeometryId geometry;
+    MaterialId material;
+    uint capacity;
+    Transform[] transforms;
+    Vec4[] colors;
+    bool cast_shadow;
+    bool receive_shadow;
+    bool trace;
+    bool has_bounds_override;
+    Aabb local_bounds;
+    InstanceSway sway;
+    InstanceFade fade;
+    uint[] quadtree_parents;
+    float split_pixels;
+    float hysteresis;
+}
+
 struct InstanceAuthoring @private {
     GeometryId geometry;
     MaterialId material;
@@ -41,6 +61,7 @@ struct InstanceAuthoring @private {
     bool cast_shadow;
     bool receive_shadow;
     bool trace;
+    bool trace_sway;
     bool has_bounds_override;
     Aabb local_bounds;
     InstanceSway sway;
@@ -63,7 +84,7 @@ struct LodAuthoringV1 @private {
     uint capacity;
     Transform[] transforms;
     Vec4[] colors;
-    LodEffects effects;
+    LodEffectsV1 effects;
     bool has_impostor;
     Impostor impostor;
     float impostor_min_screen_size;
@@ -84,6 +105,20 @@ struct AnimatedLodDescAuthoring @private {
     Aabb local_bounds;
 }
 
+struct LodAuthoringV2 @private {
+    LodDesc desc;
+    LodMode mode;
+    uint capacity;
+    Transform[] transforms;
+    Vec4[] colors;
+    LodEffectsV1 effects;
+    bool has_impostor;
+    Impostor impostor;
+    float impostor_min_screen_size;
+    bool animated;
+    AnimatedLodDescAuthoring animated_desc;
+}
+
 struct LodAuthoring @private {
     LodDesc desc;
     LodMode mode;
@@ -98,30 +133,40 @@ struct LodAuthoring @private {
     AnimatedLodDescAuthoring animated_desc;
 }
 
-BinaryCompatibility[1] instances_binary_compatibility @local = {
-    { .version = 1, .read = &read_instances_v1 },
+BinaryCompatibility[2] instances_binary_compatibility @local = {
+    { .version = 1, .read = &read_instances_v1, .upgrade = &upgrade_instances_v1 },
+    { .version = 2, .read = &read_instances_v2, .upgrade = &upgrade_instances_v2 },
 };
-uint[1] instances_text_default_versions @local = { 1 };
+uint[2] instances_text_default_versions @local = { 1, 2 };
 
-BinaryCompatibility[1] lod_binary_compatibility @local = {
-    { .version = 1, .read = &read_lod_v1 },
+BinaryCompatibility[2] lod_binary_compatibility @local = {
+    { .version = 1, .read = &read_lod_v1, .upgrade = &upgrade_lod_v1 },
+    { .version = 2, .read = &read_lod_v2, .upgrade = &upgrade_lod_v2 },
 };
-uint[1] lod_text_default_versions @local = { 1 };
+uint[2] lod_text_default_versions @local = { 1, 2 };
 
 fn void? register_core_batch_codecs() @private {
     describe::register_reflected(InstanceAuthoringV1)!;
+    describe::register_reflected(InstanceAuthoringV2)!;
     describe::register_reflected(InstanceAuthoring)!;
     describe::register_reflected(BillboardAuthoring)!;
     describe::register_reflected(LodAuthoringV1)!;
     describe::register_reflected(ModelSkin)!;
     describe::register_reflected(AnimatedLodPartAuthoring)!;
     describe::register_reflected(AnimatedLodDescAuthoring)!;
+    describe::register_reflected(LodAuthoringV2)!;
     describe::register_reflected(LodAuthoring)!;
 
     register_core_value(InstanceAuthoringV1, INSTANCES_V1_LAYOUT, &defaults_instances_v1)!;
     register_described_type(
-        $Type: InstanceAuthoring,
+        $Type: InstanceAuthoringV2,
         version: 2,
+        layout: INSTANCES_V2_LAYOUT,
+        defaults: &defaults_instances_v2,
+    )!;
+    register_described_type(
+        $Type: InstanceAuthoring,
+        version: 3,
         layout: INSTANCES_LAYOUT,
         defaults: &defaults_instances,
     )!;
@@ -131,8 +176,14 @@ fn void? register_core_batch_codecs() @private {
     register_core_value(AnimatedLodPartAuthoring, ANIMATED_LOD_PART_LAYOUT, &defaults_animated_lod_part)!;
     register_core_value(AnimatedLodDescAuthoring, ANIMATED_LOD_DESC_LAYOUT, &defaults_animated_lod_desc)!;
     register_described_type(
-        $Type: LodAuthoring,
+        $Type: LodAuthoringV2,
         version: 2,
+        layout: LOD_V2_LAYOUT,
+        defaults: &defaults_lod_v2,
+    )!;
+    register_described_type(
+        $Type: LodAuthoring,
+        version: 3,
         layout: LOD_LAYOUT,
         defaults: &defaults_lod,
     )!;
@@ -161,6 +212,10 @@ fn void defaults_instances_v1(void* value) @local {
     *(InstanceAuthoringV1*)value = { .capacity = 1, .cast_shadow = true, .receive_shadow = true, .trace = true };
 }
 
+fn void defaults_instances_v2(void* value) @local {
+    *(InstanceAuthoringV2*)value = { .capacity = 1, .cast_shadow = true, .receive_shadow = true, .trace = true };
+}
+
 fn void defaults_instances(void* value) @local {
     *(InstanceAuthoring*)value = { .capacity = 1, .cast_shadow = true, .receive_shadow = true, .trace = true };
 }
@@ -171,6 +226,10 @@ fn void defaults_billboards(void* value) @local {
 
 fn void defaults_lod_v1(void* value) @local {
     *(LodAuthoringV1*)value = { .effects = { .cast_shadow = true, .receive_shadow = true, .trace = true } };
+}
+
+fn void defaults_lod_v2(void* value) @local {
+    *(LodAuthoringV2*)value = { .effects = { .cast_shadow = true, .receive_shadow = true, .trace = true } };
 }
 
 fn void defaults_animated_lod_skin(void* value) @local {
@@ -204,6 +263,7 @@ fn void? project_instances(void* component, void* value, WriteContext* context) 
         .cast_shadow = batch.cast_shadow,
         .receive_shadow = batch.receive_shadow,
         .trace = batch.trace,
+        .trace_sway = batch.trace_sway,
         .has_bounds_override = batch.has_bounds_override,
         .local_bounds = batch.local_bounds,
         .sway = batch.sway,
@@ -290,6 +350,7 @@ fn void? add_instances(InstanceAuthoring* source, ReadContext* context) @local {
         .cast_shadow = source.cast_shadow,
         .receive_shadow = source.receive_shadow,
         .trace = source.trace,
+        .trace_sway = source.trace_sway,
         .has_bounds_override = source.has_bounds_override,
         .local_bounds = source.local_bounds,
         .sway = source.sway,
@@ -423,20 +484,9 @@ fn AnimatedLodDescAuthoring? project_animated_lod(LodGroupState* state, WriteCon
     };
 }
 
-fn void? read_instances_v1(Reader* reader, ReadContext* context) @local {
-    InstanceAuthoringV1 legacy;
-    Acquisitions owned = { .allocator = context.allocator };
-    defer owned.release();
-
-    read_described_value(
-        type: described_type(InstanceAuthoringV1)!,
-        reader: reader,
-        context: context,
-        owned: &owned,
-        value: &legacy,
-    )!;
-
-    InstanceAuthoring source = {
+fn void? upgrade_instances_v1(Reader* reader, ReadContext* context, void* value) @local {
+    InstanceAuthoringV1* legacy = context.read_value(InstanceAuthoringV1, reader)!;
+    *(InstanceAuthoring*)value = {
         .geometry = legacy.geometry,
         .material = legacy.material,
         .capacity = legacy.capacity,
@@ -450,34 +500,91 @@ fn void? read_instances_v1(Reader* reader, ReadContext* context) @local {
         .sway = legacy.sway,
         .fade = legacy.fade,
     };
+}
 
+fn void? read_instances_v1(Reader* reader, ReadContext* context) @local {
+    InstanceAuthoring source;
+    upgrade_instances_v1(reader, context, &source)!;
     attach_instances(&source, context)!;
 }
 
-fn void? read_lod_v1(Reader* reader, ReadContext* context) @local {
-    LodAuthoringV1 legacy;
-    Acquisitions owned = { .allocator = context.allocator };
-    defer owned.release();
+fn void? upgrade_instances_v2(Reader* reader, ReadContext* context, void* value) @local {
+    InstanceAuthoringV2* legacy = context.read_value(InstanceAuthoringV2, reader)!;
+    *(InstanceAuthoring*)value = {
+        .geometry = legacy.geometry,
+        .material = legacy.material,
+        .capacity = legacy.capacity,
+        .transforms = legacy.transforms,
+        .colors = legacy.colors,
+        .cast_shadow = legacy.cast_shadow,
+        .receive_shadow = legacy.receive_shadow,
+        .trace = legacy.trace,
+        .has_bounds_override = legacy.has_bounds_override,
+        .local_bounds = legacy.local_bounds,
+        .sway = legacy.sway,
+        .fade = legacy.fade,
+        .quadtree_parents = legacy.quadtree_parents,
+        .split_pixels = legacy.split_pixels,
+        .hysteresis = legacy.hysteresis,
+    };
+}
 
-    read_described_value(
-        type: described_type(LodAuthoringV1)!,
-        reader: reader,
-        context: context,
-        owned: &owned,
-        value: &legacy,
-    )!;
+fn void? read_instances_v2(Reader* reader, ReadContext* context) @local {
+    InstanceAuthoring source;
+    upgrade_instances_v2(reader, context, &source)!;
+    attach_instances(&source, context)!;
+}
 
-    LodAuthoring source = {
+fn LodEffects lod_effects_from_v1(LodEffectsV1 legacy) @local {
+    return {
+        .sway = legacy.sway,
+        .fade = legacy.fade,
+        .cast_shadow = legacy.cast_shadow,
+        .receive_shadow = legacy.receive_shadow,
+        .trace = legacy.trace,
+    };
+}
+
+fn void? upgrade_lod_v2(Reader* reader, ReadContext* context, void* value) @local {
+    LodAuthoringV2* legacy = context.read_value(LodAuthoringV2, reader)!;
+    *(LodAuthoring*)value = {
         .desc = legacy.desc,
         .mode = legacy.mode,
         .capacity = legacy.capacity,
         .transforms = legacy.transforms,
         .colors = legacy.colors,
-        .effects = legacy.effects,
+        .effects = lod_effects_from_v1(legacy.effects),
+        .has_impostor = legacy.has_impostor,
+        .impostor = legacy.impostor,
+        .impostor_min_screen_size = legacy.impostor_min_screen_size,
+        .animated = legacy.animated,
+        .animated_desc = legacy.animated_desc,
+    };
+}
+
+fn void? read_lod_v2(Reader* reader, ReadContext* context) @local {
+    LodAuthoring source;
+    upgrade_lod_v2(reader, context, &source)!;
+    attach_lod(&source, context)!;
+}
+
+fn void? upgrade_lod_v1(Reader* reader, ReadContext* context, void* value) @local {
+    LodAuthoringV1* legacy = context.read_value(LodAuthoringV1, reader)!;
+    *(LodAuthoring*)value = {
+        .desc = legacy.desc,
+        .mode = legacy.mode,
+        .capacity = legacy.capacity,
+        .transforms = legacy.transforms,
+        .colors = legacy.colors,
+        .effects = lod_effects_from_v1(legacy.effects),
         .has_impostor = legacy.has_impostor,
         .impostor = legacy.impostor,
         .impostor_min_screen_size = legacy.impostor_min_screen_size,
     };
+}
 
+fn void? read_lod_v1(Reader* reader, ReadContext* context) @local {
+    LodAuthoring source;
+    upgrade_lod_v1(reader, context, &source)!;
     attach_lod(&source, context)!;
 }

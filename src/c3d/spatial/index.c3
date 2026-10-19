@@ -109,7 +109,7 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
     bool changed;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && !animated_lod_owns_node(scene, node)) {
+        if (node.visible_effective && !mesh.trace_only && !animated_lod_owns_node(scene, node)) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (mesh_is_live(assets, mesh, skin)) {
                 if (needed < self.entries.len) {
@@ -292,7 +292,7 @@ fn void prepare_triangle_picks(AssetStore* assets, Scene* scene) {
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
         SkinBinding* skin = scene.get(node, SkinBinding);
-        if (!animated_lod_owns_node(scene, node) && mesh_is_live(assets, mesh, skin)) {
+        if (!mesh.trace_only && !animated_lod_owns_node(scene, node) && mesh_is_live(assets, mesh, skin)) {
             GeometryAsset* record = assets.geometry(mesh.geometry);
             if (triangles_are_static(record, skin != null, mesh.has_bounds_override)) {
                 prepare_triangle_tree(assets, mesh.geometry);

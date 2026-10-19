@@ -13,7 +13,7 @@ Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe, Decal and CloudLayer
 VALUE phase. Light is version 3, with `source_radius` and `source_angle`; version-1 and
 version-2 binary and JSONC payloads, which lack them, read them as zero, and
 version-1 payloads read `volumetric` as true. A negative or non-finite extent, or an angle of `PI / 2` or more,
-faults `INVALID_ARGUMENT` on read and on write. Mesh copies its morph-weight array into ordinary Scene ownership.
+faults `INVALID_ARGUMENT` on read and on write. Mesh is version 2, with `trace_only`; version-1 binary and JSONC payloads read it as false. Mesh copies its morph-weight array into ordinary Scene ownership.
 The other value components use fixed-size copying attachment. ProbeVolume,
 Atmosphere, HeightFog, ReflectionProbe and CloudLayer use their existing owner validity
 predicates on both export and decoded authoring before attachment. CloudLayer's
@@ -34,9 +34,11 @@ remove the batch again, so parents that do not match the live count, a negative 
 non-finite `split_pixels` or `hysteresis`, a traced batch or a mirrored instance
 fail the read. Writing a batch that breaks the same contract faults
 `INVALID_ARGUMENT`. Version-1 binary and JSONC payloads have no
-quadtree and read as batches without one.
+quadtree and read as batches without one. Version 3 adds `trace_sway`; version-1 and version-2
+payloads read it as false.
 
-LodGroup authoring version 2 restores in BINDINGS, after its source owners.
+LodGroup authoring version 3 restores in BINDINGS, after its source owners. Its common effects
+carry `trace_sway`; version-1 and version-2 binary and JSONC payloads read it as false.
 Rigid groups preserve ordered affine parts, levels, capacities, live placements,
 common effects and terminal impostors. Version-1 binary and JSONC authoring still
 reads as rigid. Animated groups preserve their source-owner reference, levels,
@@ -146,7 +148,9 @@ read exits.
 A `BinaryCompatibility` entry may also carry an `upgrade`. `ReadContext.authored` rejects a payload of an older
 version with `UNSUPPORTED`, so an owner that other owners inspect before attachment, as a body is inspected by
 ragdolls and breakable anchors, supplies an `upgrade` that decodes the older payload into the current authoring
-type. The result lives until the subtree read finishes: acquire retained storage with `read_owned`.
+type. The result lives until the subtree read finishes: acquire retained storage with `read_owned`. Mesh version 1,
+InstancedMesh versions 1 and 2 and LodGroup versions 1 and 2 supply one, and their `read` callbacks reuse it, so a
+Cloth or an Animator preflight sees the current Mesh whatever version was stored.
 
 Finite floats/doubles preserve their bits with nine/seventeen significant digits
 and direct conversion into the destination width. Negative zero is `-0.0`.

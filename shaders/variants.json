@@ -258,6 +258,7 @@
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["SKINNED_U16"] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["INSTANCED"] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["INSTANCED", "SKINNED_U16"] },
+    { "shader": "trace_sway", "source": "trace_sway.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "trace_refit", "source": "trace_refit.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "sample_zero", "source": "sample_zero.frag.glsl", "stage": "frag", "defines": [] }
   ],
@@ -305,6 +306,7 @@
     { "include": "view_clip.glsl", "stage": "vert", "defines": [] },
     { "include": "instance_effects.glsl", "stage": "vert", "defines": [] },
     { "include": "instance_effects.glsl", "stage": "comp", "defines": [] },
+    { "include": "trace_pose.glsl", "stage": "comp", "defines": [] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": [] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["INSTANCED"] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },

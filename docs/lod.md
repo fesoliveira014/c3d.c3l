@@ -202,7 +202,8 @@ by default. Edit the copied group effects through `set_lod_effects` to change
 its trace participation. Ordinary animated parts also respect the source
 `Mesh.trace` flag. Sway/fade follow the existing
 [instancing contracts](instancing.md#sway-and-distance-fade). A swaying group still traces, at its rest
-pose ([scene trace](scene_trace.md#what-traces)).
+pose, unless `LodEffects.trace_sway` poses each instance
+([scene trace](scene_trace.md#what-traces)).
 
 Selection uses projected sphere diameter divided by viewport height, multiplied
 by `exp2(ViewDesc.lod_bias)`. Bias defaults to zero; positive bias adds detail.

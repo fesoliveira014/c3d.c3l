@@ -15,9 +15,32 @@ const ulong IMPOSTOR_LAYOUT @local = 0x323ef7f725b2c310;
 const ulong LOD_PART_LAYOUT @local = 0x5c34bf1e202331d1;
 const ulong LOD_LEVEL_LAYOUT @local = 0x0f3cb1108b618099;
 const ulong LOD_DESC_LAYOUT @local = 0xefefc2e5eb2ac7ff;
-const ulong LOD_EFFECTS_LAYOUT @local = 0xf3d91f0510c4f53d;
+const ulong LOD_EFFECTS_LAYOUT @local = 0x9c8fe3507ce978dc;
+const ulong LOD_EFFECTS_V1_LAYOUT @local = 0xf3d91f0510c4f53d;
 const ulong BILLBOARD_LAYOUT @local = 0x2a7839a4c39e5ee2;
-const ulong MESH_LAYOUT @local = 0x5e1d3cb5a05dfe89;
+const ulong MESH_LAYOUT @local = 0x81e7097de8b07d0c;
+const ulong MESH_V1_LAYOUT @local = 0x5e1d3cb5a05dfe89;
+
+struct LodEffectsV1 @private {
+    InstanceSway sway;
+    InstanceFade fade;
+    bool cast_shadow;
+    bool receive_shadow;
+    bool trace;
+}
+
+struct MeshV1 @private {
+    GeometryId geometry;
+    MaterialId material;
+    bool       cast_shadow;
+    bool       receive_shadow;
+    bool       trace;
+    float[]    morph_weights;
+    bool       has_bounds_override;
+    Aabb       local_bounds;
+    bool       vertex_motion;
+    ulong      vertex_history_token @tag("transient", true);
+}
 
 <*
  Register shared scene field layouts and semantic defaults.
@@ -35,8 +58,17 @@ fn void? register_core_value_types() {
     register_core_value(LodLevel, LOD_LEVEL_LAYOUT, &defaults_lod_level)!;
     register_core_value(LodDesc, LOD_DESC_LAYOUT, &defaults_lod_desc)!;
     register_core_value(LodEffects, LOD_EFFECTS_LAYOUT, &defaults_lod_effects)!;
+    describe::register_reflected(LodEffectsV1)!;
+    register_core_value(LodEffectsV1, LOD_EFFECTS_V1_LAYOUT, &defaults_lod_effects_v1)!;
     register_core_value(Billboard, BILLBOARD_LAYOUT, &defaults_billboard)!;
-    register_core_value(Mesh, MESH_LAYOUT, &defaults_mesh)!;
+    describe::register_reflected(MeshV1)!;
+    register_core_value(MeshV1, MESH_V1_LAYOUT, &defaults_mesh_v1)!;
+    register_described_type(
+        $Type: Mesh,
+        version: 2,
+        layout: MESH_LAYOUT,
+        defaults: &defaults_mesh,
+    )!;
     register_node_reference_type()!;
 }
 
@@ -89,10 +121,18 @@ fn void defaults_lod_effects(void* value) @local {
     *(LodEffects*)value = { .cast_shadow = true, .receive_shadow = true, .trace = true };
 }
 
+fn void defaults_lod_effects_v1(void* value) @local {
+    *(LodEffectsV1*)value = { .cast_shadow = true, .receive_shadow = true, .trace = true };
+}
+
 fn void defaults_billboard(void* value) @local {
     *(Billboard*)value = scene::BILLBOARD_DEFAULT;
 }
 
 fn void defaults_mesh(void* value) @local {
     *(Mesh*)value = { .cast_shadow = true, .receive_shadow = true, .trace = true };
+}
+
+fn void defaults_mesh_v1(void* value) @local {
+    *(MeshV1*)value = { .cast_shadow = true, .receive_shadow = true, .trace = true };
 }

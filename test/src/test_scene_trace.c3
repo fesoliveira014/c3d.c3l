@@ -2,6 +2,7 @@ module c3d::test::scene_trace;
 
 import c3d;
 import c3d::asset;
+import c3d::camera;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
@@ -28,10 +29,10 @@ fn Fixture make_fixture() @local {
     fixture.assets = asset::create_asset_store(mem, {
         .max_geometries = 6,
         .max_textures   = asset::BUILTIN_TEXTURE_COUNT,
-        .max_materials  = 8,
+        .max_materials  = 14,
         .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
         .max_skeletons  = 2,
-        .max_shaders    = 2,
+        .max_shaders    = 8,
     });
     @pool() {
         Geometry box = geometry::box(tmem, 1, 1, 1);
@@ -114,6 +115,22 @@ fn ShaderId add_custom_shader(Fixture* fixture, bool vertex_stage) @local {
     char[4] stage = { 1, 2, 3, 4 };
     asset::ShaderDesc desc = { .fragment = stage[..] };
     if (vertex_stage) desc.vertex = { .shaded = stage[..], .depth = stage[..] };
+    return fixture.assets.add_shader(&desc)!!;
+}
+
+fn ShaderId add_posed_shader(Fixture* fixture, bool single, bool instanced) @local {
+    char[4] stage = { 1, 2, 3, 4 };
+    asset::ShaderDesc desc = {
+        .fragment = stage[..],
+        .vertex   = {
+            .shaded           = stage[..],
+            .depth            = stage[..],
+            .instanced_shaded = stage[..],
+            .instanced_depth  = stage[..],
+        },
+    };
+    if (single) desc.trace_pose.single = stage[..];
+    if (instanced) desc.trace_pose.instanced = stage[..];
     return fixture.assets.add_shader(&desc)!!;
 }
 
@@ -228,6 +245,173 @@ fn void test_custom_vertex_stage_keeps_meshes_out_whatever_trace_says() @test {
     @pool() {
         render::TraceInstance[] records = collect(&fixture);
         assert(records.len == 1 && same_entity(records[0].entity, fragment_only.id));
+    };
+}
+
+fn void test_custom_trace_pose_makes_a_custom_stage_traceable() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    MaterialId single = fixture.assets.add_material(material::custom(add_posed_shader(&fixture, true, false)))!!;
+    MaterialId instanced = fixture.assets.add_material(material::custom(add_posed_shader(&fixture, false, true)))!!;
+    MaterialId unposed = fixture.assets.add_material(material::custom(add_custom_shader(&fixture, true)))!!;
+    Node* displaced = scene.add_mesh(fixture.box, single, name: "displaced")!!;
+    Mesh* displaced_mesh = scene.get(displaced, Mesh);
+    displaced_mesh.has_bounds_override = true;
+    displaced_mesh.local_bounds = { .min = { -2, -1, -2 }, .max = { 2, 1, 2 } };
+    scene.add_mesh(fixture.box, instanced, name: "wrong_form")!!;
+    scene.add_mesh(fixture.box, unposed, name: "unposed")!!;
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].position = { 3, 0, 0 };
+    Node* posed_batch = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   instanced,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "posed_batch",
+    )!!;
+    scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   single,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "wrong_batch_form",
+    )!!;
+    scene.update_world();
+
+    @pool() {
+        render::TraceCollection collection = collect_all(&fixture);
+        assert(collection.records.len == 3);
+        assert(same_entity(collection.records[0].entity, displaced.id));
+        assert(collection.poses[0].kind == render::TracePose.CUSTOM && collection.poses[0].mesh == displaced_mesh);
+        Aabb bound = maths::aabb_transform(displaced_mesh.local_bounds, displaced.world);
+        assert(same_box(collection.records[0].bounds, bound));
+        for (uint index = 1; index <= 2; index++) {
+            assert(same_entity(collection.records[index].entity, posed_batch.id));
+            assert(collection.records[index].instance_index == index - 1);
+            assert(collection.poses[index].kind == render::TracePose.CUSTOM);
+            assert(collection.poses[index].batch == scene.get(posed_batch, InstancedMesh));
+        }
+    };
+
+    char[4] stage = { 1, 2, 3, 4 };
+    asset::ShaderDesc without_vertex = { .fragment = stage[..], .trace_pose = { .single = stage[..] } };
+    assert(@catch(fixture.assets.add_shader(&without_vertex)) == c3d::INVALID_ARGUMENT);
+    asset::ShaderDesc without_instanced_vertex = {
+        .fragment   = stage[..],
+        .vertex     = { .shaded = stage[..], .depth = stage[..] },
+        .trace_pose = { .instanced = stage[..] },
+    };
+    assert(@catch(fixture.assets.add_shader(&without_instanced_vertex)) == c3d::INVALID_ARGUMENT);
+    ShaderId plain = add_custom_shader(&fixture, false);
+    assert(@catch(fixture.assets.replace_shader(plain, &without_vertex)) == c3d::INVALID_ARGUMENT);
+}
+
+fn void test_trace_only_mesh_traces_and_never_draws() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Node* camera_node = scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    camera_node.local.position = { 0, 0, 5 };
+    Node* drawn = scene.add_mesh(fixture.box, fixture.opaque, name: "drawn")!!;
+    Node* helper = scene.add_mesh(fixture.box, fixture.opaque, name: "helper")!!;
+    scene.get(helper, Mesh).trace_only = true;
+    Node* hidden = scene.add_mesh(fixture.box, fixture.opaque, name: "hidden")!!;
+    scene.get(hidden, Mesh).trace_only = true;
+    hidden.visible = false;
+    scene.update_world();
+
+    @pool() {
+        render::TraceCollection collection = collect_all(&fixture);
+        assert(collection.records.len == 2);
+        assert(same_entity(collection.records[0].entity, drawn.id));
+        assert(same_entity(collection.records[1].entity, helper.id));
+
+        Camera* camera = scene.get(camera_node, Camera);
+        CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, { 1600, 900 });
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = render::extract_candidates(
+            allocator: tmem,
+            scene:     scene,
+            assets:    &fixture.assets,
+            camera:    &matrices,
+            layers:    scene::DEFAULT_LAYERS,
+            counts:    &counts,
+        );
+        assert(candidates.len == 1 && candidates[0].node == drawn);
+        render::ExtractCounts shadow_counts;
+        render::MeshCandidate[] casters = render::extract_shadow_candidates(
+            allocator:   tmem,
+            scene:       scene,
+            assets:      &fixture.assets,
+            fade_origin: {},
+            counts:      &shadow_counts,
+        );
+        assert(casters.len == 1 && casters[0].node == drawn);
+    };
+}
+
+fn void test_sway_rows_yield_posed_slots_to_other_kinds() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].position = { 3, 0, 0 };
+    Node* swaying = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.opaque,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "swaying",
+    )!!;
+    InstancedMesh* swaying_batch = scene.get(swaying, InstancedMesh);
+    swaying_batch.sway = { .direction = { 1, 0, 0 }, .amplitude = 0.2f, .frequency = 1 };
+    swaying_batch.trace_sway = true;
+    MaterialId custom = fixture.assets.add_material(material::custom(add_posed_shader(&fixture, false, true)))!!;
+    Node* newcomer = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   custom,
+        capacity:   1,
+        transforms: transforms[:1],
+        name:       "newcomer",
+    )!!;
+    newcomer.visible = false;
+    scene.update_world();
+
+    RetireList retire;
+    retire.init(mem);
+    defer retire.free();
+    PosedTraceTable table = render::create_posed_trace_table(mem, 2);
+    defer render::free_posed_trace_storage(&table);
+
+    @pool() {
+        render::TraceCollection first = collect_all(&fixture);
+        assert(first.records.len == 2 && first.poses[0].kind == render::TracePose.SWAY);
+        table.begin_epoch(1);
+        foreach (index, &pose : first.poses) {
+            PosedTraceKey key = render::trace_pose_key(scene.identity, pose, &first.records[index]);
+            assert(@ok(table.claim(key, 0, &retire)));
+        }
+        assert(retire.len() == 0);
+
+        newcomer.visible = true;
+        scene.update_world();
+        render::TraceCollection second = collect_all(&fixture);
+        assert(second.records.len == 3);
+        assert(second.poses[0].kind == render::TracePose.CUSTOM);
+        assert(second.poses[1].kind == render::TracePose.SWAY && second.poses[2].kind == render::TracePose.SWAY);
+        table.begin_epoch(2);
+        uint admitted;
+        foreach (index, &pose : second.poses) {
+            PosedTraceKey key = render::trace_pose_key(scene.identity, pose, &second.records[index]);
+            if (@ok(table.claim(key, 1, &retire))) {
+                admitted++;
+            } else {
+                assert(pose.kind == render::TracePose.SWAY);
+            }
+        }
+        assert(admitted == 2);
+        assert(table.lookup.has_key(render::trace_pose_key(scene.identity, &second.poses[0], &second.records[0])));
     };
 }
 

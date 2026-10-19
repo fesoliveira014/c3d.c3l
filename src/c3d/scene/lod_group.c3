@@ -49,6 +49,7 @@ struct LodEffects {
     bool cast_shadow;
     bool receive_shadow;
     bool trace;
+    bool trace_sway; // trace the built-in sway pose per instance; overflow traces at rest
 }
 
 <* One explicit representation of a level-zero logical model mesh. *>

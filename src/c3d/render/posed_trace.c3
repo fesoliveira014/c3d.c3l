@@ -3,6 +3,7 @@ module c3d::render;
 import c3d;
 import c3d::asset;
 import c3d::geometry;
+import c3d::material;
 import c3d::maths;
 import c3d::scene;
 import c3d::shader;
@@ -92,6 +93,7 @@ struct PosedTraceTable {
     List{uint}                   motion_copies; // vertex-motion slots whose streams the mirror must refill
     gpu::PipelineHandle          pose_pipeline;
     gpu::PipelineHandle          pose_u16_pipeline;
+    gpu::PipelineHandle          sway_pipeline;
     gpu::PipelineHandle          refit_pipeline;
 }
 
@@ -101,10 +103,32 @@ struct PosedBuild @private {
 }
 
 struct PosedDispatch @private {
-    gpu::GpuAddress pose_root;  // TracePoseRoot in the frame ring; 0 when the pose is current
-    gpu::GpuAddress refit_root; // TraceRefitRoot in the frame ring; 0 without a software refit
-    uint            vertex_count;
-    bool            joints_u16;
+    gpu::GpuAddress     pose_root;  // root of the pose pipeline in the frame ring; 0 when the pose is current
+    gpu::GpuAddress     refit_root; // TraceRefitRoot in the frame ring; 0 without a software refit
+    gpu::PipelineHandle pipeline;   // a custom stage's or the sway pose; invalid selects the skin pose pipelines
+    uint                vertex_count;
+    bool                joints_u16;
+}
+
+struct CustomPoseTexture @private {
+    TextureId texture;
+    uint      revision;
+}
+
+// What a custom pose stage can read and a frame can change; equal bytes pose the same geometry.
+struct CustomPoseInputs @private {
+    uint                                                  material_revision;
+    uint                                                  shader_revision;
+    float                                                 time; // zero unless the stage reads time
+    uint                                                  _pad0;
+    CustomPoseTexture[material::MAX_CUSTOM_TEXTURE_SLOTS] textures;
+    InstanceGpu                                           instance; // zero for a single mesh
+}
+$assert CustomPoseInputs::size == 240;
+
+struct TracePlacement @private {
+    InstanceGpu instance;   // the record raster would write for the row
+    Mat4f       part_local; // placement of a LOD part within the instance; identity otherwise
 }
 
 struct PosedGroupClaim @private {
@@ -297,6 +321,7 @@ fn void free_posed_trace(Renderer* renderer) @private {
     }
     if (table.pose_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.pose_pipeline);
     if (table.pose_u16_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.pose_u16_pipeline);
+    if (table.sway_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.sway_pipeline);
     if (table.refit_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.refit_pipeline);
     free_posed_trace_storage(table);
 }
@@ -424,10 +449,13 @@ fn bool vertex_motion_held(
 
 fn PosedTraceKey trace_pose_key(ulong scene, TracePoseSource* source, TraceInstance* record) @private {
     PosedTraceKey key = { .scene = scene, .node = source.node.id, .instance = record.instance_index };
-    if (source.lod) {
+    if (source.lod && source.lod.animated) {
         key.lod_identity = source.lod.identity;
         key.source_identity = source.lod.instance_epoch;
         key.logical_part = source.lod.animated.parts[source.part].mesh_index;
+    } else if (source.lod) {
+        key.lod_identity = source.lod.identity;
+        key.logical_part = source.part;
     } else if (source.kind == TracePose.CROWD) {
         key.source_identity = source.crowd.playback.identity;
         key.logical_part = source.part;
@@ -440,6 +468,10 @@ fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
         case REST:
         case VERTEX_MOTION:
             return 0;
+        case CUSTOM:
+            return (uint)CustomPoseInputs::size;
+        case SWAY:
+            return (uint)TraceSwayPoseRoot::size;
         case MESH:
             uint palette = source.skin ? (uint)(source.skin.joints.len * Mat4f::size) : 0;
             return palette + (mesh_morphs(assets, source.mesh) ? (uint)MorphWeightsGpu::size : 0);
@@ -469,6 +501,26 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
     switch (source.kind) {
         case REST:
         case VERTEX_MOTION:
+            return inputs;
+        case CUSTOM:
+            InstanceGpu instance;
+            if (source.batch) instance = trace_placement(renderer, source, record).instance;
+
+            ShaderRes* published = &renderer.shaders[renderer.assets.material(source.material).data.custom.shader.index];
+            CustomPoseInputs custom = custom_pose_inputs(
+                assets:          renderer.assets,
+                material:        source.material,
+                shader_revision: published.revision,
+                instance:        instance,
+                time:            (float)renderer.info.time,
+                reads_time:      source.reads_time,
+            );
+
+            mem::copy(inputs.ptr, &custom, CustomPoseInputs::size);
+            return inputs;
+        case SWAY:
+            TraceSwayPoseRoot sway = sway_pose_root(renderer, source, record);
+            mem::copy(inputs.ptr, &sway, TraceSwayPoseRoot::size);
             return inputs;
         case MESH:
             if (source.skin) {
@@ -532,6 +584,92 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
     }
     if (morphs) *(MorphWeightsGpu*)(inputs.ptr + palette_bytes) = block;
     return inputs;
+}
+
+fn CustomPoseInputs custom_pose_inputs(
+    AssetStore* assets,
+    MaterialId material,
+    uint shader_revision,
+    InstanceGpu instance,
+    float time,
+    bool reads_time,
+) @private {
+    MaterialAsset* record = assets.material(material);
+    CustomPoseInputs inputs = {
+        .material_revision = record.header.revision,
+        .shader_revision   = shader_revision,
+        .time              = reads_time ? time : 0,
+        .instance          = instance,
+    };
+    foreach (index, slot : record.data.custom.slots) {
+        if (slot.texture.kind != TextureRefKind.ASSET || !assets.textures.is_live(slot.texture.asset)) continue;
+
+        inputs.textures[index] = {
+            .texture  = slot.texture.asset,
+            .revision = assets.texture(slot.texture.asset).header.revision,
+        };
+    }
+    return inputs;
+}
+
+// The instance record raster writes for a batch row, and the placement of its LOD part.
+fn TracePlacement trace_placement(Renderer* renderer, TracePoseSource* source, TraceInstance* record) @private {
+    Mat4 placement = record.local;
+    Mat4 part_local = matrix::IDENTITY4;
+    Vec4 color = { 1, 1, 1, 1 };
+    float seed = instance_seed({});
+    if (source.batch) {
+        Transform transform = source.batch.transforms[record.instance_index];
+        color = source.batch.colors[record.instance_index];
+        seed = instance_seed(transform.position);
+    } else if (source.lod.mode == LodMode.INSTANCED) {
+        Transform transform = source.lod.transforms[record.instance_index];
+        placement = transform.to_mat4();
+        part_local = source.lod.desc.parts[source.part].local;
+        color = source.lod.colors[record.instance_index];
+        seed = instance_seed(transform.position);
+    } else {
+        placement = matrix::IDENTITY4;
+        part_local = source.lod.desc.parts[source.part].local;
+    }
+
+    TracePlacement result = { .part_local = bitcast(part_local, Mat4f) };
+    write_instance(
+        record: &result.instance,
+        world:  maths::rebase(record.world, renderer.frame_origin).mul(placement),
+        color:  color,
+        seed:   seed,
+    );
+    return result;
+}
+
+// The root a SWAY row poses from, without the geometry addresses of its slot.
+fn TraceSwayPoseRoot sway_pose_root(Renderer* renderer, TracePoseSource* source, TraceInstance* record) @private {
+    TracePlacement placement = trace_placement(renderer, source, record);
+    InstanceSway sway = source.lod ? source.lod.effects.sway : source.batch.sway;
+    Aabb bounds = source.lod ? source.lod.object_bounds : renderer.assets.geometry(record.geometry).data.bounds;
+    InstancedMesh logical = { .sway = sway };
+    InstanceEffectsGpu effects = pack_instance_effects(
+        batch:         &logical,
+        local_bounds:  bounds,
+        fade_origin:   {},
+        previous_sway: {},
+        time:          renderer.info.time,
+        origin:        renderer.frame_origin,
+        world_shift:   source.scene.world_shift,
+    );
+    Mat4 inverse = maths::inverse_affine(bitcast(placement.instance.model, Mat4).mul(bitcast(placement.part_local, Mat4)));
+    return {
+        .vertex_count    = renderer.geometries[record.geometry.index].layout.vertex_count,
+        .flags           = sway.weight == SwayWeight.VERTEX_ALPHA ? shader::DRAW_SWAY_VERTEX_ALPHA : 0,
+        .instance        = placement.instance,
+        .part_local      = placement.part_local,
+        .sway            = effects.sway,
+        .anchor          = effects.anchor,
+        .inverse_model_0 = { inverse.m00, inverse.m10, inverse.m20, 0 },
+        .inverse_model_1 = { inverse.m01, inverse.m11, inverse.m21, 0 },
+        .inverse_model_2 = { inverse.m02, inverse.m12, inverse.m22, 0 },
+    };
 }
 
 fn void? acquire_trace_pose_pipelines(Renderer* renderer) @private {
@@ -598,7 +736,8 @@ fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @pri
     gpu::cmd_barrier(commands, &readers_done)!;
     foreach (&dispatch : table.dispatches) {
         if (!dispatch.pose_root) continue;
-        gpu::cmd_bind_pipeline(commands, dispatch.joints_u16 ? table.pose_u16_pipeline : table.pose_pipeline)!;
+        gpu::PipelineHandle skin_pipeline = dispatch.joints_u16 ? table.pose_u16_pipeline : table.pose_pipeline;
+        gpu::cmd_bind_pipeline(commands, dispatch.pipeline.is_valid() ? dispatch.pipeline : skin_pipeline)!;
         uint groups = (dispatch.vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
         gpu::cmd_dispatch(commands, dispatch.pose_root, { groups, 1, 1 })!;
         renderer.stats.trace_poses++;
@@ -806,6 +945,13 @@ fn void? resolve_posed_instance(
         .vertex_count = mirror.layout.vertex_count,
         .joints_u16   = mirror.layout.flags.joints_u16,
     };
+    if (source.kind == TracePose.SWAY) {
+        acquire_compute_slot(renderer, ComputeSlot.TRACE_SWAY)!;
+        dispatch.pipeline = table.sway_pipeline;
+    } else if (source.kind == TracePose.CUSTOM) {
+        dispatch.pipeline = source.pipeline;
+    }
+
     if (source.kind == TracePose.VERTEX_MOTION) {
         if (slot.update_vertex_motion(source.vertex_history_token)) {
             mark_posed_pending(table, index);
@@ -837,7 +983,9 @@ fn void? resolve_posed_instance(
     }
 
     if (hardware && slot.blas_serial != slot.pose_serial) {
-        table.builds.push({ .slot = index, .update = slot.blas_serial != 0 });
+        // A stage that does not read time re-poses on an edit, which may reshape the surface; the tree is built anew.
+        bool refits = source.kind != TracePose.CUSTOM || source.reads_time;
+        table.builds.push({ .slot = index, .update = slot.blas_serial != 0 && refits });
         slot.blas_serial = slot.pose_serial;
         mark_posed_pending(table, index);
     }
@@ -926,6 +1074,24 @@ fn gpu::GpuAddress? write_pose_root(
         case REST:
         case VERTEX_MOTION:
             unreachable("only skinned, morphed and crowd rows pose on the GPU");
+        case CUSTOM:
+            TraceCustomPoseRoot custom_root = {
+                .source       = mirror.root,
+                .posed        = slot.root,
+                .material     = record.material_address,
+                .time         = (float)renderer.info.time,
+                .vertex_count = mirror.layout.vertex_count,
+            };
+            if (source.batch) {
+                InstanceGpu instance = trace_placement(renderer, source, record).instance;
+                custom_root.instance = upload_bytes(renderer, &instance, InstanceGpu::size)!;
+            }
+            return upload_bytes(renderer, &custom_root, TraceCustomPoseRoot::size)!;
+        case SWAY:
+            TraceSwayPoseRoot sway_root = sway_pose_root(renderer, source, record);
+            sway_root.source = mirror.root;
+            sway_root.posed = slot.root;
+            return upload_bytes(renderer, &sway_root, TraceSwayPoseRoot::size)!;
         case MESH:
             if (source.skin) palette = resolve_palette(renderer, source.node, source.skin)!;
             if (mesh_morphs(renderer.assets, source.mesh)) {

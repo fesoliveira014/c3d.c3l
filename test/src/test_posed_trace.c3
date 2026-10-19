@@ -1,7 +1,9 @@
 module c3d::test::posed_trace;
 
 import c3d;
+import c3d::asset;
 import c3d::geometry;
+import c3d::material;
 import c3d::render @public;
 import c3d::shader;
 import gpu;
@@ -206,4 +208,101 @@ fn void test_vertex_motion_slot_validity_keys_on_topology() @test {
     render::discard_posed_trace(&table);
     assert(!slot.pose_valid);
     assert(slot.update_vertex_motion(1) && slot.pose_valid && slot.pose_serial == 3);
+}
+
+fn void test_custom_pose_inputs_drive_the_pose_serial() @test {
+    AssetStore assets = asset::create_asset_store(mem, {
+        .max_geometries = 1,
+        .max_textures  = asset::BUILTIN_TEXTURE_COUNT + 1,
+        .max_materials = 1,
+        .max_samplers  = asset::BUILTIN_SAMPLER_COUNT,
+        .max_shaders   = 1,
+    });
+    defer asset::destroy_asset_store(&assets);
+    char[4] stage = { 1, 2, 3, 4 };
+    asset::ShaderDesc desc = {
+        .fragment = stage[..],
+        .vertex   = { .shaded = stage[..], .depth = stage[..] },
+        .trace_pose = { .single = stage[..] },
+    };
+    ShaderId shader = assets.add_shader(&desc)!!;
+    char[4] pixel = { 255, 255, 255, 255 };
+    TextureId height_map = assets.add_texture(material::texture_2d_desc(1, 1, PixelFormat.RGBA8_UNORM), pixel[..])!!;
+    TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
+    slots[0] = material::texture_slot(height_map);
+    MaterialId material = assets.add_material(material::custom(shader, slots: slots))!!;
+
+    RetireList retire;
+    PosedTraceTable table = make_table(&retire);
+    defer destroy_table(&table, &retire);
+    table.begin_epoch(1);
+    uint index = table.claim(key_of(0), 0, &retire)!!;
+    PosedTraceRes* slot = &table.slots[index];
+    slot.pose = alloc::new_array(mem, char, CustomPoseInputs::size);
+    InstanceGpu instance;
+
+    uint published = assets.shader(shader).header.revision;
+
+    foreach (reads_time : (bool[2]){ false, true }) {
+        slot.pose_valid = false;
+        slot.pose_serial = 0;
+        for (uint frame = 0; frame < 4; frame++) {
+            CustomPoseInputs inputs = render::custom_pose_inputs(
+                assets:          &assets,
+                material:        material,
+                shader_revision: published,
+                instance:        instance,
+                time:            0.25f * (float)frame,
+                reads_time:      reads_time,
+            );
+            bool posed = slot.update_pose(((char*)&inputs)[:CustomPoseInputs::size]);
+            assert(posed == (frame == 0 || reads_time));
+        }
+
+        ulong serial = slot.pose_serial;
+        assets.mark_texture_dirty(height_map);
+        CustomPoseInputs edited = render::custom_pose_inputs(
+            assets:          &assets,
+            material:        material,
+            shader_revision: published,
+            instance:        instance,
+            time:            0,
+            reads_time:      reads_time,
+        );
+        assert(slot.update_pose(((char*)&edited)[:CustomPoseInputs::size]) && slot.pose_serial == serial + 1);
+
+        assets.mark_material_dirty(material);
+        CustomPoseInputs remarked = render::custom_pose_inputs(
+            assets:          &assets,
+            material:        material,
+            shader_revision: published,
+            instance:        instance,
+            time:            0,
+            reads_time:      reads_time,
+        );
+        assert(slot.update_pose(((char*)&remarked)[:CustomPoseInputs::size]) && slot.pose_serial == serial + 2);
+
+        // A newer store revision the renderer has not published poses nothing new.
+        assets.mark_shader_dirty(shader);
+        CustomPoseInputs unpublished = render::custom_pose_inputs(
+            assets:          &assets,
+            material:        material,
+            shader_revision: published,
+            instance:        instance,
+            time:            0,
+            reads_time:      reads_time,
+        );
+        assert(!slot.update_pose(((char*)&unpublished)[:CustomPoseInputs::size]) && slot.pose_serial == serial + 2);
+
+        published = assets.shader(shader).header.revision;
+        CustomPoseInputs republished = render::custom_pose_inputs(
+            assets:          &assets,
+            material:        material,
+            shader_revision: published,
+            instance:        instance,
+            time:            0,
+            reads_time:      reads_time,
+        );
+        assert(slot.update_pose(((char*)&republished)[:CustomPoseInputs::size]) && slot.pose_serial == serial + 3);
+    }
 }

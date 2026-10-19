@@ -51,6 +51,11 @@ BinaryCompatibility[2] light_binary_compatibility @local = {
 };
 uint[2] light_text_default_versions @local = { 1, 2 };
 
+BinaryCompatibility[1] mesh_binary_compatibility @local = {
+    { .version = 1, .read = &read_mesh_v1, .upgrade = &upgrade_mesh_v1 },
+};
+uint[1] mesh_text_default_versions @local = { 1 };
+
 <*
  Register portable core components and their semantic defaults.
  @return? describe::DESCRIPTION_CONFLICT, describe::MISSING_DESCRIPTION
@@ -84,7 +89,13 @@ fn void? register_core_codecs() {
     register_core_value(ReflectionProbe, REFLECTION_LAYOUT, &defaults_reflection)!;
     register_core_value(Decal, DECAL_LAYOUT, &defaults_decal)!;
     register_core_value(CloudLayer, CLOUD_LAYOUT, &defaults_cloud)!;
-    register_described(Mesh, { .name = "c3d.Mesh", .project = &project_mesh, .attach = &attach_mesh })!;
+    register_described(Mesh, {
+        .name = "c3d.Mesh",
+        .project = &project_mesh,
+        .attach = &attach_mesh,
+        .binary_compatibility = mesh_binary_compatibility[..],
+        .text_default_versions = mesh_text_default_versions[..],
+    })!;
     register_described(Camera, { .name = "c3d.Camera" })!;
     register_described(Light, {
         .name = "c3d.Light",
@@ -245,6 +256,27 @@ fn void? attach_mesh(void* value, ReadContext* context) @local {
     weights[..] = mesh.morph_weights[..];
     mesh.morph_weights = weights;
     context.scene.add(context.node, mesh);
+}
+
+fn void? upgrade_mesh_v1(Reader* reader, ReadContext* context, void* value) @local {
+    MeshV1* legacy = context.read_value(MeshV1, reader)!;
+    *(Mesh*)value = {
+        .geometry = legacy.geometry,
+        .material = legacy.material,
+        .cast_shadow = legacy.cast_shadow,
+        .receive_shadow = legacy.receive_shadow,
+        .trace = legacy.trace,
+        .morph_weights = legacy.morph_weights,
+        .has_bounds_override = legacy.has_bounds_override,
+        .local_bounds = legacy.local_bounds,
+        .vertex_motion = legacy.vertex_motion,
+    };
+}
+
+fn void? read_mesh_v1(Reader* reader, ReadContext* context) @local {
+    Mesh mesh;
+    upgrade_mesh_v1(reader, context, &mesh)!;
+    attach_mesh(&mesh, context)!;
 }
 
 fn void? project_mesh(void* component, void* value, WriteContext* context) @local {
