@@ -80,8 +80,8 @@ than asserts, since descs also come from files.
 | `cell_size` | Metres between texel centres along x and z; positive |
 | `height_scale` | Metres at texel 65535: `height = height_scale × texel / 65535`; positive |
 | `layers` | Up to four live `STANDARD` materials, leading; zero ids after the last one |
-| `lod_threshold` | Projected node diameter, in pixels of the view's working extent, above which a node splits; zero or more |
-| `lod_hysteresis` | A split node merges below `lod_threshold / (1 + lod_hysteresis)`; zero or more |
+| `lod_threshold` | Projected node diameter, in pixels of the view's working extent, above which a node splits; finite, zero or more |
+| `lod_hysteresis` | A split node merges below `lod_threshold / (1 + lod_hysteresis)`; finite, zero or more |
 | `slope_projection` | `TOP` projects the layers from above; `TRIPLANAR` projects them along all three axes ([slope projection](#slope-projection)) |
 | `triplanar_sharpness` | Exponent of the plane weights: `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read and checked only under `TRIPLANAR` |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update` |
@@ -142,9 +142,10 @@ rendering stays split until its size falls below `lod_threshold / (1 + lod_hyste
 ancestor splits and it does not, so the drawn nodes partition the extent. The size is the projected height of
 the sphere through the corners of the node's box, in pixels of the view's working extent with `render_scale`
 included. The sphere does not depend on the node's rotation: a terrain turned about Y selects the levels it
-selected unturned. The selection reads no camera rotation, so turning in place never re-selects. A change of `lod_threshold` or `lod_hysteresis` keeps every view's history; `update` copies the
-values onto the quadtree [without checking them](instancing.md#quadtree-selection), so keep them finite and not
-negative after `add_terrain` has validated them.
+selected unturned. The selection reads no camera rotation, so turning in place never re-selects. A change of
+`lod_threshold` or `lod_hysteresis` keeps every view's history. `update` checks the edited values: when either is
+negative or not finite it faults `INVALID_ARGUMENT` and leaves the terrain as it was, so the batch never holds a
+value the [quadtree contract](instancing.md#quadtree-selection) rejects.
 
 - Two views of one terrain, such as a split screen or a mirror, draw different levels when their cameras are at
   different distances, and a shadow layer draws the levels of the view it belongs to.
@@ -433,13 +434,13 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::UNSUPPORTED` | Height map not `R16_UINT`, not a `MIP_ZERO` source, or a layered, 3D or cube texture |
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
-| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or NaN tunable, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain`, `prepare`, `update` | `c3d::UNSUPPORTED` | The node carries a `LodGroup`, which cannot share a batch with a quadtree |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
 | `TerrainSet.neighbour` | `NOT_FOUND` | The tile is not linked, or has no linked neighbour in the direction |
 | `update` | `c3d::INVALID_ID` | The height map was removed |
-| `update` | `c3d::INVALID_ARGUMENT` | A revision whose side differs from the accepted one |
+| `update` | `c3d::INVALID_ARGUMENT` | A revision whose side differs from the accepted one; an edited `lod_threshold` or `lod_hysteresis` that is negative or not finite |
 | `sample_height`, `sample_normal`, `sample_smooth_normal` | `NOT_FOUND` | The point is outside the extent |
 
 ## Limits
@@ -509,80 +510,25 @@ pass lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `-
 [froxel volume](sky.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`).
 Interactive runs always validate; benchmark runs validate only with `--validation`.
 
-## Measured cost
+## Cost
 
-### RTX 4090, driver 610.88, 2560 × 1440
+The shadow atlas is the largest GPU share of a terrain, followed by the forward opaque or G-buffer pass, where four
+layers cost more than one because every set layer is sampled on every pixel. Level selection saves most on large
+maps: the finest level everywhere costs more than twice the default threshold at 4097 texels. The selection runs on
+the GPU inside the instance cull, once per view and batch.
 
-Windows host, `--opt O3` with GPU timings, atlas shadows, three runs of each case (48 in all); medians, and
-per-pass run-to-run ranges within ±1 %. Both gates passed in every run. These runs predate the GPU selection: the
-levels were chosen on the CPU, and the Instance cull column holds only the cull of the chosen chunks. GPU pass
-medians of the still segment, in ms:
+On the CPU an ordinary `update` is a revision compare. After an edit it refreshes the touched bounds and rewrites
+the node records, which takes microseconds; the full bounds build, milliseconds at 4097 texels, runs at load. The
+edit an application pays for is the whole-texture re-upload and, with a collider, the physics re-cook at the end
+of a stroke: the windows it touched, or the whole field when the collider is not tiled.
 
-| Case | Prepass | G-buffer | Shadow atlas | Forward opaque | Lighting | Velocity | Instance cull |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 2049 forward | 0.095 | | 0.463 | 0.406 | | 0.112 | 0.023 |
-| 2049 forward, 1 layer | 0.095 | | 0.463 | 0.204 | | 0.113 | 0.023 |
-| 2049 forward, hidden | 0.001 | | 0.013 | 0.004 | | 0.022 | |
-| 2049 forward, finest | 0.161 | | 0.587 | 0.473 | | 0.178 | 0.023 |
-| 2049 deferred | 0.095 | 0.289 | 0.462 | | 0.073 | 0.112 | 0.023 |
-| 2049 deferred, 1 layer | 0.095 | 0.161 | 0.463 | | 0.071 | 0.112 | 0.023 |
-| 2049 deferred, finest | 0.161 | 0.345 | 0.587 | | 0.073 | 0.178 | 0.023 |
-| 4097 forward | 0.134 | | 0.636 | 0.355 | | 0.155 | 0.023 |
-| 4097 forward, 1 layer | 0.133 | | 0.634 | 0.221 | | 0.155 | 0.023 |
-| 4097 forward, finest | 0.561 | | 1.418 | 0.776 | | 0.583 | 0.023 |
-| 4097 deferred | 0.134 | 0.280 | 0.634 | | 0.076 | 0.155 | 0.023 |
-| 4097 deferred, 1 layer | 0.134 | 0.186 | 0.635 | | 0.074 | 0.155 | 0.023 |
-| 4097 deferred, finest | 0.561 | 0.706 | 1.418 | | 0.074 | 0.583 | 0.023 |
+`--benchmark` prints `update_us`, the instances drawn and the upload bytes per segment; with `--gpu-timings` it
+adds the GPU pass times.
 
-- **Terrain cost.** Visible against hidden, about 1.06 ms at 2049 and 1.25 ms at 4097; the shadow atlas is the
-  largest share.
-- **What LOD saves.** Against the finest level everywhere (`--lod-threshold 0`), the default threshold saves
-  23 % of the GPU total at 2049 (1.42 to 1.10 ms) and 61 % at 4097 (3.36 to 1.30 ms).
-- **Four layers against one.** Forward opaque +0.20 ms at 2049 and +0.13 ms at 4097; G-buffer +0.13 and
-  +0.09 ms.
+### Collision re-cook
 
-CPU, Windows host, median of three runs (range):
-
-| Line | 2049 | 4097 |
-| --- | --- | --- |
-| `bounds_build_ms` | 0.24 (0.18 to 0.29) | 2.8 to 3.3 |
-| `edit_update_ms` median / p99 | 0.0064 / 0.0095 | 0.0100 / 0.019 |
-| `physics_recook_ms` | 239 to 243 | 1,026 to 1,028 |
-| `selection_us` median, still | 1.9 | 3.4 to 3.6 |
-| `selection_us` p99, sweep | 3.0 to 3.2 | 6.0 to 6.2 |
-
-`selection_us` timed the CPU selection that `update` no longer runs.
-
-The full bounds build runs at load, not per frame. The edit an application pays for is the whole-texture
-re-upload and, with a collider, the physics re-cook at the end of a stroke: the windows it touched, or the whole
-field when the collider is not tiled.
-
-### WSL, llvmpipe, 1920 × 1080
-
-llvmpipe is a CPU Vulkan implementation: its frame and pass times are environment only, never GPU numbers.
-CPU-side lines (bounds, edits, update) are the terrain's own work on an i9-14900K.
-
-Scripted benchmark, 1920 × 1080, atlas shadows, four layers, 2049 and 4097 forward; `--opt O3`. The gate passes
-in every run. The `bounds_build_ms`, `edit_update_ms` and `physics_recook_ms` lines come from 300 frames per
-segment; the `update_us` and `drawn` lines from 100 frames per segment.
-
-| Line | 2049 | 4097 |
-| --- | ---: | ---: |
-| `bounds_build_ms` (full rebuild, median of five) | 0.19 to 0.24 | 2.23 |
-| `edit_update_ms` median / p99 (49 × 49 stamp) | 0.009 to 0.011 / 0.042 to 0.053 | 0.019 / 0.125 |
-| `edit_upload_bytes` (whole height map plus node records) | 8,440,450 | 33,745,538 |
-| `physics_recook_ms` (whole field at stroke end) | 252 to 258 | 1,131 |
-| `update_us` median, still / sweep / hover / edit | 0.41 / 0.85 / 0.42 / 0.47 | 0.64 / 0.83 / 0.67 / 0.77 |
-| `drawn` median, still / sweep / hover / edit (instances over all passes) | 369 / 359 / 241 / 294 | 472 / 484 / 253 / 371 |
-| `frame_ms` median, still (environment only) | 687 to 711 | 834 |
-
-The still, sweep and hover segments upload nothing after their first frame: moving the camera changes no
-record. A stamp frame uploads the whole height map and the node records (43,648 B at 2049, 174,720 B at 4097),
-and its update, bounds refresh and record rewrite included, stays under 0.13 ms; the whole-texture re-upload and
-the physics re-cook are the costs of an edit.
-
-Collision re-cook at the end of the same stroke, WSL on the i9-14900K, `--opt O3`, a 160 × 90 viewport (these
-lines do not depend on it), 300 frames per segment. The default collider is tiled into 256-cell windows;
+Collision re-cook at the end of the benchmark's edit stroke, WSL on the i9-14900K, `--opt O3`, a 160 × 90 viewport
+(these lines do not depend on it), 300 frames per segment. The default collider is tiled into 256-cell windows;
 `--collision-window 0` builds one collider over the whole map:
 
 | Line | 2049 | 4097 |
