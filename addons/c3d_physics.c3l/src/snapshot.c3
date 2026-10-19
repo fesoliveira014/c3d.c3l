@@ -83,6 +83,16 @@ struct HeightRange @local {
     float maximum;
 }
 
+struct HeightSurface @local {
+    float* origin; // the field's own first sample, past any apron
+    usz    stride;
+    Vec3   scale;
+}
+
+fn Vec3 HeightSurface.point(&self, uint x, uint z) {
+    return { x * self.scale.x, self.origin[z * self.stride + x] * self.scale.y, z * self.scale.z };
+}
+
 fn SnapshotTable*? create_snapshot_table(Allocator allocator, AssetStore* assets, CollisionCacheDesc desc) @private {
     SnapshotTable* table = alloc::new_try(allocator, SnapshotTable) ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch alloc::free(allocator, table);
@@ -263,8 +273,9 @@ fn SnapshotHandle? acquire_height_map(
         check_collision_height_grid(
             count_x: grid.samples_x,
             count_z: grid.samples_z,
-            sample_count: (usz)grid.samples_x * grid.samples_z,
+            sample_count: grid.padded_sample_count(),
             material_count: material_indices.len,
+            padding: grid.padding(),
         )!;
     }
 
@@ -304,6 +315,7 @@ fn SnapshotHandle? acquire_height_map(
         scale: scale,
         material_indices: material_indices,
         full_range: !window_covers_map(window),
+        apron_sides: grid.apron_sides,
     )!;
     snapshot.content = content;
     snapshot.scale = scale;
@@ -313,12 +325,14 @@ fn SnapshotHandle? acquire_height_map(
 }
 
 // Whole fields quantize over their own range; windows share one, so neighbours meet exactly and an edit leaves the others alone.
+// With apron sides the heights and cell materials carry one more ring of the neighbours' samples around the field's own.
 fn CollisionSnapshot? cook_height_field(
     SnapshotTable* table,
     HeightField field,
     Vec3 scale,
     char[] material_indices,
     bool full_range = false,
+    char apron_sides = 0,
 ) @local {
     HeightRange range = { .minimum = SAMPLE_RANGE_MINIMUM, .maximum = SAMPLE_RANGE_MAXIMUM };
     if (!full_range) range = measure_range(field.heights);
@@ -331,10 +345,11 @@ fn CollisionSnapshot? cook_height_field(
         .count_z               = (int)field.count_z,
         .global_minimum_height = range.minimum,
         .global_maximum_height = range.maximum,
+        .apron_sides           = apron_sides,
     };
     b3::HeightFieldData* data = b3::create_height_field(&def)!;
     Vec3[] wire;
-    if (table.cache_wireframes) wire = height_field_wire(table.allocator, field, scale);
+    if (table.cache_wireframes) wire = height_field_wire(table.allocator, field, scale, apron_padding(apron_sides));
     return { .kind = HEIGHT_FIELD, .height_field = data, .wire = wire };
 }
 
@@ -546,33 +561,63 @@ fn usz? height_texel_bytes(PixelFormat format) @private {
     }
 }
 
-// Red channel only; the store allocator aligns pixels for the ushort and float views.
+// Padding past a map edge repeats the border sample; the cook never reads it.
 fn float[] height_map_samples(TextureAsset* texture, HeightGrid grid, Allocator allocator) @local {
-    float[] samples = alloc::new_array(allocator, float, (sz)((usz)grid.samples_x * grid.samples_z));
+    uint padding = grid.padding();
+    usz columns = (usz)(grid.samples_x + 2 * padding);
+    usz column_before = padded_map_index(grid.x, 0, padding, texture.desc.width);
+    usz column_after = padded_map_index(grid.x, grid.samples_x + padding, padding, texture.desc.width);
+
+    float[] samples = alloc::new_array(allocator, float, (sz)grid.padded_sample_count());
+    for (uint row = 0; row < grid.samples_z + 2 * padding; row++) {
+        usz source_row = padded_map_index(grid.z, row, padding, texture.desc.height);
+        float* target = samples.ptr + row * columns;
+        read_height_texels(
+            texture:      texture,
+            row:          source_row,
+            first_column: grid.x,
+            count:        grid.samples_x,
+            target:       target + padding,
+        );
+        if (!padding) continue;
+
+        read_height_texels(
+            texture:      texture,
+            row:          source_row,
+            first_column: column_before,
+            count:        1,
+            target:       target,
+        );
+        read_height_texels(
+            texture:      texture,
+            row:          source_row,
+            first_column: column_after,
+            count:        1,
+            target:       target + padding + grid.samples_x,
+        );
+    }
+    return samples;
+}
+
+// Red channel only; the store allocator aligns pixels for the ushort and float views.
+fn void read_height_texels(
+    TextureAsset* texture,
+    usz row,
+    usz first_column,
+    usz count,
+    float* target,
+) @local {
     usz width = texture.desc.width;
     switch (texture.desc.format) {
         case RGBA8_UNORM:
-            for (usz row = 0; row < grid.samples_z; row++) {
-                char* source = texture.pixels.ptr + ((grid.z + row) * width + grid.x) * RGBA_CHANNELS;
-                float* target = samples.ptr + row * grid.samples_x;
-                for (usz column = 0; column < grid.samples_x; column++) {
-                    target[column] = source[column * RGBA_CHANNELS] / 255.0f;
-                }
-            }
+            char* source = texture.pixels.ptr + (row * width + first_column) * RGBA_CHANNELS;
+            for (usz column = 0; column < count; column++) target[column] = source[column * RGBA_CHANNELS] / 255.0f;
         case R16_UINT:
-            ushort* texels = (ushort*)texture.pixels.ptr;
-            for (usz row = 0; row < grid.samples_z; row++) {
-                ushort* source = texels + (grid.z + row) * width + grid.x;
-                float* target = samples.ptr + row * grid.samples_x;
-                for (usz column = 0; column < grid.samples_x; column++) target[column] = source[column] / 65535.0f;
-            }
+            ushort* source = (ushort*)texture.pixels.ptr + row * width + first_column;
+            for (usz column = 0; column < count; column++) target[column] = source[column] / 65535.0f;
         case RGBA32_FLOAT:
-            float* texels = (float*)texture.pixels.ptr;
-            for (usz row = 0; row < grid.samples_z; row++) {
-                float* source = texels + ((grid.z + row) * width + grid.x) * RGBA_CHANNELS;
-                float* target = samples.ptr + row * grid.samples_x;
-                for (usz column = 0; column < grid.samples_x; column++) target[column] = source[column * RGBA_CHANNELS];
-            }
+            float* source = (float*)texture.pixels.ptr + (row * width + first_column) * RGBA_CHANNELS;
+            for (usz column = 0; column < count; column++) target[column] = source[column * RGBA_CHANNELS];
         case RGBA8_SRGB:
         case RGBA16_FLOAT:
         case BC1_RGBA_UNORM:
@@ -586,7 +631,6 @@ fn float[] height_map_samples(TextureAsset* texture, HeightGrid grid, Allocator 
         case BC7_SRGB:
             unreachable();
     }
-    return samples;
 }
 
 fn SnapshotSource[] copy_sources(Allocator allocator, SnapshotSource[] sources) @local {
@@ -812,26 +856,33 @@ fn Vec3[] mesh_wire(Allocator allocator, Vec3[] positions, uint[] indices) @loca
     return wire;
 }
 
-fn Vec3[] height_field_wire(Allocator allocator, HeightField field, Vec3 scale) @local {
+fn Vec3[] height_field_wire(
+    Allocator allocator,
+    HeightField field,
+    Vec3 scale,
+    uint padding,
+) @local {
+    usz stride = (usz)(field.count_x + 2 * padding);
+    HeightSurface surface = {
+        .origin = field.heights.ptr + padding * (stride + 1),
+        .stride = stride,
+        .scale  = scale,
+    };
     usz row_segments = (usz)(field.count_x - 1) * field.count_z;
     usz column_segments = (usz)(field.count_z - 1) * field.count_x;
     Vec3[] wire = alloc::new_array(allocator, Vec3, (sz)(2 * (row_segments + column_segments)));
     usz cursor;
     for (uint z = 0; z < field.count_z; z++) {
         for (uint x = 0; x + 1 < field.count_x; x++) {
-            wire[cursor++] = height_point(field, scale, { x, z });
-            wire[cursor++] = height_point(field, scale, { x + 1, z });
+            wire[cursor++] = surface.point(x, z);
+            wire[cursor++] = surface.point(x + 1, z);
         }
     }
     for (uint x = 0; x < field.count_x; x++) {
         for (uint z = 0; z + 1 < field.count_z; z++) {
-            wire[cursor++] = height_point(field, scale, { x, z });
-            wire[cursor++] = height_point(field, scale, { x, z + 1 });
+            wire[cursor++] = surface.point(x, z);
+            wire[cursor++] = surface.point(x, z + 1);
         }
     }
     return wire;
-}
-
-fn Vec3 height_point(HeightField field, Vec3 scale, uint[<2>] cell) @local {
-    return { cell.x * scale.x, field.heights[(usz)cell.y * field.count_x + cell.x] * scale.y, cell.y * scale.z };
 }

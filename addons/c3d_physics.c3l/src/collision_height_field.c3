@@ -28,6 +28,7 @@ fn void? check_collision_height_grid(
     uint count_z,
     usz sample_count,
     usz material_count,
+    uint padding = 0,
 ) @private {
     if (count_x < 2 || count_z < 2) return c3d::INVALID_ARGUMENT~;
 
@@ -40,8 +41,10 @@ fn void? check_collision_height_grid(
       + aligned_height_field_bytes(triangles);
     if (points > int::max || triangles > int::max || bytes > int::max) return c3d::CAPACITY_EXCEEDED~;
 
-    if (sample_count != points) return c3d::INVALID_ARGUMENT~;
-    if (material_count && material_count != cells) return c3d::INVALID_ARGUMENT~;
+    usz padded_points = (usz)(count_x + 2 * padding) * (usz)(count_z + 2 * padding);
+    usz padded_cells = (usz)(count_x - 1 + 2 * padding) * (usz)(count_z - 1 + 2 * padding);
+    if (sample_count != padded_points) return c3d::INVALID_ARGUMENT~;
+    if (material_count && material_count != padded_cells) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void? check_collision_height_samples(
