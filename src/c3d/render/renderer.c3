@@ -727,9 +727,12 @@ fn void? finish_pending_output(Renderer* renderer) @private {
         defer catch (void)gpu::discard_commands(&commands);
 
         // Acquired images must consume readiness and be presented before reuse or release.
+        gpu::TextureState acquired_state = renderer.acquired.prior_state;
+        acquired_state.stages = WINDOW_READINESS_STAGES;
+
         gpu::TextureBarrier to_present = gpu::texture_transition(
             texture: renderer.acquired.texture,
-            before: renderer.acquired.prior_state,
+            before: acquired_state,
             after: PRESENT_STATE,
         )!;
         gpu::cmd_texture_barrier(&commands, &to_present)!;
