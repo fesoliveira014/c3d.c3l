@@ -70,6 +70,8 @@ const uint TRACE_INSTANCE_BEND_FROM_ALPHA = 4; // vertex alpha drives the sway b
 const uint TRACE_INSTANCE_PROXY = 8; // stands in for drawn geometry: a hit below a pixel's proxy skip height is ignored
 const uint TRACE_MASK_ALL = 1;
 const uint TRACE_MASK_SHADOW_CASTER = 2;
+const uint TRACE_MASK_PROXY = 4; // a trace proxy carries its own bits, never ALL or SHADOW_CASTER
+const uint TRACE_MASK_PROXY_SHADOW_CASTER = 8;
 
 struct BvhNodeGpu {
     float min_x;

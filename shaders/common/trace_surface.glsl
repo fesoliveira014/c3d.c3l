@@ -26,6 +26,12 @@ float trace_proxy_t_min(float skip_height, vec3 direction, vec3 normal) {
     return skip_height / max(dot(direction, normal), TRACE_MIN_COSINE);
 }
 
+// The instance mask that reaches the proxies a query with this mask reaches.
+uint trace_proxy_mask(uint instance_mask) {
+    return ((instance_mask & TRACE_MASK_ALL) != 0u ? TRACE_MASK_PROXY : 0u)
+        | ((instance_mask & TRACE_MASK_SHADOW_CASTER) != 0u ? TRACE_MASK_PROXY_SHADOW_CASTER : 0u);
+}
+
 struct SceneHit {
     uint instance;
     uint primitive;

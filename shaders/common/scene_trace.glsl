@@ -14,14 +14,14 @@
 
 #include "ray_query.glsl"
 
-bool trace_scene_query(
+bool trace_scene_range(
     SceneTraceRoot scene,
     vec3 origin,
     vec3 direction,
+    float t_min,
     float t_max,
     uint instance_mask,
     uint ray_flags,
-    float proxy_t_min,
     out SceneHit hit
 ) {
     hit = SceneHit(
@@ -34,7 +34,7 @@ bool trace_scene_query(
 
     TraceInstanceArray instances = TraceInstanceArray(scene.instances);
     rayQueryEXT query;
-    GPU_RAY_QUERY_INITIALIZE(query, scene.tlas_index, ray_flags, instance_mask, origin, 0.0, direction, t_max);
+    GPU_RAY_QUERY_INITIALIZE(query, scene.tlas_index, ray_flags, instance_mask, origin, t_min, direction, t_max);
     while (rayQueryProceedEXT(query)) {
         if (rayQueryGetIntersectionTypeEXT(query, false) != gl_RayQueryCandidateIntersectionTriangleEXT) continue;
         SceneHit candidate = SceneHit(
@@ -44,8 +44,6 @@ bool trace_scene_query(
             rayQueryGetIntersectionTEXT(query, false)
         );
         uint flags = instances.values[candidate.instance].flags;
-        if ((flags & TRACE_INSTANCE_PROXY) != 0u && candidate.t < proxy_t_min) continue;
-
         bool masked = (flags & TRACE_INSTANCE_ALPHA_MASK) != 0u;
         if (masked && !trace_surface_passes(instances.values[candidate.instance], candidate)) continue;
 
@@ -59,6 +57,41 @@ bool trace_scene_query(
         rayQueryGetIntersectionTEXT(query, true)
     );
     return true;
+}
+
+// Every other instance counts from the ray's start; the proxies a mask reaches count from proxy_t_min, in a second
+// query that a shadow ray skips once the first has hit.
+bool trace_scene_query(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    uint ray_flags,
+    float proxy_t_min,
+    out SceneHit hit
+) {
+    bool found = trace_scene_range(scene, origin, direction, 0.0, t_max, instance_mask, ray_flags, hit);
+    if (found && (ray_flags & gl_RayFlagsTerminateOnFirstHitEXT) != 0u) return true;
+
+    float proxy_far = found ? hit.t : t_max;
+    if (proxy_t_min >= proxy_far) return found;
+
+    SceneHit proxy_hit;
+    if (trace_scene_range(
+        scene,
+        origin,
+        direction,
+        proxy_t_min,
+        proxy_far,
+        trace_proxy_mask(instance_mask),
+        ray_flags,
+        proxy_hit
+    )) {
+        hit = proxy_hit;
+        found = true;
+    }
+    return found;
 }
 
 bool trace_scene_query(
@@ -381,7 +414,7 @@ bool trace_scene_walk(
         for (uint slot = 0u; slot < node.count; slot++) {
             uint row = node.left_or_first + slot;
             TraceInstanceGpu instance = instances.values[row];
-            if ((instance.mask & instance_mask) == 0u) continue;
+            if ((instance.mask & (instance_mask | trace_proxy_mask(instance_mask))) == 0u) continue;
             bool met = trace_instance(
                 instance,
                 row,
