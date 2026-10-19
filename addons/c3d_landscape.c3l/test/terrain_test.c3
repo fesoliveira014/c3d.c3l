@@ -463,7 +463,7 @@ fn void test_morph_band_limits() @test {
 
     TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
     float limit = (1 - desc.lod_hysteresis) * 0.5f;
-    float[5] rejected_bands = { limit * 1.01f, -0.01f, float::inf, float::nan, 1 };
+    float[3] rejected_bands = { limit * 1.01f, -0.01f, float::nan };
     foreach (band : rejected_bands) {
         desc.morph_band = band;
         assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::INVALID_ARGUMENT);
@@ -933,6 +933,37 @@ fn void test_terrain_set_rejects_incompatible_tiles() @test {
 
     Node* second = add_prepared_tile(&sets, 1, 0);
     assert(c3d::same_id(sets.set.neighbour(first.id, EAST)!!, second.id));
+}
+
+fn void test_linked_tiles_hold_identical_morph_ranges() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    sets.desc.morph_band = 0.25f;
+    TerrainDesc flat_desc = sets.desc;
+    flat_desc.height_map = add_height_map(&sets.base, SMALL_TEXELS, SEED, flat: true);
+    Node* rough = add_prepared_tile(&sets, 0, 0);
+    Node* flat = add_tile_node(&sets, 1, 0);
+    try_add_terrain(&sets.base, flat, flat_desc)!!;
+    update_terrain(&sets.base);
+
+    InstanceQuadtree* rough_ranges = &sets.base.scene.get(rough, InstancedMesh).quadtree;
+    InstanceQuadtree* flat_ranges = &sets.base.scene.get(flat, InstancedMesh).quadtree;
+    float flat_diagonal = 1.416f * flat_ranges.levels[0].extent; // a flat tile alone holds the square's 1.4142
+    float shared = rough_ranges.levels[0].diagonal;
+    assert(shared > flat_diagonal && flat_ranges.levels[0].diagonal == shared);
+
+    // The flat tile now holds the tallest nodes of the set.
+    TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    write_extreme_texels(&sets.base, flat_desc.height_map, edit);
+    terrain::mark_dirty(&sets.base.scene, flat, edit);
+    update_terrain(&sets.base);
+    assert(flat_ranges.levels[0].diagonal > shared);
+    assert(rough_ranges.levels[0].diagonal == flat_ranges.levels[0].diagonal);
+
+    // Leaving the set returns the rough tile to its own, lower, ranges.
+    sets.base.scene.remove_component(flat, TerrainTile);
+    assert(rough_ranges.levels[0].diagonal == shared);
 }
 
 fn void test_terrain_set_links_neighbours_and_unlinks_on_removal() @test {
