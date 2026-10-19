@@ -2,8 +2,10 @@
 
 The LOD cases in `test_lod.c3` verify shared logical source indices, part/parity
 transforms, independent view/shadow selection, whole-group arena fallback,
-submission-owned history, temporal rejection, transparency sorting and common
-sway/fade anchors. Image comparisons use 512×512 reference color/depth/shadows.
+submission-owned history, temporal rejection, transparency sorting, common
+sway/fade anchors and a level that does not change when the object turns about Y
+(`test_lod_level_does_not_depend_on_yaw`, instanced and ordinary groups).
+Image comparisons use 512×512 reference color/depth/shadows.
 See [LOD acceptance](../../../docs/lod_acceptance.md) for the separate example run.
 
 The quadtree cases in `test_quadtree.c3` read each view's selection words back from the renderer-owned history. A 21-node

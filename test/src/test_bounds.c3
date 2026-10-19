@@ -53,6 +53,29 @@ fn void test_aabb_transform_covers_rotated_corners() @test {
     assert(math::abs(result.max.z - 1.0f) <= TOLERANCE);
 }
 
+fn void test_transformed_box_sphere_ignores_rotation() @test {
+    Aabb bounds = { .min = { -1, -2, -3 }, .max = { 3, 2, 1 } };
+    Transform scaled = {
+        .position = { 5, -4, 7 },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0),
+        .scale    = { 2, 1, 1 },
+    };
+    Transform turned = scaled;
+    turned.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 4);
+    Vec3 reach = { 0.5f, 0.25f, 0 };
+    Sphere unturned_sphere = maths::transformed_box_sphere(bounds, scaled.to_mat4(), reach);
+    Sphere turned_sphere = maths::transformed_box_sphere(bounds, turned.to_mat4(), reach);
+
+    // Local half extents (2, 2, 2) scaled by (2, 1, 1) and widened by the reach.
+    Vec3 expected_extent = { 4.5f, 2.25f, 2 };
+    assert(math::abs(unturned_sphere.radius - expected_extent.length()) <= TOLERANCE);
+    assert(math::abs(turned_sphere.radius - unturned_sphere.radius) <= TOLERANCE);
+
+    Vec3 expected_center = maths::transform_point(turned.to_mat4(), { 1, 0, -1 });
+    assert(turned_sphere.center.distance(expected_center) <= TOLERANCE);
+    assert(unturned_sphere.center.distance({ 7, -4, 6 }) <= TOLERANCE);
+}
+
 fn void test_ray_hits_box_ahead() @test {
     Ray ray = { .origin = { 0, 0, 0 }, .direction = { 0, 0, -1 } };
     Aabb bounds = { .min = { -1, -1, -6 }, .max = { 1, 1, -4 } };

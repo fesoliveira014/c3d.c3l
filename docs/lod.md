@@ -205,8 +205,8 @@ its trace participation. Ordinary animated parts also respect the source
 pose, unless `LodEffects.trace_sway` poses each instance
 ([scene trace](scene_trace.md#what-traces)).
 
-Selection uses projected sphere diameter divided by viewport height, multiplied
-by `exp2(ViewDesc.lod_bias)`. Bias defaults to zero; positive bias adds detail.
+Selection uses the projected diameter of the [size sphere](#size-sphere) divided by
+viewport height, multiplied by `exp2(ViewDesc.lod_bias)`. Bias defaults to zero; positive bias adds detail.
 Nonfinite bias is `INVALID_ARGUMENT`. Resolution and render scale do not affect
 normalized size. Perspective uses the existing Euclidean camera-to-center
 distance; orthographic size is independent of distance.
@@ -250,6 +250,28 @@ submitted frame: after a skipped frame the group draws with rejected history for
 that view, while an ordinary crowd part loses only its deformation motion
 ([crowds](instancing.md#crowds)). Update animation, morphs and world transforms
 before preparing any view, depth, shadow, velocity or trace pass of the frame.
+
+### Size sphere
+
+Selection sizes one sphere per object or placement. Its centre is the centre of
+the local bounds under the owner matrix, composed with the placement for an
+instanced group. Its radius is the length of the vector whose components are
+each half extent of those bounds, scaled by the length of the matching matrix
+axis, plus the group's world sway reach on that component.
+
+Turning the object leaves the radius unchanged. The world bounding box of a
+turned object grows by up to 1.41 times at 45 degrees and would change its
+level. A shear under-bounds the sphere, which selection tolerates; culling,
+picking and the spatial index keep world boxes.
+
+Ordinary groups call `maths::transformed_box_sphere`. The instance-cull shader
+computes the same radius in `bounding_radius`, and a
+[quadtree](instancing.md#quadtree-selection) batch sizes its nodes with it and
+no reach. A crowd group and any group with a bounds override size by this rule.
+
+An animated `ModelInstance` group without a bounds override is the exception.
+Its bounds are posed per part and no single matrix holds them, so it sizes the
+smallest sphere around its posed world bounds.
 
 ## GPU drawing
 
