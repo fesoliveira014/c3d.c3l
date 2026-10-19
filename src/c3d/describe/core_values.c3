@@ -13,6 +13,7 @@ fn void? register_core_values() {
     register_reflected(Sphere)!;
     register_reflected(InstanceSway)!;
     register_reflected(InstanceFade)!;
+    register_reflected(QuadtreeLevel)!;
     register_reflected(Impostor)!;
     register_reflected(LodPart)!;
     register_reflected(LodLevel)!;

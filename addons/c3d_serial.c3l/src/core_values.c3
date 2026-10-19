@@ -11,6 +11,7 @@ const ulong AABB_LAYOUT @local = 0xf8d61510a7f38293;
 const ulong SPHERE_LAYOUT @local = 0x9640fdd53be2f810;
 const ulong SWAY_LAYOUT @local = 0x11af37ae59834a58;
 const ulong FADE_LAYOUT @local = 0x679d213a5a3ae902;
+const ulong QUADTREE_LEVEL_LAYOUT @local = 0xa4da9f2bed3f8e98;
 const ulong IMPOSTOR_LAYOUT @local = 0x323ef7f725b2c310;
 const ulong LOD_PART_LAYOUT @local = 0x5c34bf1e202331d1;
 const ulong LOD_LEVEL_LAYOUT @local = 0x0f3cb1108b618099;
@@ -53,6 +54,7 @@ fn void? register_core_value_types() {
     register_core_value(Sphere, SPHERE_LAYOUT, &defaults_sphere)!;
     register_core_value(InstanceSway, SWAY_LAYOUT, &defaults_sway)!;
     register_core_value(InstanceFade, FADE_LAYOUT, &defaults_fade)!;
+    register_core_value(QuadtreeLevel, QUADTREE_LEVEL_LAYOUT, &defaults_quadtree_level)!;
     register_core_value(Impostor, IMPOSTOR_LAYOUT, &defaults_impostor)!;
     register_core_value(LodPart, LOD_PART_LAYOUT, &defaults_lod_part)!;
     register_core_value(LodLevel, LOD_LEVEL_LAYOUT, &defaults_lod_level)!;
@@ -99,6 +101,10 @@ fn void defaults_sway(void* value) @local {
 
 fn void defaults_fade(void* value) @local {
     *(InstanceFade*)value = {};
+}
+
+fn void defaults_quadtree_level(void* value) @local {
+    *(QuadtreeLevel*)value = {};
 }
 
 fn void defaults_impostor(void* value) @local {
