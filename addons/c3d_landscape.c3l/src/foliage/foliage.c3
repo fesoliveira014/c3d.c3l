@@ -80,7 +80,8 @@ struct FoliageDesc {
     InstanceFade fade;
     bool         cast_shadow;
     bool         receive_shadow;
-    bool         trace;     // traced views see the cells in their rest pose
+    bool         trace;      // traced views see the cells, at rest unless trace_sway is set
+    bool         trace_sway; // with trace: swaying cells trace at their swayed pose, up to the posed capacity
 }
 
 <*
