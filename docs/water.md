@@ -285,10 +285,17 @@ target values per wave while a blend runs, and the target's own when it ends.
 state. During a blend a changing speed and wavelength would jump a phase that is an absolute `t · c / λ`, so `update`
 integrates each wave's phase in double, `phase += dt · (c / λ)` averaged over the step, and uploads the blended
 waves with the `φ` that makes the stage's phase at the frame time equal the integrated one. When the blend ends the
-last `φ` stays: it continues the integrated phase at the target speed, and the surface never jumps. The integration
+last `φ` stays: it continues the integrated phase at the target speed, so the time phase never jumps. The integration
 starts from the phase the stage draws at the first `update` of the blend. Queries read the same `φ` and time, so a
 sample at `time + step_offset` extrapolates linearly from the frame's waves, as the stage would draw it. The traced
 surface runs the stage's code and agrees in and out of a blend.
+
+The stretch limit: a changing wavelength stretches the pattern about the node origin, because `dot(d, p) / λ` scales
+with the distance. A point at distance `r` sees `r · |1/λ_from − 1/λ_to|` extra crests pass during the blend, so the
+per-frame height step grows with the distance from the node origin, and a longer `transition_seconds` spreads it over
+more frames. On the 200 m body of the continuity test a two second blend from the default waves to a 12 m/s sea
+stepped the height by 0.02 to 0.04 m per frame within 3 m of the origin and by up to 0.42 m per frame at 85 m. The
+wavelength blends linearly: blending `1/λ` linearly steps further (up to 0.99 m in the same measurement).
 
 **Motion vectors.** `WaterParams` also holds the waves of the update before, and the velocity form draws a rest
 point at the previous frame's time with them: during a blend the vectors are the reprojection of the surface that
@@ -511,6 +518,9 @@ between removing and adding a water body on the same node. Destroy the scene bef
 - **Wave edits** through `set_desc` give one rendering of wrong wave motion vectors: the velocity form evaluates
   the new waves at the previous time. Queries follow once `surface_view` is retaken. A `set_sea_state` blend has
   exact vectors ([Sea state](#sea-state)).
+- **Sea-state stretch**: a blend that changes wavelengths stretches the pattern about the node origin, so the
+  per-frame height step grows with the distance from it; a longer transition spreads it
+  ([Phase continuity](#sea-state)).
 - **Long sessions**: core's float time limit; wrap the clock and call `render::reset_view_history`. The wave phase
   is `t · c / λ` in float ([Time](#time)); a sea state's offsets carry the same limit.
 - **Query accuracy**: the inversion stops at 0.1 mm or after 8 steps; `residual` reports where it stopped, and
