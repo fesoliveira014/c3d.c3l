@@ -57,7 +57,7 @@ const uint MAX_OCEAN_CHUNKS = 1 << scene::MAX_QUADTREE_DEPTH; // 87,381 nodes: 4
 <*
  Metres below the rest plane a water body reaches when the desc sets none.
 *>
-const float DEFAULT_WATER_DEPTH = 40; // ten default absorption distances: under 3e-5 of the light is left by then
+const float DEFAULT_WATER_DEPTH = 40; // ten default absorption distances: spends red, keeps green and blue
 
 const Wave[2] CALM_WAVES @private = {
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
@@ -127,18 +127,19 @@ struct Water {
 }
 
 <*
- Checked desc, material, grid, mirror cameras and clip plane of a water body, written by the library.
+ Checked desc, material, grid, mirror cameras, medium node and clip plane of a water body, written by the library.
 *>
 struct WaterRuntime {
-    WaterDesc           desc;       // checked preparation or set_desc snapshot; later Water edits never reach it
-    MaterialId          material;   // owned; removed with the runtime
-    GeometryId          grid;       // the built grid, shared per store key, or the desc's geometry
-    Entity[MAX_MIRRORS] mirrors;    // root camera nodes by slot; zero where none stands
-    Plane               clip_plane; // world; the mirror views' ViewDesc.clip_plane
-    Vec2                rest_min;   // node-local XZ of the rest surface
+    WaterDesc           desc;        // checked preparation or set_desc snapshot; later Water edits never reach it
+    MaterialId          material;    // owned; removed with the runtime
+    GeometryId          grid;        // the built grid, shared per store key, or the desc's geometry
+    Entity[MAX_MIRRORS] mirrors;     // root camera nodes by slot; zero where none stands
+    Entity              medium_node; // child of the body carrying its MediumVolume; owned, removed with the runtime
+    Plane               clip_plane;  // world; the mirror views' ViewDesc.clip_plane
+    Vec2                rest_min;    // node-local XZ of the rest surface
     Vec2                rest_max;
-    SeaBlend            sea;        // the sea-state blend set_sea_state started; idle without one
-    OceanState          ocean;      // zero for a BODY
+    SeaBlend            sea;         // the sea-state blend set_sea_state started; idle without one
+    OceanState          ocean;       // zero for a BODY
 }
 
 <*
@@ -241,7 +242,6 @@ fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, WaterRuntime);
 
 <*
  Prepare pending water atomically; prepared water is unchanged.
- The body owns its node's MediumVolume from here on; a node that already has one is refused.
  @param [&inout] scene : "Registered; node world matrix current."
  @param [&inout] assets : "The store given to register_water."
  @param [&in] node : "Carries Water."
@@ -252,7 +252,6 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     if (is_prepared(scene, node)) return;
     WaterDesc desc = scene.get(node, Water).desc;
     check_desc(assets, &desc)!;
-    if (scene.has(node, MediumVolume)) return c3d::INVALID_ARGUMENT~;
     bool shader_created, grid_created;
     ShaderId shader = water_shader(assets, &shader_created)!;
     defer catch if (shader_created) assets.remove_shader(shader);
@@ -303,6 +302,8 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         )!;
     }
     defer catch if (ocean) scene.remove_component(node, InstancedMesh);
+    Node* medium_node = scene.add_node(node, "water_medium")!;
+    defer catch scene.remove(medium_node);
     Entity[MAX_MIRRORS] mirrors;
     add_mirrors(scene, node.id, mirrors[:desc.max_mirrors])!;
 
@@ -318,22 +319,17 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         });
     }
     scene.add(node, (WaterRuntime){
-        .desc       = desc,
-        .material   = owned,
-        .grid       = surface,
-        .mirrors    = mirrors,
-        .clip_plane = mirror_clip_plane(node.world, total_amplitude(desc.waves[:desc.wave_count])),
-        .rest_min   = { rest.min.x, rest.min.z },
-        .rest_max   = { rest.max.x, rest.max.z },
-        .ocean      = layout,
+        .desc        = desc,
+        .material    = owned,
+        .grid        = surface,
+        .mirrors     = mirrors,
+        .medium_node = medium_node.id,
+        .clip_plane  = mirror_clip_plane(node.world, total_amplitude(desc.waves[:desc.wave_count])),
+        .rest_min    = { rest.min.x, rest.min.z },
+        .rest_max    = { rest.max.x, rest.max.z },
+        .ocean       = layout,
     });
-    write_medium(
-        scene:    scene,
-        node:     node,
-        desc:     &desc,
-        rest_min: { rest.min.x, rest.min.z },
-        rest_max: { rest.max.x, rest.max.z },
-    );
+    write_medium(scene, node, scene.get(node, WaterRuntime));
 }
 
 <*
@@ -427,13 +423,7 @@ fn void? set_desc(
     runtime.rest_max = { rest.max.x, rest.max.z };
     runtime.desc = desc;
     scene.get(node, Water).desc = desc;
-    write_medium(
-        scene:    scene,
-        node:     node,
-        desc:     &desc,
-        rest_min: runtime.rest_min,
-        rest_max: runtime.rest_max,
-    );
+    write_medium(scene, node, runtime);
     if (ocean) {
         place_ocean_bounds(
             scene: scene,
@@ -529,6 +519,7 @@ fn void update(
             wind_velocity: wind_velocity,
             time:          time,
         );
+        scene.node(runtime.medium_node).layers = node.layers;
         OceanMove move = ocean_move(scene, node, runtime);
         advance_sea(
             scene:   scene,
@@ -562,7 +553,8 @@ fn void remove_orphans(Scene* scene) @private {
         } else {
             scene.remove_component(node, Mesh);
         }
-        if (scene.has(node, MediumVolume)) scene.remove_component(node, MediumVolume);
+        Entity medium_node = scene.get(node, WaterRuntime).medium_node;
+        if (scene.world.is_alive(medium_node)) scene.remove(scene.node(medium_node));
         scene.remove_component(node, WaterRuntime);
     }
     while (true) {

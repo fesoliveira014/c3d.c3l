@@ -524,8 +524,8 @@ version 3 payloads tracing off. The Foliage payload is version 3, which adds
 encodings read `FACE` and no swayed tracing, and version 2 payloads read no swayed tracing.
 The Water payload is version 4, which adds `mode` and `depth`; versions 1, 2 and 3 read as a
 `BODY` with the default depth, and a body's `trace` and mirror fields as before. An ocean's
-generated `InstancedMesh` is omitted like a body's `Mesh`, and a prepared body's `MediumVolume` is omitted: preparation
-writes it again from the desc.
+generated `InstancedMesh` is omitted like a body's `Mesh`, and a prepared body's medium node, with its `MediumVolume`,
+is omitted: preparation adds it again from the desc.
 Foliage cells, water mirrors and a terrain's trace grid are omitted only through
 verified ownership.
 See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).

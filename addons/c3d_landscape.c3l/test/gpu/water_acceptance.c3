@@ -87,7 +87,7 @@ const Vec3 MIRROR_BACKGROUND_POINT @local = { -4, 4, -8 }; // above the plane, o
 const uint MIRROR_SAMPLES @local = 2;
 const int[<2>][3] CENTRE_PIXELS @local = { { 32, 32 }, { 26, 30 }, { 36, 38 } }; // near the axis of the view
 const float SHIFT_TOLERANCE @local = 0.002f; // absolute, near zero
-const float SHIFT_RELATIVE_TOLERANCE @local = 0.005f; // opaque water's medium over a depth rebuild's noise
+const float SHIFT_RELATIVE_TOLERANCE @local = 0.005f; // opaque water's absorption scales a depth rebuild's noise
 const float MISS_TOLERANCE @local = 0.03f; // relative; half-float storage and the Schlick fit
 const float HALF_FLOAT_STEP @local = 0.0005f; // absolute floor of the comparison, near zero
 const uint VELOCITY_SIZE @local = 65;
@@ -1985,7 +1985,7 @@ fn void test_water_mirror_is_not_darkened_by_its_own_medium() @test {
         mirror_view: mirror_view,
         pixels:      pixels[..],
     );
-    fixture.scene.remove_component(water_node, MediumVolume);
+    fixture.scene.remove_component(fixture.scene.node(runtime.medium_node), MediumVolume);
     Vec4[MIRROR_SAMPLES] without_medium = read_mirror(
         fixture:     &fixture,
         mirror_node: mirror_node,

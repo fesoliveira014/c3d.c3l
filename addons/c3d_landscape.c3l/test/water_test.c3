@@ -896,14 +896,14 @@ fn void test_pending_water_rolls_back_caches_and_preserves_prepared_owners() @te
     Fixture fixture;
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&fixture.assets);
-    fixture.scene = scene::create_scene(mem, { .max_nodes = 5 });
+    fixture.scene = scene::create_scene(mem, { .max_nodes = 7 });
     defer scene::destroy_scene(&fixture.scene);
     water::register_water(&fixture.scene, &fixture.assets)!!;
     fixture.camera = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
     Node* first = fixture.scene.add_node()!!;
     Node* second = fixture.scene.add_node()!!;
-    Node* first_blocker = fixture.scene.add_node()!!;
-    Node* second_blocker = fixture.scene.add_node()!!;
+    Node*[2] first_blockers = { fixture.scene.add_node()!!, fixture.scene.add_node()!! }; // a body needs two nodes
+    Node*[2] second_blockers = { fixture.scene.add_node()!!, fixture.scene.add_node()!! };
     WaterDesc desc = calm_desc();
     desc.extent = 10;
     uint free_nodes = fixture.scene.world.entities.free_count;
@@ -934,7 +934,10 @@ fn void test_pending_water_rolls_back_caches_and_preserves_prepared_owners() @te
     assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.shaders.free_count == free_shaders);
     assert(fixture.assets.materials.free_count == free_materials);
     assert(fixture.scene.get(first, Water).desc.extent == desc.extent);
-    fixture.scene.remove(first_blocker);
+    fixture.scene.remove(first_blockers[0]);
+    assert(@catch(water::prepare(&fixture.scene, &fixture.assets, first)) == c3d::CAPACITY_EXCEEDED);
+    assert(fixture.scene.world.entities.free_count == free_nodes + 1, "the medium node was left behind");
+    fixture.scene.remove(first_blockers[1]);
     assert(@catch(water::prepare_subtree(&fixture.scene, &fixture.assets)) == c3d::CAPACITY_EXCEEDED);
     assert(water::is_prepared(&fixture.scene, first) && !water::is_prepared(&fixture.scene, second));
     WaterRuntime before = *fixture.scene.get(first, WaterRuntime);
@@ -942,7 +945,8 @@ fn void test_pending_water_rolls_back_caches_and_preserves_prepared_owners() @te
     assert(fixture.scene.has(first, Mesh) && !fixture.scene.has(second, Mesh));
     assert(fixture.scene.world.is_alive(before.mirrors[0]));
 
-    fixture.scene.remove(second_blocker);
+    fixture.scene.remove(second_blockers[0]);
+    fixture.scene.remove(second_blockers[1]);
     water::prepare(&fixture.scene, &fixture.assets, second)!!;
     free_geometry = fixture.assets.geometries.free_count;
     free_materials = fixture.assets.materials.free_count;
@@ -1431,7 +1435,7 @@ fn void test_ocean_batch_is_freed_on_failure_and_on_removal() @test {
     defer tracking.free();
     Fixture fixture;
     fixture.assets = asset::create_asset_store(&tracking, asset::default_asset_store_desc());
-    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 3 });
+    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 4 });
     water::register_water(&fixture.scene, &fixture.assets)!!;
     fixture.camera = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
     Node* node = fixture.scene.add_node()!!;
@@ -1457,6 +1461,15 @@ fn void assert_medium_value(float value, float expected, String what) @local {
     assert(math::abs(value - expected) <= slack, "%s is %f, expected %f", what, value, expected);
 }
 
+fn Node* medium_node_of(Fixture* fixture, Node* node) @local {
+    return fixture.scene.node(fixture.scene.get(node, WaterRuntime).medium_node);
+}
+
+// The metres the medium's top hangs under the node: the waves' total amplitude and the skin.
+fn float medium_offset(Fixture* fixture, Node* node) @local {
+    return -medium_node_of(fixture, node).local.position.y;
+}
+
 fn void test_water_medium_maps_the_desc() @test {
     Fixture fixture;
     setup(&fixture);
@@ -1468,8 +1481,9 @@ fn void test_water_medium_maps_the_desc() @test {
     desc.depth = MEDIUM_DEPTH;
     Node* node = add_water_node(&fixture, desc);
 
-    MediumVolume* medium = fixture.scene.get(node, MediumVolume);
-    assert(medium && light::medium_volume_valid(medium));
+    Node* medium_node = medium_node_of(&fixture, node);
+    MediumVolume* medium = fixture.scene.get(medium_node, MediumVolume);
+    assert(medium && light::medium_volume_valid(medium) && !fixture.scene.has(node, MediumVolume));
     float[3] transmittance = { MEDIUM_TRANSMITTANCE.x, MEDIUM_TRANSMITTANCE.y, MEDIUM_TRANSMITTANCE.z };
     float[3] albedo = { MEDIUM_ALBEDO.x, MEDIUM_ALBEDO.y, water::MAX_SCATTER_ALBEDO };
     foreach (channel, color : transmittance) {
@@ -1479,13 +1493,19 @@ fn void test_water_medium_maps_the_desc() @test {
         assert_medium_value(medium.scattering[channel], scattering, "scattering");
     }
     assert(medium.anisotropy == water::MEDIUM_ANISOTROPY);
-    assert(medium.depth == MEDIUM_DEPTH);
     assert(medium.center == (Vec2){ 0, 0 } && medium.half_extent == (Vec2){ 100, 100 });
+
+    // The top hangs under the deepest trough and the bottom stays where the desc puts it.
+    float offset = amplitude_sum(&desc) + water::MEDIUM_SKIN;
+    assert_medium_value(medium_offset(&fixture, node), offset, "offset");
+    assert_medium_value(medium.depth, MEDIUM_DEPTH - offset, "depth");
+    assert(medium_node.parent == node && medium_node.layers == node.layers);
+    assert_medium_value(medium_node.world.m13 - medium.depth, -MEDIUM_DEPTH, "bottom");
 
     WaterDesc clear = desc;
     clear.absorption_color = { 1, 1, 1 };
     Node* clear_node = add_water_node(&fixture, clear);
-    assert(!fixture.scene.has(clear_node, MediumVolume));
+    assert(!fixture.scene.has(medium_node_of(&fixture, clear_node), MediumVolume));
 
     GeometryId shifted;
     @pool() {
@@ -1501,48 +1521,78 @@ fn void test_water_medium_maps_the_desc() @test {
     custom.geometry = shifted;
     custom.extent = 0;
     Node* custom_node = add_water_node(&fixture, custom);
-    MediumVolume* custom_medium = fixture.scene.get(custom_node, MediumVolume);
+    MediumVolume* custom_medium = fixture.scene.get(medium_node_of(&fixture, custom_node), MediumVolume);
     assert(custom_medium.center == OFF_CENTRE_SHIFT && custom_medium.half_extent == (Vec2){ 15, 5 });
 
     WaterDesc ocean = ocean_desc();
     ocean.depth = MEDIUM_DEPTH;
     Node* ocean_node = add_water_node(&fixture, ocean);
     WaterRuntime* ocean_runtime = fixture.scene.get(ocean_node, WaterRuntime);
-    MediumVolume* ocean_medium = fixture.scene.get(ocean_node, MediumVolume);
+    MediumVolume* ocean_medium = fixture.scene.get(medium_node_of(&fixture, ocean_node), MediumVolume);
     assert(ocean_medium.half_extent.x >= OCEAN_EXTENT / 2 && ocean_medium.half_extent.y >= OCEAN_EXTENT / 2);
     assert(ocean_medium.center + ocean_medium.half_extent == ocean_runtime.rest_max);
     assert(ocean_medium.center - ocean_medium.half_extent == ocean_runtime.rest_min);
+
+    WaterDesc puddle = desc;
+    puddle.depth = amplitude_sum(&desc);
+    Node* puddle_node = add_water_node(&fixture, puddle);
+    assert(!fixture.scene.has(medium_node_of(&fixture, puddle_node), MediumVolume));
 }
 
 fn void test_water_medium_follows_the_desc_and_the_body() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
-    WaterDesc desc = calm_desc();
-    Node* node = add_water_node(&fixture, desc);
-    assert(fixture.scene.has(node, MediumVolume));
+    WaterDesc desc = sea_desc(BODY_EXTENT);
+    Node* node = fixture.scene.add_node()!!;
+    node.layers = WATER_LAYER;
+    fixture.scene.update_world();
+    try_add(&fixture, node, desc)!!;
+    Node* medium_node = medium_node_of(&fixture, node);
+    assert(fixture.scene.has(medium_node, MediumVolume) && medium_node.layers == WATER_LAYER);
 
     WaterDesc clear = desc;
     clear.absorption_color = { 1, 1, 1 };
     try_set_desc(&fixture, node, clear)!!;
-    assert(!fixture.scene.has(node, MediumVolume));
+    assert(!fixture.scene.has(medium_node, MediumVolume));
 
     WaterDesc murky = desc;
     murky.absorption_distance = MEDIUM_DISTANCE;
     murky.depth = MEDIUM_DEPTH;
+    murky.waves[0].amplitude *= 2;
     try_set_desc(&fixture, node, murky)!!;
-    MediumVolume* medium = fixture.scene.get(node, MediumVolume);
+    MediumVolume* medium = fixture.scene.get(medium_node, MediumVolume);
     assert_medium_value(medium.absorption.x, -math::ln(desc.absorption_color.x) / MEDIUM_DISTANCE, "absorption");
-    assert(medium.depth == MEDIUM_DEPTH);
+    assert_medium_value(medium_offset(&fixture, node), amplitude_sum(&murky) + water::MEDIUM_SKIN, "offset");
+    assert_medium_value(medium.depth, MEDIUM_DEPTH - medium_offset(&fixture, node), "depth");
 
+    // A sea-state blend hangs the medium under the larger of the leaving and the target waves, then under the target.
+    update_water(&fixture, {}, SEA_START_TIME);
+    try_set_sea_state(&fixture, node.id)!!;
+    WaterDesc storm = fixture.scene.get(node, Water).desc;
+    float envelope = max(amplitude_sum(&murky), amplitude_sum(&storm)) + water::MEDIUM_SKIN;
+    assert(medium_offset(&fixture, node) >= envelope - MEDIUM_TOLERANCE);
+    update_water(&fixture, {}, SEA_START_TIME + SEA_FRAME_STEP);
+    assert(medium_offset(&fixture, node) >= envelope - MEDIUM_TOLERANCE);
+    update_water(&fixture, {}, SEA_START_TIME + SEA_TRANSITION + 1);
+    assert_medium_value(medium_offset(&fixture, node), amplitude_sum(&storm) + water::MEDIUM_SKIN, "offset");
+
+    // A view takes the medium only if it sees the body's layers, as the body's own layers change.
+    Vec3 eye = {};
+    assert(render::select_media(&fixture.scene, WATER_LAYER, eye, {}).count == 1);
+    assert(render::select_media(&fixture.scene, ~WATER_LAYER, eye, {}).count == 0);
+    node.layers = WATER_LAYER << 1;
+    update_water(&fixture);
+    assert(medium_node.layers == node.layers);
+    assert(render::select_media(&fixture.scene, WATER_LAYER, eye, {}).count == 0);
+    assert(render::select_media(&fixture.scene, WATER_LAYER << 1, eye, {}).count == 1);
+
+    // A medium the application put on the body's node is its own: it stays through the body's removal.
+    fixture.scene.add(node, (MediumVolume){ .absorption = { 1, 1, 1 }, .half_extent = { 1, 1 }, .depth = 1 });
     fixture.scene.remove_component(node, Water);
     update_water(&fixture);
-    assert(!fixture.scene.has(node, MediumVolume) && !fixture.scene.has(node, WaterRuntime));
-
-    Node* owned = fixture.scene.add_node()!!;
-    fixture.scene.add(owned, (MediumVolume){ .absorption = { 1, 1, 1 }, .half_extent = { 1, 1 }, .depth = 1 });
-    assert_fault(@catch(try_add(&fixture, owned, desc)), c3d::INVALID_ARGUMENT, "Water on a node with a medium");
-    assert(!fixture.scene.has(owned, Water) && fixture.scene.has(owned, MediumVolume));
+    assert(!fixture.scene.world.is_alive(medium_node.id) && !fixture.scene.has(node, WaterRuntime));
+    assert(fixture.scene.has(node, MediumVolume));
 }
 
 fn void test_mirror_below_the_rest_plane_is_disabled() @test {
