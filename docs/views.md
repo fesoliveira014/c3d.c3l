@@ -271,6 +271,11 @@ for the required build features and capture configuration.
 views and reset at `begin_frame`. Hidden, culled and collapsed decals are not
 budget drops. `ViewStats.decals` and `decals_dropped` describe one view's selection.
 
+`Stats.media_dropped` counts, per view, the visible [medium volumes](sky.md#medium-volumes) past the nearest four
+(`shader::MAX_VIEW_MEDIA`) and resets at `begin_frame`. A view that keeps a medium is fogged like one with an
+atmosphere or a fog: it records the fog pass and the split, takes the depth snapshot with every colour snapshot
+and draws blended items after the split. A view that keeps none costs what it did before.
+
 `Stats.cluster_view`, `cluster_count`, `cluster_overflows`, `cluster_skipped` and `decal_overflows` are delayed results read
 only after the reused frame slot has completed, independently of GPU timestamp enablement.
 They describe that slot's last recorded drawable view, not a sum across views: a later
@@ -549,7 +554,8 @@ renderer.render_view(&scene, camera_node, main_view)!;
   view texture; see [water](water.md#the-mirror).
 - Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
   from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
-  reflection carries the reflected path's fog once. The mirror view owns its own sky tables.
+  reflection carries the reflected path's fog once. Its [medium volumes](sky.md#medium-volumes) follow the same cut.
+  The mirror view owns its own sky tables.
 
 Every mesh vertex stage declares `ClipDistance`, so the device must support `shaderClipDistance`;
 `create_renderer` faults `UNSUPPORTED` without it. Adapter selection prefers a discrete adapter
@@ -883,7 +889,7 @@ again when a blended draw reads the scene, transparency (a `WEIGHTED` view with 
 records `FORWARD_TRANSPARENT` into its accumulation images, then `TRANSPARENT_COMPOSITE` into
 `hdr_color`, then the sorted blended draws: additive and every custom blended material),
 velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A view with
-[fog or an atmosphere](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
+[fog, an atmosphere or a medium](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
 depth prepass when its scene has an atmosphere, and splits before the transparent draws: the snapshot for
 blended readers, the SSGI colour copy, then `FOG`, then transparency. With `volumetric_fog` the view also
 records `FOG_SCATTERING` and `FOG_INTEGRATION` after the sky tables. Dielectric F0 in the resolve is
