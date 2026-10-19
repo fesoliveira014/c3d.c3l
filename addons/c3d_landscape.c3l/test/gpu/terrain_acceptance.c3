@@ -206,7 +206,7 @@ fn void destroy_fixture(Fixture* fixture) @local {
     asset::destroy_asset_store(&fixture.assets);
 }
 
-fn void check_validation(Renderer* renderer) @local {
+fn void check_validation(Renderer* renderer) @private {
     DebugEntry[render::DEBUG_LOG_ENTRIES] entries;
     usz count = renderer.log.recent(entries[..]);
     foreach (entry : entries[:count]) {
