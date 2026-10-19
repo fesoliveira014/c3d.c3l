@@ -3,6 +3,7 @@ module c3d_physics_height_window_test;
 import std::math;
 import c3d;
 import c3d::asset;
+import c3d::debug;
 import c3d::ecs;
 import c3d::material;
 import c3d::physics;
@@ -33,6 +34,8 @@ const float RISE_EPSILON @private = 0.0005f; // metres; the same rounding, seen 
 const float HEADING_EPSILON @private = 0.001f; // radians; the same rounding, seen in direction
 const ushort FLAT_LEVEL @private = 6554; // a tenth of the range
 const uint  FLOAT_TEXEL_BYTES @private = 16;
+const float WIRE_TOLERANCE @private = 0.0001f; // metres; the wire holds float samples and the map 16-bit ones
+const uint  WINDOW_COUNT @private = 4;
 
 enum Tiling @private {
     WHOLE,
@@ -299,6 +302,29 @@ fn void test_height_field_windows_match_the_whole_field() @test {
         assert(actual.node.parent == terrain);
     }
     assert(holes == 2);
+}
+
+fn void test_window_wireframes_follow_the_map_samples() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    TextureId texture = add_hill_map(&fixture);
+    ColliderDesc collider = map_collider(texture);
+    add_window_terrain(&fixture, &collider, WINDOW_CELLS);
+    usz segments_per_window = 2 * WINDOW_CELLS * (WINDOW_CELLS + 1);
+    debug::DebugDraw sink = debug::create_debug_draw(mem, WINDOW_COUNT * segments_per_window);
+    defer debug::destroy_debug_draw(&sink);
+    fixture.physics.debug_draw(&sink, { .colliders = true });
+
+    assert((usz)sink.vertices.len() == 2 * WINDOW_COUNT * segments_per_window);
+    ushort* texels = (ushort*)fixture.assets.texture(texture).pixels.ptr;
+    foreach (vertex : sink.vertices) {
+        uint column = (uint)math::round(vertex.position.x);
+        uint row = (uint)math::round(vertex.position.z);
+        float expected = texels[row * MAP_SAMPLES + column] * HEIGHT_SCALE / 65535;
+        assert(math::abs(vertex.position.y - expected) < WIRE_TOLERANCE);
+    }
 }
 
 fn void test_window_edit_marks_every_sharing_window() @test {
