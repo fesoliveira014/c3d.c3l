@@ -14,6 +14,7 @@ void main() {
     TerrainParams params = TerrainParams(material.parameters);
     uint height_texture = material.slots[TERRAIN_HEIGHT_SLOT].texture_index;
     uint border_texture = material.slots[TERRAIN_BORDER_SLOT].texture_index;
+
     TracePoseVertex vertex = trace_pose_vertex(index);
     ivec2 texel = ivec2(round(vertex.position.xz * float(params.texels - 1u)));
     vec3 position = vec3(
@@ -21,6 +22,7 @@ void main() {
         terrain_height(height_texture, params, texel),
         float(texel.y) * params.cell_size
     );
+
     vec3 normal = terrain_local_normal(height_texture, border_texture, params, vec2(texel));
     trace_pose_write(index, position, normal, vertex.tangent);
 }

@@ -181,10 +181,9 @@ of the whole extent, built from the same height map and independent of any view.
   texels' own triangulation, which the grid's triangles refine. `TerrainRuntime.trace_error` is that largest gap in
   metres over the whole map; it is 0 at `trace_level` 0 and on a map that is linear over each grid cell. Each finest chunk
   keeps its own maximum, in `TerrainRuntime.trace_deviation` as height texels, so a `mark_dirty` rectangle recomputes
-  only the chunks it touches, and the bounds then take the new maximum. The Mesh's bounds are the terrain's own
-  box, widened by `trace_error` above and below.
+  only the chunks it touches before the new global maximum is taken.
 - **A drawn level.** A view that draws a coarser chunk level than 0 differs from the full resolution surface by that
-  level's own error; the grid does not follow the selection. `lod_threshold = 0` draws the full resolution surface.
+  level's own error, and the grid does not follow the selection. `lod_threshold = 0` draws the full resolution surface.
 - **Edits.** A height-map revision poses the whole grid again: one dispatch and, on the hardware trace kind, one new
   bottom level, because a first pose from flat geometry would leave a poor tree to update; the software kind refits.
   A frame with no revision poses nothing. A tile's ring revision does the same for its own grid.
@@ -197,10 +196,10 @@ of the whole extent, built from the same height map and independent of any view.
   GPU. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow`
   ([capacity](scene_trace.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
   refreshes, which at preparation is every texel.
-- **Shadows.** The grid is what the trace sees, not the surface drawn. A traced shadow ray starts 0.02 m above the drawn
-  surface; where the grid lies above that start, by up to `trace_error`, the point sits under the grid and shadows
-  itself. The speckle follows the grid's cells and grows with `trace_level`; at level 0 the grid is the drawn surface.
-  Coarser levels suit effects that tolerate the error, such as reflections and probes.
+- **Shadows.** A traced shadow ray starts a fixed 0.02 m above the drawn surface, so where the trace grid sits higher,
+  by up to `trace_error`, the surface can shadow itself. The speckle follows the grid's cells and tracks the larger of
+  `trace_error` and the error of the drawn level; `lod_threshold = 0` removes the second. Coarser levels suit effects
+  that tolerate the error, such as reflections and probes.
 - **Hits.** Traced terrain shades grey and ignores layers, the control map and decals, like any custom material hit.
 - **Lifetime.** The grid is runtime-owned: removing the `Terrain` component or the node removes it at the next `update`
   or with the node. It is never serialized; `prepare` creates it again after a read. Each tile of a [set](#tile-sets)
@@ -439,8 +438,9 @@ its [trace grid](#scene-traces) node and `TerrainRuntime` first thing, so a remo
 removed node's batch and grid go with the node. The runtime's remove hook frees its arrays and removes the terrain's own material and border ring. Removing
 `TerrainRuntime` directly is not supported.
 
-The shared shader (`"c3d_landscape/terrain_shader"`) and chunk grid (`"c3d_landscape/terrain_grid"`) are
-added to the store by the first `add_terrain` and live as long as the store. Destroy physics worlds first, then
+The shared shader (`"c3d_landscape/terrain_shader"`), chunk grid (`"c3d_landscape/terrain_grid"`) and each trace grid
+(`"c3d_landscape/terrain_trace_grid/<side>"`, one per side length) are added to the store by the first `add_terrain`
+that needs them and live as long as the store. Destroy physics worlds first, then
 the scene, then the store.
 
 **Serialisation.** `Terrain` is the authored component; `TerrainRuntime`, the terrain's `InstancedMesh` and its

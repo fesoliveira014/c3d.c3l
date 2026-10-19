@@ -246,6 +246,7 @@ fn Demo? build_demo(
     uint texels = options.tiles ? (options.size - 1) / landscape_ground::TILES_PER_SIDE + 1 : options.size;
     uint trace_level = options.trace_level;
     if (trace_level == AUTO_TRACE_LEVEL) trace_level = landscape_ground::finest_trace_level(texels);
+
     Ground ground;
     if (options.tiles) {
         ground = landscape_ground::add_ground_tiles(

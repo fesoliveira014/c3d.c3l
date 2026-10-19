@@ -56,6 +56,7 @@ fn TerrainRuntime? create_runtime(Allocator allocator, uint texels, TerrainDesc*
         .level_count = level_count_of(texels)!,
     };
     if (desc.trace) runtime.trace_level = desc.trace_level;
+
     uint nodes;
     for (uint level = 0; level < runtime.level_count; level++) {
         uint side = level_side(&runtime, level);
@@ -71,12 +72,14 @@ fn TerrainRuntime? create_runtime(Allocator allocator, uint texels, TerrainDesc*
     if (catch maximum) return c3d::CAPACITY_EXCEEDED~;
     runtime.maximum = maximum;
     defer catch alloc::free(allocator, runtime.maximum.ptr);
+
     if (desc.trace) {
         uint leaves = level_side(&runtime, 0);
         float[]? deviation = alloc::new_array_try(allocator, float, (sz)leaves * leaves);
         if (catch deviation) return c3d::CAPACITY_EXCEEDED~;
         runtime.trace_deviation = deviation;
     }
+
     return runtime;
 }
 
@@ -109,11 +112,13 @@ fn void refresh_bounds(
             }
         }
     }
+
     if (runtime.trace_deviation.len) {
         float widest;
         foreach (deviation : runtime.trace_deviation) widest = max(widest, deviation);
         runtime.trace_error = widest * height_scale / TEXEL_MAX;
     }
+
     for (uint level = 1; level < runtime.level_count; level++) {
         first_x >>= 1;
         first_z >>= 1;

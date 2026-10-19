@@ -492,6 +492,7 @@ fn void? collect_terrain(void* component, serial::WriteContext* context) @privat
     GeometryId grid = context.assets.find_geometry("c3d_landscape/terrain_grid") ?? c3d::INVALID_ARGUMENT~!;
     if (!c3d::same_id(batch.geometry, grid)) return c3d::INVALID_ARGUMENT~;
     context.omit_component(context.node, ecs::slot_of(InstancedMesh)!)!;
+
     if (!runtime.trace_grid.generation) return;
 
     if (!context.scene.world.is_alive(runtime.trace_grid)) return c3d::INVALID_ARGUMENT~;

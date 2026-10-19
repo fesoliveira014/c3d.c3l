@@ -20,7 +20,7 @@ const uint MAX_TERRAIN_LEVELS = 6; // 4097 texels: 1,365 nodes, each a bounds en
 <*
  Most vertices a trace grid may have.
 *>
-const uint MAX_TRACE_VERTICES = 65535 * 64; // one thread per vertex: 65,535 groups of 64, the dispatch limit
+const uint MAX_TRACE_VERTICES = 65535 * 64; // Vulkan's minimum maxComputeWorkGroupCount[0] x TRACE_POSE_GROUP_SIZE (64)
 
 <*
  Projected node diameter, in pixels of a view's working extent, above which a node splits.
@@ -278,6 +278,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     scene.add(node, batch);
     defer catch scene.remove_component(node, InstancedMesh);
     install_quadtree(scene, node, &runtime, &desc)!;
+
     if (desc.trace) {
         runtime.trace_grid = add_trace_grid(
             scene:   scene,
@@ -287,6 +288,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             desc:    &desc,
         )!;
     }
+
     scene.add(node, runtime);
     if (tiled) refresh_tile_rings(scene, assets, node);
 }
@@ -372,6 +374,7 @@ fn void? update_node(Scene* scene, AssetStore* assets, Node* node) @private {
     apply_lod_tunables(batch, &terrain.desc);
     batch.cast_shadow = terrain.desc.cast_shadow;
     batch.receive_shadow = terrain.desc.receive_shadow;
+
     if (runtime.trace_grid.generation) {
         sync_trace_grid(scene, node, runtime, &terrain.desc);
         show_trace_grid(scene, node, runtime, true);
@@ -443,6 +446,7 @@ fn void remove_orphans(Scene* scene) @private {
         Node* node = scene.node(orphan);
         Entity trace_grid = scene.get(node, TerrainRuntime).trace_grid;
         if (trace_grid.generation) scene.remove(scene.node(trace_grid));
+
         scene.remove_component(node, InstancedMesh);
         scene.remove_component(node, TerrainRuntime);
     }

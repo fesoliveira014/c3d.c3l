@@ -52,6 +52,7 @@ fn Geometry trace_grid_geometry(Allocator allocator, uint side) @private {
             grid.normals[z * side + x] = { 0, 1, 0 };
         }
     }
+
     usz slot;
     for (uint z = 0; z < cells; z++) {
         for (uint x = 0; x < cells; x++) {
@@ -65,17 +66,18 @@ fn Geometry trace_grid_geometry(Allocator allocator, uint side) @private {
             slot += QUAD_INDICES;
         }
     }
+
     grid.finalize();
     return grid;
 }
 
-// The grid covers the whole extent and its heights come from the stage, so the bound is the terrain's own.
+// The grid's vertices are texels and its triangles lie between them, so the terrain's own box holds it.
 fn Aabb trace_bounds(TerrainRuntime* runtime, TerrainDesc* desc) @private {
     uint root = node_count(runtime) - 1;
     float unit = desc.height_scale / TEXEL_MAX;
     float extent = (float)(runtime.texels - 1) * desc.cell_size;
-    float low = (float)runtime.minimum[root] * unit - runtime.trace_error;
-    float high = (float)runtime.maximum[root] * unit + runtime.trace_error;
+    float low = (float)runtime.minimum[root] * unit;
+    float high = (float)runtime.maximum[root] * unit;
     return {
         .min = { 0, low, 0 },
         .max = { extent, max(high, low + unit), extent },
@@ -111,6 +113,7 @@ fn Entity? add_trace_grid(
 fn void sync_trace_grid(Scene* scene, Node* node, TerrainRuntime* runtime, TerrainDesc* desc) @private {
     Node* child = scene.node(runtime.trace_grid);
     Mesh* mesh = scene.get(child, Mesh);
+
     child.layers = node.layers;
     mesh.cast_shadow = desc.cast_shadow;
     mesh.local_bounds = trace_bounds(runtime, desc);
