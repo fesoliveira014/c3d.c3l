@@ -526,6 +526,7 @@ fn void? terrain_panel(
             v_min: 0,
             v_max: (1 - first_desc.lod_hysteresis) * 0.5f,
         );
+
         // Morphing needs a positive threshold.
         if (morph_band > 0) lod_threshold = math::max(lod_threshold, MORPH_MIN_THRESHOLD);
         foreach (node : demo.ground.terrain_nodes()) {
@@ -533,6 +534,7 @@ fn void? terrain_panel(
             desc.lod_threshold = lod_threshold;
             desc.morph_band = morph_band;
         }
+
         Vec3 position = fly_camera.position;
         HeightView view = ground_view(demo, position)!;
         if (try height = terrain::sample_height(&view, position.x, position.z)) {

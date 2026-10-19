@@ -187,18 +187,21 @@ that touch differ by at most one level. `morph_band <= (1 - lod_hysteresis) / 2`
   `lod_threshold`, `lod_hysteresis` or `morph_band`, give one frame of approximate motion, since no previous height
   texture or previous parameters are kept.
 - **Selection.** The ranges follow the largest diagonal of the boxes of a depth, so a height edit that raises a level's
-  tallest box lengthens that level's ranges: `update` sets them again, only when a value changed. The batch returns to
+  tallest box lengthens that level's ranges: `update` sets them again, only when a value changed. A tile of a
+  [set](#tile-sets) follows the largest diagonal over the whole set. The batch returns to
   the sphere rule when `morph_band` is edited to zero. The ranges are set again whenever the quadtree is installed
   again, after a rejected height-map revision.
 - **Cost.** About three quarters of a chunk's vertices are odd. With a band above zero each reads the quadtree block
-  and the depth of its node, and a vertex inside a morph reads two more heights; with the band at zero the stage takes
-  one uniform branch and draws what it drew before.
+  and the depth of its node, and a vertex inside a morph reads two more heights. With the band at zero an odd vertex of
+  a quadtree draw still loads the effects block and the batch's quadtree block and returns before any morph work; its
+  output is what it was.
 
 **Limits.** Selection and morph measure distance, which an orthographic view does not have: every node of a depth takes
 the level its extent gives and the stage morphs nothing in the view's own passes. A shadow layer cannot tell that its
 view is orthographic and morphs by distance, so keep `morph_band` zero for terrain drawn into orthographic views. Tiles
-of a [set](#tile-sets) morph each in their own quadtree, and share one `morph_band`, so the edge vertices of
-neighbouring tiles morph alike.
+of a [set](#tile-sets) morph each in their own quadtree and share one `morph_band`. They also share one set of ranges:
+every linked tile takes the largest box diagonal of each depth over the set, so the edge vertices of neighbouring tiles
+morph alike. A height edit, a link or an unlink in the set sets the ranges of every linked tile again.
 
 ## The node
 
