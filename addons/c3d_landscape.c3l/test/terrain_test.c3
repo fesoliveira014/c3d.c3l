@@ -455,6 +455,114 @@ fn void test_triplanar_sharpness_outside_its_range_is_invalid_argument() @test {
     try_add_terrain(&fixture, fixture.scene.add_node()!!, desc)!!;
 }
 
+fn void test_morph_band_limits() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = fixture.scene.add_node()!!;
+
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    float limit = (1 - desc.lod_hysteresis) * 0.5f;
+    float[3] rejected_bands = { limit * 1.01f, -0.01f, float::nan };
+    foreach (band : rejected_bands) {
+        desc.morph_band = band;
+        assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::INVALID_ARGUMENT);
+        assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, InstancedMesh));
+    }
+
+    desc.morph_band = 0.1f;
+    desc.lod_hysteresis = 1;
+    assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::INVALID_ARGUMENT);
+
+    desc.lod_hysteresis = terrain::DEFAULT_LOD_HYSTERESIS;
+    desc.lod_threshold = 0;
+    assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::INVALID_ARGUMENT);
+
+    desc.lod_threshold = terrain::DEFAULT_LOD_THRESHOLD;
+    desc.morph_band = limit;
+    try_add_terrain(&fixture, node, desc)!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    Terrain* terrain = fixture.scene.get(node, Terrain);
+    assert(batch.quadtree.metric == QuadtreeMetric.BOX_RANGES && batch.quadtree.morph_band == limit);
+
+    terrain.desc.morph_band = limit * 1.01f;
+    assert(@catch(try_update(&fixture)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.metric == QuadtreeMetric.BOX_RANGES && batch.quadtree.morph_band == limit);
+
+    terrain.desc.morph_band = limit;
+    terrain.desc.lod_hysteresis = 0.9f;
+    assert(@catch(try_update(&fixture)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.hysteresis == terrain::DEFAULT_LOD_HYSTERESIS);
+
+    terrain.desc.lod_hysteresis = terrain::DEFAULT_LOD_HYSTERESIS;
+    terrain.desc.lod_threshold = 0;
+    assert(@catch(try_update(&fixture)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.split_pixels == terrain::DEFAULT_LOD_THRESHOLD);
+
+    desc.morph_band = 0;
+    desc.lod_hysteresis = 1;
+    desc.lod_threshold = 0;
+    try_add_terrain(&fixture, fixture.scene.add_node()!!, desc)!!;
+}
+
+fn void test_morph_ranges_follow_the_desc_the_bounds_and_a_restored_batch() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, FOUR_LEVEL_TEXELS, SEED));
+    Node* plain = add_terrain_node(&fixture, desc);
+    assert(fixture.scene.get(plain, InstancedMesh).quadtree.metric == QuadtreeMetric.SPHERE_PIXELS);
+
+    desc.morph_band = 0.25f;
+    Node* node = add_terrain_node(&fixture, desc);
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    InstanceQuadtree* quadtree = &batch.quadtree;
+    TerrainRuntime* runtime = fixture.scene.get(node, TerrainRuntime);
+    assert(quadtree.metric == QuadtreeMetric.BOX_RANGES && quadtree.morph_band == 0.25f);
+    assert(quadtree.depth_count == runtime.level_count);
+    float finest_edge = (float)terrain::CHUNK_CELLS * CELL_SIZE;
+    assert(quadtree.levels[quadtree.depth_count - 1].extent == finest_edge);
+    assert(quadtree.levels[0].extent == finest_edge * (float)(1 << (runtime.level_count - 1)));
+
+    uint parameters = quadtree.parameter_revision;
+    uint topology = quadtree.revision;
+    update_terrain(&fixture);
+    assert(quadtree.parameter_revision == parameters);
+
+    float root_diagonal = quadtree.levels[0].diagonal;
+    TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    write_extreme_texels(&fixture, desc.height_map, edit);
+    terrain::mark_dirty(&fixture.scene, node, edit);
+    update_terrain(&fixture);
+    assert(quadtree.levels[0].diagonal > root_diagonal);
+    assert(quadtree.parameter_revision != parameters && quadtree.revision == topology);
+
+    Terrain* terrain = fixture.scene.get(node, Terrain);
+    terrain.desc.morph_band = 0;
+    update_terrain(&fixture);
+    assert(quadtree.metric == QuadtreeMetric.SPHERE_PIXELS && quadtree.morph_band == 0);
+    terrain.desc.morph_band = 0.2f;
+    update_terrain(&fixture);
+    assert(quadtree.metric == QuadtreeMetric.BOX_RANGES && quadtree.morph_band == 0.2f);
+
+    TextureAsset* record = fixture.assets.texture(desc.height_map);
+    char[] original = record.pixels;
+    TextureDesc original_desc = record.desc;
+    TextureId smaller = add_height_map(&fixture, SMALL_TEXELS, SEED);
+    record.desc = fixture.assets.texture(smaller).desc;
+    record.pixels = fixture.assets.texture(smaller).pixels;
+    fixture.assets.mark_texture_dirty(desc.height_map);
+    assert(@catch(try_update(&fixture)) == c3d::INVALID_ARGUMENT);
+    assert(quadtree.metric == QuadtreeMetric.SPHERE_PIXELS && !quadtree.parents.len);
+
+    record.desc = original_desc;
+    record.pixels = original;
+    fixture.assets.mark_texture_dirty(desc.height_map);
+    update_terrain(&fixture);
+    assert(quadtree.metric == QuadtreeMetric.BOX_RANGES && quadtree.morph_band == 0.2f);
+    assert(quadtree.levels[quadtree.depth_count - 1].extent == finest_edge);
+}
+
 fn bool near(float first, float second) @local => math::abs(first - second) <= RECORD_TOLERANCE;
 
 fn void test_node_records_and_parents_match_the_bounds_tree() @test {
@@ -805,6 +913,10 @@ fn void test_terrain_set_rejects_incompatible_tiles() @test {
     eager_lod.lod_threshold = sets.desc.lod_threshold + 1;
     assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), eager_lod);
 
+    TerrainDesc morphing = sets.desc;
+    morphing.morph_band = 0.1f;
+    assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), morphing);
+
     TerrainDesc extra_layer = sets.desc;
     extra_layer.layers[1] = sets.base.assets.add_material(material::standard())!!;
     assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), extra_layer);
@@ -821,6 +933,37 @@ fn void test_terrain_set_rejects_incompatible_tiles() @test {
 
     Node* second = add_prepared_tile(&sets, 1, 0);
     assert(c3d::same_id(sets.set.neighbour(first.id, EAST)!!, second.id));
+}
+
+fn void test_linked_tiles_hold_identical_morph_ranges() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    sets.desc.morph_band = 0.25f;
+    TerrainDesc flat_desc = sets.desc;
+    flat_desc.height_map = add_height_map(&sets.base, SMALL_TEXELS, SEED, flat: true);
+    Node* rough = add_prepared_tile(&sets, 0, 0);
+    Node* flat = add_tile_node(&sets, 1, 0);
+    try_add_terrain(&sets.base, flat, flat_desc)!!;
+    update_terrain(&sets.base);
+
+    InstanceQuadtree* rough_ranges = &sets.base.scene.get(rough, InstancedMesh).quadtree;
+    InstanceQuadtree* flat_ranges = &sets.base.scene.get(flat, InstancedMesh).quadtree;
+    float flat_diagonal = 1.416f * flat_ranges.levels[0].extent; // a flat tile alone holds the square's 1.4142
+    float shared = rough_ranges.levels[0].diagonal;
+    assert(shared > flat_diagonal && flat_ranges.levels[0].diagonal == shared);
+
+    // The flat tile now holds the tallest nodes of the set.
+    TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    write_extreme_texels(&sets.base, flat_desc.height_map, edit);
+    terrain::mark_dirty(&sets.base.scene, flat, edit);
+    update_terrain(&sets.base);
+    assert(flat_ranges.levels[0].diagonal > shared);
+    assert(rough_ranges.levels[0].diagonal == flat_ranges.levels[0].diagonal);
+
+    // Leaving the set returns the rough tile to its own, lower, ranges.
+    sets.base.scene.remove_component(flat, TerrainTile);
+    assert(rough_ranges.levels[0].diagonal == shared);
 }
 
 fn void test_terrain_set_links_neighbours_and_unlinks_on_removal() @test {

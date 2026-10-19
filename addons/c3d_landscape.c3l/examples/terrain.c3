@@ -69,6 +69,8 @@ const Vec2 PANEL_SIZE @local = { 420, 360 };
 const Vec2 STATS_PANEL_POSITION @local = { 16, 392 };
 const Vec2 STATS_PANEL_SIZE @local = { 420, 300 };
 const float LOD_THRESHOLD_MAX @local = 2048;
+const float MORPH_MIN_THRESHOLD @local = 1; // pixels: the panel's smallest threshold while morphing
+const float MORPH_BAND @local = 0.25f; // --morph: within the default hysteresis's limit of 0.375
 const double NANOSECONDS_PER_MICROSECOND @local = 1_000;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 const double MICROSECONDS_PER_MILLISECOND @local = 1_000;
@@ -123,6 +125,8 @@ struct Options @local {
     uint        size;
     uint        layers;
     float       lod_threshold;
+    float       morph_band;
+    bool        triplanar;
     uint        width;
     uint        height;
     bool        hide_terrain;
@@ -244,19 +248,23 @@ fn Demo? build_demo(
     Ground ground;
     if (options.tiles) {
         ground = landscape_ground::add_ground_tiles(
-            scene:         scene,
-            assets:        assets,
-            size:          options.size,
-            layers:        options.layers,
-            lod_threshold: options.lod_threshold,
+            scene:            scene,
+            assets:           assets,
+            size:             options.size,
+            layers:           options.layers,
+            lod_threshold:    options.lod_threshold,
+            morph_band:       options.morph_band,
+            slope_projection: options.triplanar ? SlopeProjection.TRIPLANAR : SlopeProjection.TOP,
         )!;
     } else {
         ground = landscape_ground::add_ground(
-            scene:         scene,
-            assets:        assets,
-            size:          options.size,
-            layers:        options.layers,
-            lod_threshold: options.lod_threshold,
+            scene:            scene,
+            assets:           assets,
+            size:             options.size,
+            layers:           options.layers,
+            lod_threshold:    options.lod_threshold,
+            morph_band:       options.morph_band,
+            slope_projection: options.triplanar ? SlopeProjection.TRIPLANAR : SlopeProjection.TOP,
         )!;
     }
     ground.node.visible = !options.hide_terrain;
@@ -438,6 +446,8 @@ fn Options? parse_options(String[] args) @local {
             case "--lod-threshold":
                 options.lod_threshold = option_value(args, &index)!.to_float()!;
                 if (!(options.lod_threshold >= 0)) return c3d::INVALID_ARGUMENT~;
+            case "--morph": options.morph_band = MORPH_BAND;
+            case "--triplanar": options.triplanar = true;
             case "--collision-window": options.collision_window = option_value(args, &index)!.to_uint()!;
             case "--sky": options.sky = true;
             case "--volumetric-fog": options.volumetric_fog = true;
@@ -446,6 +456,7 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
+    if (options.morph_band > 0 && !(options.lod_threshold > 0)) return c3d::INVALID_ARGUMENT~;
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.tiles && options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (options.capture.len && options.benchmark) return c3d::INVALID_ARGUMENT~;
@@ -500,14 +511,30 @@ fn void? terrain_panel(
             renderer.stats.instances_visible,
             renderer.stats.quadtree_fallbacks,
         );
-        float lod_threshold = demo.scene.get(demo.ground.terrain_nodes()[0], Terrain).desc.lod_threshold;
+        TerrainDesc first_desc = demo.scene.get(demo.ground.terrain_nodes()[0], Terrain).desc;
+        float lod_threshold = first_desc.lod_threshold;
+        float morph_band = first_desc.morph_band;
         imgui::slider_float(
             label: "LOD threshold",
             v:     &lod_threshold,
             v_min: 0,
             v_max: LOD_THRESHOLD_MAX,
         );
-        foreach (node : demo.ground.terrain_nodes()) demo.scene.get(node, Terrain).desc.lod_threshold = lod_threshold;
+        imgui::slider_float(
+            label: "Morph band",
+            v:     &morph_band,
+            v_min: 0,
+            v_max: (1 - first_desc.lod_hysteresis) * 0.5f,
+        );
+
+        // Morphing needs a positive threshold.
+        if (morph_band > 0) lod_threshold = math::max(lod_threshold, MORPH_MIN_THRESHOLD);
+        foreach (node : demo.ground.terrain_nodes()) {
+            TerrainDesc* desc = &demo.scene.get(node, Terrain).desc;
+            desc.lod_threshold = lod_threshold;
+            desc.morph_band = morph_band;
+        }
+
         Vec3 position = fly_camera.position;
         HeightView view = ground_view(demo, position)!;
         if (try height = terrain::sample_height(&view, position.x, position.z)) {
@@ -1161,8 +1188,8 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
-              "[--width W] [--height H] [--hide-terrain] [--tiles 2x2] [--capture FILE.png] [--sky] "
-              "[--volumetric-fog] [--collision-window CELLS].");
+              "[--morph] [--triplanar] [--width W] [--height H] [--hide-terrain] [--tiles 2x2] "
+              "[--capture FILE.png] [--sky] [--volumetric-fog] [--collision-window CELLS].");
         }
         return 1;
     }

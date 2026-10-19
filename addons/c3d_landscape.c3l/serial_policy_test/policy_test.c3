@@ -32,7 +32,7 @@ fn void test_every_landscape_component_has_one_expected_serialization_policy() @
     landscape::register_serial_codecs()!!;
     ExpectedPolicy[5] authored = {
         { .slot = ecs::assigned_slot(Terrain)!!, .name = "terrain", .identity = TerrainDesc::typeid,
-            .phase = VALUE, .version = 2 },
+            .phase = VALUE, .version = 3 },
         { .slot = ecs::assigned_slot(TerrainSet)!!, .name = "terrain_set",
             .identity = TerrainSetAuthoring::typeid, .phase = VALUE, .version = 1 },
         { .slot = ecs::assigned_slot(TerrainTile)!!, .name = "terrain_tile",
