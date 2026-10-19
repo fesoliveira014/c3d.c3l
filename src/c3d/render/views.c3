@@ -692,6 +692,7 @@ struct ViewRecord {
     post::ViewFocus                      focus;
     LodHistory                          lod_history;
     QuadtreeHistory                      quadtree_history;
+    RenderTargetId[material::MAX_VIEW_TEXTURES] view_textures; // kept across configure_view, dropped with the view
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
     ClusterBuffers                       clusters;
     gpu::GpuAddress                      cluster_root;
@@ -897,6 +898,23 @@ fn ViewStats? Renderer.view_stats(&self, ViewId view) {
 }
 
 <*
+ Provide a render target as the view's texture at slot; a zero target clears it.
+ A target destroyed later reads as absent.
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
+ @require slot < material::MAX_VIEW_TEXTURES
+*>
+fn void? Renderer.set_view_texture(&self, ViewId view, uint slot, RenderTargetId target) {
+    ViewRecord* record = self.views.try_get(view)!;
+
+    if (!c3d::same_id(target, (RenderTargetId){})) {
+        if (!self.targets.is_live(target)) return c3d::INVALID_ID~;
+        if (view_writes(record, ViewOutput.TEXTURE, target)) return c3d::INVALID_ARGUMENT~;
+    }
+
+    record.view_textures[slot] = target;
+}
+
+<*
  Working extent of a view: the viewport or the whole output, scaled, at least one pixel.
 *>
 fn uint[<2>] working_extent(
@@ -964,6 +982,7 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
 <*
  Replace the view's configuration, resizing or retiring its working images.
  Needs room for every new image before an old one goes; a fault changes nothing.
+ Faults INVALID_ARGUMENT when the new output target is one of the view's textures.
  @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
  @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
@@ -976,6 +995,10 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
 fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     ViewRecord* record = renderer.views.try_get(view)!;
     validate_view_desc(renderer, &desc)!;
+
+    foreach (provided : record.view_textures) {
+        if (desc.output == ViewOutput.TEXTURE && c3d::same_id(desc.target, provided)) return c3d::INVALID_ARGUMENT~;
+    }
 
     @pool() {
         StagedView[] staged = alloc::new_array(tmem, StagedView, 1);

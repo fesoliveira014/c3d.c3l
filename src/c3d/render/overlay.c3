@@ -159,6 +159,7 @@ fn void? prepare_overlay(Renderer* self, OverlayList* list, RenderTargetId targe
                 binding.texture = texture_mirror.view.index;
             case RENDER_TARGET:
                 binding.texture = self.targets.get(rect.texture.target).target.view.index;
+            case VIEW: unreachable();
         }
     }
 
