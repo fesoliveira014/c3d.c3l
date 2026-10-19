@@ -37,6 +37,7 @@ const uint FRAME_CLIP_PLANE = 16u;
 const uint FRAME_REFLECTIONS_PRESENT = 32u;
 const uint FRAME_SHADOW_SAMPLES_SHIFT = 6u;
 const uint FRAME_SHADOW_SAMPLES_MASK = 15u;
+const uint FRAME_SELECTION_ORTHOGRAPHIC = 2048u;
 const uint MAX_VIEW_TEXTURES = 4u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_DECALS = 256u;

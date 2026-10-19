@@ -20,8 +20,11 @@ The box-range cases in `test_quadtree.c3` use a 1,365-node batch (six depths) ov
 `test_box_ranges_bound_the_level_difference` reads the drawn nodes back and asserts that nodes sharing an edge differ by at most
 one depth, in a 512-pixel view where the natural ranges already hold and in a 128-pixel view where only the clamp holds (the
 pixels per extent drop to about one half by editing `split_pixels` in place); each pass must draw depths at least two apart.
-`selection_probe.vert.glsl` stores `FrameRoot.selection_camera` and `previous_selection_camera` from its shaded and its depth
+`selection_probe.vert.glsl` stores `FrameRoot.selection_camera`, `previous_selection_camera` and a vector holding the
+`FRAME_SELECTION_ORTHOGRAPHIC` bit and whether the frame's own `proj` is orthographic, from its shaded and its depth
 forms: `test_selection_camera_follows_the_owning_view` checks that a shadow layer holds its view's camera, not the light's, and
+that the layer's orthographic light projection leaves the bit clear in a perspective view;
+`test_selection_flag_follows_the_owning_views_projection` that an orthographic view sets it in both forms, and
 `test_vertex_stage_reads_the_quadtree_block` that an instanced stage reaches the batch's `QuadtreeGpu` and per-node depth through
 the instance-effects block and gets the expected range and morph from `quadtree_morph.glsl`; a smaller batch placed on a
 node whose larger slot survived reads its own depths. The probe stores from the vertex stage through a device address, without

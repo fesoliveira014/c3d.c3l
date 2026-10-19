@@ -1785,7 +1785,8 @@ fn void write_frame_root(
           | (clip_plane.normal != (Vec3){} ? shader::FRAME_CLIP_PLANE : 0)
           | (reflection_texture != (gpu::TextureIndex)0 ? shader::FRAME_REFLECTIONS_PRESENT : 0)
           | ((shadow_samples - 1) << shader::FRAME_SHADOW_SAMPLES_SHIFT)
-          | (ao_bent_normals ? shader::FRAME_AO_BENT_NORMALS : 0),
+          | (ao_bent_normals ? shader::FRAME_AO_BENT_NORMALS : 0)
+          | (selection.orthographic ? shader::FRAME_SELECTION_ORTHOGRAPHIC : 0),
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,

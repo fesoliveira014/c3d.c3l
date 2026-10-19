@@ -37,7 +37,9 @@ const float RANGE_SMALL_SPLIT_PIXELS @private = 222; // about half a pixel per e
 const Vec3 RANGE_CAMERA @private = { -10, -10, 1 }; // beside a corner of the plane, so the drawn depths span the tree
 const float RANGE_ADJACENT_TOLERANCE @private = 1e-3f;
 const uint RANGE_MINIMUM_DEPTH_SPAN @private = 2; // a pass needs drawn depths a violation could separate
-const uint PROBE_NODE_FIRST @private = 6; // mirrored as NODE_FIRST in selection_probe.vert.glsl; the frame vectors come first
+const uint PROBE_NODE_FIRST @private = 8; // mirrored as NODE_FIRST in selection_probe.vert.glsl; the frame vectors come first
+const uint PROBE_DEPTH_FIRST @private = 4; // mirrored as FRAME_VECTORS in selection_probe.vert.glsl; the depth form's vectors follow the shaded form's
+const uint PROBE_FLAGS @private = 3; // in a form's vectors: x is the selection flag, y whether the frame's own projection is orthographic
 const uint PROBE_VECTORS @private = PROBE_NODE_FIRST + QUADTREE_NODES;
 const uint CHAIN_NODES @private = 5; // a single path of nodes, each the child of the one before
 const usz PROBE_BYTES @private = PROBE_VECTORS * Vec4::size;
@@ -646,9 +648,33 @@ fn void test_selection_camera_follows_the_owning_view() @test {
     float pixel_scale = (float)TARGET_SIZE / (2 * math::tan(math::deg_to_rad(60.0f) * 0.5f));
     Vec4 expected = { CAMERA_POSITION.x, CAMERA_POSITION.y, CAMERA_POSITION.z, pixel_scale };
     assert(vectors[0] == expected && vectors[1] == expected);
-    assert(vectors[3] == expected && vectors[4] == expected);
-    assert(vectors[5].xyz != expected.xyz);
+    assert(vectors[PROBE_DEPTH_FIRST] == expected && vectors[PROBE_DEPTH_FIRST + 1] == expected);
+    assert(vectors[PROBE_DEPTH_FIRST + 2].xyz != expected.xyz);
+    assert(vectors[PROBE_FLAGS] == (Vec4){ 0, 0, 0, 0 });
+    assert(vectors[PROBE_DEPTH_FIRST + PROBE_FLAGS] == (Vec4){ 0, 1, 0, 0 });
     check_validation(renderer);
+}
+
+fn void test_selection_flag_follows_the_owning_views_projection() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    SelectionProbe probe = create_selection_probe(&fixture)!!;
+    defer destroy_selection_probe(&fixture, &probe);
+    DeformedScene target = create_single_box_scene(&fixture, fixture.box, probe.material, sunlit: true)!!;
+    defer scene::destroy_scene(&target.scene);
+    *target.scene.get(target.camera, Camera) = camera::orthographic(ORTHOGRAPHIC_HEIGHT, 0.1f, 100);
+
+    ViewDesc desc = render::texture_view_desc(fixture.hdr_target);
+    desc.depth_prepass = false;
+    render::configure_view(&fixture.renderer, fixture.view, desc)!!;
+    Vec4[] vectors = render_selection_probe(&fixture, &probe, &target.scene, target.camera, fixture.view)!!;
+
+    float pixel_scale = (float)TARGET_SIZE / ORTHOGRAPHIC_HEIGHT;
+    assert(vectors[0].w == pixel_scale && vectors[PROBE_DEPTH_FIRST].w == pixel_scale);
+    assert(vectors[PROBE_FLAGS] == (Vec4){ 1, 1, 0, 0 });
+    assert(vectors[PROBE_DEPTH_FIRST + PROBE_FLAGS] == (Vec4){ 1, 1, 0, 0 });
+    check_validation(&fixture.renderer);
 }
 
 fn void test_vertex_stage_reads_the_quadtree_block() @test {
