@@ -15,6 +15,7 @@ import c3d::shader::compile;
 import gpu;
 import std::io;
 import std::math;
+import std::math::quaternion;
 
 const char[*] READBACK_SOURCE @local = $embed("readback.comp.glsl");
 const char[*] NORMAL_PROBE_SOURCE @local = $embed("normal_probe.comp.glsl");
@@ -60,6 +61,7 @@ const uint COVERED_RADIUS_NEAR @local = 12; // pixels around the centre that the
 const uint COVERED_RADIUS_FAR @local = 3;
 const uint RGBA8_BYTES @local = 4;
 const float RESELECT_THRESHOLD @local = 1e9f; // splits nothing, so the root draws alone
+const float TURNED_YAW_DEGREES @local = 45; // where the world bounding box of a node box is largest
 const uint SLOPE_TARGET_SIZE @local = 64;
 const uint SLOPE_TEXELS @local = 257; // two finest chunks per side
 const float SLOPE_CELL_SIZE @local = 0.25f; // a 24 m wall falls within one cell
@@ -346,6 +348,7 @@ struct ViewTarget @local {
 struct Selection @local {
     uint                              drawn;
     uint[terrain::MAX_TERRAIN_LEVELS] per_level;
+    bool[VIEW_NODES]                  node_drawn;
 }
 
 fn ViewTarget? create_view_target(Fixture* fixture, float altitude) @local {
@@ -441,6 +444,7 @@ fn Selection read_selection(Fixture* fixture, gpu::MappedGpuSpan selection) @loc
     foreach (uint node, word : words) {
         if (word & shader::QUADTREE_DRAW) {
             result.drawn++;
+            result.node_drawn[node] = true;
             uint level = runtime.level_count - 1;
             while (runtime.level_offset[level] > node) level--;
             result.per_level[level]++;
@@ -513,6 +517,39 @@ fn void test_views_select_their_own_terrain_levels() @test {
     )!!;
     assert(read_selection(&fixture, selection).drawn == NEAR_DRAWN);
     io::printfn("Terrain nodes drawn per level: near view %s, far view %s", near_levels.per_level, far_levels.per_level);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_selection_does_not_depend_on_the_node_yaw() @test {
+    Fixture fixture;
+    create_fixture(&fixture, side: VIEW_TEXELS, lod_threshold: VIEW_SPLIT_PIXELS)!!;
+    defer destroy_fixture(&fixture);
+    ViewTarget near_view = create_view_target(&fixture, NEAR_ALTITUDE)!!;
+    gpu::MappedGpuSpan selection = create_selection_readback(&fixture.renderer)!!;
+    defer free_selection_readback(&fixture.renderer, selection);
+    uint frame;
+
+    settle_selection(&fixture, &near_view, selection, &frame)!!;
+    Selection unturned = read_selection(&fixture, selection);
+    assert(unturned.drawn == NEAR_DRAWN);
+
+    // The map turns about its middle, which stays under the camera.
+    Vec3 middle = { (float)(VIEW_TEXELS - 1) * CELL_SIZE * 0.5f, 0, (float)(VIEW_TEXELS - 1) * CELL_SIZE * 0.5f };
+    Node* ground = fixture.terrain_node;
+    ground.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::deg_to_rad(TURNED_YAW_DEGREES));
+    ground.local.position = {};
+    fixture.scene.update_world();
+    ground.local.position = middle - maths::transform_point(ground.world, middle);
+
+    settle_selection(&fixture, &near_view, selection, &frame)!!;
+    Selection turned = read_selection(&fixture, selection);
+    io::printfn(
+        "Terrain nodes drawn per level: unturned %s, turned %s",
+        unturned.per_level,
+        turned.per_level,
+    );
+    assert(turned.per_level == unturned.per_level);
+    assert(mem::equals(turned.node_drawn[..], unturned.node_drawn[..]));
     check_validation(&fixture.renderer);
 }
 

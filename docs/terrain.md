@@ -140,10 +140,9 @@ rejected height-map revision and to install it again. Each tile of a [set](#tile
 records. A node splits when its size exceeds `lod_threshold`, and a node that split in the view's previous
 rendering stays split until its size falls below `lod_threshold / (1 + lod_hysteresis)`. A node draws when every
 ancestor splits and it does not, so the drawn nodes partition the extent. The size is the projected height of
-the sphere that bounds the node's box, in pixels of the view's working extent with `render_scale` included. The
-sphere is taken from the box's bounding box in world space: a node turned by 45° about Y measures up to 1.41
-times larger than an unturned one. The selection reads no camera rotation, so turning in place never
-re-selects. A change of `lod_threshold` or `lod_hysteresis` keeps every view's history; `update` copies the
+the sphere through the corners of the node's box, in pixels of the view's working extent with `render_scale`
+included. The sphere does not depend on the node's rotation: a terrain turned about Y selects the levels it
+selected unturned. The selection reads no camera rotation, so turning in place never re-selects. A change of `lod_threshold` or `lod_hysteresis` keeps every view's history; `update` copies the
 values onto the quadtree [without checking them](instancing.md#quadtree-selection), so keep them finite and not
 negative after `add_terrain` has validated them.
 
