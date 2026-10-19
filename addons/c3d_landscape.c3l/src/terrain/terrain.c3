@@ -10,6 +10,7 @@ import std::math;
 <*
  Cells along one chunk edge at every level.
 *>
+// mirrored as TERRAIN_CHUNK_CELLS in landscape/terrain_height.glsl
 const uint CHUNK_CELLS = 128; // 17,157 grid and skirt vertices keep 16-bit indices; 101,376 indices per chunk draw
 
 <*
@@ -80,6 +81,7 @@ struct TerrainDesc {
     MaterialId[material::MAX_CUSTOM_MATERIAL_REFERENCES] layers; // STANDARD materials, leading; zero ids unused
     float      lod_threshold;  // projected node diameter in pixels of a view's working extent above which a node splits
     float      lod_hysteresis; // a split node merges below lod_threshold / (1 + lod_hysteresis)
+    float      morph_band;     // share of a selection range over which vertices morph; zero keeps levels abrupt
     SlopeProjection slope_projection; // how the layers' textures project onto the surface
     float      triplanar_sharpness; // plane-weight exponent in MIN_ to MAX_TRIPLANAR_SHARPNESS; read under TRIPLANAR
     bool       cast_shadow;
@@ -339,11 +341,15 @@ fn void? update_node(Scene* scene, AssetStore* assets, Node* node) @private {
         return excuse~;
     }
 
-    if (runtime.stale) {
+    bool published = runtime.stale;
+    if (published) {
         publish_nodes(scene, node, runtime, &terrain.desc)!;
         runtime.stale = false;
     }
     apply_lod_tunables(batch, &terrain.desc);
+    if (published || morph_outdated(batch, &terrain.desc)) {
+        apply_quadtree_ranges(scene, node, runtime, &terrain.desc)!;
+    }
     batch.cast_shadow = terrain.desc.cast_shadow;
     batch.receive_shadow = terrain.desc.receive_shadow;
 }

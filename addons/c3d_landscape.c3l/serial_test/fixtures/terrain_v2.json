@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "terrain",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "terrain": {
+          "version": 2,
+          "value": {
+            "height_map": "height",
+            "control_map": "density",
+            "cell_size": 1,
+            "height_scale": 4,
+            "layers": [
+              "layer",
+              null,
+              null,
+              null
+            ],
+            "lod_threshold": 123,
+            "lod_hysteresis": 0.400000006,
+            "slope_projection": "TRIPLANAR",
+            "triplanar_sharpness": 7,
+            "cast_shadow": false,
+            "receive_shadow": false
+          }
+        }
+      }
+    }
+  ]
+}
