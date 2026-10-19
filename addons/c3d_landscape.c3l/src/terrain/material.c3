@@ -31,10 +31,16 @@ struct TerrainParams @private {
 $assert TerrainParams::size == 32;
 $assert (uint)SlopeProjection.TRIPLANAR.ordinal == 1;
 
+// Negated so NaN faults too; core requires the same of a quadtree's thresholds.
+fn void? check_lod_tunables(TerrainDesc* desc) @private {
+    if (!(desc.lod_threshold >= 0) || !math::is_finite(desc.lod_threshold)) return c3d::INVALID_ARGUMENT~;
+    if (!(desc.lod_hysteresis >= 0) || !math::is_finite(desc.lod_hysteresis)) return c3d::INVALID_ARGUMENT~;
+}
+
 // Descs come from files as well as code, so every value check is a fault; negated so NaN faults too.
 fn uint? check_terrain_desc(AssetStore* assets, TerrainDesc* desc) @private {
     if (!(desc.cell_size > 0) || !(desc.height_scale > 0)) return c3d::INVALID_ARGUMENT~;
-    if (!(desc.lod_threshold >= 0) || !(desc.lod_hysteresis >= 0)) return c3d::INVALID_ARGUMENT~;
+    check_lod_tunables(desc)!;
     float sharpness = desc.triplanar_sharpness;
     bool sharpness_valid = sharpness >= MIN_TRIPLANAR_SHARPNESS && sharpness <= MAX_TRIPLANAR_SHARPNESS;
     if (desc.slope_projection == TRIPLANAR && !sharpness_valid) return c3d::INVALID_ARGUMENT~;

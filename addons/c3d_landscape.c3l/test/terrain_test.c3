@@ -421,6 +421,9 @@ fn void test_invalid_desc_values_are_invalid_argument() @test {
     } else {
         assert(false, "A zero cell size was accepted.");
     }
+    TerrainDesc unbounded = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    unbounded.lod_threshold = float::inf;
+    assert(@catch(try_add_terrain(&fixture, node, unbounded)) == c3d::INVALID_ARGUMENT);
     assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, InstancedMesh));
 }
 
@@ -522,6 +525,31 @@ fn void test_height_edit_republishes_records_and_keeps_the_topology() @test {
     assert(batch.count == expected.count);
     assert(mem::equals(batch.transforms[:batch.count], expected.transforms[:expected.count]));
     assert(mem::equals(batch.colors[:batch.count], expected.colors[:expected.count]));
+}
+
+fn void test_edited_lod_values_are_checked_at_update() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    Node* node = add_terrain_node(&fixture, desc);
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    Terrain* terrain = fixture.scene.get(node, Terrain);
+    float threshold = batch.quadtree.split_pixels;
+    float hysteresis = batch.quadtree.hysteresis;
+
+    terrain.desc.lod_threshold = float::nan;
+    assert(@catch(try_update(&fixture)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.split_pixels == threshold && batch.quadtree.hysteresis == hysteresis);
+
+    terrain.desc.lod_threshold = threshold;
+    terrain.desc.lod_hysteresis = float::inf;
+    assert(@catch(try_update(&fixture)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.split_pixels == threshold && batch.quadtree.hysteresis == hysteresis);
+
+    terrain.desc.lod_hysteresis = hysteresis * 2;
+    update_terrain(&fixture);
+    assert(batch.quadtree.hysteresis == hysteresis * 2);
 }
 
 fn void test_lod_group_on_the_node_faults_and_rolls_back() @test {

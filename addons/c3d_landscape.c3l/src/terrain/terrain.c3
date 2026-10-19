@@ -310,6 +310,7 @@ fn void mark_dirty(Scene* scene, Node* node, TexelRect rect) {
 <*
  Refresh changed bounds and publish every terrain's nodes; views select their own levels.
  Invalidates InstancedMesh and TerrainRuntime pointers when a Terrain was removed.
+ Leaves a terrain as it was when its edited lod values are negative or not finite.
  @param [&inout] scene : "Pending terrains are skipped; their authoring is unchanged."
  @param [&inout] assets : "The store given to register_terrain."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
@@ -329,6 +330,8 @@ fn void? update_node(Scene* scene, AssetStore* assets, Node* node) @private {
     Terrain* terrain = scene.get(node, Terrain);
     TerrainRuntime* runtime = scene.get(node, TerrainRuntime);
     InstancedMesh* batch = scene.get(node, InstancedMesh);
+    check_lod_tunables(&terrain.desc)!;
+
     if (catch excuse = refresh_changed_bounds(assets, &terrain.desc, runtime)) {
         // The GPU copy may already hold the rejected shape; draw nothing until a conforming revision.
         hide_batch(scene, node);
