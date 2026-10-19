@@ -97,13 +97,26 @@ fn Node* add_water_node(
     return node;
 }
 
-fn void? try_update(Fixture* fixture, Vec3 wind = {}, double time = 0) @local {
-    return water::update(
+fn void update_water(Fixture* fixture, Vec3 wind = {}, double time = 0) @local {
+    water::update(
+        scene:         &fixture.scene,
+        assets:        &fixture.assets,
+        wind_velocity: wind,
+        time:          time,
+    );
+}
+
+fn void? try_update_mirror(
+    Fixture* fixture,
+    Entity body,
+    uint slot = 0,
+    Entity viewing_camera = {},
+) @local {
+    return water::update_mirror(
         scene:          &fixture.scene,
-        assets:         &fixture.assets,
-        viewing_camera: fixture.camera.id,
-        wind_velocity:  wind,
-        time:           time,
+        body:           body,
+        slot:           slot,
+        viewing_camera: viewing_camera.generation ? viewing_camera : fixture.camera.id,
     );
 }
 
@@ -369,7 +382,7 @@ fn void test_grid_is_shared_per_shape_and_kept() @test {
     assert(c3d::same_id(fixture.scene.get(first, WaterRuntime).grid, fine_grid));
     assert(c3d::same_id(fixture.scene.get(first, Mesh).geometry, fine_grid));
     fixture.scene.remove(second);
-    try_update(&fixture)!!;
+    update_water(&fixture);
     assert(fixture.assets.geometries.is_live(coarse_grid));
 }
 
@@ -424,7 +437,9 @@ fn void test_live_desc_edits_wait_for_set_desc() @test {
     live.ripple_drift = float::nan;
     live.extent = 7;
 
-    try_update(&fixture, { 4, 0, 3 }, 2)!!;
+    update_water(&fixture, { 4, 0, 3 }, 2);
+    try_update_mirror(&fixture, edited.id)!!;
+    try_update_mirror(&fixture, twin.id)!!;
     WaterRuntime* edited_runtime = fixture.scene.get(edited, WaterRuntime);
     WaterRuntime* twin_runtime = fixture.scene.get(twin, WaterRuntime);
     assert(edited_runtime.clip_plane.normal == twin_runtime.clip_plane.normal);
@@ -432,8 +447,8 @@ fn void test_live_desc_edits_wait_for_set_desc() @test {
     char[] edited_payload = fixture.assets.material(edited_runtime.material).data.custom.param_block;
     char[] twin_payload = fixture.assets.material(twin_runtime.material).data.custom.param_block;
     foreach (index, byte : twin_payload[:WaterParams::size]) assert(edited_payload[index] == byte);
-    Mat4 edited_mirror = fixture.scene.node(edited_runtime.mirror).world;
-    Mat4 twin_mirror = fixture.scene.node(twin_runtime.mirror).world;
+    Mat4 edited_mirror = fixture.scene.node(edited_runtime.mirrors[0]).world;
+    Mat4 twin_mirror = fixture.scene.node(twin_runtime.mirrors[0]).world;
     for (uint index = 0; index < 16; index++) assert(edited_mirror.m[index] == twin_mirror.m[index]);
     SurfaceView edited_view = water::surface_view(&fixture.scene, &fixture.assets, edited.id)!!;
     SurfaceView twin_view = water::surface_view(&fixture.scene, &fixture.assets, twin.id)!!;
@@ -559,45 +574,140 @@ fn void test_surface_detail_follows_the_public_surface() @test {
     assert_fault(@catch(sampled), NOT_FOUND, "A point past the edge");
 }
 
-fn void test_mirror_reflects_the_viewing_camera() @test {
+fn void place_camera(Fixture* fixture, Node* camera, Vec3 position, float pitch_degrees) @local {
+    camera.local.position = position;
+    camera.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, (float)math::deg_to_rad(pitch_degrees));
+    fixture.scene.get(camera, Camera).layers = camera::ALL_LAYERS;
+    fixture.scene.update_world();
+}
+
+fn void test_each_mirror_slot_reflects_its_viewing_camera() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
-    Node* node = add_water_node(&fixture, calm_desc(), { 0, 2, 0 });
+    WaterDesc desc = calm_desc();
+    desc.max_mirrors = 2;
+    Node* node = add_water_node(&fixture, desc, { 0, 2, 0 });
     node.layers = WATER_LAYER | 1;
-    fixture.camera.local.position = { 1, 5, 8 };
-    fixture.camera.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, (float)math::deg_to_rad(-20));
-    fixture.scene.get(fixture.camera, Camera).layers = camera::ALL_LAYERS;
-    fixture.scene.update_world();
-    try_update(&fixture)!!;
+    Node* second = fixture.scene.add_camera(camera::perspective_deg(40, 0.5f))!!;
+    place_camera(&fixture, fixture.camera, { 1, 5, 8 }, -20);
+    place_camera(&fixture, second, { -6, 9, -3 }, -35);
+    try_update_mirror(&fixture, node.id, 0, fixture.camera.id)!!;
+    try_update_mirror(&fixture, node.id, 1, second.id)!!;
 
     WaterRuntime* runtime = fixture.scene.get(node, WaterRuntime);
-    Node* mirror = fixture.scene.node(runtime.mirror);
     Plane rest = { .normal = { 0, 1, 0 }, .d = -2 };
-    Mat4 expected = maths::reflection_matrix(rest).mul(fixture.camera.world);
-    fixture.scene.update_world();
-    for (uint index = 0; index < 16; index++) {
-        assert(math::abs(mirror.world.m[index] - expected.m[index]) <= MATRIX_TOLERANCE);
+    Node*[2] viewing = { fixture.camera, second };
+    assert(!c3d::same_id(runtime.mirrors[0], runtime.mirrors[1]));
+    foreach (slot, camera : viewing) {
+        Node* mirror = fixture.scene.node(runtime.mirrors[slot]);
+        Mat4 expected = maths::reflection_matrix(rest).mul(camera.world);
+        for (uint index = 0; index < 16; index++) {
+            assert(math::abs(mirror.world.m[index] - expected.m[index]) <= MATRIX_TOLERANCE);
+        }
+        assert(mirror.world.determinant() < 0);
+        assert(mirror.parent == fixture.scene.root);
+        WaterMirror* owner = fixture.scene.get(mirror, WaterMirror);
+        assert(c3d::same_id(owner.water, node.id) && owner.slot == slot);
+        Camera* mirrored = fixture.scene.get(mirror, Camera);
+        Camera* lens = fixture.scene.get(camera, Camera);
+        assert(mirrored.layers == (camera::ALL_LAYERS & ~(WATER_LAYER | 1)));
+        assert(mirrored.fov_y == lens.fov_y && mirrored.near == lens.near && mirrored.aspect == lens.aspect);
     }
-    assert(mirror.world.determinant() < 0);
-    assert(mirror.parent == fixture.scene.root);
-    assert(c3d::same_id(fixture.scene.get(mirror, WaterMirror).water, node.id));
-    Camera* mirrored = fixture.scene.get(mirror, Camera);
-    Camera* viewing = fixture.scene.get(fixture.camera, Camera);
-    assert(mirrored.layers == (camera::ALL_LAYERS & ~(WATER_LAYER | 1)));
-    assert(mirrored.fov_y == viewing.fov_y && mirrored.near == viewing.near && mirrored.aspect == viewing.aspect);
+    assert(fixture.scene.count(WaterMirror) == 2);
+
     float amplitude = 0.12f + 0.07f;
     assert(runtime.clip_plane.normal == (Vec3){ 0, 1, 0 });
     assert(math::abs(runtime.clip_plane.d - (-2 + amplitude)) <= QUERY_TOLERANCE);
+}
 
-    uint revision = fixture.assets.material(runtime.material).header.revision;
-    RenderTargetId target = { .index = 3, .generation = 1 };
-    water::set_reflection_target(&fixture.scene, &fixture.assets, node, target);
+fn void test_released_mirror_slot_is_freed_and_placed_again_on_demand() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    WaterDesc desc = calm_desc();
+    desc.max_mirrors = 3;
+    Node* node = add_water_node(&fixture, desc, { 0, 2, 0 });
+    WaterRuntime* runtime = fixture.scene.get(node, WaterRuntime);
+    Entity kept = runtime.mirrors[0];
+    Entity released = runtime.mirrors[1];
+    assert(fixture.scene.count(WaterMirror) == 3);
+
+    water::release_mirror(&fixture.scene, node.id, 1);
+    assert(!fixture.scene.world.is_alive(released));
+    assert(!runtime.mirrors[1].generation);
+    assert(fixture.scene.world.is_alive(kept) && fixture.scene.count(WaterMirror) == 2);
+    water::release_mirror(&fixture.scene, node.id, 1);
+    assert(fixture.scene.count(WaterMirror) == 2);
+
+    try_update_mirror(&fixture, node.id, 1)!!;
+    assert(fixture.scene.world.is_alive(runtime.mirrors[1]) && fixture.scene.count(WaterMirror) == 3);
+    assert(fixture.scene.get(fixture.scene.node(runtime.mirrors[1]), WaterMirror).slot == 1);
+
+    WaterDesc narrower = desc;
+    narrower.max_mirrors = 1;
+    try_set_desc(&fixture, node, narrower)!!;
+    assert(c3d::same_id(runtime.mirrors[0], kept) && fixture.scene.count(WaterMirror) == 1);
+    assert(!runtime.mirrors[1].generation && !runtime.mirrors[2].generation);
+}
+
+fn void test_update_mirror_faults_without_a_body_or_camera() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_water_node(&fixture, calm_desc());
+    Node* plain = fixture.scene.add_node()!!;
+    Node* gone = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    Entity dead_camera = gone.id;
+    fixture.scene.remove(gone);
+    Node* pending = fixture.scene.add_node()!!;
+    water::attach_water(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   pending,
+        desc:   calm_desc(),
+    )!!;
+
+    Entity dead_body = fixture.scene.add_node()!!.id;
+    fixture.scene.remove(fixture.scene.node(dead_body));
+    assert_fault(@catch(try_update_mirror(&fixture, plain.id)), c3d::INVALID_ID, "A node without water");
+    assert_fault(@catch(try_update_mirror(&fixture, pending.id)), c3d::INVALID_ID, "Pending water");
+    assert_fault(@catch(try_update_mirror(&fixture, dead_body)), c3d::INVALID_ID, "A dead body");
+    assert_fault(@catch(try_update_mirror(&fixture, node.id, 0, dead_camera)), c3d::INVALID_ID, "A dead camera");
+}
+
+fn void test_view_slot_and_mirror_count_are_checked_at_add() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = fixture.scene.add_node()!!;
+    WaterDesc[3] rejected;
+    foreach (&desc : rejected) *desc = calm_desc();
+    rejected[0].reflection_view_slot = material::MAX_VIEW_TEXTURES;
+    rejected[1].max_mirrors = 0;
+    rejected[2].max_mirrors = water::MAX_MIRRORS + 1;
+    foreach (desc : rejected) {
+        assert_fault(@catch(try_add(&fixture, node, desc)), c3d::INVALID_ARGUMENT, "A rejected slot value");
+    }
+    assert(!fixture.scene.has(node, Water) && !fixture.scene.has(node, WaterRuntime));
+    assert(fixture.scene.count(WaterMirror) == 0);
+
+    WaterDesc last = calm_desc();
+    last.reflection_view_slot = material::MAX_VIEW_TEXTURES - 1;
+    last.max_mirrors = water::MAX_MIRRORS;
+    try_add(&fixture, node, last)!!;
+    WaterRuntime* runtime = fixture.scene.get(node, WaterRuntime);
     TextureSlot slot = fixture.assets.material(runtime.material).data.custom.slots[0];
-    assert(slot.texture.kind == RENDER_TARGET && c3d::same_id(slot.texture.target, target));
-    assert(fixture.assets.material(runtime.material).header.revision == revision + 1);
-    water::set_reflection_target(&fixture.scene, &fixture.assets, node, {});
-    assert(fixture.assets.material(runtime.material).data.custom.slots[0].texture.kind == ASSET);
+    assert(slot.texture.kind == VIEW && slot.texture.view_slot == material::MAX_VIEW_TEXTURES - 1);
+    assert(fixture.scene.count(WaterMirror) == water::MAX_MIRRORS);
+
+    WaterDesc moved = last;
+    moved.reflection_view_slot = 1;
+    try_set_desc(&fixture, node, moved)!!;
+    assert(fixture.assets.material(runtime.material).data.custom.slots[0].texture.view_slot == 1);
+    moved.reflection_view_slot = material::MAX_VIEW_TEXTURES;
+    assert_fault(@catch(try_set_desc(&fixture, node, moved)), c3d::INVALID_ARGUMENT, "A view slot past the limit");
+    assert(fixture.assets.material(runtime.material).data.custom.slots[0].texture.view_slot == 1);
 }
 
 fn Vec2 texture_phase(Vec2 offset, UvTransform transform) @local {
@@ -634,7 +744,7 @@ fn void test_wind_change_keeps_the_ripple_offset_continuous() @test {
     WaterParams* params = fixture.assets.@custom_params(owned, WaterParams);
     uint revision = fixture.assets.material(owned).header.revision;
 
-    try_update(&fixture, { 4, 0, 3 }, 1)!!;
+    update_water(&fixture, { 4, 0, 3 }, 1);
     assert(fixture.assets.material(owned).header.revision == revision + 1);
     Vec3 local_wind = maths::transform_dir(maths::inverse_affine(node.world), { 4, 0, 3 });
     Vec2 first = (Vec2){ local_wind.x, local_wind.z } * 0.05f;
@@ -643,12 +753,12 @@ fn void test_wind_change_keeps_the_ripple_offset_continuous() @test {
     float sine = math::sin(water::RIPPLE_CROSS_ANGLE);
     Vec2 second = { cosine * first.x - sine * first.y, sine * first.x + cosine * first.y };
     assert((params.scroll_velocity.zw - second).length() <= QUERY_TOLERANCE);
-    try_update(&fixture, { 4, 0, 3 }, 1.5)!!;
+    update_water(&fixture, { 4, 0, 3 }, 1.5);
     assert(fixture.assets.material(owned).header.revision == revision + 1);
 
     float change = (float)1000.25;
     Vec4 before = params.scroll_origin + params.scroll_velocity * (change - params.scroll_time);
-    try_update(&fixture, { -2, 0, 6 }, 1000.25)!!;
+    update_water(&fixture, { -2, 0, 6 }, 1000.25);
     Vec4 after = params.scroll_origin + params.scroll_velocity * (change - params.scroll_time);
     assert(fixture.assets.material(owned).header.revision == revision + 2);
     UvTransform transform = ripple_params.normal_map.transform;
@@ -669,15 +779,15 @@ fn void test_removed_water_releases_material_and_mirror() @test {
     WaterRuntime second_runtime = *fixture.scene.get(second, WaterRuntime);
 
     fixture.scene.remove_component(first, Water);
-    try_update(&fixture)!!;
+    update_water(&fixture);
     assert(!fixture.scene.has(first, Mesh) && !fixture.scene.has(first, WaterRuntime));
     assert(!fixture.assets.materials.is_live(first_runtime.material));
-    assert(!fixture.scene.world.is_alive(first_runtime.mirror));
+    assert(!fixture.scene.world.is_alive(first_runtime.mirrors[0]));
 
     fixture.scene.remove(second);
     assert(!fixture.assets.materials.is_live(second_runtime.material));
-    try_update(&fixture)!!;
-    assert(!fixture.scene.world.is_alive(second_runtime.mirror));
+    update_water(&fixture);
+    assert(!fixture.scene.world.is_alive(second_runtime.mirrors[0]));
     assert(fixture.assets.geometries.is_live(second_runtime.grid));
 }
 
@@ -715,7 +825,7 @@ fn void test_pending_water_rolls_back_caches_and_preserves_prepared_owners() @te
     assert(fixture.scene.world.entities.free_count == free_nodes);
     assert(fixture.assets.materials.free_count == free_materials);
     fixture.scene.update_world();
-    try_update(&fixture)!!;
+    update_water(&fixture);
     assert(fixture.scene.count(Mesh) == 0);
 
     assert(@catch(water::prepare(&fixture.scene, &fixture.assets, first)) == c3d::CAPACITY_EXCEEDED);
@@ -727,9 +837,9 @@ fn void test_pending_water_rolls_back_caches_and_preserves_prepared_owners() @te
     assert(@catch(water::prepare_subtree(&fixture.scene, &fixture.assets)) == c3d::CAPACITY_EXCEEDED);
     assert(water::is_prepared(&fixture.scene, first) && !water::is_prepared(&fixture.scene, second));
     WaterRuntime before = *fixture.scene.get(first, WaterRuntime);
-    try_update(&fixture)!!;
+    update_water(&fixture);
     assert(fixture.scene.has(first, Mesh) && !fixture.scene.has(second, Mesh));
-    assert(fixture.scene.world.is_alive(before.mirror));
+    assert(fixture.scene.world.is_alive(before.mirrors[0]));
 
     fixture.scene.remove(second_blocker);
     water::prepare(&fixture.scene, &fixture.assets, second)!!;
@@ -737,10 +847,10 @@ fn void test_pending_water_rolls_back_caches_and_preserves_prepared_owners() @te
     free_materials = fixture.assets.materials.free_count;
     water::prepare_subtree(&fixture.scene, &fixture.assets)!!;
     assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.materials.free_count == free_materials);
-    assert(c3d::same_id(fixture.scene.get(first, WaterRuntime).mirror, before.mirror));
+    assert(c3d::same_id(fixture.scene.get(first, WaterRuntime).mirrors[0], before.mirrors[0]));
     assert(c3d::same_id(fixture.scene.get(first, WaterRuntime).material, before.material));
     assert(fixture.scene.count(Mesh) == 2 && fixture.scene.count(WaterMirror) == 2);
-    try_update(&fixture)!!;
+    update_water(&fixture);
 }
 
 fn void test_water_eager_failure_and_pending_removal_leave_no_owned_resources() @test {

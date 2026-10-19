@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "water",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "water": {
+          "version": 1,
+          "value": {
+            "waves": [
+              {
+                "amplitude": 0.119999997,
+                "wavelength": 6,
+                "speed": 1.20000005,
+                "direction": [
+                  1,
+                  0
+                ],
+                "steepness": 0.5
+              },
+              {
+                "amplitude": 0.0700000003,
+                "wavelength": 3.5,
+                "speed": 0.899999976,
+                "direction": [
+                  0.600000024,
+                  0.800000012
+                ],
+                "steepness": 0.5
+              },
+              {
+                "amplitude": 0.0399999991,
+                "wavelength": 2,
+                "speed": -0.100000001,
+                "direction": [
+                  0,
+                  1
+                ],
+                "steepness": 0.100000001
+              },
+              {
+                "amplitude": 0,
+                "wavelength": 0,
+                "speed": 0,
+                "direction": [
+                  0,
+                  0
+                ],
+                "steepness": 0
+              }
+            ],
+            "wave_count": 3,
+            "geometry": "water-source",
+            "extent": 4,
+            "cell_size": 0.5,
+            "absorption_color": [
+              0.200000003,
+              0.400000006,
+              0.600000024
+            ],
+            "absorption_distance": 3,
+            "scatter_color": [
+              0.100000001,
+              0.200000003,
+              0.300000012
+            ],
+            "roughness": 0.200000003,
+            "refraction_strength": 0.0299999993,
+            "reflection_distortion": 0.0700000003,
+            "foam_depth": 0.800000012,
+            "foam_crest": 0.600000024,
+            "ripple_drift": 0.0399999991,
+            "ripples": "layer",
+            "foam": "layer",
+            "march_reflections": false
+          }
+        }
+      }
+    }
+  ]
+}
