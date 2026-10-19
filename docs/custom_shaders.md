@@ -99,11 +99,38 @@ void main() {
 }
 ```
 
-`CustomMaterialGpu` (generated, 320 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, `parameters`, the payload address, and `references`, the heap addresses of up to four referenced Standard blocks (0 when unused). `custom_material.glsl` supplies `custom_slot_present`, `custom_map_uv`, `sample_custom_map` and `custom_reference`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. The shared includes read only `FrameRoot` through `DrawRoot.frame`.
+`CustomMaterialGpu` (generated, 320 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, `parameters`, the payload address, and `references`, the heap addresses of up to four referenced Standard blocks (0 when unused). `custom_material.glsl` supplies `custom_slot_present`, `custom_slot_texture`, `custom_map_uv`, `sample_custom_map` and `custom_reference`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. The shared includes read only `FrameRoot` through `DrawRoot.frame`.
 
 A slot may hold an `R16_UINT` texture (see [sixteen-bit single-channel data](textures.md#sixteen-bit-single-channel-data)). The stage reads it with `gpu_fetch_uint(material.slots[i].texture_index, texel, 0)`, never `sample_custom_map`; slot 0 of a masked material cannot hold one, and the material faults `UNSUPPORTED` when uploaded.
 
 A masked custom material (`alpha_mode == MASK`) discards in its own fragment stage; the shadow atlas reads the same header and uses slot 0's alpha against `alpha_cutoff` as the caster coverage. A custom caster's `DrawRoot.material` is always its `CustomMaterialGpu`, so a custom depth vertex form can read the payload. A blended custom material casts no shadow, with [colored shadows](shadows.md#colored-shadows) on or off. `shadow_transmittance` is the `vec3` form of `shadow_visibility` that carries the tint of the built-in translucent casters; a stage that calls `shadow_visibility` shows the opaque shadow only.
+
+### View-provided slots
+
+A slot built with `material::view_texture_slot(view_slot)`, or a `TextureSlot` whose `texture` is `{ .kind = VIEW, .view_slot = n }`, holds no texture of its own. The view that draws the material supplies it: `Renderer.set_view_texture(view, n, target)` binds a render target to the view's slot `n`, below `MAX_VIEW_TEXTURES` (4). One material then shows the target of whichever view draws it ([view textures](views.md#view-textures)). The slot keeps its sampler, UV set and transform.
+
+A stage resolves such a slot through the frame:
+
+```glsl
+if (custom_slot_present(frame, material, 0u)) {
+    base_color *= sample_custom_map(frame, material, 0u, v_uv0, v_uv1, frame.mip_bias);
+}
+```
+
+- A view-provided slot sets bit 31 of its `TextureMapGpu.texture_index` (`VIEW_TEXTURE_FLAG`); the low bits are the view's slot. Its `map_flags` presence bit stays clear, so every reader that does not take the frame sees the slot absent: the depth stage's coverage and the traced coverage read `custom_slot_present(material, slot)`.
+- `custom_slot_present(frame, material, slot)` is true for an asset or render-target slot that is present, and for a view-provided slot while `FrameRoot.view_textures[n]` holds a texture. `custom_slot_texture(frame, material, slot)` is the texture index to sample: the slot's own, or the view's, or zero when the view provides none.
+- The frame overloads of `sample_custom_map` sample `custom_slot_texture` and return white (1, 1, 1, 1) for an absent view texture, as an empty asset slot does. A stage that wants a different fallback tests `custom_slot_present(frame, ...)` first.
+- A view that provides nothing for the slot reads it as absent, so the stage's own fallback runs.
+
+The frame-less `custom_slot_present` and `sample_custom_map` keep their signatures and their results for asset and render-target slots. For a view-provided slot they read absent: `custom_slot_present(material, slot)` is false and `sample_custom_map(material, slot, ...)` returns white without touching the descriptor heap. A stage compiled before the slot kind existed never meets one unless the application assigns it.
+
+Where a view provides nothing:
+
+- Shadow layers render from the light and are shared by every view that borrows the set, so they write no view textures. A custom depth form reads such a slot as absent.
+- The forward depth prepass, the G-buffer, velocity and scene-read passes of a view share the view's frame root and see its textures.
+- Probe updates and the path tracer provide none. Traced hit shading shades a custom material as a constant grey Lambert albedo ([reflections](reflections.md), [path tracing](path_tracing.md)) and reads only slot 0's alpha, which a view-provided slot never holds.
+
+A built-in material slot cannot hold a `VIEW` reference, nor can slot 0 of a masked custom material: `Renderer.upload_material` faults `UNSUPPORTED`. A `view_slot` of `MAX_VIEW_TEXTURES` or above faults `INVALID_ARGUMENT`.
 
 ### Standard shading
 
@@ -227,11 +254,11 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | Include | Public surface |
 | --- | --- |
 | `constants.glsl` | `PI` |
-| `material_uv.glsl` | `custom_slot_present`, `custom_map_uv` |
+| `material_uv.glsl` | `custom_slot_present` (with or without the frame), `custom_slot_texture`, `custom_map_uv` ([view-provided slots](#view-provided-slots)) |
 | `material_alpha.glsl` | `material_output` |
 | `blend_output.glsl` | `write_blend_output`, the `out_color` output and, under `WEIGHTED_BLEND`, the `out_revealage` output ([weighted transparency](#weighted-transparency)); includes `pre_exposure.glsl` |
 | `pre_exposure.glsl` | `pre_exposed` ([pre-exposure](#pre-exposure)); fragment and compute stages |
-| `custom_material.glsl` | `sample_custom_map` (both overloads), `custom_reference` |
+| `custom_material.glsl` | `sample_custom_map` (the plain and biased overloads, each with or without the frame), `custom_reference` |
 | `normal_mapping.glsl` | `decode_normal`, `tangent_normal`, `derivative_normal`, `derivative_tangent`, `surface_tangent_frame` |
 | `noise.glsl` | `interleaved_gradient_noise`, `pcg_hash`, `hash_unit` |
 | `texture_fetch.glsl` | `fetch_texture_2d`, `texture_extent`, `sample_texture_2d_lod` |

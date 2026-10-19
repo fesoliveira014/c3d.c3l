@@ -62,7 +62,7 @@ renderer.end_overlay(&overlay)!;
   scale.
 - Colors are sRGB with straight alpha: `fill` and `border_color`. A textured item multiplies its texture by `fill`.
 - `texture` is a `TextureRef`. An `ASSET` reference with a zero id fills with color only. An asset texture or a
-  `RENDER_TARGET` reference must be live.
+  `RENDER_TARGET` reference must be live. A `VIEW` reference is rejected with `INVALID_ARGUMENT`.
 - A zero `sampler` selects the linear clamp sampler. A comparison sampler is rejected.
 - Cube, volume, layered and `R16_UINT` textures are unsupported.
 - `uv_rect` is the sampled region, `u0, v0, u1, v1`.

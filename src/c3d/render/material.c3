@@ -19,6 +19,7 @@ $assert MATERIAL_STRIDE >= ToonMaterialGpu::size;
 $assert MATERIAL_STRIDE >= PhysicalMaterialGpu::size;
 $assert MATERIAL_STRIDE >= CustomMaterialGpu::size;
 $assert material::MAX_CUSTOM_TEXTURE_SLOTS == shader::CUSTOM_TEXTURE_SLOTS;
+$assert material::MAX_VIEW_TEXTURES == shader::MAX_VIEW_TEXTURES;
 $assert material::MAX_CUSTOM_MATERIAL_REFERENCES == shader::CUSTOM_MATERIAL_REFERENCES;
 $assert (uint)MaterialKind.BASIC.ordinal == shader::MATERIAL_KIND_BASIC;
 $assert (uint)MaterialKind.STANDARD.ordinal == shader::MATERIAL_KIND_STANDARD;

@@ -19,6 +19,7 @@ import std::math;
 import std::sort;
 
 alias PreviousInstanceCache @private = HashMap{ulong, gpu::GpuAddress};
+alias ViewTextureIndices @private = gpu::TextureIndex[material::MAX_VIEW_TEXTURES];
 
 <*
  Color format of the view targets.
@@ -664,6 +665,7 @@ fn void? record_raster_view(
             record_probe_volumes(renderer, scene, &environments, probe_trace)!;
             record_instance_cull(renderer, view_culls)!;
             record_instance_sort(renderer, view_culls)!;
+            ready_view_textures(renderer, record);
             prepare_sampled_targets(renderer, record)!;
         };
 
@@ -841,6 +843,7 @@ fn void? record_raster_view(
                 cloud_shadow: cloud_pass.shadow,
                 shadow_samples: math::max(record.desc.ray_tracing.shadow_samples, 1u),
                 ao_bent_normals: ambient_occlusion && record.desc.ambient_occlusion.bent_normals,
+                view_textures: view_texture_indices(renderer, record),
             );
             ((FrameRoot*)frame_span.bytes.ptr).light_spatial = light_spatial;
             if (record.desc.lights == LightSelection.CLUSTERED) {
@@ -1691,6 +1694,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param cloud_shadow : "Root of the cloud layer's shadow map; zero when the view has none."
  @param shadow_samples : "Rays a pixel casts toward a light with a source extent."
  @param ao_bent_normals : "The AO view holds the world bent normal in its green and blue channels."
+ @param view_textures : "Indices of the view's provided textures; zero reads as absent."
  @require shadow_samples >= 1 && shadow_samples <= MAX_SHADOW_SAMPLES
 *>
 fn void write_frame_root(
@@ -1735,6 +1739,7 @@ fn void write_frame_root(
     gpu::GpuAddress cloud_shadow = (gpu::GpuAddress)0,
     uint shadow_samples = 1,
     bool ao_bent_normals = false,
+    ViewTextureIndices view_textures = {},
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1785,6 +1790,7 @@ fn void write_frame_root(
         .pre_exposure             = pre_exposure,
         .pre_exposure_ratio       = pre_exposure_ratio,
         .cloud_shadow             = cloud_shadow,
+        .view_textures            = view_textures,
     };
 }
 
@@ -2359,6 +2365,22 @@ fn void? record_view_output(Renderer* renderer, ViewRecord* record) @private {
                 pre_exposure: record.pre_exposure.factor,
             );
     }
+}
+
+fn void ready_view_textures(Renderer* renderer, ViewRecord* record) @private {
+    foreach (target : record.view_textures) {
+        if (renderer.targets.is_live(target)) renderer.targets.get(target).sample_pending = true;
+    }
+}
+
+fn ViewTextureIndices view_texture_indices(Renderer* renderer, ViewRecord* record) @private {
+    ViewTextureIndices indices;
+
+    foreach (slot, target : record.view_textures) {
+        if (renderer.targets.is_live(target)) indices[slot] = renderer.targets.get(target).target.view.index;
+    }
+
+    return indices;
 }
 
 fn void? prepare_sampled_targets(Renderer* renderer, ViewRecord* record) @private {

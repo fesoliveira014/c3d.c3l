@@ -146,6 +146,7 @@ const uint FRAME_CLIP_PLANE = 16;
 const uint FRAME_REFLECTIONS_PRESENT = 32;
 const uint FRAME_SHADOW_SAMPLES_SHIFT = 6; // flags bits 6..9 hold the shadow rays per pixel less one; zero reads as one
 const uint FRAME_SHADOW_SAMPLES_MASK = 15; // applied after the shift
+const uint MAX_VIEW_TEXTURES = 4; // mirrored as MAX_VIEW_TEXTURES in texture_slot.c3; 16 bytes of FrameRoot per view
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_DECALS = 256; // 40 KiB of 160-byte records per view per frame-slot upload; bounds the flat loop.
 const uint MAX_CLUSTER_DECALS = 8; // 32 bytes of indices per cell; overflow selects the complete flat loop.
@@ -254,6 +255,7 @@ root FrameRoot {
     float      pre_exposure_ratio; // this rendering's pre_exposure over the previous rendering's
     GpuAddress cloud_shadow; // CloudShadowRoot; zero when the view casts no cloud shadows
     GpuAddress light_spatial;
+    TextureIndex[4] view_textures; // the view's provided textures, MAX_VIEW_TEXTURES entries; zero reads as absent
     uint       _pad0;
     uint       _pad1;
 }
@@ -1477,6 +1479,7 @@ root PhysicalMaterialGpu {
 
 const uint CUSTOM_TEXTURE_SLOTS = 8;
 const uint CUSTOM_MAP_UV1_SHIFT = 8;
+const uint VIEW_TEXTURE_FLAG = 2147483648; // bit 31 of a custom TextureMapGpu.texture_index: the low bits select FrameRoot.view_textures
 const uint MATERIAL_KIND_BASIC = 0;
 const uint MATERIAL_KIND_STANDARD = 1;
 const uint MATERIAL_KIND_TOON = 2;

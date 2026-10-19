@@ -161,8 +161,9 @@ The default 16 × 9 × 24 grid has 3,456 cells. Its additional decal storage is:
 
 `DecalGpu` holds frame-relative inverse and forward affine rows, projection/fade
 data, tangent/handedness, weights and material/layer fields. Transform rebasing
-precedes inverse and bound construction. `FrameRoot` is 592 bytes with `decals`
-at offset 528, `decal_count` at 536 and the optional `light_spatial` address at 576. `ClusterGpu` is 160 bytes;
+precedes inverse and bound construction. `FrameRoot` is 608 bytes with `decals`
+at offset 528, `decal_count` at 536, the optional `light_spatial` address at 576 and the four
+[view textures](#view-textures) at 584. `ClusterGpu` is 160 bytes;
 `ClusterCounterGpu` remains 16 bytes with separate light and decal overflow counts and a
 skipped-cell count. The buffer ends with one `float` per tile (576 bytes at the default grid)
 for the pruning bound; it is reserved whether pruning is on or off.
@@ -296,6 +297,41 @@ the view's own output. The application orders the producer view before the consu
 frame and keeps the consumer's surfaces out of the producer camera's layers, so no view samples the
 image it is writing. Use `DISPLAY_LDR` output on an sRGB target for an unlit "monitor" surface and
 `LINEAR_HDR` on a float target for reflection or composition inputs.
+
+## View textures
+
+```c3
+TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
+slots[0] = material::view_texture_slot(0);
+MaterialId surface = assets.add_material(material::custom(shader, slots: slots))!;
+
+renderer.set_view_texture(first_view, 0, first_capture)!;
+renderer.set_view_texture(second_view, 0, second_capture)!;
+```
+
+A custom-material slot of kind `VIEW` names a texture the drawing view supplies, so one material shows
+a different target in each view. `Renderer.set_view_texture(view, slot, target)` binds a render target
+to the view's `slot`, below `MAX_VIEW_TEXTURES` (4); a zero target clears the slot. The stage reads the
+slot through the frame ([view-provided slots](custom_shaders.md#view-provided-slots)); a view that
+provides nothing for it reads it as absent, and the stage's own fallback runs.
+
+- **Faults.** A dead view or a dead target faults `INVALID_ID`. A view's own output target faults
+  `INVALID_ARGUMENT`, as does a `configure_view` that would make a provided target the view's output.
+- **Lifetime.** Bindings belong to the view. An ordinary `configure_view`, a resize included, keeps them;
+  `destroy_view` drops them. A target destroyed after it was provided reads as absent.
+- **Ordering.** Before the view records, the renderer transitions each live provided target to the
+  sampled state, as for a target in a material slot. The application renders the producer view before
+  the consumer view in the frame; there is no render graph.
+- **Frame roots.** The view's depth prepass, G-buffer, velocity and scene-read passes share its frame
+  root and see its textures. Shadow layers, probe updates and the path tracer write none: a shadow layer
+  is rendered from the light and shared by the views that borrow its set, so a view-provided slot reads
+  as absent there.
+- **Scope.** Only custom-material slots take a `VIEW` reference. A built-in material, or slot 0 of a
+  masked custom material, faults `UNSUPPORTED` when uploaded; a `view_slot` of `MAX_VIEW_TEXTURES` or
+  above faults `INVALID_ARGUMENT`; an [overlay](overlay.md#coordinates-colors-textures) rectangle
+  faults `INVALID_ARGUMENT`.
+- **Cost.** 16 bytes of `FrameRoot` per view per frame. The material block is unchanged and is written
+  once per revision.
 
 ## Reading a target back
 
