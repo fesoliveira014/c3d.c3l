@@ -105,9 +105,9 @@ enum Segment @local {
 }
 
 enum Metric @local {
-    SELECTION_US,
+    UPDATE_US,
     FRAME_MS,
-    CHUNKS,
+    DRAWN,
     UPLOAD_BYTES,
 }
 
@@ -151,11 +151,10 @@ struct HoverPose @local {
 }
 
 struct FrameRecord @local {
-    double                    selection_us;
+    double                    update_us;
     double                    frame_ms;
-    uint                      chunks;
+    uint                      drawn;
     uint                      upload_bytes;
-    uint                      lod_switches;
     bool                      batch_changed;
     bool                      stamped;
     float[render::PASS_COUNT] gpu_ms;
@@ -168,9 +167,7 @@ struct BenchmarkResult @local {
     double        physics_recook_ms;
     double        physics_whole_recook_ms;
     uint          physics_recook_windows;
-    uint          level_count;
     bool          timestamps;
-    uint[terrain::MAX_TERRAIN_LEVELS][Segment::len] chunks_per_level;
 }
 
 // The collider as docs/terrain.md builds it: the node's transform places both.
@@ -360,9 +357,9 @@ fn double percentile(double[] samples, float share) @local {
 
 fn double metric_value(FrameRecord* record, Metric metric) @local {
     switch (metric) {
-        case SELECTION_US: return record.selection_us;
+        case UPDATE_US: return record.update_us;
         case FRAME_MS: return record.frame_ms;
-        case CHUNKS: return (double)record.chunks;
+        case DRAWN: return (double)record.drawn;
         case UPLOAD_BYTES: return (double)record.upload_bytes;
     }
 }
@@ -483,30 +480,26 @@ fn void push_picked_crate(Demo* demo, Renderer* renderer, Vec2 pixel) @local {
     };
 }
 
-fn void? terrain_panel(Demo* demo, FlyCamera* fly_camera, float delta) @local {
+fn void? terrain_panel(
+    Demo* demo,
+    Renderer* renderer,
+    FlyCamera* fly_camera,
+    float delta,
+) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Terrain", null, {})) {
         imgui::text("Right drag looks, WASD move, Shift fast; F flies, Q and E sink and rise");
         imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
         imgui::text("T toggles the ground decal");
-        uint chunks;
-        uint lod_switches;
-        uint level_count;
-        uint[terrain::MAX_TERRAIN_LEVELS] chunks_per_level;
-        foreach (node : demo.ground.terrain_nodes()) {
-            TerrainRuntime* runtime = demo.scene.get(node, TerrainRuntime);
-            chunks += demo.scene.get(node, InstancedMesh).count;
-            lod_switches += runtime.lod_switches;
-            level_count = runtime.level_count;
-            for (uint level = 0; level < level_count; level++) {
-                chunks_per_level[level] += runtime.chunks_per_level[level];
-            }
-        }
-        imgui::text("Chunks: %u   LOD switches: %u", chunks, lod_switches);
-        for (uint level = 0; level < level_count; level++) {
-            imgui::text("  level %u: %u", level, chunks_per_level[level]);
-        }
+        uint nodes;
+        foreach (node : demo.ground.terrain_nodes()) nodes += demo.scene.get(node, InstancedMesh).count;
+        imgui::text(
+            "Nodes: %u   Drawn instances over all passes: %u   Fallbacks: %u",
+            nodes,
+            renderer.stats.instances_visible,
+            renderer.stats.quadtree_fallbacks,
+        );
         float lod_threshold = demo.scene.get(demo.ground.terrain_nodes()[0], Terrain).desc.lod_threshold;
         imgui::slider_float(
             label: "LOD threshold",
@@ -675,14 +668,14 @@ fn void? run_interactive(Options options) @local {
         scene.update_world();
         physics.update(delta);
         scene.update_world();
-        terrain::update(
-            scene:                &scene,
-            assets:               &assets,
-            camera_node:          demo.camera_node,
-            output_height_pixels: (float)max(renderer.output_height, 1u),
-        )!;
+        terrain::update(&scene, &assets)!;
 
-        terrain_panel(&demo, &fly_camera, delta)!;
+        terrain_panel(
+            demo:       &demo,
+            renderer:   &renderer,
+            fly_camera: &fly_camera,
+            delta:      delta,
+        )!;
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(&renderer)!;
@@ -795,17 +788,12 @@ fn void? render_offscreen(
 
 fn double elapsed_ms(time::Clock started) @local => (double)(long)started.to_now() / NANOSECONDS_PER_MILLISECOND;
 
-fn double? time_bounds_build(Demo* demo, BenchmarkResult* result, float output_height) @local {
+fn double? time_bounds_build(Demo* demo, BenchmarkResult* result) @local {
     double[] runs = result.scratch[:BOUNDS_BUILD_RUNS];
     foreach (&run : runs) {
         demo.assets.mark_texture_dirty(demo.ground.desc.height_map);
         time::Clock started = clock::now();
-        terrain::update(
-            scene:                demo.scene,
-            assets:               demo.assets,
-            camera_node:          demo.camera_node,
-            output_height_pixels: output_height,
-        )!;
+        terrain::update(demo.scene, demo.assets)!;
         *run = elapsed_ms(started);
     }
     return percentile(runs, 0.5f);
@@ -837,9 +825,7 @@ fn void? run_segments(
     Options options = demo.options;
     uint frames = options.segment_frames;
     uint measured = Segment::len * frames;
-    float output_height = (float)options.height;
     InstancedMesh* batch = demo.scene.get(demo.ground.node, InstancedMesh);
-    TerrainRuntime* runtime = demo.scene.get(demo.ground.node, TerrainRuntime);
     HoverPose hover = hover_pose(demo, options);
 
     for (uint frame = 0; frame < WARMUP_FRAMES + measured + render::FRAMES_IN_FLIGHT; frame++) {
@@ -873,14 +859,9 @@ fn void? run_segments(
         demo.physics.update(TIME_STEP);
         demo.scene.update_world();
         uint revision = batch.revision;
-        time::Clock selection_started = clock::now();
-        terrain::update(
-            scene:                demo.scene,
-            assets:               demo.assets,
-            camera_node:          demo.camera_node,
-            output_height_pixels: output_height,
-        )!;
-        double selection_us = (double)(long)selection_started.to_now() / NANOSECONDS_PER_MICROSECOND;
+        time::Clock update_started = clock::now();
+        terrain::update(demo.scene, demo.assets)!;
+        double update_us = (double)(long)update_started.to_now() / NANOSECONDS_PER_MICROSECOND;
         render_offscreen(
             renderer:    renderer,
             scene:       demo.scene,
@@ -891,15 +872,13 @@ fn void? run_segments(
 
         if (timed) {
             result.records[step] = {
-                .selection_us  = selection_us,
+                .update_us     = update_us,
                 .frame_ms      = elapsed_ms(frame_started),
-                .chunks        = batch.count,
+                .drawn         = renderer.stats.instances_visible,
                 .upload_bytes  = renderer.stats.upload_bytes,
-                .lod_switches  = runtime.lod_switches,
                 .batch_changed = batch.revision != revision,
                 .stamped       = stamped,
             };
-            if (segment_step == frames - 1) result.chunks_per_level[segment.ordinal] = runtime.chunks_per_level;
         }
         // A frame's GPU timings arrive once its slot comes round again.
         if (frame >= WARMUP_FRAMES + render::FRAMES_IN_FLIGHT) {
@@ -907,7 +886,6 @@ fn void? run_segments(
             if (completed < measured) result.records[completed].gpu_ms = renderer.stats.gpu_pass_ms;
         }
     }
-    result.level_count = runtime.level_count;
 
     end_stroke(demo)!;
     result.physics_recook_windows = demo.physics.counters().pending_bodies;
@@ -922,7 +900,7 @@ fn void print_edit_results(BenchmarkResult* result, FrameRecord[] edit) @local {
     usz stamps;
     foreach (record : edit) {
         if (!record.stamped) continue;
-        result.scratch[stamps] = record.selection_us / MICROSECONDS_PER_MILLISECOND;
+        result.scratch[stamps] = record.update_us / MICROSECONDS_PER_MILLISECOND;
         stamps++;
     }
     double[] update_ms = result.scratch[:stamps];
@@ -948,22 +926,18 @@ fn bool print_results(Options options, BenchmarkResult* result) @local {
     io::printfn("physics_whole_recook_ms %.4f", result.physics_whole_recook_ms);
 
     bool still_gate = true;
-    uint hover_switches;
     foreach (ordinal, name : SEGMENT_NAMES) {
         Segment segment = Segment::from_ordinal(ordinal);
         FrameRecord[] records = result.records[ordinal * frames:frames];
-        double[] selection = gather(records, SELECTION_US, result.scratch);
+        double[] update = gather(records, UPDATE_US, result.scratch);
         io::printfn(
-            "selection_us segment=%s median=%.3f p99=%.3f",
+            "update_us segment=%s median=%.3f p99=%.3f",
             name,
-            percentile(selection, 0.5f),
-            percentile(selection, 0.99f),
+            percentile(update, 0.5f),
+            percentile(update, 0.99f),
         );
-        double[] chunks = gather(records, CHUNKS, result.scratch);
-        io::printfn("chunks segment=%s median=%.0f max=%.0f", name, percentile(chunks, 0.5f), percentile(chunks, 1.0f));
-        io::printf("chunks_per_level segment=%s", name);
-        foreach (level_chunks : result.chunks_per_level[ordinal][:result.level_count]) io::printf(" %d", level_chunks);
-        io::printn();
+        double[] drawn = gather(records, DRAWN, result.scratch);
+        io::printfn("drawn segment=%s median=%.0f max=%.0f", name, percentile(drawn, 0.5f), percentile(drawn, 1.0f));
         double[] uploads = gather(records, UPLOAD_BYTES, result.scratch);
         io::printfn(
             "upload_bytes segment=%s median=%.0f max=%.0f",
@@ -973,20 +947,15 @@ fn bool print_results(Options options, BenchmarkResult* result) @local {
         );
 
         uint upload_frames;
-        uint switches;
         uint revisions;
         foreach (index, record : records) {
             if (record.upload_bytes) upload_frames++;
-            switches += record.lod_switches;
             if (index > 0 && record.batch_changed) revisions++;
             bool still_changed = record.upload_bytes || record.batch_changed;
             if (segment == Segment.STILL && index > 0 && still_changed) still_gate = false;
-            if (segment == Segment.HOVER && index >= FRAMES_PER_SECOND) hover_switches += record.lod_switches;
         }
         io::printfn("upload_frames segment=%s %d", name, upload_frames);
         if (segment == Segment.STILL) io::printfn("batch_revisions segment=still %d", revisions);
-        double switches_per_second = (double)switches * FRAMES_PER_SECOND / (double)frames;
-        io::printfn("lod_switches_per_second segment=%s %.3f", name, switches_per_second);
         if (result.timestamps) {
             foreach (pass : REPORTED_PASSES) {
                 double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
@@ -1007,10 +976,8 @@ fn bool print_results(Options options, BenchmarkResult* result) @local {
             percentile(frame_ms, 0.99f),
         );
     }
-    io::printfn("lod_switches hover_after_first_second %d", hover_switches);
     io::printfn("gate still_uploads %s", still_gate ? "pass" : "fail");
-    io::printfn("gate hover_switches %s", hover_switches == 0 ? "pass" : "fail");
-    return still_gate && hover_switches == 0;
+    return still_gate;
 }
 
 fn void? drop_benchmark_crates(Demo* demo) @local {
@@ -1083,7 +1050,7 @@ fn bool? run_benchmark(Options options) @local {
     defer alloc::free(mem, result.records.ptr);
     defer alloc::free(mem, result.scratch.ptr);
     renderer.prepare_scene(&scene)!;
-    result.bounds_build_ms = time_bounds_build(&demo, &result, (float)options.height)!;
+    result.bounds_build_ms = time_bounds_build(&demo, &result)!;
 
     io::printfn(
         "# terrain size=%d layers=%d shading=%s shadows=%s lod_threshold=%g hysteresis=%g extent=%dx%d frames=%d "
@@ -1164,12 +1131,7 @@ fn void? run_capture(Options options) @local {
     scene.update_world();
     renderer.prepare_scene(&scene)!;
     for (uint frame = 0; frame < CAPTURE_SETTLE_FRAMES; frame++) {
-        terrain::update(
-            scene:                &scene,
-            assets:               &assets,
-            camera_node:          demo.camera_node,
-            output_height_pixels: (float)options.height,
-        )!;
+        terrain::update(&scene, &assets)!;
         render_offscreen(
             renderer:    &renderer,
             scene:       &scene,

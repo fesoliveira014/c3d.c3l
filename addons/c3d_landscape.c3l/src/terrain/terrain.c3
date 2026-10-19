@@ -2,9 +2,7 @@ module c3d::landscape::terrain;
 
 import c3d;
 import c3d::asset;
-import c3d::camera;
 import c3d::ecs;
-import c3d::maths;
 import c3d::material;
 import c3d::scene;
 import std::math;
@@ -17,15 +15,15 @@ const uint CHUNK_CELLS = 128; // 17,157 grid and skirt vertices keep 16-bit indi
 <*
  Quadtree levels of the largest height map, 4097 texels per side.
 *>
-const uint MAX_TERRAIN_LEVELS = 6; // 4097 texels: 1,365 bounds nodes, 1,024 chunks, 128 KiB of instance records
+const uint MAX_TERRAIN_LEVELS = 6; // 4097 texels: 1,365 nodes, each a bounds entry and a 128 B instance record
 
 <*
- Projected chunk diameter, in output pixels, above which a chunk splits.
+ Projected node diameter, in pixels of a view's working extent, above which a node splits.
 *>
 const float DEFAULT_LOD_THRESHOLD = 512; // drawn cells under 2.8 px; halving it quadruples near chunks
 
 <*
- Share of the threshold a split chunk falls below before it merges.
+ Share of the threshold a split node falls below before it merges.
 *>
 const float DEFAULT_LOD_HYSTERESIS = 0.25f; // merges below 410 px; wider re-selects less, keeps finer chunks longer
 
@@ -80,8 +78,8 @@ struct TerrainDesc {
     float      cell_size;      // metres between texel centres along x and z
     float      height_scale;   // metres at texel 65535: height = height_scale * texel / 65535
     MaterialId[material::MAX_CUSTOM_MATERIAL_REFERENCES] layers; // STANDARD materials, leading; zero ids unused
-    float      lod_threshold;  // projected chunk diameter in output pixels above which a chunk splits
-    float      lod_hysteresis; // a split chunk merges below lod_threshold / (1 + lod_hysteresis)
+    float      lod_threshold;  // projected node diameter in pixels of a view's working extent above which a node splits
+    float      lod_hysteresis; // a split node merges below lod_threshold / (1 + lod_hysteresis)
     SlopeProjection slope_projection; // how the layers' textures project onto the surface
     float      triplanar_sharpness; // plane-weight exponent in MIN_ to MAX_TRIPLANAR_SHARPNESS; read under TRIPLANAR
     bool       cast_shadow;
@@ -96,7 +94,7 @@ struct Terrain {
 }
 
 <*
- Derived bounds, selection and owned material of a terrain, written by the library.
+ Derived bounds and owned material of a terrain, written by the library.
 *>
 struct TerrainRuntime {
     Allocator                allocator;
@@ -110,13 +108,10 @@ struct TerrainRuntime {
     bool                     rejected;         // the last revision failed the checks; the batch is hidden
     TexelRect                pending;          // union of mark_dirty rectangles since the last refresh
     bool                     has_pending;
-    bool                     stale;            // the batch does not hold the last selection
-    uint[MAX_TERRAIN_LEVELS] level_offset;     // first node of each level
+    bool                     stale;            // the batch records do not hold the current bounds
+    uint[MAX_TERRAIN_LEVELS] level_offset;     // first node of each level, which is also its instance index
     ushort[]                 minimum;          // per node: lowest texel of its footprint
     ushort[]                 maximum;          // per node: highest texel of its footprint
-    bool[]                   split;            // per node: split in the last selection
-    uint[MAX_TERRAIN_LEVELS] chunks_per_level; // of the last selection
-    uint                     lod_switches;     // splits plus merges in the last selection
     TerrainRefresh           last_refresh;     // kept until the next accepted refresh
 }
 
@@ -259,11 +254,14 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         allocator: scene.allocator,
         grid:      grid,
         owned:     owned,
-        capacity:  finest_chunk_count(&runtime),
+        capacity:  node_count(&runtime),
         desc:      &desc,
     )!;
+    write_node_records(&runtime, &desc, &batch);
 
     scene.add(node, batch);
+    defer catch scene.remove_component(node, InstancedMesh);
+    install_quadtree(scene, node, &runtime, &desc)!;
     scene.add(node, runtime);
     if (tiled) refresh_tile_rings(scene, assets, node);
 }
@@ -310,58 +308,44 @@ fn void mark_dirty(Scene* scene, Node* node, TexelRect rect) {
 }
 
 <*
- Refresh changed bounds and select every terrain's chunks for one camera.
+ Refresh changed bounds and publish every terrain's nodes; views select their own levels.
  Invalidates InstancedMesh and TerrainRuntime pointers when a Terrain was removed.
+ Leaves a terrain as it was when its edited lod values are negative or not finite.
  @param [&inout] scene : "Pending terrains are skipped; their authoring is unchanged."
  @param [&inout] assets : "The store given to register_terrain."
- @param [&in] camera_node : "Carries a Camera; world matrices current."
- @param output_height_pixels : "Height of the output the thresholds are tuned for."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
- @require scene.has(camera_node, Camera), output_height_pixels > 0
 *>
-fn void? update(
-    Scene* scene,
-    AssetStore* assets,
-    Node* camera_node,
-    float output_height_pixels,
-) {
+fn void? update(Scene* scene, AssetStore* assets) {
     remove_orphans(scene);
-    Camera camera = *scene.get(camera_node, Camera);
-    Vec3 camera_position = maths::translation(camera_node.world);
     fault failure;
     scene.@each(TerrainRuntime; entity, runtime) {
-        Node* node = scene.node(entity);
-        Terrain* terrain = scene.get(node, Terrain);
-        InstancedMesh* batch = scene.get(node, InstancedMesh);
-        if (catch excuse = refresh_changed_bounds(assets, &terrain.desc, runtime)) {
+        if (catch excuse = update_node(scene, assets, scene.node(entity))) {
             if (!failure) failure = excuse;
-            // The GPU copy may already hold the rejected shape; draw nothing until a conforming revision.
-            if (batch.count) {
-                batch.count = 0;
-                scene.mark_instances_dirty(node);
-            }
-            runtime.stale = true;
-        } else {
-            SelectFrame frame = {
-                .runtime         = runtime,
-                .batch           = batch,
-                .desc            = &terrain.desc,
-                .world           = node.world,
-                .world_scale     = largest_axis_scale(node.world),
-                .camera          = camera,
-                .camera_position = camera_position,
-                .output_height   = output_height_pixels,
-            };
-            select_chunks(&frame);
-            if (runtime.stale || runtime.lod_switches) {
-                scene.mark_instances_dirty(node);
-                runtime.stale = false;
-            }
-            batch.cast_shadow = terrain.desc.cast_shadow;
-            batch.receive_shadow = terrain.desc.receive_shadow;
         }
     };
     if (failure) return failure~;
+}
+
+fn void? update_node(Scene* scene, AssetStore* assets, Node* node) @private {
+    Terrain* terrain = scene.get(node, Terrain);
+    TerrainRuntime* runtime = scene.get(node, TerrainRuntime);
+    InstancedMesh* batch = scene.get(node, InstancedMesh);
+    check_lod_tunables(&terrain.desc)!;
+
+    if (catch excuse = refresh_changed_bounds(assets, &terrain.desc, runtime)) {
+        // The GPU copy may already hold the rejected shape; draw nothing until a conforming revision.
+        hide_batch(scene, node);
+        runtime.stale = true;
+        return excuse~;
+    }
+
+    if (runtime.stale) {
+        publish_nodes(scene, node, runtime, &terrain.desc)!;
+        runtime.stale = false;
+    }
+    apply_lod_tunables(batch, &terrain.desc);
+    batch.cast_shadow = terrain.desc.cast_shadow;
+    batch.receive_shadow = terrain.desc.receive_shadow;
 }
 
 fn TexelRect union_rect(TexelRect first, TexelRect second) @private {

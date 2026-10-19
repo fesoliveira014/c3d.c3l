@@ -15,6 +15,7 @@ import c3d::shader::compile;
 import gpu;
 import std::io;
 import std::math;
+import std::math::quaternion;
 
 const char[*] READBACK_SOURCE @local = $embed("readback.comp.glsl");
 const char[*] NORMAL_PROBE_SOURCE @local = $embed("normal_probe.comp.glsl");
@@ -47,6 +48,20 @@ const float PROBE_BEND_Z @local = 0.35f;
 const float RING_AGREEMENT @local = 1e-5f; // float rounding of the shared texel's two gradients, which use the same four heights
 const float ONE_SIDED_DISAGREEMENT @local = 0.01f; // far above the agreement, so a missing ring fails
 const float CPU_SHADER_AGREEMENT @local = 1e-5f; // float rounding of two evaluations of the same texels
+const uint VIEW_TEXELS @local = 1025; // four levels: 64 leaves, 16, 4 and a root
+const uint VIEW_NODES @local = 85;
+const float VIEW_SPLIT_PIXELS @local = 12; // the root and the 2 x 2 level split from 2000 m; only the root from 5000 m
+const float VIEW_FAR_PLANE @local = 8000;
+const float NEAR_ALTITUDE @local = 2000; // metres: the 1,024 m map spans 28 of the 64 pixels
+const float FAR_ALTITUDE @local = 5000; // metres: the map spans 11 pixels
+const uint NEAR_DRAWN @local = 16; // the 4 x 4 level
+const uint FAR_DRAWN @local = 4; // the 2 x 2 level
+const uint PASSES_PER_VIEW @local = 3; // shadow layer, depth prepass and view
+const uint COVERED_RADIUS_NEAR @local = 12; // pixels around the centre that the map covers
+const uint COVERED_RADIUS_FAR @local = 3;
+const uint RGBA8_BYTES @local = 4;
+const float RESELECT_THRESHOLD @local = 1e9f; // splits nothing, so the root draws alone
+const float TURNED_YAW_DEGREES @local = 45; // where the world bounding box of a node box is largest
 const uint SLOPE_TARGET_SIZE @local = 64;
 const uint SLOPE_TEXELS @local = 257; // two finest chunks per side
 const float SLOPE_CELL_SIZE @local = 0.25f; // a 24 m wall falls within one cell
@@ -99,33 +114,38 @@ struct Fixture @local {
     gpu::MappedGpuSpan   readback;
 }
 
-fn TextureId add_hills(AssetStore* assets, bool flat) @local {
+fn TextureId add_hills(AssetStore* assets, uint side, bool flat) @local {
     TextureId texture;
     @pool() {
-        ushort[] texels = alloc::new_array(tmem, ushort, (sz)TERRAIN_TEXELS * TERRAIN_TEXELS);
-        for (uint z = 0; z < TERRAIN_TEXELS; z++) {
-            for (uint x = 0; x < TERRAIN_TEXELS; x++) {
+        ushort[] texels = alloc::new_array(tmem, ushort, (sz)side * side);
+        for (uint z = 0; z < side; z++) {
+            for (uint x = 0; x < side; x++) {
                 float wave = flat ? FLAT_HEIGHT : 0.5f + 0.25f * math::sin((float)x * 0.05f) + 0.25f * math::cos((float)z * 0.07f);
-                texels[z * TERRAIN_TEXELS + x] = (ushort)(wave * (float)ushort::max);
+                texels[z * side + x] = (ushort)(wave * (float)ushort::max);
             }
         }
-        material::TextureDesc desc = material::texture_2d_desc(TERRAIN_TEXELS, TERRAIN_TEXELS, R16_UINT);
+        material::TextureDesc desc = material::texture_2d_desc(side, side, R16_UINT);
         desc.generate_mips = false;
         texture = assets.add_texture(desc, ((char*)texels.ptr)[:texels.len * ushort::size])!!;
     };
     return texture;
 }
 
-fn void? create_fixture(Fixture* fixture, bool flat = false) @local {
+fn void? create_fixture(
+    Fixture* fixture,
+    bool flat = false,
+    uint side = TERRAIN_TEXELS,
+    float lod_threshold = 0,
+) @local {
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
     terrain::register_terrain(&fixture.scene, &fixture.assets)!;
 
     TerrainDesc desc = terrain::default_terrain_desc();
-    desc.height_map = add_hills(&fixture.assets, flat);
+    desc.height_map = add_hills(&fixture.assets, side, flat);
     desc.cell_size = CELL_SIZE;
     desc.height_scale = HEIGHT_SCALE;
-    desc.lod_threshold = 0;
+    desc.lod_threshold = lod_threshold;
     StandardParams grass = { .base_color = { 0.5f, 0.6f, 0.3f, 1 }, .roughness = 1 };
     desc.layers[0] = fixture.assets.add_material(material::standard(grass))!;
     fixture.terrain_node = fixture.scene.add_node()!;
@@ -224,12 +244,7 @@ fn void? record_readback(Fixture* fixture) @local {
 
 fn void? update_terrain(Fixture* fixture) @local {
     fixture.scene.update_world();
-    return terrain::update(
-        scene:                &fixture.scene,
-        assets:               &fixture.assets,
-        camera_node:          fixture.camera_node,
-        output_height_pixels: TARGET_SIZE,
-    );
+    return terrain::update(&fixture.scene, &fixture.assets);
 }
 
 fn void? render_frame(
@@ -287,21 +302,17 @@ fn void test_reselected_chunks_keep_background_velocity() @test {
     assert(!near_pixel(moved[0], moved[1]), "The moved terrain shows the background's velocity %08x.", moved[1]);
     settle(&fixture, &frame);
 
-    // Equal count, every record index now names another chunk: a re-selection at rest.
+    // The root replaces its four chunks: a re-selection at rest.
+    uint chunks_visible = fixture.renderer.stats.instances_visible;
+    fixture.scene.get(fixture.terrain_node, Terrain).desc.lod_threshold = RESELECT_THRESHOLD;
     update_terrain(&fixture)!!;
-    InstancedMesh* batch = fixture.scene.get(fixture.terrain_node, InstancedMesh);
-    assert(batch.count > 1);
-    for (uint index = 0; index < batch.count / 2; index++) {
-        uint mirror = batch.count - 1 - index;
-        @swap(batch.transforms[index], batch.transforms[mirror]);
-        @swap(batch.colors[index], batch.colors[mirror]);
-    }
-    fixture.scene.mark_instances_dirty(fixture.terrain_node);
-    render_frame(&fixture, frame, true)!!;
+    render_frame(&fixture, frame++, true)!!;
 
     uint[READBACK_POINTS] pixels = read_pixels(&fixture);
     assert(near_pixel(pixels[1], NEUTRAL_VELOCITY), "The still background shows velocity %08x.", pixels[1]);
     assert(near_pixel(pixels[0], pixels[1]), "Terrain velocity %08x against background %08x.", pixels[0], pixels[1]);
+    settle(&fixture, &frame);
+    assert(fixture.renderer.stats.instances_visible < chunks_visible);
     check_validation(&fixture.renderer);
 }
 
@@ -325,6 +336,220 @@ fn void test_relative_terrain_has_no_velocity_when_only_reference_changes() @tes
         assert(near_pixel(pixels[1], NEUTRAL_VELOCITY));
         assert(near_pixel(pixels[0], pixels[1]));
     }
+    check_validation(&fixture.renderer);
+}
+
+struct ViewTarget @local {
+    RenderTargetId target;
+    ViewId         view;
+    Node*          camera;
+}
+
+struct Selection @local {
+    uint                              drawn;
+    uint[terrain::MAX_TERRAIN_LEVELS] per_level;
+    bool[VIEW_NODES]                  node_drawn;
+}
+
+fn ViewTarget? create_view_target(Fixture* fixture, float altitude) @local {
+    RenderTargetId target = render::create_render_target(
+        renderer: &fixture.renderer,
+        desc:     render::render_target_desc(TARGET_SIZE, TARGET_SIZE, PixelFormat.RGBA8_UNORM),
+    )!;
+    ViewDesc desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
+    desc.post.anti_aliasing = AntiAliasing.NONE;
+    Node* camera = fixture.scene.add_camera(camera::perspective_deg(60, 1, VIEW_FAR_PLANE))!;
+    float middle = (float)(VIEW_TEXELS - 1) * CELL_SIZE * 0.5f;
+    camera.local.position = { middle, altitude, middle };
+    camera.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 });
+    return {
+        .target = target,
+        .view   = render::create_view(&fixture.renderer, desc)!,
+        .camera = camera,
+    };
+}
+
+fn gpu::MappedGpuSpan? create_selection_readback(Renderer* renderer) @local {
+    gpu::AllocationDesc desc = {
+        .size         = VIEW_NODES * uint::size,
+        .alignment    = render::STREAM_ALIGNMENT,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access       = { .graphics },
+        .debug_name   = "terrain_selection_readback",
+    };
+    return gpu::allocate_mapped_memory(&renderer.device, &desc);
+}
+
+fn void free_selection_readback(Renderer* renderer, gpu::MappedGpuSpan readback) @local {
+    render::wait_frames(renderer)!!;
+    gpu::GpuAllocation allocation = readback.span.allocation();
+    gpu::free_allocation(&renderer.device, &allocation)!!;
+}
+
+// Copies the view's selection words of this rendering, as the renderer wrote them.
+fn void? render_selection_frame(
+    Fixture* fixture,
+    ViewTarget* target,
+    gpu::MappedGpuSpan selection,
+    uint frame,
+) @local {
+    Renderer* renderer = &fixture.renderer;
+    fixture.scene.update_world();
+    renderer.begin_frame({ .time = (double)frame * TIME_STEP, .delta = (float)TIME_STEP })!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(&fixture.scene, target.camera, target.view)!;
+
+    uint node_slot = fixture.terrain_node.id.index;
+    render::QuadtreeHistoryEntry* history = &renderer.views.get(target.view).quadtree_history.entries[node_slot];
+    assert(history.allocation.is_valid());
+    usz offset = (usz)(history.committed_slot ^ 1) * history.capacity * uint::size;
+    gpu::GpuSpan source = gpu::get_allocation_span(&renderer.device, history.allocation)!;
+    gpu::Barrier produced = { .before = { .compute, .vertex_shader }, .after = { .transfer } };
+    gpu::cmd_barrier(&renderer.commands, &produced)!;
+    gpu::BufferCopyDesc copy = { .src = source.checked_subspan(offset, selection.bytes.len)!, .dst = selection.span };
+    gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
+    gpu::Barrier copied = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &copied)!;
+
+    renderer.finish_view(target.view)!;
+    renderer.end_frame()!;
+    render::wait_frames(renderer)!;
+    gpu::invalidate_mapped_span(&renderer.device, selection.span)!;
+}
+
+fn void? settle_selection(
+    Fixture* fixture,
+    ViewTarget* target,
+    gpu::MappedGpuSpan selection,
+    uint* frame,
+) @local {
+    for (uint settled = 0; settled < SETTLE_FRAMES; settled++, (*frame)++) {
+        update_terrain(fixture)!;
+        render_selection_frame(
+            fixture:   fixture,
+            target:    target,
+            selection: selection,
+            frame:     *frame,
+        )!;
+    }
+}
+
+// Counts the drawn nodes by level; every leaf area must have exactly one drawn node on its path to the root.
+fn Selection read_selection(Fixture* fixture, gpu::MappedGpuSpan selection) @local {
+    TerrainRuntime* runtime = fixture.scene.get(fixture.terrain_node, TerrainRuntime);
+    InstancedMesh* batch = fixture.scene.get(fixture.terrain_node, InstancedMesh);
+    assert(batch.count == VIEW_NODES);
+    uint[] words = ((uint*)selection.bytes.ptr)[:batch.count];
+    Selection result;
+    foreach (uint node, word : words) {
+        if (word & shader::QUADTREE_DRAW) {
+            result.drawn++;
+            result.node_drawn[node] = true;
+            uint level = runtime.level_count - 1;
+            while (runtime.level_offset[level] > node) level--;
+            result.per_level[level]++;
+        }
+
+        if (!batch.is_leaf(node)) continue;
+
+        uint covering;
+        for (uint ancestor = node; ancestor != scene::QUADTREE_ROOT; ancestor = batch.quadtree.parents[ancestor]) {
+            if (words[ancestor] & shader::QUADTREE_DRAW) covering++;
+        }
+        assert(covering == 1);
+    }
+    return result;
+}
+
+// The map spans the pixels around the centre; any background pixel there is a hole.
+fn void assert_map_covered(Fixture* fixture, ViewTarget* target, uint radius) @local {
+    @pool() {
+        char[] pixels = alloc::new_array(tmem, char, (sz)TARGET_SIZE * TARGET_SIZE * RGBA8_BYTES);
+        fixture.renderer.read_render_target(target.target, pixels)!!;
+        char[] background = pixels[:RGBA8_BYTES];
+        uint centre = TARGET_SIZE / 2;
+        for (uint row = centre - radius; row < centre + radius; row++) {
+            for (uint column = centre - radius; column < centre + radius; column++) {
+                usz offset = ((usz)row * TARGET_SIZE + column) * RGBA8_BYTES;
+                assert(!mem::equals(pixels[offset:RGBA8_BYTES], background), "Hole at pixel %d, %d.", column, row);
+            }
+        }
+    };
+}
+
+fn void test_views_select_their_own_terrain_levels() @test {
+    Fixture fixture;
+    create_fixture(&fixture, side: VIEW_TEXELS, lod_threshold: VIEW_SPLIT_PIXELS)!!;
+    defer destroy_fixture(&fixture);
+    fixture.scene.ambient_color = { 1, 1, 1 };
+    fixture.scene.ambient_intensity = 1;
+    Light sunlight = light::directional({ 1, 1, 1 }, 2);
+    sunlight.shadow.cascades = 1;
+    sunlight.shadow.max_distance = VIEW_FAR_PLANE;
+    fixture.scene.add_light(sunlight)!!;
+    ViewTarget near_view = create_view_target(&fixture, NEAR_ALTITUDE)!!;
+    ViewTarget far_view = create_view_target(&fixture, FAR_ALTITUDE)!!;
+    gpu::MappedGpuSpan selection = create_selection_readback(&fixture.renderer)!!;
+    defer free_selection_readback(&fixture.renderer, selection);
+    Renderer* renderer = &fixture.renderer;
+    uint frame;
+
+    settle_selection(&fixture, &near_view, selection, &frame)!!;
+    Selection near_levels = read_selection(&fixture, selection);
+    assert(near_levels.drawn == NEAR_DRAWN);
+    assert(renderer.stats.shadow_layers == 1 && renderer.stats.quadtree_fallbacks == 0);
+    assert(renderer.stats.instances_visible == PASSES_PER_VIEW * NEAR_DRAWN);
+    assert_map_covered(&fixture, &near_view, COVERED_RADIUS_NEAR);
+
+    settle_selection(&fixture, &far_view, selection, &frame)!!;
+    Selection far_levels = read_selection(&fixture, selection);
+    assert(far_levels.drawn == FAR_DRAWN);
+    assert(renderer.stats.shadow_layers == 1 && renderer.stats.quadtree_fallbacks == 0);
+    assert(renderer.stats.instances_visible == PASSES_PER_VIEW * FAR_DRAWN);
+    assert_map_covered(&fixture, &far_view, COVERED_RADIUS_FAR);
+
+    // The far view left the near view's selection alone.
+    render_selection_frame(
+        fixture:   &fixture,
+        target:    &near_view,
+        selection: selection,
+        frame:     frame,
+    )!!;
+    assert(read_selection(&fixture, selection).drawn == NEAR_DRAWN);
+    io::printfn("Terrain nodes drawn per level: near view %s, far view %s", near_levels.per_level, far_levels.per_level);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_selection_does_not_depend_on_the_node_yaw() @test {
+    Fixture fixture;
+    create_fixture(&fixture, side: VIEW_TEXELS, lod_threshold: VIEW_SPLIT_PIXELS)!!;
+    defer destroy_fixture(&fixture);
+    ViewTarget near_view = create_view_target(&fixture, NEAR_ALTITUDE)!!;
+    gpu::MappedGpuSpan selection = create_selection_readback(&fixture.renderer)!!;
+    defer free_selection_readback(&fixture.renderer, selection);
+    uint frame;
+
+    settle_selection(&fixture, &near_view, selection, &frame)!!;
+    Selection unturned = read_selection(&fixture, selection);
+    assert(unturned.drawn == NEAR_DRAWN);
+
+    // The map turns about its middle, which stays under the camera.
+    Vec3 middle = { (float)(VIEW_TEXELS - 1) * CELL_SIZE * 0.5f, 0, (float)(VIEW_TEXELS - 1) * CELL_SIZE * 0.5f };
+    Node* ground = fixture.terrain_node;
+    ground.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::deg_to_rad(TURNED_YAW_DEGREES));
+    ground.local.position = {};
+    fixture.scene.update_world();
+    ground.local.position = middle - maths::transform_point(ground.world, middle);
+
+    settle_selection(&fixture, &near_view, selection, &frame)!!;
+    Selection turned = read_selection(&fixture, selection);
+    io::printfn(
+        "Terrain nodes drawn per level: unturned %s, turned %s",
+        unturned.per_level,
+        turned.per_level,
+    );
+    assert(turned.per_level == unturned.per_level);
+    assert(mem::equals(turned.node_drawn[..], unturned.node_drawn[..]));
     check_validation(&fixture.renderer);
 }
 
@@ -759,12 +984,7 @@ fn Vec4[]? render_slope_view(SlopeFixture* fixture, ViewPose pose) @local {
 
     for (uint frame = 0; frame < SLOPE_FRAMES; frame++) {
         fixture.scene.update_world();
-        terrain::update(
-            scene:                &fixture.scene,
-            assets:               &fixture.assets,
-            camera_node:          fixture.camera_node,
-            output_height_pixels: SLOPE_TARGET_SIZE,
-        )!;
+        terrain::update(&fixture.scene, &fixture.assets)!;
 
         renderer.begin_frame({ .time = (double)frame * SLOPE_TIME_STEP, .delta = (float)SLOPE_TIME_STEP })!;
         defer catch render::abort_frame(renderer);

@@ -73,15 +73,31 @@ uint64_t sort_key(float view_depth, uint source) {
     return (uint64_t(bits) << 32) | uint64_t(~source);
 }
 
-// Height of the instance's bound sphere as a share of the output height; infinite at the sphere's centre.
+// Height of a sphere as a share of the output height; infinite at the sphere's centre.
+float sphere_size(InstanceCullRoot root, vec3 center, float radius) {
+    return radius == 0.0 ? 0.0 : (root.lod_projection.z != 0.0
+        ? 2.0 * radius / root.lod_projection.y
+        : radius * root.lod_projection.x / distance(center, root.lod_camera_bias.xyz));
+}
+
+// Height of the instance's bound sphere, taken from its world bounding box and the sway reach, as a share of the output height.
 float projected_size(InstanceCullRoot root, mat4 model) {
     vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
     mat3 axes = mat3(model);
     mat3 reach = mat3(abs(axes[0]), abs(axes[1]), abs(axes[2]));
     float radius = length(reach * ((root.bounds_max.xyz - root.bounds_min.xyz) * 0.5) + root.lod_reach.xyz);
-    return radius == 0.0 ? 0.0 : (root.lod_projection.z != 0.0
-        ? 2.0 * radius / root.lod_projection.y
-        : radius * root.lod_projection.x / distance(center, root.lod_camera_bias.xyz));
+    return sphere_size(root, center, radius);
+}
+
+// Turning a node must not change its size, while its world bounding box grows by up to 1.41 times at 45 degrees:
+// the radius is the half diagonal of the bound scaled along each axis of the matrix. Shear under-bounds; LOD only.
+float quadtree_size(InstanceCullRoot root, mat4 model) {
+    vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
+    mat3 axes = mat3(model);
+    vec3 half_extent = (root.bounds_max.xyz - root.bounds_min.xyz) * 0.5;
+    vec3 axis_scale = vec3(length(axes[0]), length(axes[1]), length(axes[2]));
+    float radius = length(axis_scale * half_extent);
+    return sphere_size(root, center, radius);
 }
 
 void select_lod(InstanceCullRoot root, uint source) {
@@ -109,7 +125,7 @@ void select_lod(InstanceCullRoot root, uint source) {
 
 bool quadtree_splits(InstanceCullRoot root, uint node) {
     if (QuadtreeNodes(root.quadtree_nodes).values[node].children == 0u) return false;
-    float size = projected_size(root, CullInstances(root.instances).values[node].model) * root.quadtree_height_pixels;
+    float size = quadtree_size(root, CullInstances(root.instances).values[node].model) * root.quadtree_height_pixels;
     bool was_split = root.quadtree_history_valid != 0u
         && (QuadtreeHistory(root.lod_previous).values[node] & QUADTREE_SPLIT) != 0u;
     return was_split ? size >= root.quadtree_split_pixels / (1.0 + root.quadtree_hysteresis)

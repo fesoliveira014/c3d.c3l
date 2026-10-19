@@ -137,12 +137,7 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 assert(fixture.assets.materials.free_count == free_materials);
                 Node* camera = fixture.destination.add_camera(camera::perspective_deg(60, 0.1f))!!;
                 fixture.destination.update_world();
-                terrain::update(
-                    scene: &fixture.destination,
-                    assets: &fixture.assets,
-                    camera_node: camera,
-                    output_height_pixels: 720,
-                )!!;
+                terrain::update(&fixture.destination, &fixture.assets)!!;
                 foliage::update(&fixture.destination, &fixture.assets, { 2, 0, 1 })!!;
                 water::update(
                     scene: &fixture.destination,

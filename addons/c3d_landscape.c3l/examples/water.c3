@@ -837,16 +837,10 @@ fn double? step_scene(
     Vec3 wind,
     double time,
     float delta,
-    float output_height,
 ) @local {
     Scene* scene = demo.scene;
     scene.update_world();
-    terrain::update(
-        scene:                scene,
-        assets:               demo.assets,
-        camera_node:          demo.camera_node,
-        output_height_pixels: output_height,
-    )!;
+    terrain::update(scene, demo.assets)!;
     foliage::update(scene, demo.assets, wind)!;
     water::update(
         scene:          scene,
@@ -1194,12 +1188,11 @@ fn void? run_interactive(Options options) @local {
             pitch:       fly_camera.pitch,
         );
         physics_us = step_scene(
-            demo:          &demo,
-            renderer:      &renderer,
-            wind:          wind_velocity(controls.wind_speed, controls.wind_heading_degrees),
-            time:          window.clock.total,
-            delta:         delta,
-            output_height: (float)max(renderer.output_height, 1u),
+            demo:     &demo,
+            renderer: &renderer,
+            wind:     wind_velocity(controls.wind_speed, controls.wind_heading_degrees),
+            time:     window.clock.total,
+            delta:    delta,
         )! / (double)max(physics.steps_last_update, 1u);
 
         view_stats_panel(&demo, &renderer);
@@ -1358,12 +1351,11 @@ fn void? run_segments(
             frames:  segment_frames(options, segment),
         )!;
         double physics_us = step_scene(
-            demo:          demo,
-            renderer:      renderer,
-            wind:          wind,
-            time:          frame_time(frame),
-            delta:         TIME_STEP,
-            output_height: (float)options.height,
+            demo:     demo,
+            renderer: renderer,
+            wind:     wind,
+            time:     frame_time(frame),
+            delta:    TIME_STEP,
         )!;
         render_offscreen(
             demo:      demo,

@@ -4,7 +4,7 @@ import std::math;
 import std::math::quaternion;
 import c3d;
 import c3d::asset;
-import c3d::camera;
+import c3d::geometry;
 import c3d::landscape::terrain;
 import c3d::maths;
 import c3d::material;
@@ -23,10 +23,9 @@ const float RAY_START_HEIGHT @local = 100; // above HEIGHT_SCALE plus the node's
 const float RAY_LENGTH @local = 200;
 const uint RANDOM_POINTS @local = 256;
 const ulong SEED @local = 0x7e11a1;
-const float OUTPUT_HEIGHT @local = 1080;
-const float CAMERA_FOV_DEGREES @local = 60;
-const float CAMERA_NEAR @local = 0.1f;
 const uint EDIT_SIDE @local = 9;
+const float RECORD_TOLERANCE @local = 1e-4f; // float rounding of node boxes built from the same texels
+const float TEXEL_MAX @local = 65535; // height = height_scale * texel / 65535, the physics height-field rule
 const ushort MAP_LOW @local = 1000; // generated maps stay inside [MAP_LOW, MAP_HIGH]; edits write 0 and 65535
 const ushort MAP_HIGH @local = 64000;
 const uint RING_NORTH @local = 0; // the border ring's rows and the bits of the tile's edge mask, in this order
@@ -46,7 +45,6 @@ struct Fixture @local {
     Scene        scene;
     PhysicsWorld physics;
     MaterialId   layer;
-    Node*        camera;
 }
 
 fn void setup(Fixture* fixture) @local {
@@ -61,7 +59,6 @@ fn void setup(Fixture* fixture) @local {
         desc:      physics::default_physics_desc(),
     )!!;
     fixture.layer = fixture.assets.add_material(material::standard({ .base_color = { 1, 1, 1, 1 }, .roughness = 1 }))!!;
-    fixture.camera = fixture.scene.add_camera(camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR))!!;
 }
 
 fn void teardown(Fixture* fixture) @local {
@@ -179,39 +176,12 @@ fn Vec2[] probe_points(Allocator allocator, uint texels, ulong seed) @local {
     return points;
 }
 
-fn void camera_at(Fixture* fixture, Vec3 position, Quat rotation = quaternion::IDENTITY) @local {
-    fixture.camera.local.position = position;
-    fixture.camera.local.rotation = rotation;
-    fixture.scene.update_world();
-}
-
 fn void? try_update(Fixture* fixture) @local {
-    return terrain::update(
-        scene:                &fixture.scene,
-        assets:               &fixture.assets,
-        camera_node:          fixture.camera,
-        output_height_pixels: OUTPUT_HEIGHT,
-    );
+    return terrain::update(&fixture.scene, &fixture.assets);
 }
 
 fn void update_terrain(Fixture* fixture) @local {
     try_update(fixture)!!;
-}
-
-fn void assert_covers_once(InstancedMesh* batch, uint texels) @local {
-    uint side = (texels - 1) / terrain::CHUNK_CELLS;
-    @pool() {
-        uint[] hits = alloc::new_array(tmem, uint, (sz)side * side);
-        foreach (chunk : batch.colors[:batch.count]) {
-            uint span = (uint)chunk.z / terrain::CHUNK_CELLS;
-            uint first_x = (uint)chunk.x / terrain::CHUNK_CELLS;
-            uint first_z = (uint)chunk.y / terrain::CHUNK_CELLS;
-            for (uint z = first_z; z < first_z + span; z++) {
-                for (uint x = first_x; x < first_x + span; x++) hits[z * side + x]++;
-            }
-        }
-        foreach (count : hits) assert(count == 1);
-    };
 }
 
 fn void assert_same_bounds(TerrainRuntime* edited, TerrainRuntime* fresh) @local {
@@ -415,7 +385,8 @@ fn void test_size_changing_replacement_faults_invalid_argument() @test {
     record.pixels = fixture.assets.texture(conforming).pixels;
     fixture.assets.mark_texture_dirty(desc.height_map);
     update_terrain(&fixture);
-    assert(fixture.scene.get(node, InstancedMesh).count > 0);
+    InstancedMesh* restored = fixture.scene.get(node, InstancedMesh);
+    assert(restored.count > 0 && restored.quadtree.parents.len == restored.count);
     Node* fresh = add_terrain_node(&fixture, terrain_desc(&fixture, copy_height_map(&fixture, desc.height_map)));
     assert_same_bounds(fixture.scene.get(node, TerrainRuntime), fixture.scene.get(fresh, TerrainRuntime));
     record.desc = original_desc;
@@ -450,6 +421,9 @@ fn void test_invalid_desc_values_are_invalid_argument() @test {
     } else {
         assert(false, "A zero cell size was accepted.");
     }
+    TerrainDesc unbounded = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    unbounded.lod_threshold = float::inf;
+    assert(@catch(try_add_terrain(&fixture, node, unbounded)) == c3d::INVALID_ARGUMENT);
     assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, InstancedMesh));
 }
 
@@ -481,85 +455,138 @@ fn void test_triplanar_sharpness_outside_its_range_is_invalid_argument() @test {
     try_add_terrain(&fixture, fixture.scene.add_node()!!, desc)!!;
 }
 
-fn void test_selection_ignores_camera_facing() @test {
+fn bool near(float first, float second) @local => math::abs(first - second) <= RECORD_TOLERANCE;
+
+fn void test_node_records_and_parents_match_the_bounds_tree() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
     Node* node = add_terrain_node(&fixture, terrain_desc(&fixture, add_height_map(&fixture, FOUR_LEVEL_TEXELS, SEED)));
     TerrainRuntime* runtime = fixture.scene.get(node, TerrainRuntime);
     InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
-    Vec3 position = { 60, 30, 90 };
+    uint finest_side = (FOUR_LEVEL_TEXELS - 1) / terrain::CHUNK_CELLS;
+    uint nodes;
+    for (uint level = 0; level < runtime.level_count; level++) nodes += (finest_side >> level) * (finest_side >> level);
 
-    camera_at(&fixture, position);
-    update_terrain(&fixture);
-    assert_covers_once(batch, FOUR_LEVEL_TEXELS);
-    assert(runtime.chunks_per_level[0] > 0 && runtime.chunks_per_level[runtime.level_count - 1] == 0);
-    uint count = batch.count;
-    uint revision = batch.revision;
-    @pool() {
-        Vec4[] first = alloc::new_array(tmem, Vec4, (sz)count);
-        first[..] = batch.colors[:count];
-        Quat[3] turns = {
-            quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::deg_to_rad(90)),
-            quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::deg_to_rad(200)),
-            quaternion::from_axis_angle{float}({ 1, 0, 0 }, (float)math::deg_to_rad(-60)),
-        };
-        foreach (turn : turns) {
-            camera_at(&fixture, position, turn);
-            update_terrain(&fixture);
-            assert(runtime.lod_switches == 0 && batch.revision == revision);
-            assert(batch.count == count);
-            assert(mem::equals(batch.colors[:count], first));
+    assert(batch.count == nodes && batch.transforms.len == nodes && batch.quadtree.parents.len == nodes);
+    assert(batch.quadtree.leaf_count == finest_side * finest_side && !batch.trace);
+
+    float height_unit = HEIGHT_SCALE / TEXEL_MAX;
+    for (uint level = 0; level < runtime.level_count; level++) {
+        uint side = finest_side >> level;
+        uint span = terrain::CHUNK_CELLS << level;
+        float edge = (float)span * CELL_SIZE;
+        for (uint z = 0; z < side; z++) {
+            for (uint x = 0; x < side; x++) {
+                uint index = runtime.level_offset[level] + z * side + x;
+                uint parent = scene::QUADTREE_ROOT;
+                if (level + 1 < runtime.level_count) {
+                    parent = runtime.level_offset[level + 1] + (z >> 1) * (side >> 1) + (x >> 1);
+                }
+                assert(batch.quadtree.parents[index] == parent);
+                assert(batch.is_leaf(index) == (level == 0));
+
+                float lowest = (float)runtime.minimum[index] * height_unit;
+                float highest = (float)runtime.maximum[index] * height_unit;
+                Transform record = batch.transforms[index];
+                assert(near(record.position.x, (float)x * edge) && near(record.position.z, (float)z * edge));
+                assert(near(record.position.y, lowest) && near(record.scale.y, highest - lowest));
+                assert(near(record.scale.x, edge) && near(record.scale.z, edge));
+                Vec4 chunk = batch.colors[index];
+                assert(near(chunk.x, (float)(x * span)) && near(chunk.y, (float)(z * span)));
+                assert(near(chunk.z, (float)span) && near(chunk.w, lowest));
+            }
         }
-    };
-}
-
-fn void test_split_and_merge_follow_the_hysteresis_band() @test {
-    Fixture fixture;
-    setup(&fixture);
-    defer teardown(&fixture);
-    TerrainDesc desc = terrain_desc(&fixture, add_height_map(
-        fixture: &fixture,
-        texels:  TWO_LEVEL_TEXELS,
-        seed:    SEED,
-        flat:    true,
-    ));
-    Node* node = add_terrain_node(&fixture, desc);
-    TerrainRuntime* runtime = fixture.scene.get(node, TerrainRuntime);
-    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
-    float extent = (float)(TWO_LEVEL_TEXELS - 1) * CELL_SIZE;
-    Vec3 center = { extent * 0.5f, 0, extent * 0.5f };
-    float diameter = extent * math::SQRT2;
-    Camera* lens = fixture.scene.get(fixture.camera, Camera);
-    float pixels_per_unit = OUTPUT_HEIGHT / (2 * math::tan(lens.fov_y * 0.5f));
-    float threshold = desc.lod_threshold;
-    float merge_below = threshold / (1 + desc.lod_hysteresis);
-
-    float[4] sizes = { threshold * 0.99f, threshold * 1.01f, (threshold + merge_below) * 0.5f, merge_below * 0.99f };
-    uint[4] counts = { 1, 4, 4, 1 };
-    uint[4] switches = { 0, 1, 0, 1 };
-    foreach (index, size : sizes) {
-        camera_at(&fixture, center + (Vec3){ 0, diameter * pixels_per_unit / size, 0 });
-        update_terrain(&fixture);
-        assert(batch.count == counts[index]);
-        assert(runtime.lod_switches == switches[index]);
     }
 }
 
-fn void test_finest_selection_fills_the_instance_capacity() @test {
+fn void test_height_edit_republishes_records_and_keeps_the_topology() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
-    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, FOUR_LEVEL_TEXELS, SEED));
-    desc.lod_threshold = 0;
-    Node* node = add_terrain_node(&fixture, desc);
-    camera_at(&fixture, { 0, 5000, 0 });
-    update_terrain(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED));
+    Node* edited = add_terrain_node(&fixture, desc);
+    InstancedMesh* batch = fixture.scene.get(edited, InstancedMesh);
+    uint records = batch.revision;
+    uint topology = batch.quadtree.revision;
 
+    update_terrain(&fixture);
+    assert(batch.revision == records && batch.quadtree.revision == topology);
+
+    TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    write_extreme_texels(&fixture, desc.height_map, edit);
+    terrain::mark_dirty(&fixture.scene, edited, edit);
+    update_terrain(&fixture);
+    assert(batch.revision != records && batch.quadtree.revision == topology);
+
+    Node* fresh = add_terrain_node(&fixture, terrain_desc(&fixture, copy_height_map(&fixture, desc.height_map)));
+    batch = fixture.scene.get(edited, InstancedMesh);
+    InstancedMesh* expected = fixture.scene.get(fresh, InstancedMesh);
+    assert(batch.count == expected.count);
+    assert(mem::equals(batch.transforms[:batch.count], expected.transforms[:expected.count]));
+    assert(mem::equals(batch.colors[:batch.count], expected.colors[:expected.count]));
+}
+
+fn void test_edited_lod_values_are_checked_at_update() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    Node* node = add_terrain_node(&fixture, desc);
     InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
-    uint side = (FOUR_LEVEL_TEXELS - 1) / terrain::CHUNK_CELLS;
-    assert(batch.count == side * side && batch.transforms.len == (usz)side * side);
-    assert_covers_once(batch, FOUR_LEVEL_TEXELS);
+    Terrain* terrain = fixture.scene.get(node, Terrain);
+    float threshold = batch.quadtree.split_pixels;
+    float hysteresis = batch.quadtree.hysteresis;
+
+    terrain.desc.lod_threshold = float::nan;
+    assert(@catch(try_update(&fixture)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.split_pixels == threshold && batch.quadtree.hysteresis == hysteresis);
+
+    terrain.desc.lod_threshold = threshold;
+    terrain.desc.lod_hysteresis = float::inf;
+    assert(@catch(try_update(&fixture)) == c3d::INVALID_ARGUMENT);
+    assert(batch.quadtree.split_pixels == threshold && batch.quadtree.hysteresis == hysteresis);
+
+    terrain.desc.lod_hysteresis = hysteresis * 2;
+    update_terrain(&fixture);
+    assert(batch.quadtree.hysteresis == hysteresis * 2);
+}
+
+fn void test_lod_group_on_the_node_faults_and_rolls_back() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    Node* node = fixture.scene.add_node()!!;
+
+    GeometryId stand_in;
+    @pool() {
+        Geometry box = geometry::box(
+            allocator: tmem,
+            width:     1,
+            height:    1,
+            depth:     1,
+        );
+        stand_in = fixture.assets.add_geometry(&box)!!;
+    };
+    LodLevel[1] levels = {{ .first_part = 0, .part_count = 1, .min_screen_size = 0 }};
+    LodPart[1] parts = {{ .geometry = stand_in, .material = fixture.layer, .local = matrix::IDENTITY4 }};
+    LodGroup group = scene::create_lod_group(
+        allocator: mem,
+        assets:    &fixture.assets,
+        desc:      { .levels = levels[..], .parts = parts[..] },
+    )!!;
+    fixture.scene.add(node, group);
+
+    uint free_materials = fixture.assets.materials.free_count;
+    uint free_geometry = fixture.assets.geometries.free_count;
+    uint free_shaders = fixture.assets.shaders.free_count;
+
+    assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::UNSUPPORTED);
+    assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, TerrainRuntime));
+    assert(!fixture.scene.has(node, InstancedMesh));
+    assert(fixture.assets.materials.free_count == free_materials);
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.shaders.free_count == free_shaders);
 }
 
 fn void test_removed_terrain_releases_its_batch_and_material() @test {
@@ -596,7 +623,6 @@ fn void test_pending_terrains_retry_without_partial_assets_or_shared_owner_chang
     fixture.layer = fixture.assets.add_material(material::standard())!!;
     MaterialId first_blocker = fixture.assets.add_material(material::standard())!!;
     MaterialId second_blocker = fixture.assets.add_material(material::standard())!!;
-    fixture.camera = fixture.scene.add_camera(camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR))!!;
     TextureId height_map = add_height_map(&fixture, SMALL_TEXELS, SEED, flat: true);
     TerrainDesc desc = terrain_desc(&fixture, height_map);
     Node* group = fixture.scene.add_node()!!;
@@ -622,12 +648,7 @@ fn void test_pending_terrains_retry_without_partial_assets_or_shared_owner_chang
     assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.shaders.free_count == free_shaders);
     assert(fixture.scene.count(InstancedMesh) == 0);
     fixture.scene.update_world();
-    terrain::update(
-        scene: &fixture.scene,
-        assets: &fixture.assets,
-        camera_node: fixture.camera,
-        output_height_pixels: OUTPUT_HEIGHT,
-    )!!;
+    terrain::update(&fixture.scene, &fixture.assets)!!;
     assert(fixture.scene.count(InstancedMesh) == 0);
 
     assert(@catch(terrain::prepare(&fixture.scene, &fixture.assets, first)) == c3d::CAPACITY_EXCEEDED);
@@ -638,12 +659,7 @@ fn void test_pending_terrains_retry_without_partial_assets_or_shared_owner_chang
     assert(@catch(terrain::prepare_subtree(&fixture.scene, &fixture.assets, group)) == c3d::CAPACITY_EXCEEDED);
     assert(terrain::is_prepared(&fixture.scene, first) && !terrain::is_prepared(&fixture.scene, second));
     MaterialId material = fixture.scene.get(first, TerrainRuntime).material;
-    terrain::update(
-        scene: &fixture.scene,
-        assets: &fixture.assets,
-        camera_node: fixture.camera,
-        output_height_pixels: OUTPUT_HEIGHT,
-    )!!;
+    terrain::update(&fixture.scene, &fixture.assets)!!;
     assert(fixture.scene.get(first, InstancedMesh).count == 1 && !fixture.scene.has(second, InstancedMesh));
 
     fixture.assets.remove_material(second_blocker);
@@ -654,12 +670,7 @@ fn void test_pending_terrains_retry_without_partial_assets_or_shared_owner_chang
     terrain::prepare_subtree(&fixture.scene, &fixture.assets)!!;
     assert(c3d::same_id(fixture.scene.get(first, TerrainRuntime).material, material));
     assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.materials.free_count == free_materials);
-    terrain::update(
-        scene: &fixture.scene,
-        assets: &fixture.assets,
-        camera_node: fixture.camera,
-        output_height_pixels: OUTPUT_HEIGHT,
-    )!!;
+    terrain::update(&fixture.scene, &fixture.assets)!!;
     assert(fixture.scene.get(first, InstancedMesh).count == 1 && fixture.scene.get(second, InstancedMesh).count == 1);
 }
 

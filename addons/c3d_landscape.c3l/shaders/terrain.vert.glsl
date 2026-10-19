@@ -47,7 +47,7 @@ void main() {
     gl_ClipDistance[0] = view_clip_distance(frame, world.xyz);
 #ifdef VELOCITY
 #ifdef INSTANCED
-    // Re-selection reuses record indices for other chunks: only the node's motion is object motion.
+    // The chunk's shape comes from its record, not the instance matrix: only the node's motion is object motion.
     v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * world);
 #else
     v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * vec4(local, 1.0));
