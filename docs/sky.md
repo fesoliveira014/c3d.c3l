@@ -601,7 +601,7 @@ with none of what follows.
 | `fog_behind(frame, surface_position, behind, behind_depth)` | the fog between a surface and a depth sample behind it; depth 0 is the background |
 | `apply_fog_refracted(frame, surface_position, transmittance, refracted, refracted_depth, surface_radiance)` | a depth-writing refracting surface's output |
 | `apply_fog_segment(frame, origin, hit_position, radiance)` | the height fog and, behind it, the marched atmosphere over the segment from a ray's origin to its hit, for a ray cast from elsewhere than the camera; returns `radiance` when `frame.sky_fog` is zero |
-| `apply_fog_to_infinity(frame, origin, direction, radiance)` | the height fog from a point to infinity, for a ray that leaves the scene; no atmosphere |
+| `apply_fog_to_infinity(frame, origin, direction, radiance)` | the height fog from a point to infinity, for a ray that leaves the scene; no atmosphere, except the marched atmosphere in front of a [medium volume](#medium-volumes) |
 | `fog_phase(cos_angle, anisotropy)` | the Henyey-Greenstein phase, per steradian |
 | `atmosphere_segment(sky, altitude, direction, distance)` | the `FogTerms` of the marched atmosphere over `distance` of a unit ray from a world altitude; none without an atmosphere |
 
@@ -710,7 +710,8 @@ sky example does under `--path-traced`.
   one.
 - Mirror views fog only behind their clip plane.
 - Traced reflection and probe hits take the analytic height fog and a marched atmosphere over their segment, with no
-  froxel volume and no aerial perspective table; a miss takes the height fog alone.
+  froxel volume and no aerial perspective table; a miss takes the height fog alone, and the marched atmosphere in
+  front of a medium volume.
 - Opaque stages cannot opt out of the fog pass.
 - Path-traced views are unfogged; a sky change does not restart their accumulation.
 - Twilight precision is bounded by `RGBA16F`: the tables keep a half float's 11-bit significand, and the

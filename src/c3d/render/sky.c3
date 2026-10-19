@@ -211,6 +211,7 @@ fn void keep_nearest_medium(
 ) @local {
     uint position = selection.count;
     while (position > 0 && distance < distances[position - 1]) position--;
+
     if (position == shader::MAX_VIEW_MEDIA) {
         selection.dropped++;
         return;
@@ -219,6 +220,7 @@ fn void keep_nearest_medium(
         selection.dropped++;
         selection.count--;
     }
+
     for (uint index = selection.count; index > position; index--) {
         selection.media[index] = selection.media[index - 1];
         distances[index] = distances[index - 1];

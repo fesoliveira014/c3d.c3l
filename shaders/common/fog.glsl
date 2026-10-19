@@ -263,6 +263,7 @@ vec2 medium_span(MediumGpu medium, vec3 origin, vec3 direction, float near, floa
         dot(medium.world_to_local_1.xyz, direction),
         dot(medium.world_to_local_2.xyz, direction)
     );
+
     vec3 lower = -medium.extent_anisotropy.xyz;
     vec3 upper = vec3(medium.extent_anisotropy.x, 0.0, medium.extent_anisotropy.z);
     float enter = near;
@@ -303,6 +304,7 @@ FogTerms medium_interval(
         absorption += set.media[index].absorption.xyz;
         scattering += set.media[index].scattering.xyz;
     }
+
     float span = to - from;
     vec3 optical_depth = (absorption + scattering) * span;
     vec3 ambient_reach = fog_exponential_integral(vec3(0.0), -optical_depth, span);
@@ -389,6 +391,7 @@ FogTerms fog_through_media(
         }
     }
     bounds[bound_count++] = far;
+
     for (uint index = 1u; index < bound_count; index++) {
         float bound = bounds[index];
         uint position = index;
@@ -539,10 +542,12 @@ vec3 apply_fog_segment(FrameRoot frame, vec3 origin, vec3 hit_position, vec3 rad
 }
 
 // Radiance of a ray that leaves the scene from a point: the fog a background pixel takes, without the volume. The sky
-// the ray reads already holds the atmosphere, so none is added.
+// the ray reads already holds the atmosphere, so none is added past the last medium; with media, the air in front of
+// a box takes the marched atmosphere.
 vec3 apply_fog_to_infinity(FrameRoot frame, vec3 origin, vec3 direction, vec3 radiance) {
     if (frame.sky_fog == 0ul) return radiance;
     SkyFogGpu sky = SkyFogGpu(frame.sky_fog);
+    float altitude = origin.y + frame.origin.y;
     FogTerms fog = sky.media_count != 0u
         ? fog_through_media(
             frame,
@@ -551,7 +556,7 @@ vec3 apply_fog_to_infinity(FrameRoot frame, vec3 origin, vec3 direction, vec3 ra
             vec2(0.0),
             origin,
             direction,
-            0.0,
+            altitude,
             0.0,
             BACKGROUND_VIEW_DISTANCE,
             true
