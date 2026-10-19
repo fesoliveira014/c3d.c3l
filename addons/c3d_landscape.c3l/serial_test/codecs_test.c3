@@ -23,6 +23,8 @@ const uint TRACE_TEXELS @private = 257; // two quadtree levels, so a trace level
 const uint TRACE_LEVEL @private = 1;
 const char[*] WATER_V1_BINARY @private = $embed("fixtures/water_v1.bin");
 const char[*] WATER_V1_TEXT @private = $embed("fixtures/water_v1.json");
+const char[*] WATER_V2_BINARY @private = $embed("fixtures/water_v2.bin");
+const char[*] WATER_V2_TEXT @private = $embed("fixtures/water_v2.json");
 
 fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
@@ -38,8 +40,9 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(landscape::FoliageAuthoring)!!.version == 2);
     assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0x797c3ed45915c1ed);
     assert(serial::described_type(Wave)!!.layout == 0xb7ea583c7a255cb9);
-    assert(serial::described_type(WaterDesc)!!.version == 2);
-    assert(serial::described_type(WaterDesc)!!.layout == 0x718815cf64669e4e);
+    assert(serial::described_type(WaterDesc)!!.version == 3);
+    assert(serial::described_type(WaterDesc)!!.layout == 0x90996b184cb03fab);
+    assert(serial::described_type(landscape::WaterDescV2)!!.layout == 0x718815cf64669e4e);
     assert(serial::described_type(landscape::WaterDescV1)!!.layout == 0x74434d01389bb922);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
@@ -156,6 +159,27 @@ fn void test_water_v1_fixtures_read_with_one_mirror_on_view_slot_zero() @test {
     }
 }
 
+fn void test_water_v2_fixtures_read_with_tracing_off() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(
+                fixture:   &fixture,
+                allocator: mem,
+                capacity:  32,
+                with_lod:  false,
+            );
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? WATER_V2_TEXT[..] : WATER_V2_BINARY[..];
+            Node* lake = decode(&fixture, bytes, text_mode)!!;
+            WaterDesc* desc = &fixture.destination.get(lake, Water).desc;
+            assert(desc.roughness == 0.2f && desc.wave_count == 3);
+            assert(desc.max_mirrors == 2 && desc.reflection_view_slot == 2 && !desc.trace);
+        };
+    }
+}
+
 fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @test {
     foreach (text_mode : (bool[2]){ false, true }) {
         foreach (with_lod : (bool[2]){ false, true }) {
@@ -219,6 +243,7 @@ fn void test_landscape_both_encodings_restore_pending_authoring_and_prepare() @t
                 assert(child_named(ground, "authored-child") != null);
                 WaterDesc* restored_water = &fixture.destination.get(lake, Water).desc;
                 assert(restored_water.max_mirrors == 2 && restored_water.reflection_view_slot == 2);
+                assert(restored_water.trace);
                 FoliageDesc* desc = &fixture.destination.get(plants, Foliage).desc;
                 assert(c3d::same_id(desc.ground, ground.id) && (desc.lod != null) == with_lod);
                 assert(desc.rules.slope_normal == SMOOTH);
