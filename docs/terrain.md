@@ -643,11 +643,11 @@ the collider, then the terrain.
 2. `scene.update_world()`.
 3. `physics.shift_origin(&scene, offset)`.
 4. Retake the views: their world matrices predate the shift.
-5. Navigation: owners built outside a grid cache take `NavMesh.shift_origin`, `NavQuery.shift_origin` and
-   `Crowd.shift_origin`. A `GridCache` cannot shift yet: create it again with the new origin and the retaken views, with
-   a new `NavMesh` from its `mesh_desc()`, at the cost of a full rebuild.
+5. Navigation: `NavMesh.shift_origin`, `NavQuery.shift_origin` and `Crowd.shift_origin`, then
+   `GridCache.shift_origin(offset)`, which rebuilds no tile. Subtract the offset from `sampler.origin`; the view it reads
+   is the one retaken in step 4, at the same address. A later `set_source` takes `GridCache.source_origin()` as its origin.
 
-See [large worlds](large_world.md#origin-rebasing) for the rest of the rebase protocol.
+See [large worlds](large_world.md#navigation-grid-caches) for the rebase order and offsets.
 
 ## Removal
 

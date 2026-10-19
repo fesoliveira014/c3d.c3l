@@ -375,7 +375,8 @@ publication remains pending for retry. A held slot can cause `capture_next` to r
 
 Source identity is application-defined and nonzero. `mark_dirty(cells, revision)` names the current
 source revision, which never decreases. `set_source(source, identity, revision)` replaces the source
-and requests the entire extent; its origin and declared height bounds must stay unchanged. Job
+and requests the entire extent; its origin and declared height bounds must stay unchanged, and
+`source_origin()` reads the origin after a shift. Job
 identity, revision and per-coordinate request generation reject superseded results. The installed
 identity and revision are available in `tiles`; stale completion cannot overwrite newer resident
 or pending data.
@@ -470,13 +471,25 @@ After `Scene.shift_origin(offset)`, each navigation owner the application has ta
 nav_mesh.shift_origin(offset);       // grid origin and resident tiles; every PolyRef stays valid
 builder.shift_origin(offset);        // bounds, tile records, cached layers, obstacles, queued removals, jobs
 crowd.shift_origin(offset);          // agents, corridors, boundaries, traversals, path requests, queries
+grid_cache.shift_origin(offset);     // source origin, cached and staged layers, obstacles, captured jobs
 scene.shift_navigation(offset);      // runtime mirrors and POSITION targets
 ```
 
-Join tile builds on other threads before `NavBuilder.shift_origin`. A sliced search in progress on a
-query the application holds is moved with `NavQuery.shift_origin`; the crowd moves its own queries.
-`ProximityGrid` is rebuilt every update and needs nothing. `GridSourceDesc.origin` and a floors
-callback belong to the application, which moves or retakes them.
+Join tile builds on other threads before `NavBuilder.shift_origin` and workers before
+`GridCache.shift_origin`. A sliced search in progress on a query the application holds is moved with
+`NavQuery.shift_origin`; the crowd moves its own queries. `ProximityGrid` is rebuilt every update and
+needs nothing.
+
+A `GridCache` moves the origin of its own source copy and every world-space layer it holds, without
+rebuilding a tile or changing a dirty mark, revision or request. The source behind it belongs to the
+application. A `GridHeightSampler` or `GridHeightView` keeps world coordinates: subtract the offset from
+its `origin`, and retake views taken from absolute data. A floors callback that takes cell indices needs
+nothing. A later `set_source` takes `GridCache.source_origin()` as its origin, because the cache refuses
+any other. A bare `GridTileBuilder` keeps no cache: move the `origin` of its `source`, or retake the source.
+
+Pass multiples of 256 m, the step of the large-world rebase, so origins stay exactly representable. Other
+offsets also work, within float rounding. See [large worlds](../../docs/large_world.md#navigation-grid-caches)
+for the order across all owners.
 
 ## Tests
 
