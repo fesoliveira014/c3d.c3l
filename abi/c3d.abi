@@ -67,8 +67,11 @@ const uint BVH_STACK_DEPTH = 32;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
 const uint TRACE_INSTANCE_BEND_FROM_ALPHA = 4; // vertex alpha drives the sway bend, so coverage ignores it
+const uint TRACE_INSTANCE_PROXY = 8; // stands in for drawn geometry: a hit below a pixel's proxy skip height is ignored
 const uint TRACE_MASK_ALL = 1;
 const uint TRACE_MASK_SHADOW_CASTER = 2;
+const uint TRACE_MASK_PROXY = 4; // a trace proxy carries its own bits, never ALL or SHADOW_CASTER
+const uint TRACE_MASK_PROXY_SHADOW_CASTER = 8;
 
 struct BvhNodeGpu {
     float min_x;
@@ -104,7 +107,7 @@ root SceneTraceRoot {
     uint       instance_count;
     uint       top_node_count;
     uint       tlas_index;
-    uint       _pad1;
+    uint       proxy_count; // trace proxies among the instances; zero skips the proxy query
 }
 
 const uint TRACE_POSE_GROUP_SIZE = 64;
@@ -525,6 +528,8 @@ const uint DRAW_TRACED_REFLECTION = 128;
 const uint DRAW_QUADTREE = 256;
 
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
+const uint GBUFFER_PROXY_SKIP_SHIFT = 16; // flags bits 16..31 hold the proxy skip height in GBUFFER_PROXY_SKIP_UNIT steps
+const float GBUFFER_PROXY_SKIP_UNIT = 0.01; // metres: a centimetre
 
 root LightingResolveRoot {
     GpuAddress   frame;
@@ -670,7 +675,7 @@ root RtAoRoot {
     float        intensity;
     uint         noise_frame;
     uint         ray_count;
-    uint         _pad0;
+    TextureIndex flags; // the G-buffer flags of a view with one sample per pixel; zero reads no proxy skip height
 }
 
 root RtReflectionRoot {
@@ -687,7 +692,7 @@ root RtReflectionRoot {
     uint         light_count;
     uint         ray_count;
     uint         trace_shift; // 0 traces every pixel of the output, 1 one pixel of each 2 x 2 block
-    uint         _pad1;
+    TextureIndex flags;       // the G-buffer flags of a view with one sample per pixel; zero reads no proxy skip height
     GpuAddress   light_spatial;
 }
 

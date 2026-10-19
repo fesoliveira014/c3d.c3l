@@ -15,7 +15,8 @@ import std::math;
 
 const ulong TERRAIN_V1_LAYOUT @private = 0x7638a7507fa65b33;
 const ulong TERRAIN_V2_LAYOUT @private = 0xbbb8c4e5931f82a4;
-const ulong TERRAIN_LAYOUT @private = 0xa32420a76628fd33;
+const ulong TERRAIN_V3_LAYOUT @private = 0xa32420a76628fd33;
+const ulong TERRAIN_LAYOUT @private = 0x93bc20cf0d28ef4d;
 const ulong TERRAIN_TILE_LAYOUT @private = 0x3fe780c7be5416e1;
 const ulong TERRAIN_SET_LAYOUT @private = 0x6b17270c6b53663f;
 const ulong SCATTER_V1_LAYOUT @private = 0x788326d1092caa6b;
@@ -53,11 +54,27 @@ struct TerrainDescV2 @private {
     bool       receive_shadow;
 }
 
-serial::BinaryCompatibility[2] terrain_binary_compatibility @local = {
+struct TerrainDescV3 @private {
+    TextureId  height_map;
+    TextureId  control_map;
+    float      cell_size;
+    float      height_scale;
+    MaterialId[material::MAX_CUSTOM_MATERIAL_REFERENCES] layers;
+    float      lod_threshold;
+    float      lod_hysteresis;
+    float      morph_band;
+    SlopeProjection slope_projection;
+    float      triplanar_sharpness;
+    bool       cast_shadow;
+    bool       receive_shadow;
+}
+
+serial::BinaryCompatibility[3] terrain_binary_compatibility @local = {
     { .version = 1, .read = &read_terrain_v1 },
     { .version = 2, .read = &read_terrain_v2 },
+    { .version = 3, .read = &read_terrain_v3 },
 };
-uint[2] terrain_text_default_versions @local = { 1, 2 };
+uint[3] terrain_text_default_versions @local = { 1, 2, 3 };
 
 struct WaterDescV1 @private {
     Wave[water::MAX_WAVES] waves;
@@ -152,10 +169,17 @@ fn void? register_serial_codecs() {
         layout: TERRAIN_V2_LAYOUT,
         defaults: &defaults_terrain_v2,
     )!;
+    describe::register_reflected(TerrainDescV3)!;
+    serial::register_described_type(
+        $Type: TerrainDescV3,
+        version: 3,
+        layout: TERRAIN_V3_LAYOUT,
+        defaults: &defaults_terrain_v3,
+    )!;
     describe::register_reflected(TerrainDesc)!;
     serial::register_described_type(
         $Type: TerrainDesc,
-        version: 3,
+        version: 4,
         layout: TERRAIN_LAYOUT,
         defaults: &defaults_terrain,
     )!;
@@ -277,6 +301,44 @@ fn TerrainDesc terrain_desc_from_v2(TerrainDescV2 legacy) @private {
     desc.layers = legacy.layers;
     desc.lod_threshold = legacy.lod_threshold;
     desc.lod_hysteresis = legacy.lod_hysteresis;
+    desc.slope_projection = legacy.slope_projection;
+    desc.triplanar_sharpness = legacy.triplanar_sharpness;
+    desc.cast_shadow = legacy.cast_shadow;
+    desc.receive_shadow = legacy.receive_shadow;
+    return desc;
+}
+
+fn void defaults_terrain_v3(void* value) @private {
+    *(TerrainDescV3*)value = terrain_desc_v3(terrain::default_terrain_desc());
+}
+
+fn TerrainDescV3 terrain_desc_v3(TerrainDesc desc) @private {
+    return {
+        .height_map          = desc.height_map,
+        .control_map         = desc.control_map,
+        .cell_size           = desc.cell_size,
+        .height_scale        = desc.height_scale,
+        .layers              = desc.layers,
+        .lod_threshold       = desc.lod_threshold,
+        .lod_hysteresis      = desc.lod_hysteresis,
+        .morph_band          = desc.morph_band,
+        .slope_projection    = desc.slope_projection,
+        .triplanar_sharpness = desc.triplanar_sharpness,
+        .cast_shadow         = desc.cast_shadow,
+        .receive_shadow      = desc.receive_shadow,
+    };
+}
+
+fn TerrainDesc terrain_desc_from_v3(TerrainDescV3 legacy) @private {
+    TerrainDesc desc = terrain::default_terrain_desc();
+    desc.height_map = legacy.height_map;
+    desc.control_map = legacy.control_map;
+    desc.cell_size = legacy.cell_size;
+    desc.height_scale = legacy.height_scale;
+    desc.layers = legacy.layers;
+    desc.lod_threshold = legacy.lod_threshold;
+    desc.lod_hysteresis = legacy.lod_hysteresis;
+    desc.morph_band = legacy.morph_band;
     desc.slope_projection = legacy.slope_projection;
     desc.triplanar_sharpness = legacy.triplanar_sharpness;
     desc.cast_shadow = legacy.cast_shadow;
@@ -546,6 +608,14 @@ fn void? read_terrain_v2(serial::Reader* reader, serial::ReadContext* context) @
     attach_terrain(&desc, context)!;
 }
 
+fn void? read_terrain_v3(serial::Reader* reader, serial::ReadContext* context) @private {
+    TerrainDescV3* legacy = context.read_value(TerrainDescV3, reader)!;
+    TerrainDesc desc = terrain_desc_from_v3(*legacy);
+
+    validate_terrain(&desc, context)!;
+    attach_terrain(&desc, context)!;
+}
+
 fn void? attach_terrain_set(void* value, serial::ReadContext* context) @private {
     TerrainSetAuthoring* authoring = value;
     context.scene.add(context.node, (TerrainSet){
@@ -595,6 +665,17 @@ fn void? collect_terrain(void* component, serial::WriteContext* context) @privat
     GeometryId grid = context.assets.find_geometry("c3d_landscape/terrain_grid") ?? c3d::INVALID_ARGUMENT~!;
     if (!c3d::same_id(batch.geometry, grid)) return c3d::INVALID_ARGUMENT~;
     context.omit_component(context.node, ecs::slot_of(InstancedMesh)!)!;
+
+    if (!runtime.trace_grid.generation) return;
+
+    if (!context.scene.world.is_alive(runtime.trace_grid)) return c3d::INVALID_ARGUMENT~;
+    Node* trace_grid = context.scene.node(runtime.trace_grid);
+    Mesh* mesh = context.scene.get(trace_grid, Mesh);
+    if (!mesh || trace_grid.parent != context.node || !mesh.trace_only
+        || !c3d::same_id(mesh.material, runtime.material)) return c3d::INVALID_ARGUMENT~;
+
+    context.omit_component(trace_grid, ecs::slot_of(Mesh)!)!;
+    context.omit_node(trace_grid)!;
 }
 
 fn void? collect_terrain_runtime(void* component, serial::WriteContext* context) @private {

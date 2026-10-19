@@ -14,10 +14,11 @@
 
 #include "ray_query.glsl"
 
-bool trace_scene_query(
+bool trace_scene_range(
     SceneTraceRoot scene,
     vec3 origin,
     vec3 direction,
+    float t_min,
     float t_max,
     uint instance_mask,
     uint ray_flags,
@@ -33,7 +34,7 @@ bool trace_scene_query(
 
     TraceInstanceArray instances = TraceInstanceArray(scene.instances);
     rayQueryEXT query;
-    GPU_RAY_QUERY_INITIALIZE(query, scene.tlas_index, ray_flags, instance_mask, origin, 0.0, direction, t_max);
+    GPU_RAY_QUERY_INITIALIZE(query, scene.tlas_index, ray_flags, instance_mask, origin, t_min, direction, t_max);
     while (rayQueryProceedEXT(query)) {
         if (rayQueryGetIntersectionTypeEXT(query, false) != gl_RayQueryCandidateIntersectionTriangleEXT) continue;
         SceneHit candidate = SceneHit(
@@ -42,9 +43,11 @@ bool trace_scene_query(
             rayQueryGetIntersectionBarycentricsEXT(query, false),
             rayQueryGetIntersectionTEXT(query, false)
         );
-        if (trace_surface_passes(instances.values[candidate.instance], candidate)) {
-            rayQueryConfirmIntersectionEXT(query);
-        }
+        uint flags = instances.values[candidate.instance].flags;
+        bool masked = (flags & TRACE_INSTANCE_ALPHA_MASK) != 0u;
+        if (masked && !trace_surface_passes(instances.values[candidate.instance], candidate)) continue;
+
+        rayQueryConfirmIntersectionEXT(query);
     }
     if (rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionTriangleEXT) return false;
     hit = SceneHit(
@@ -56,13 +59,63 @@ bool trace_scene_query(
     return true;
 }
 
-// Nearest hit a viewer at the origin sees: a single-sided face counts only from its front.
+// Every other instance counts from the ray's start; the proxies a mask reaches count from proxy_t_min, in a second
+// query that a scene without proxies, or a shadow ray that has already hit, skips.
+bool trace_scene_query(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    uint ray_flags,
+    float proxy_t_min,
+    out SceneHit hit
+) {
+    bool found = trace_scene_range(scene, origin, direction, 0.0, t_max, instance_mask, ray_flags, hit);
+    if (scene.proxy_count == 0u) return found;
+    if (found && (ray_flags & gl_RayFlagsTerminateOnFirstHitEXT) != 0u) return true;
+
+    float proxy_far = found ? hit.t : t_max;
+    if (proxy_t_min >= proxy_far) return found;
+
+    SceneHit proxy_hit;
+    if (trace_scene_range(
+        scene,
+        origin,
+        direction,
+        proxy_t_min,
+        proxy_far,
+        trace_proxy_mask(instance_mask),
+        ray_flags,
+        proxy_hit
+    )) {
+        hit = proxy_hit;
+        found = true;
+    }
+    return found;
+}
+
+bool trace_scene_query(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    uint ray_flags,
+    out SceneHit hit
+) {
+    return trace_scene_query(scene, origin, direction, t_max, instance_mask, ray_flags, 0.0, hit);
+}
+
+// Nearest hit a viewer at the origin sees: a single-sided face counts only from its front. A hit on a trace proxy
+// nearer than proxy_t_min is ignored, as trace_proxy_t_min computes it.
 bool trace_scene(
     SceneTraceRoot scene,
     vec3 origin,
     vec3 direction,
     float t_max,
     uint instance_mask,
+    float proxy_t_min,
     out SceneHit hit
 ) {
     return trace_scene_query(
@@ -72,18 +125,31 @@ bool trace_scene(
         t_max,
         instance_mask,
         gl_RayFlagsCullBackFacingTrianglesEXT,
+        proxy_t_min,
         hit
     );
 }
 
+bool trace_scene(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    out SceneHit hit
+) {
+    return trace_scene(scene, origin, direction, t_max, instance_mask, 0.0, hit);
+}
+
 // Shadow test toward the far end: a single-sided face counts only where a light there sees its front, so the
-// answer depends on the ray's direction.
+// answer depends on the ray's direction. A hit on a trace proxy nearer than proxy_t_min is ignored.
 bool trace_scene_any(
     SceneTraceRoot scene,
     vec3 origin,
     vec3 direction,
     float t_max,
-    uint instance_mask
+    uint instance_mask,
+    float proxy_t_min
 ) {
     SceneHit ignored;
     return trace_scene_query(
@@ -93,8 +159,19 @@ bool trace_scene_any(
         t_max,
         instance_mask,
         gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsCullFrontFacingTrianglesEXT,
+        proxy_t_min,
         ignored
     );
+}
+
+bool trace_scene_any(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask
+) {
+    return trace_scene_any(scene, origin, direction, t_max, instance_mask, 0.0);
 }
 
 // Nearest hit on either face of every instance; the instance mask and the alpha test still apply.
@@ -233,6 +310,7 @@ bool trace_instance(
     vec3 origin,
     vec3 direction,
     bool first_hit,
+    float proxy_t_min,
     inout float t_max,
     inout SceneHit hit
 ) {
@@ -257,6 +335,7 @@ bool trace_instance(
     uint node_index = 0u;
     bool found = false;
     uint row_cull = (instance.flags & TRACE_INSTANCE_DOUBLE_SIDED) != 0u ? TRACE_CULL_NONE : cull;
+    float row_t_min = (instance.flags & TRACE_INSTANCE_PROXY) != 0u ? proxy_t_min : 0.0;
     do {
         BvhNodeGpu node = nodes.values[node_index];
         for (uint slot = 0u; slot < node.count; slot++) {
@@ -274,7 +353,7 @@ bool trace_instance(
                 weights,
                 determinant
             );
-            if (!met || t >= t_max) continue;
+            if (!met || t >= t_max || t < row_t_min) continue;
             // The determinant is -dot(direction, cross(b - a, c - a)) in local space: positive meets the
             // counter-clockwise front, the side raster draws, mirrored or not. Zero is a ray in the triangle's
             // plane, which the intersection already rejects.
@@ -312,6 +391,7 @@ bool trace_scene_walk(
     float t_max,
     uint instance_mask,
     bool first_hit,
+    float proxy_t_min,
     out SceneHit hit
 ) {
     hit = SceneHit(
@@ -335,7 +415,7 @@ bool trace_scene_walk(
         for (uint slot = 0u; slot < node.count; slot++) {
             uint row = node.left_or_first + slot;
             TraceInstanceGpu instance = instances.values[row];
-            if ((instance.mask & instance_mask) == 0u) continue;
+            if ((instance.mask & (instance_mask | trace_proxy_mask(instance_mask))) == 0u) continue;
             bool met = trace_instance(
                 instance,
                 row,
@@ -343,6 +423,7 @@ bool trace_scene_walk(
                 origin,
                 direction,
                 first_hit,
+                proxy_t_min,
                 t_max,
                 hit
             );
@@ -362,13 +443,28 @@ bool trace_scene_walk(
     return found;
 }
 
-// Nearest hit a viewer at the origin sees: a single-sided face counts only from its front.
+bool trace_scene_walk(
+    SceneTraceRoot scene,
+    uint cull,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    bool first_hit,
+    out SceneHit hit
+) {
+    return trace_scene_walk(scene, cull, origin, direction, t_max, instance_mask, first_hit, 0.0, hit);
+}
+
+// Nearest hit a viewer at the origin sees: a single-sided face counts only from its front. A hit on a trace proxy
+// nearer than proxy_t_min is ignored, as trace_proxy_t_min computes it.
 bool trace_scene(
     SceneTraceRoot scene,
     vec3 origin,
     vec3 direction,
     float t_max,
     uint instance_mask,
+    float proxy_t_min,
     out SceneHit hit
 ) {
     return trace_scene_walk(
@@ -379,18 +475,31 @@ bool trace_scene(
         t_max,
         instance_mask,
         false,
+        proxy_t_min,
         hit
     );
 }
 
+bool trace_scene(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    out SceneHit hit
+) {
+    return trace_scene(scene, origin, direction, t_max, instance_mask, 0.0, hit);
+}
+
 // Shadow test toward the far end: a single-sided face counts only where a light there sees its front, so the
-// answer depends on the ray's direction.
+// answer depends on the ray's direction. A hit on a trace proxy nearer than proxy_t_min is ignored.
 bool trace_scene_any(
     SceneTraceRoot scene,
     vec3 origin,
     vec3 direction,
     float t_max,
-    uint instance_mask
+    uint instance_mask,
+    float proxy_t_min
 ) {
     SceneHit ignored;
     return trace_scene_walk(
@@ -401,8 +510,19 @@ bool trace_scene_any(
         t_max,
         instance_mask,
         true,
+        proxy_t_min,
         ignored
     );
+}
+
+bool trace_scene_any(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask
+) {
+    return trace_scene_any(scene, origin, direction, t_max, instance_mask, 0.0);
 }
 
 // Nearest hit on either face of every instance; the instance mask and the alpha test still apply.

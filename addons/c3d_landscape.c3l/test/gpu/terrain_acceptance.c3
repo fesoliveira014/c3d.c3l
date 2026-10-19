@@ -40,7 +40,7 @@ const float DECAL_TOLERANCE @local = 0.02f; // the core decal tolerance, includi
 const float DECAL_MIN_DIFFERENCE @local = 0.1f; // far above the tolerance, so an unchanged colour fails
 const uint PROBE_COUNT @local = 8; // mirrored as PROBE_COUNT in normal_probe.comp.glsl
 const uint PROBE_TEXELS @local = 129; // one chunk per tile
-const uint PROBE_PARAMS_SIZE @local = 32; // the terrain material's parameter block
+const uint PROBE_PARAMS_SIZE @local = 64; // the terrain material's parameter block
 const usz PROBE_BORDER_EDGES_OFFSET @local = 16; // in that block, after texels, cell_size, height_scale and layer_count
 const float PROBE_HEIGHT_SCALE @local = 24;
 const float PROBE_BEND_X @local = 0.3f; // radians per texel; bends the surface enough that one-sided slopes differ across a seam
@@ -206,7 +206,7 @@ fn void destroy_fixture(Fixture* fixture) @local {
     asset::destroy_asset_store(&fixture.assets);
 }
 
-fn void check_validation(Renderer* renderer) @local {
+fn void check_validation(Renderer* renderer) @private {
     DebugEntry[render::DEBUG_LOG_ENTRIES] entries;
     usz count = renderer.log.recent(entries[..]);
     foreach (entry : entries[:count]) {

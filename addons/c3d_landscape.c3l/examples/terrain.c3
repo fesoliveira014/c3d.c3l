@@ -22,6 +22,7 @@ import c3d::spatial;
 import imgui;
 import landscape_ground;
 
+const uint AUTO_TRACE_LEVEL @local = uint::max; // the finest trace level a terrain of the chosen size can pose
 const uint CRATE_CAPACITY @local = 256; // one node and one body each; the scene capacity lever
 const uint SCENE_NODE_CAPACITY @local = CRATE_CAPACITY + 16; // the collision windows' nodes come on top
 const uint COLLISION_WINDOW_CELLS @local = 256; // 65 k samples per window: one stroke re-cooks a few of them, not the map
@@ -120,6 +121,7 @@ struct Options @local {
     bool        validation;
     ShadingPath shading;
     bool        traced_shadows;
+    uint        trace_level;
     bool        sky;
     bool        volumetric_fog;
     uint        size;
@@ -246,6 +248,10 @@ fn Demo? build_demo(
     Scene* scene,
     PhysicsWorld* physics,
 ) @local {
+    uint texels = options.tiles ? (options.size - 1) / landscape_ground::TILES_PER_SIDE + 1 : options.size;
+    uint trace_level = options.trace_level;
+    if (trace_level == AUTO_TRACE_LEVEL) trace_level = landscape_ground::finest_trace_level(texels);
+
     Ground ground;
     if (options.tiles) {
         ground = landscape_ground::add_ground_tiles(
@@ -256,6 +262,8 @@ fn Demo? build_demo(
             lod_threshold:    options.lod_threshold,
             morph_band:       options.morph_band,
             slope_projection: options.triplanar ? SlopeProjection.TRIPLANAR : SlopeProjection.TOP,
+            trace:            options.traced_shadows,
+            trace_level:      trace_level,
         )!;
     } else {
         ground = landscape_ground::add_ground(
@@ -266,6 +274,8 @@ fn Demo? build_demo(
             lod_threshold:    options.lod_threshold,
             morph_band:       options.morph_band,
             slope_projection: options.triplanar ? SlopeProjection.TRIPLANAR : SlopeProjection.TOP,
+            trace:            options.traced_shadows,
+            trace_level:      trace_level,
         )!;
     }
     ground.node.visible = !options.hide_terrain;
@@ -396,6 +406,7 @@ fn Options? parse_options(String[] args) @local {
         .size             = landscape_ground::DEFAULT_MAP_SIZE,
         .layers           = landscape_ground::LAYER_COUNT,
         .lod_threshold    = terrain::DEFAULT_LOD_THRESHOLD,
+        .trace_level      = AUTO_TRACE_LEVEL,
         .collision_window = COLLISION_WINDOW_CELLS,
     };
     for (usz index = 1; index < args.len; index++) {
@@ -444,6 +455,8 @@ fn Options? parse_options(String[] args) @local {
                 if (options.layers != 1 && options.layers != landscape_ground::LAYER_COUNT) {
                     return c3d::INVALID_ARGUMENT~;
                 }
+            case "--trace-level":
+                options.trace_level = option_value(args, &index)!.to_uint()!;
             case "--lod-threshold":
                 options.lod_threshold = option_value(args, &index)!.to_float()!;
                 if (!(options.lod_threshold >= 0)) return c3d::INVALID_ARGUMENT~;
@@ -1188,8 +1201,9 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
-              "[--morph] [--triplanar] [--width W] [--height H] [--hide-terrain] [--tiles 2x2] "
+              "[--shadows atlas|traced] [--trace-level LEVEL] [--size 1025|2049|4097] [--layers 1|4] "
+              "[--lod-threshold PIXELS] [--morph] [--triplanar] [--width W] [--height H] [--hide-terrain] "
+              "[--tiles 2x2] "
               "[--capture FILE.png] [--sky] [--volumetric-fog] [--collision-window CELLS].");
         }
         return 1;

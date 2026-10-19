@@ -124,6 +124,7 @@ struct SceneTrace @private {
     TraceInstance[]    baseline;
     uint               baseline_count;
     uint               top_node_count;
+    uint               proxy_count;    // as last written to the root
     gpu::GpuAllocation allocation;
     gpu::GpuAddress    root;
     gpu::GpuAddress    top_nodes;
@@ -395,6 +396,7 @@ fn TraceCollection collect_trace_instances(
                     layers:      node.layers,
                     cast_shadow: mesh.cast_shadow,
                     origin:      origin,
+                    proxy:       mesh.trace_only,
                 );
                 // Raster skins only a geometry with joints; a binding over another draws morphs alone.
                 SkinBinding* posed_skin = skin && geometry_has_joints(assets.geometry(mesh.geometry)) ? skin : null;
@@ -1224,6 +1226,14 @@ fn void? upload_trace_geometry(
     renderer.stats.upload_bytes += (uint)total_bytes;
 }
 
+fn uint count_trace_proxies(TraceInstance[] records) @private {
+    uint count;
+    foreach (&record : records) {
+        if ((record.flags & shader::TRACE_INSTANCE_PROXY) != 0) count++;
+    }
+    return count;
+}
+
 fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] records, uint tlas_index) @local {
     SceneTrace* trace = &renderer.scene_trace;
     Bvh top;
@@ -1235,6 +1245,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
 
     usz node_bytes = top.nodes.len * BvhNodeGpu::size;
     usz instance_bytes = records.len * TraceInstanceGpu::size;
+    uint proxy_count = count_trace_proxies(records);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = slot.upload.take(
         device:    &renderer.device,
@@ -1247,6 +1258,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
         .instance_count = (uint)records.len,
         .top_node_count = (uint)top.nodes.len,
         .tlas_index     = tlas_index,
+        .proxy_count    = proxy_count,
     };
     mem::copy(staging.bytes.ptr + SceneTraceRoot::size, top.nodes.ptr, (sz)node_bytes);
     TraceInstanceGpu* rows = (TraceInstanceGpu*)(staging.bytes.ptr + SceneTraceRoot::size + node_bytes);
@@ -1275,6 +1287,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     trace.baseline[:records.len] = records[..];
     trace.baseline_count = (uint)records.len;
     trace.top_node_count = (uint)top.nodes.len;
+    trace.proxy_count = proxy_count;
     trace.tlas_index = tlas_index;
     trace.scene = scene.identity;
     trace.origin = renderer.frame_origin;
@@ -1291,6 +1304,7 @@ fn void? write_trace_root(Renderer* renderer, uint tlas_index) @local {
         .instance_count = trace.baseline_count,
         .top_node_count = trace.top_node_count,
         .tlas_index     = tlas_index,
+        .proxy_count    = trace.proxy_count,
     };
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, trace.allocation)!;
     renderer.pending_copies.push({
@@ -1398,11 +1412,16 @@ fn TraceInstance trace_record(
     Mat4 local = matrix::IDENTITY4,
     Vec3 origin = {},
     bool vertex_alpha_bend = false,
+    bool proxy = false,
 ) @local {
     Material* data = &assets.material(material).data;
     uint flags = data.common.alpha_mode == AlphaMode.MASK ? shader::TRACE_INSTANCE_ALPHA_MASK : 0;
     if (data.common.double_sided) flags |= shader::TRACE_INSTANCE_DOUBLE_SIDED;
     if (vertex_alpha_bend) flags |= shader::TRACE_INSTANCE_BEND_FROM_ALPHA;
+    if (proxy) flags |= shader::TRACE_INSTANCE_PROXY;
+    uint mask = proxy
+        ? shader::TRACE_MASK_PROXY | (cast_shadow ? shader::TRACE_MASK_PROXY_SHADOW_CASTER : 0)
+        : shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0);
     TraceInstance record = {
         .entity        = entity,
         .flags         = flags,
@@ -1412,7 +1431,7 @@ fn TraceInstance trace_record(
         .geometry_revision = assets.geometry(geometry).header.revision,
         .world         = world,
         .local         = local,
-        .mask           = shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0),
+        .mask           = mask,
         .layers         = layers,
         .instance_index = instance_index,
     };

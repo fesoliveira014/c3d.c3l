@@ -28,6 +28,17 @@ vec3 reconstruct_world_position(FrameRoot frame, vec2 uv, float depth) {
     return world.xyz / world.w;
 }
 
+// The proxy skip height a material raised, in the upper bits of the flags: rounded up so the stored height is never
+// below the one raised, and clamped to what the bits hold. Zero means none.
+uint gbuffer_pack_proxy_skip(float height) {
+    float steps = ceil(height / GBUFFER_PROXY_SKIP_UNIT);
+    return uint(clamp(steps, 0.0, 65535.0)) << GBUFFER_PROXY_SKIP_SHIFT;
+}
+
+float gbuffer_proxy_skip_height(uint flags) {
+    return float(flags >> GBUFFER_PROXY_SKIP_SHIFT) * GBUFFER_PROXY_SKIP_UNIT;
+}
+
 // Stands in for infinity: depth 0 under an infinite far plane.
 const float BACKGROUND_VIEW_DISTANCE = 1e30;
 

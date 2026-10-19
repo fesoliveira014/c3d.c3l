@@ -25,10 +25,13 @@ struct TerrainParams @private {
     uint    border_edges;     // bit per BorderEdge that has a linked neighbour and a valid ring row
     uint    slope_projection; // SlopeProjection ordinal; TERRAIN_PROJECTION_TRIPLANAR mirrors TRIPLANAR
     float   triplanar_sharpness;
-    uint    padding;          // a whole number of the block's 16-byte alignment
+    float   trace_error;      // metres: the trace grid's largest gap from the full-resolution surface; 0 untraced
+    float[MAX_TERRAIN_LEVELS] drawn_deviation; // metres per level: the gap of that level's drawn chunks; 0 untraced
+    uint[2] padding;          // a whole number of the block's 16-byte alignment
 }
 
-$assert TerrainParams::size == 32;
+$assert TerrainParams::size == 64;
+$assert MAX_TERRAIN_LEVELS == 6; // mirrored as TERRAIN_MAX_LEVELS in landscape/terrain_height.glsl
 $assert (uint)SlopeProjection.TRIPLANAR.ordinal == 1;
 
 // Negated so NaN faults too; core requires the same of a quadtree's thresholds.
@@ -53,6 +56,7 @@ fn uint? check_terrain_desc(AssetStore* assets, TerrainDesc* desc) @private {
     if (desc.slope_projection == TRIPLANAR && !sharpness_valid) return c3d::INVALID_ARGUMENT~;
     if (!assets.textures.is_live(desc.height_map)) return c3d::INVALID_ID~;
     check_height_map(assets.texture(desc.height_map))!;
+    check_trace_grid(desc, assets.texture(desc.height_map).desc.width)!;
     if (desc.control_map.generation) {
         if (!assets.textures.is_live(desc.control_map)) return c3d::INVALID_ID~;
         // The stage samples weights through the float heap, unconverted.
@@ -91,6 +95,7 @@ fn ShaderId? terrain_shader(AssetStore* assets, bool* created = null) @private {
             .velocity           = landscape::TERRAIN_VERTEX_VELOCITY_SPIRV[..],
             .instanced_velocity = landscape::TERRAIN_VERTEX_INSTANCED_VELOCITY_SPIRV[..],
         },
+        .trace_pose       = { .single = landscape::TERRAIN_TRACE_POSE_SPIRV[..] },
         .param_block_size = TerrainParams::size,
     };
     ShaderId shader = assets.add_shader(&desc, SHADER_KEY)!;

@@ -29,6 +29,7 @@ TerrainChunk terrain_chunk(DrawRoot draw, TerrainParams params) {
 struct TerrainMorphedHeight {
     float current;
     float previous;
+    float amount; // the share of the way to the parent level's surface
 };
 
 // Height of an odd grid vertex on the parent level's surface, whose cells split from their +x,-z to their -x,+z corner.
@@ -51,7 +52,7 @@ TerrainMorphedHeight terrain_morphed_height(
     ivec2 grid,
     float fine_height
 ) {
-    TerrainMorphedHeight heights = TerrainMorphedHeight(fine_height, fine_height);
+    TerrainMorphedHeight heights = TerrainMorphedHeight(fine_height, fine_height, 0.0);
     ivec2 odd = grid & 1;
     if ((odd.x | odd.y) == 0 || (draw.flags & DRAW_QUADTREE) == 0u) return heights;
 
@@ -91,6 +92,7 @@ TerrainMorphedHeight terrain_morphed_height(
     float parent = terrain_parent_height(height_texture, params, texel, odd, step);
     heights.current = mix(fine_height, parent, morph);
     heights.previous = mix(fine_height, parent, previous_morph);
+    heights.amount = morph;
     return heights;
 }
 #endif
@@ -110,6 +112,7 @@ void main() {
     bool surface = unit.y > 0.5;
     float height = surface ? terrain_height(height_texture, params, texel) : chunk.skirt_height;
     float previous_height = height;
+    float morph_amount = 0.0;
 #ifdef INSTANCED
     if (surface) {
         TerrainMorphedHeight morphed = terrain_morphed_height(
@@ -124,6 +127,7 @@ void main() {
         );
         height = morphed.current;
         previous_height = morphed.previous;
+        morph_amount = morphed.amount;
     }
 #endif
 
@@ -136,7 +140,8 @@ void main() {
 #endif
     v_uv0 = local.xz;
     v_uv1 = vec2(texel) / float(params.texels - 1u);
-    v_color = vec4(1.0);
+    // The fragment stage reads the chunk's level and morph to raise its proxy skip height.
+    v_color = vec4(log2(chunk.span / float(TERRAIN_CHUNK_CELLS)), morph_amount, 0.0, 1.0);
     vec4 clip = frame.view_proj * world;
     gl_Position = clip;
     gl_ClipDistance[0] = view_clip_distance(frame, world.xyz);

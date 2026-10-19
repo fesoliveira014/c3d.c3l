@@ -287,8 +287,12 @@ fn void? record_ambient_occlusion(
     acquire_ambient_occlusion_pipelines(renderer, ambient_occlusion, accumulates)!;
     bool deferred = record.desc.shading == ShadingPath.DEFERRED;
     Target* normals = deferred_normals(record);
+    Target* flags = &record.gbuffer[GBufferChannel.FLAGS.ordinal];
+    // The proxy skip height rides in the G-buffer flags, which a multisampled view has no single-sample copy of.
+    bool reads_flags = deferred && ambient_occlusion.kind == AoKind.RAY_TRACED && record.desc.msaa == MsaaSamples.ONE;
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     if (deferred) normals.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
+    if (reads_flags) flags.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     record.ao_raw.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -323,6 +327,7 @@ fn void? record_ambient_occlusion(
                 .intensity      = ambient_occlusion.intensity,
                 .noise_frame    = temporal_noise_frame(record, accumulates),
                 .ray_count      = ambient_occlusion.ray_count,
+                .flags          = reads_flags ? flags.view.index : (gpu::TextureIndex)0,
             };
         case NONE:
     }

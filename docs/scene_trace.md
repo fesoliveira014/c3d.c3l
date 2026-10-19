@@ -18,7 +18,7 @@ An instance enters the trace when all of these hold:
 - the material's alpha mode is `OPAQUE` or `MASK`;
 - the material has no custom vertex stage, or its shader poses the trace geometry in the row's form ([custom trace poses](#custom-trace-poses)).
 
-`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace collection takes it like any traced mesh, so its node must be effectively visible. Picking, the scene index and impostor capture skip it: its rest geometry is not what it traces as.
+`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace collection takes it like any traced mesh, so its node must be effectively visible. Picking, the scene index and impostor capture skip it: its rest geometry is not what it traces as. Its row is a [trace proxy](#trace-proxies).
 
 A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces like any other. Every row carries its node's `layers`, which hit shading tests against `Light.layers`.
 
@@ -198,7 +198,7 @@ bool met = trace_scene_with_back_faces(scene, origin, direction, 1.0e30, TRACE_M
 
 A built-in shader that serves both kinds is compiled twice through the `SCENE_TRACE_BVH` flag of `shaders/variants.json`: the source defines `SCENE_TRACE_RAY_QUERY` unless the flag is set (for traced shadows `shadows.glsl` does it under `RT_SHADOWS`, and a custom stage's traced forms follow the same rule; see [custom shaders](custom_shaders.md#traced-shadows)), and the renderer picks the variant from `caps.ray_queries.enabled`, the same bit that selects the prepared kind. Every built-in consumer does: traced shadows in the `standard`, `physical`, `toon` and `lighting_resolve` fragment stages, ray-traced ambient occlusion, ray-traced reflections and the probe update. A renderer created without ray queries therefore runs every traced effect on the software walk; the path tracer alone needs ray-tracing pipelines.
 
-The instance mask selects rows: every row carries `TRACE_MASK_ALL`, and rows of meshes with `cast_shadow` also carry `TRACE_MASK_SHADOW_CASTER`. A row whose mask shares no bit with the argument is skipped.
+The instance mask selects rows: every row of a drawn mesh carries `TRACE_MASK_ALL`, and rows of meshes with `cast_shadow` also carry `TRACE_MASK_SHADOW_CASTER`. A [trace proxy](#trace-proxies) carries `TRACE_MASK_PROXY` and, with `cast_shadow`, `TRACE_MASK_PROXY_SHADOW_CASTER` instead, and the entry points reach it through the matching proxy bit of the mask they are given. A row whose mask shares no bit with the argument is skipped. A shader that calls `traceRayEXT` itself passes the proxy bits to see proxies.
 
 `SceneHit` carries:
 
@@ -220,6 +220,30 @@ A triangle's front is its counter-clockwise side in the geometry's local space: 
 - `trace_scene_with_back_faces` keeps both faces of every triangle, and `surface_from_hit` sets `TraceSurface.back_face` for a single-sided triangle hit from behind. The probe update uses it, because a probe inside geometry must read dark.
 
 The instance mask and the alpha test apply to all three, after the facing test. Both kinds give the same hits. `trace_scene` and `trace_scene_any` counted both faces before the software path for traced effects landed; a shader that relied on that uses `trace_scene_with_back_faces` for a nearest hit. CPU picking applies `PickOptions.faces`, whose default `MATERIAL` matches `trace_scene`.
+
+### Trace proxies
+
+A trace-only mesh stands in for geometry that raster draws another way, so its triangles may sit above the drawn surface:
+a coarse grid for terrain is above it wherever the surface dips. A ray from a drawn surface starts `TRACE_SURFACE_OFFSET`
+along the normal whatever it meets, and a proxy under that start would otherwise block it. A material that knows how far
+its proxy may sit above its surface raises `trace_proxy_skip_height` before it shades, in metres above the surface;
+`trace_proxy_t_min(skip_height, direction, normal)` gives the distance along a ray at which it has risen that far above
+the plane of the surface at its origin. `trace_scene`, `trace_scene_any` and `trace_scene_query` take it as a
+`proxy_t_min` argument before the hit (or after the instance mask, for `trace_scene_any`): a hit on a proxy nearer than
+it is ignored, on both kinds. The kinds agree: the software walk skips the triangle, and the hardware kind keeps proxy
+rows opaque under their own mask bits and runs a second query over them from `proxy_t_min`, bounded by the first query's
+hit. A `trace_scene_any` ray skips the second query once the first has hit. Every other instance, a box on the terrain
+among them, keeps counting from the ray's start, so contact shadows stay. Every `trace_only` mesh is a proxy and a pixel's
+skip height applies to all of them: a trace-only occluder standing on the terrain loses its contact shadow within that
+height of the surface. `SceneTraceRoot.proxy_count` is the number of proxy rows in the frame's trace set; a frame without
+proxies pays no proxy query. Without the argument the entry points behave as before.
+
+The forward shadow paths read `trace_proxy_skip_height` themselves. A deferred view carries it per pixel: `write_gbuffer`
+packs it into the upper 16 bits of the flags channel as centimetres, rounded up and clamped at 655.35 m, and the
+lighting resolve, [ray-traced ambient occlusion](ambient_occlusion.md#ray-traced) and
+[ray-traced reflections](reflections.md) read it back. A forward view's ambient occlusion and reflections, and any
+multisampled view's, have no flags channel to read and start rays as before. A material that never sets it writes zero.
+The path tracer starts its rays at trace hits and is unaffected.
 
 ### Hit surfaces
 

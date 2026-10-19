@@ -20,6 +20,7 @@ const float STANDARD_FURNACE_MAXIMUM @private = 1.05f; // energy conservation; a
 const float RASTER_AGREEMENT @private = 0.02f;
 const float NORMAL_MAP_EFFECT_MINIMUM @private = 0.1f;
 const Vec3 EMITTER_RADIANCE @private = { 2, 1, 0.5f };
+const float TRACE_ONLY_MINIMUM @private = 1; // half the emitter's red: the traced centre reads all of it, the rest zero
 const Vec4 BASIC_COLOR @private = { 0.25f, 0.5f, 0.75f, 1 };
 const ushort HALF_QUARTER @private = 0x3400; // 0.25 as an IEEE half
 
@@ -229,6 +230,49 @@ fn void test_path_traced_emitters_and_basic_surfaces_show_their_radiance() @test
         assert(near_rgb(value, expected[index], EXACT_TOLERANCE));
     }
     assert(near_rgb(pixels[0], { 0, 0, 0 }, EXACT_TOLERANCE));
+    check_validation(&fixture.renderer);
+}
+
+fn void test_path_tracer_sees_a_trace_only_emitter_that_raster_does_not() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_tracing_pipelines: true)!!;
+    defer destroy_fixture(&fixture);
+
+    PathScene hidden = create_path_scene(&fixture, OVERHEAD_POSE)!!;
+    defer scene::destroy_scene(&hidden.scene);
+    GeometryId plane = add_plane(&fixture, 1)!!;
+    MaterialId glow = fixture.assets.add_material(material::standard({
+        .base_color        = { 0, 0, 0, 1 },
+        .roughness         = 1,
+        .emissive          = EMITTER_RADIANCE,
+        .emissive_strength = 1,
+    }))!!;
+    Node* emitter = hidden.scene.add_mesh(plane, glow, name: "emitter")!!;
+    hidden.scene.get(emitter, Mesh).trace_only = true;
+    hidden.scene.update_world();
+
+    RenderTargetId traced_target = float_target(&fixture)!!;
+    RenderTargetId raster_target = float_target(&fixture)!!;
+    ViewId traced = create_path_view(&fixture, traced_target, render::PATH_TRACE_DEFAULT)!!;
+    ViewId raster = create_raster_view(&fixture, raster_target, OutputMode.LINEAR_HDR)!!;
+    PathRun traced_run = { .fixture = &fixture, .path_scene = &hidden, .view = traced };
+    PathRun raster_run = { .fixture = &fixture, .path_scene = &hidden, .view = raster };
+    fixture.renderer.prepare_scene(&hidden.scene)!!;
+    render_frames(&traced_run, 1)!!;
+    render_frames(&raster_run, 1)!!;
+    Vec4[] traced_pixels = read_float_target(&fixture, traced_target)!!;
+    defer free(traced_pixels);
+    Vec4[] raster_pixels = read_float_target(&fixture, raster_target)!!;
+    defer free(raster_pixels);
+
+    Vec4 traced_centre = centre_texel(traced_pixels);
+    Vec4 raster_centre = centre_texel(raster_pixels);
+    io::eprintfn(
+        "Trace-only emitter, path traced %.4f %.4f %.4f, raster %.4f %.4f %.4f",
+        traced_centre.x, traced_centre.y, traced_centre.z, raster_centre.x, raster_centre.y, raster_centre.z,
+    );
+    assert(traced_centre.x >= TRACE_ONLY_MINIMUM);
+    assert(near_rgb(raster_centre, { 0, 0, 0 }, EXACT_TOLERANCE));
     check_validation(&fixture.renderer);
 }
 

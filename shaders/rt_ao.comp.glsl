@@ -51,6 +51,7 @@ void main() {
     float noise_b = interleaved_gradient_noise(vec2(pixel.yx), root.noise_frame);
     SceneTraceRoot scene = SceneTraceRoot(frame.trace);
     vec3 origin = position + normal * TRACE_SURFACE_OFFSET;
+    float proxy_skip_height = root.flags != 0u ? gbuffer_proxy_skip_height(gpu_fetch_uint(root.flags, texel, 0)) : 0.0;
     float occlusion = 0.0;
 #ifdef BENT_NORMALS
     vec3 bent_sum = vec3(0.0);
@@ -62,7 +63,8 @@ void main() {
         );
         vec3 direction = basis * cosine_sample_hemisphere(u);
         SceneHit hit;
-        if (trace_scene(scene, origin, direction, root.radius, TRACE_MASK_ALL, hit)) {
+        float proxy_t_min = trace_proxy_t_min(proxy_skip_height, direction, normal);
+        if (trace_scene(scene, origin, direction, root.radius, TRACE_MASK_ALL, proxy_t_min, hit)) {
             occlusion += ao_falloff(hit.t, root.radius);
 #ifdef BENT_NORMALS
             bent_sum += direction * (1.0 - ao_falloff(hit.t, root.radius));

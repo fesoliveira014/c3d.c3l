@@ -99,7 +99,7 @@ vec3 trace_path(PathTraceRoot root, FrameRoot frame, SceneTraceRoot scene, PathR
         traceRayEXT(
             GPU_ACCELERATION_STRUCTURE(scene.tlas_index),
             gl_RayFlagsCullBackFacingTrianglesEXT,
-            TRACE_MASK_ALL,
+            TRACE_MASK_ALL | TRACE_MASK_PROXY,
             0,
             0,
             0,
