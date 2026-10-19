@@ -374,7 +374,6 @@ apply and the row carries `TRACE_MASK_ALL`.
   reflection and ripples do not run there.
 - **Bounds.** The pose stays inside `Mesh.local_bounds`, the rest bounds grown by the total amplitude and the crest
   shift ([Surface geometry](#surface-geometry)).
-- **Ocean.** A planned ocean mode will not trace.
 
 ## Buoyancy
 
