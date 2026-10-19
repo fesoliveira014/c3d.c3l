@@ -86,7 +86,7 @@ than asserts, since descs also come from files.
 | `triplanar_sharpness` | Exponent of the plane weights: `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read and checked only under `TRIPLANAR` |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update`; `cast_shadow` also onto the [trace grid](#scene-traces) |
 | `trace` | Adds a trace-only grid, so [scene traces](scene_trace.md) see the terrain; baked at preparation |
-| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel, and the value stays below the map's level count (1 at 257 texels, 3 at 1025); read and checked only with `trace`, baked at preparation |
+| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel. It stays below the map's level count (1 at 257 texels, 3 at 1025) and keeps the grid to `MAX_TRACE_VERTICES` (4,194,240, so level 1 or more at 2049 texels and 2 or more at 4097); read and checked only with `trace`, baked at preparation |
 
 **Height maps.** `image::load_texture_r16` loads a 16-bit PNG as `R16_UINT`; an 8-bit file widens by 257, so
 255 becomes 65535. Generated heights go through `AssetStore.add_texture` with
@@ -197,6 +197,10 @@ of the whole extent, built from the same height map and independent of any view.
   GPU. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow`
   ([capacity](scene_trace.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
   refreshes, which at preparation is every texel.
+- **Shadows.** The grid is what the trace sees, not the surface drawn. A traced shadow ray starts 0.02 m above the drawn
+  surface; where the grid lies above that start, by up to `trace_error`, the point sits under the grid and shadows
+  itself. The speckle follows the grid's cells and grows with `trace_level`; at level 0 the grid is the drawn surface.
+  Coarser levels suit effects that tolerate the error, such as reflections and probes.
 - **Hits.** Traced terrain shades grey and ignores layers, the control map and decals, like any custom material hit.
 - **Lifetime.** The grid is runtime-owned: removing the `Terrain` component or the node removes it at the next `update`
   or with the node. It is never serialized; `prepare` creates it again after a read. Each tile of a [set](#tile-sets)
@@ -478,7 +482,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::UNSUPPORTED` | Height map not `R16_UINT`, not a `MIP_ZERO` source, or a layered, 3D or cube texture |
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
-| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count or whose grid has more than `MAX_TRACE_VERTICES` vertices, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain`, `prepare`, `update` | `c3d::UNSUPPORTED` | The node carries a `LodGroup`, which cannot share a batch with a quadtree |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
@@ -519,7 +523,8 @@ the frame rate and B released ends the stroke, P toggles the collider, T toggles
 cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows the node count, the instances drawn over all passes, the height and normal under the
 camera beside the physics ray height, and the LOD threshold.
 
-`--shadows traced` sets `trace` on the ground, at a `trace_level` of 2, so ridges shadow valleys.
+`--shadows traced` sets `trace` on the ground, so ridges shadow valleys. `--trace-level LEVEL` sets the grid's level; the
+default is the finest the size allows: 0 at 1025 texels, 1 at 2049 and 2 at 4097.
 
 The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
 `--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.
