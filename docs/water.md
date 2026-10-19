@@ -14,8 +14,8 @@ the fragment stage reads the scene's colour and depth snapshots after opaque (a 
 planar mirror target, else a screen-space march over the snapshot, else the environment or the frame's
 ambient, adds lit foam, and shades sun glints through the public Standard parts. Ripple normals and foam colour
 come from referenced Standard materials; the application's wind scrolls the ripples. A CPU twin of the stage
-answers world-space height queries, and `update` places one mirror camera per water body for the view the
-application renders the reflection with.
+answers world-space height queries, and `update_mirror` places a mirror camera per water body and viewing view
+for the reflection the application renders.
 
 The module imports the standard library, core (`c3d`), `c3d::landscape` (its SPIR-V) and
 `c3d::landscape::terrain` (a query predicate); it never imports `gpu`, `c3d::render` or `c3d::physics`.
@@ -35,7 +35,7 @@ produces no generated draw. `is_prepared(scene, node)` reports readiness;
 `prepare_subtree(scene, assets, root = null)` attempts every pending water body
 under the selected root. Publish world matrices before preparation.
 
-Ordinary `update` skips pending water. `set_desc`, reflection-target changes and
+Ordinary `update` skips pending water. `set_desc`, mirror placement and
 runtime surface queries apply after preparation. `add_water` remains the combined
 attachment-and-preparation entry. See the [landscape preparation contract](../addons/c3d_landscape.c3l/README.md#pending-authoring-and-preparation)
 for failure, retry and shared-asset ownership.
@@ -61,44 +61,54 @@ water::add_water(
 )!;
 physics.set_fluid_sampler(&water::fluid_sample, &lake_fluid);
 
-// every frame, after moving the camera
+// every frame, after moving the cameras
 scene.update_world();
 // terrain::update(...) and foliage::update(...) as their docs order them
 water::update(
+    scene:         &scene,
+    assets:        &assets,
+    wind_velocity: wind,
+    time:          now,
+);
+water::update_mirror(
     scene:          &scene,
-    assets:         &assets,
+    body:           lake.id,
+    slot:           0,
     viewing_camera: camera.id,
-    wind_velocity:  wind,
-    time:           now,
 )!;
 // the mirror view's clip plane (The mirror)
 lake_fluid = { .view = water::surface_view(&scene, &assets, lake.id)!, .time = now, .current = current };
 physics.update(delta);
 scene.update_world();
-// the mirror view first, then the main view
+// the mirror view first, then the view that shows the water (The mirror)
 ```
 
 - `register_water` runs once per scene. It registers `Water`, `WaterRuntime` and `WaterMirror` and installs
   the runtime's remove hook with the store; the store outlives the scene.
 - `add_water` attaches a water body to a node without `Mesh`, `Water` or `WaterRuntime` whose world matrix is
   current. It checks the desc, finds or adds the shared shader, finds or builds the grid, adds the owned
-  material, a mirror camera node and the node's `Mesh`, all or nothing: a fault leaves the node, the scene's
-  free nodes and the store's free materials as they were.
+  material (its reflection slot a view texture at `reflection_view_slot`), `max_mirrors` mirror camera nodes and
+  the node's `Mesh`, all or nothing: a fault leaves the node, the scene's free nodes and the store's free
+  materials as they were.
 - `set_desc` is the only way to change a water body. It checks the new desc before it writes anything: a fault
   keeps the old desc, the payload, the material revision, the mesh and the grid. `WaterRuntime.desc` holds the
   checked copy; `update`, the mirror and the queries read it, so an edit of `Water.desc` itself has no effect
   until it goes through `set_desc`.
-- `update` runs every frame with the `FrameInfo.time` the frame renders with. It reads the viewing camera's
-  `local`, which must be a root node, so it may run before or after `update_world`; each water node's world
-  matrix is read as the last `update_world` left it. It tears down removed water bodies, places every mirror
-  camera and scrolls the ripples.
+- `update` runs every frame with the `FrameInfo.time` the frame renders with. It tears down removed water
+  bodies, with their mirror cameras, and scrolls the ripples. It places no mirror and takes no camera; the
+  material reads its reflection from a view texture, so no target is set on the body.
+- `update_mirror(scene, body, slot, viewing_camera)` places the mirror camera of one slot of one body for one
+  viewing camera ([The mirror](#the-mirror)). It reads the camera's `local`, which must be a root node, so it
+  may run before or after `update_world`; the body's world matrix is read as the last `update_world` left it.
+- `release_mirror(scene, body, slot)` frees the slot's camera node, for a viewing view that goes away. The next
+  `update_mirror` of that slot adds the camera again.
 - `surface_view` copies a water body's waves and pose; take it after `update` and `set_desc`, before
   `physics.update`, so buoyancy follows a desc edit in the same frame.
 
 ## WaterDesc
 
 `default_water_desc()` is a clear lake with two calm crossing waves (0.12 m at 6 m, 1.2 m/s along x; 0.07 m at
-3.5 m, 0.9 m/s along (0.6, 0.8); steepness 0.5 each), `DEFAULT_CELL_SIZE`, no extent, the march on and no
+3.5 m, 0.9 m/s along (0.6, 0.8); steepness 0.5 each), `DEFAULT_CELL_SIZE`, no extent, the march on, one mirror slot, view texture 0 and no
 references. Every rule below is a fault, not a contract: descs come from files as well as code.
 
 | Field | Rule |
@@ -116,6 +126,8 @@ references. Every rule below is a fault, not a contract: descs come from files a
 | `ripple_drift` | Non-negative: ripple scroll in m/s per m/s of wind |
 | `ripples`, `foam` | Zero, or a live `STANDARD` material |
 | `march_reflections` | The screen-space march where the planar sample is missing |
+| `max_mirrors` | At least 1 and at most `MAX_MIRRORS` (8): the mirror slots, one per viewing view |
+| `reflection_view_slot` | Below `material::MAX_VIEW_TEXTURES` (4): the [view texture](views.md#view-textures) the material samples |
 
 ## Surface geometry
 
@@ -247,7 +259,7 @@ environment term. Traced forms of the fragment stage let a traced sun shadow the
 
 | Condition | Varies | Branch |
 | --- | --- | --- |
-| The reflection slot is present | per draw | planar tried |
+| The viewing view provides the reflection slot | per draw | planar tried |
 | The planar uv (screen uv plus the tilt offset, clamped to 0.05) lies inside the frame | per pixel | planar sample |
 | `march_reflections` | per draw | march tried |
 | The march hits: a sample lies behind the snapshot surface by less than two steps | per pixel | snapshot colour |
@@ -255,16 +267,21 @@ environment term. Traced forms of the fragment stage let a traced sun shadow the
 
 The march steps 24 times along the reflected ray over four times the pixel's view distance, spaced
 quadratically; a sample behind the camera or outside the frame ends it as a miss, and background texels never
-hit. The per-pixel branches read with an explicit level of detail. A dead reflection target is an absent slot:
-the stage marches, then falls back to the environment.
+hit. The per-pixel branches read with an explicit level of detail. A view that provides nothing at the slot, or
+whose target was destroyed, reads it as absent: the stage marches, then falls back to the environment.
 
 ## The mirror
 
-The library places the mirror; the application renders it. For every water body, `update` sets the mirror
-camera node's `local` to the viewing camera's reflected across the image of the node's local XZ plane, gives it
-the viewing camera's lens with the water node's layers removed, and writes `WaterRuntime.clip_plane`: the rest
-plane lowered by the total amplitude, so everything above the deepest trough stays. The application owns the
-target, the view and the order. The example renders the mirror at
+The library places the mirror cameras; the application renders them. A water body holds `max_mirrors` mirror
+slots. Each viewing view owns one slot of every body it sees, and gives the body's material its mirror's target as
+a [view texture](views.md#view-textures) at the body's `reflection_view_slot`, so every view reflects its own
+mirror.
+
+`update_mirror(scene, body, slot, viewing_camera)` sets the slot's camera node's `local` to the viewing camera's
+reflected across the image of the node's local XZ plane, gives it the viewing camera's lens with the water node's
+layers removed, and writes `WaterRuntime.clip_plane`: the rest plane lowered by the total amplitude, so everything
+above the deepest trough stays. The plane belongs to the body, so every slot of it is the same. The application
+owns the targets, the views and the order. The example renders a mirror at
 
 ```c3
 // A quarter of the pixels: on an RTX 4090 at 2560 x 1440 the mirror view takes 0.721 against 0.815 ms still,
@@ -275,24 +292,18 @@ const float MIRROR_RENDER_SCALE = 0.5f;
 as `render_scale`, with these lines of its code, kept identical by hand:
 
 ```c3
-// Once, after add_water and a first water::update.
+// Once per viewing view and body, after add_water and a first update_mirror of the view's slot.
 RenderTargetId mirror_target = render::create_render_target(
     renderer,
-    render::render_target_desc(output_size.x, output_size.y),
+    render::render_target_desc(viewer_size.x, viewer_size.y),
 )!;
 ViewDesc mirror_desc = render::texture_view_desc(mirror_target);
 mirror_desc.render_scale = render_scale;
 mirror_desc.post.anti_aliasing = AntiAliasing.NONE;
 mirror_desc.clip_plane = scene.get(lake, WaterRuntime).clip_plane;
 ViewId mirror_view = render::create_view(renderer, mirror_desc)!;
-water::set_reflection_target(
-    scene:  scene,
-    assets: assets,
-    node:   lake,
-    target: mirror_target,
-);
 
-// Every frame, after water::update and before begin_frame: set_desc and a moved lake move the plane.
+// Every frame, after update_mirror and before begin_frame: set_desc and a moved lake move the plane.
 Plane clip_plane = scene.get(lake, WaterRuntime).clip_plane;
 ViewDesc current = renderer.views.get(mirror_view).desc;
 if (clip_plane.normal != current.clip_plane.normal || clip_plane.d != current.clip_plane.d) {
@@ -300,11 +311,11 @@ if (clip_plane.normal != current.clip_plane.normal || clip_plane.d != current.cl
     render::configure_view(renderer, mirror_view, current)!;
 }
 
-// Once, and again when the output size changes: the mirror's projection at its scaled extent equals the main view's.
-scene.get(viewing_camera, Camera).aspect = (float)output_size.x / (float)output_size.y;
+// Once, and when the viewer's output size changes: the mirror's projection at its scaled extent matches the viewer's.
+scene.get(viewing_camera, Camera).aspect = (float)viewer_size.x / (float)viewer_size.y;
 
-// In the frame: the mirror, fitted to the viewing camera, then the main view.
-Node* mirror = scene.node(scene.get(lake, WaterRuntime).mirror);
+// In the frame, for each viewing view: the mirror, fitted to the viewing camera, its texture, then the view.
+Node* mirror = scene.node(scene.get(lake, WaterRuntime).mirrors[slot]);
 renderer.render_view(
     scene:         scene,
     camera_node:   mirror,
@@ -312,22 +323,32 @@ renderer.render_view(
     shadow_camera: viewing_camera,
 )!;
 renderer.finish_view(mirror_view)!;
-renderer.render_view(scene, viewing_camera, main_view)!;
+renderer.set_view_texture(view, lake_desc.reflection_view_slot, mirror_target)!;
+renderer.render_view(scene, viewing_camera, view)!;
+renderer.finish_view(view)!;
 ```
 
 - The clip plane changes when the lake node moves or `set_desc` changes the amplitude; `configure_view` resets
   that view's history, and the lines do nothing otherwise.
-- A window resize resizes the target: `resize_render_target` keeps the id and the material repacks through the
-  target's revision, so `set_reflection_target` is needed only for a new target. Zero removes the slot.
-- One mirror view per water plane and viewing camera; lakes at two levels need two mirrors, and the cost scales
-  with them.
-- A second view that sees the water reflects the mirror camera of the first. Leave the water node's layer out
-  of that view's camera layers and render it after the main view (the example's `--capture`). Mirror, then main,
-  then any other view: the renderer holds one shadow set at a time, so a view with another camera between mirror
-  and main records over the mirror's set, and main records its own.
-- The mirror records the frame's shadow set fitted to the viewing camera, and the main view binds it and records no
-  atlas ([shadow sets](shadows.md#shadow-sets)). Set the viewing camera's `Camera.aspect` to the output's (the
-  example's `set_view_aspect`), so the mirror's projection at its scaled extent equals the main view's.
+- A window resize resizes the target: `resize_render_target` keeps the id, and the view texture and the material
+  follow the target's revision. A viewing view needs `set_view_texture` again only for a new target; zero clears
+  the slot.
+- **Per view.** Give each viewing view a mirror slot of its own on every body it sees, a mirror view and target
+  per slot, and provide each target to its own viewing view. A view given another view's target shows that
+  view's reflection. A view that is given none reads the slot as absent: the stage marches, then falls back to
+  the environment. The example's `--capture` view has no mirror, so it leaves the water's layer out of its camera.
+- **Several bodies in one view.** Bodies a view sees need distinct `reflection_view_slot` values, so one view
+  reflects at most `MAX_VIEW_TEXTURES` (4) bodies. Each body has its own plane, so each needs a mirror view of its
+  own: bodies at two levels in one view cost two mirrors. The mirror cameras leave out the layers of the body they
+  reflect, so give bodies one layer bit each to see one body in another's mirror.
+- **Cost.** One mirror view per viewing view and body, with a target at the viewer's extent scaled by
+  `render_scale`.
+- **Order.** Render a viewing view's mirrors, then the view, then the next viewing view's mirrors. The renderer
+  holds one shadow set at a time: the first mirror records the set fitted to the viewing camera, and the others
+  and the viewing view bind it ([shadow sets](shadows.md#shadow-sets)). A view with another camera between a
+  mirror and its viewing view records over the mirror's set.
+- Set the viewing camera's `Camera.aspect` to the viewer's extent (the example's `follow_viewports`), so the
+  mirror's projection at its scaled extent equals the viewer's.
 
 ## Buoyancy
 
@@ -354,18 +375,20 @@ does not fault.
 
 Remove `Water`, or the node. The runtime's remove hook removes the owned material; the next `update` removes
 the node's `Mesh` and `WaterRuntime` and every mirror camera node whose water body is gone. Removing
-`WaterRuntime` or the mirror node directly is unsupported; call `update` between removing and adding a water
-body on the same node. Destroy the scene before the store.
+`WaterRuntime` or a mirror node directly is unsupported (`release_mirror` frees one slot's camera); call `update`
+between removing and adding a water body on the same node. Destroy the scene before the store.
 
 ## Faults
 
 | Where | Fault | When |
 | --- | --- | --- |
 | `register_water` | `c3d::CAPACITY_EXCEEDED` | No component type slot left |
-| `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included); application geometry off y = 0; a reference that is not `STANDARD`; a shared key naming another asset kind |
+| `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included, `max_mirrors` outside [1, `MAX_MIRRORS`], `reflection_view_slot` at `MAX_VIEW_TEXTURES` or above); application geometry off y = 0; a reference that is not `STANDARD`; a shared key naming another asset kind |
 | `add_water`, `set_desc` | `c3d::INVALID_ID` | A dead geometry or reference |
-| `add_water`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool full, or no scene node left for the mirror |
-| `update` | `c3d::INVALID_ARGUMENT` | The viewing camera's local transform is not finite |
+| `add_water`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool full, or no scene node left for the mirrors |
+| `update_mirror` | `c3d::INVALID_ID` | A dead body, a node without prepared water or a dead viewing camera |
+| `update_mirror` | `c3d::INVALID_ARGUMENT` | The viewing camera's local transform is not finite |
+| `update_mirror` | `c3d::CAPACITY_EXCEEDED` | No scene node left to add the camera of a slot freed by `release_mirror` |
 | `surface_view` | `c3d::INVALID_ID` | Dead entity, no water body, the owned material removed |
 | `sample_surface`, `sample_surface_detail`, `fluid_sample` | `NOT_FOUND` | The point's rest position lies outside the rest rectangle |
 
@@ -375,9 +398,9 @@ body on the same node. Destroy the scene before the store.
   path-traced views the water surface is absent, not merely unreflected (the lake bed shows through, reflections
   show no water); probe updates see through it; traced shadows ignore it (it casts none). Traced shadows on the
   water work.
-- **One mirror per plane and viewing camera**; the viewing camera is a root node. A second view that sees the
-  water reflects the mirror camera of the first; leave the water node's layer out of that view's camera layers.
-  The mirror records the frame's only shadow atlas, fitted to the viewing camera, and the main view binds it
+- **One mirror per body and viewing view**, at most `MAX_MIRRORS` (8) slots on a body; the viewing camera is a
+  root node. One view reflects at most `MAX_VIEW_TEXTURES` (4) bodies. The first mirror of a viewing view records
+  the frame's only shadow atlas, fitted to the viewing camera, and the rest bind it
   ([shadow sets](shadows.md#shadow-sets)). Reflected receivers outside the viewing camera's cascades read
   unshadowed.
 - **Clip plane at the deepest trough**: geometry between a trough and the local surface can appear in the
@@ -428,6 +451,16 @@ the ripples, the wind heading and speed, and shows the crates' mean submerged fr
 scene snapshots and upload bytes; the view stats table shows each view's passes with `--gpu-timings`, and the
 targets panel previews the mirror and capture targets.
 
+`--split` draws two viewing cameras side by side in the same output, each with its own viewport, terrain levels,
+mirror views and targets, and adds a second water body: a 60 m pool on the flattest ground whose water lies at
+least 3 m under the lake's and 110 m or more from it, carved a 27 m bowl like the lake. The lake takes view
+texture slot 0 and the pool slot 1, and each has `max_mirrors` 2, one slot per viewer. The left viewer is the fly
+camera over the lake. The right one is fixed, 24 m back from the pool's centre and 6 m above its water, facing
+it. Each frame renders each viewer's mirror of the lake, its mirror of the pool, then the viewer: four mirror
+views and targets, each at the viewer's half of the output. The panel's reflection, mirror-resolution, wave and
+ripple switches apply to both bodies. With `--benchmark` the second viewer is a second texture view on the same
+target; the timings and gates stay those of the first viewer and the lake.
+
 `--benchmark [frames]` renders offscreen without a window: 60 warm-up frames, then four segments of `frames`
 steps (default 300) at 1/60 s with a steady 6 m/s wind; the settle segment runs at least 300 frames, the time
 the crates' bob needs to decay.
@@ -450,12 +483,12 @@ last frame's shadow sets), `buoyancy_us` (the physics step time per fixed step i
 - `gate crates_at_density_line`: every crate's submerged fraction over the settle segment's last 60 frames lies
   within 0.02 of 0.6.
 
-Switches: `--gpu-timings` (build with `python3 scripts/build.py --target water --opt O3 --define
+Switches: `--split`, `--gpu-timings` (build with `python3 scripts/build.py --target water --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--validation`, `--shading
 forward|deferred`, `--size 1025|2049|4097`, `--reflection planar|march|env` (march: no target; env: no target
 and the march off), `--mirror-scale 0.5|1`, `--crates 16|256`, `--ssgi` (SSGI on the main view),
 `--traced` (the main view path-traced: the water is absent), `--capture` (a second view on a 384² target whose
-camera leaves out the water's layer), `--ripples on|off`, `--width W --height H` (2560 × 1440 by default in
+camera leaves out the water's layer and has no mirror), `--ripples on|off`, `--width W --height H` (2560 × 1440 by default in
 benchmark mode) and `--sky` (an [atmosphere](sky.md) on the sun, which replaces the generated sky, and a haze
 pooling in the valleys, off by default; with `--gpu-timings` the main and mirror views print `SKY_VIEW`,
 `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a [froxel volume](sky.md#volumetric-fog)
