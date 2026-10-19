@@ -191,10 +191,12 @@ of the whole extent, built from the same height map and independent of any view.
 - **Hidden and rejected.** The grid follows the terrain node's visibility. A rejected height-map revision hides it with
   the batch until a conforming revision.
 - **Cost.** One posed slot, one bottom level or tree copy, one dispatch of one thread per vertex. The posed streams
-  hold 24 B per vertex (position and normal): 1.6 MB at 257 vertices a side, 6.3 MB at 513, 25 MB at the 1,025 of level 0
-  on a 1025 map. The shared rest geometry adds about 48 B per vertex on the CPU and on the GPU. A terrain that
-  finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace.md#custom-trace-poses)).
-  `update` does one error pass over the texels of the chunks it refreshes, which at preparation is every texel.
+  hold 24 B per vertex (position and normal): 1.6 MB at 257 vertices a side, 6.3 MB at 513, and 25 MB for level 0 of a
+  1025 map. The software kind adds a copy of the tree's nodes and the hardware kind a bottom level;
+  `Stats.trace_posed_bytes` totals the slot. The shared rest geometry adds about 48 B per vertex on the CPU and on the
+  GPU. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow`
+  ([capacity](scene_trace.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
+  refreshes, which at preparation is every texel.
 - **Hits.** Traced terrain shades grey and ignores layers, the control map and decals, like any custom material hit.
 - **Lifetime.** The grid is runtime-owned: removing the `Terrain` component or the node removes it at the next `update`
   or with the node. It is never serialized; `prepare` creates it again after a read. Each tile of a [set](#tile-sets)
