@@ -18,8 +18,8 @@ layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer Sel
     uint values[];
 };
 
-const uint FRAME_VECTORS = 3u;
-const uint NODE_FIRST = 6u;
+const uint FRAME_VECTORS = 4u;
+const uint NODE_FIRST = 8u;
 const float FAR_DISTANCE = 1.0e6;
 
 void main() {
@@ -39,6 +39,12 @@ void main() {
         probe.values[first] = frame.selection_camera;
         probe.values[first + 1u] = frame.previous_selection_camera;
         probe.values[first + 2u] = frame.camera_position;
+        probe.values[first + 3u] = vec4(
+            float((frame.flags & FRAME_SELECTION_ORTHOGRAPHIC) != 0u),
+            float(frame.proj[3][3] == 1.0),
+            0.0,
+            0.0
+        );
 #ifdef INSTANCED
         if ((draw.flags & DRAW_QUADTREE) != 0u) {
             InstanceEffectsGpu effects = InstanceEffectsGpu(draw.instance_effects);
