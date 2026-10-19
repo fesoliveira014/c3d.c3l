@@ -59,6 +59,7 @@ const SeaBand[MAX_WAVES] SEA_BANDS @private = {
 <*
  Set a water body's waves to the sea the wind raises, blended over a time.
  @param [&inout] scene : "World matrices current."
+ @param [&in] assets : "The store given to register_water; resolves a pending body's geometry."
  @param node : "Carries Water."
  @param wind_velocity : "World XZ metres per second; the waves travel along it."
  @param transition_seconds : "Zero switches at the next update."
@@ -66,6 +67,7 @@ const SeaBand[MAX_WAVES] SEA_BANDS @private = {
 *>
 fn void? set_sea_state(
     Scene* scene,
+    AssetStore* assets,
     Entity node,
     Vec2 wind_velocity,
     float transition_seconds,
@@ -77,14 +79,30 @@ fn void? set_sea_state(
     Mat4 world = scene.node(node).world;
     Water* water = scene.world.get(node, Water);
     if (!scene.world.has(node, WaterRuntime)) {
-        Vec2 half = water.desc.geometry.generation ? (Vec2){} : (Vec2){ water.desc.extent / 2, water.desc.extent / 2 };
-        water.desc.waves = sea_waves(&water.desc, -half, half, world, wind_velocity);
+        if (water.desc.geometry.generation && !assets.geometries.is_live(water.desc.geometry)) {
+            return c3d::INVALID_ID~;
+        }
+
+        Aabb rest = rest_bounds(assets, &water.desc);
+        water.desc.waves = sea_waves(
+            desc:          &water.desc,
+            rest_min:      { rest.min.x, rest.min.z },
+            rest_max:      { rest.max.x, rest.max.z },
+            world:         world,
+            wind_velocity: wind_velocity,
+        );
         water.desc.wave_count = MAX_WAVES;
         return;
     }
 
     WaterRuntime* runtime = scene.world.get(node, WaterRuntime);
-    Wave[MAX_WAVES] target = sea_waves(&runtime.desc, runtime.rest_min, runtime.rest_max, world, wind_velocity);
+    Wave[MAX_WAVES] target = sea_waves(
+        desc:          &runtime.desc,
+        rest_min:      runtime.rest_min,
+        rest_max:      runtime.rest_max,
+        world:         world,
+        wind_velocity: wind_velocity,
+    );
     blend_to(
         scene:              scene,
         node:               node,

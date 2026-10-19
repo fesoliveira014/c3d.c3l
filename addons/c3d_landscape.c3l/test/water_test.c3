@@ -996,6 +996,7 @@ fn void? try_set_sea_state(
 ) @local {
     return water::set_sea_state(
         scene:              &fixture.scene,
+        assets:             &fixture.assets,
         node:               node,
         wind_velocity:      wind,
         transition_seconds: transition_seconds,
@@ -1065,6 +1066,29 @@ fn void test_sea_state_faults_on_a_bad_node_wind_or_transition() @test {
     );
     assert(fixture.scene.get(node, Water).desc.waves[0].amplitude == before.amplitude);
     assert(fixture.scene.get(node, WaterRuntime).desc.wave_count == 2);
+
+    GeometryId plane;
+    @pool() {
+        Geometry flat = geometry::plane(tmem, 30, 10, 6, 2);
+        plane = fixture.assets.add_geometry(&flat)!!;
+    };
+    WaterDesc application = calm_desc();
+    application.geometry = plane;
+    application.extent = 0;
+    Node* pending = fixture.scene.add_node()!!;
+    fixture.scene.update_world();
+    water::attach_water(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   pending,
+        desc:   application,
+    )!!;
+    fixture.assets.remove_geometry(plane);
+    assert_fault(
+        @catch(try_set_sea_state(&fixture, pending.id)),
+        c3d::INVALID_ID,
+        "Pending water whose geometry was removed",
+    );
 }
 
 fn void test_sea_state_uploads_only_while_blending_and_once_after() @test {
@@ -1091,6 +1115,19 @@ fn void test_sea_state_uploads_only_while_blending_and_once_after() @test {
     }
 }
 
+fn bool same_waves(WaterDesc* first, WaterDesc* second) @local {
+    if (first.wave_count != second.wave_count) return false;
+    for (uint index = 0; index < first.wave_count; index++) {
+        Wave* left = &first.waves[index];
+        Wave* right = &second.waves[index];
+        if (left.amplitude != right.amplitude || left.wavelength != right.wavelength) return false;
+        if (left.speed != right.speed || left.direction != right.direction || left.steepness != right.steepness) {
+            return false;
+        }
+    }
+    return true;
+}
+
 fn void test_sea_state_target_is_a_valid_desc_whatever_the_grid_and_wind() @test {
     Fixture fixture;
     setup(&fixture);
@@ -1113,6 +1150,20 @@ fn void test_sea_state_target_is_a_valid_desc_whatever_the_grid_and_wind() @test
             try_set_desc(&fixture, node, fixture.scene.get(node, Water).desc)!!;
         }
     }
+
+    Node* pending = fixture.scene.add_node()!!;
+    fixture.scene.update_world();
+    water::attach_water(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   pending,
+        desc:   application,
+    )!!;
+    try_set_sea_state(&fixture, pending.id, FETCH_WIND, transition_seconds: 0)!!;
+    WaterDesc pending_sea = fixture.scene.get(pending, Water).desc;
+    water::prepare(&fixture.scene, &fixture.assets, pending)!!;
+    try_set_sea_state(&fixture, pending.id, FETCH_WIND, transition_seconds: 0)!!;
+    assert(same_waves(&pending_sea, &fixture.scene.get(pending, Water).desc), "A pending body drew another sea");
 }
 
 fn float sea_amplitude(Fixture* fixture, float extent, Vec2 wind) @local {

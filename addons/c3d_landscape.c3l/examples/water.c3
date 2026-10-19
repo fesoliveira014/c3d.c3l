@@ -779,6 +779,7 @@ fn void? apply_sea_state(Demo* demo, Vec3 wind, float transition_seconds) @local
     foreach (&body : demo.bodies[:demo.body_count]) {
         water::set_sea_state(
             scene:              demo.scene,
+            assets:             demo.assets,
             node:               body.node.id,
             wind_velocity:      { wind.x, wind.z },
             transition_seconds: transition_seconds,
