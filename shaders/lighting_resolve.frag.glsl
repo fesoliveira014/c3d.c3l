@@ -102,6 +102,9 @@ void main() {
         );
     }
     color += diffuse + specular;
+#ifdef RT_SHADOWS
+    trace_proxy_skip_height = gbuffer_proxy_skip_height(flags);
+#endif
     color += evaluate_standard_lights(
         frame,
         surface,

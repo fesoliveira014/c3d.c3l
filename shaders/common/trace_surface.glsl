@@ -16,6 +16,16 @@ const float TRACE_DEFAULT_IOR = 1.5; // the index a non-Physical hit carries: 4%
 
 GPU_DECLARE_READONLY_ARRAY_REF(TraceInstanceArray, TraceInstanceGpu);
 
+// Raise before shading; metres above the surface. A traced ray ignores a hit on a trace proxy that lies less than this
+// above the shading point's tangent plane. Hits on every other instance keep counting from TRACE_SURFACE_OFFSET.
+float trace_proxy_skip_height = 0.0;
+
+// Along a ray, where a proxy hit starts to count: the distance at which the ray rises trace_proxy_skip_height above the
+// plane of the surface at its origin. A grazing ray reaches the height late, so the cosine keeps the distance finite.
+float trace_proxy_t_min(float skip_height, vec3 direction, vec3 normal) {
+    return skip_height / max(dot(direction, normal), TRACE_MIN_COSINE);
+}
+
 struct SceneHit {
     uint instance;
     uint primitive;

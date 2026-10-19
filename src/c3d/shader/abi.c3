@@ -21,6 +21,7 @@ const uint BVH_STACK_DEPTH = 32;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
 const uint TRACE_INSTANCE_BEND_FROM_ALPHA = 4;
+const uint TRACE_INSTANCE_PROXY = 8;
 const uint TRACE_MASK_ALL = 1;
 const uint TRACE_MASK_SHADOW_CASTER = 2;
 const uint TRACE_POSE_GROUP_SIZE = 64;
@@ -74,6 +75,8 @@ const uint DRAW_VERTEX_HISTORY_INVALID = 64;
 const uint DRAW_TRACED_REFLECTION = 128;
 const uint DRAW_QUADTREE = 256;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
+const uint GBUFFER_PROXY_SKIP_SHIFT = 16;
+const float GBUFFER_PROXY_SKIP_UNIT = 0.01;
 const uint FRAME_AO_BENT_NORMALS = 1024;
 const uint AO_BLUR_FLAG_VECTOR_INPUT = 1;
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1;
@@ -1273,7 +1276,7 @@ struct RtAoRoot {
     float        intensity;
     uint         noise_frame;
     uint         ray_count;
-    uint         _pad0;
+    TextureIndex flags;
 }
 $assert RtAoRoot::size == 48;
 $assert $reflect(RtAoRoot.frame).offset == 0;
@@ -1286,7 +1289,7 @@ $assert $reflect(RtAoRoot.radius).offset == 28;
 $assert $reflect(RtAoRoot.intensity).offset == 32;
 $assert $reflect(RtAoRoot.noise_frame).offset == 36;
 $assert $reflect(RtAoRoot.ray_count).offset == 40;
-$assert $reflect(RtAoRoot._pad0).offset == 44;
+$assert $reflect(RtAoRoot.flags).offset == 44;
 
 struct RtReflectionRoot {
     GpuAddress   frame;
@@ -1302,7 +1305,7 @@ struct RtReflectionRoot {
     uint         light_count;
     uint         ray_count;
     uint         trace_shift;
-    uint         _pad1;
+    TextureIndex flags;
     GpuAddress   light_spatial;
 }
 $assert RtReflectionRoot::size == 72;
@@ -1319,7 +1322,7 @@ $assert $reflect(RtReflectionRoot.noise_frame).offset == 44;
 $assert $reflect(RtReflectionRoot.light_count).offset == 48;
 $assert $reflect(RtReflectionRoot.ray_count).offset == 52;
 $assert $reflect(RtReflectionRoot.trace_shift).offset == 56;
-$assert $reflect(RtReflectionRoot._pad1).offset == 60;
+$assert $reflect(RtReflectionRoot.flags).offset == 60;
 $assert $reflect(RtReflectionRoot.light_spatial).offset == 64;
 
 struct RtReflectionUpsampleRoot {

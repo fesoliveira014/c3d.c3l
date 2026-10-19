@@ -100,7 +100,8 @@ float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position
         origin,
         direction,
         t_max,
-        TRACE_MASK_SHADOW_CASTER
+        TRACE_MASK_SHADOW_CASTER,
+        trace_proxy_t_min(trace_proxy_skip_height, direction, normal)
     );
     return occluded ? 0.0 : 1.0;
 }
@@ -177,7 +178,8 @@ float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position
             origin,
             direction,
             t_max,
-            TRACE_MASK_SHADOW_CASTER
+            TRACE_MASK_SHADOW_CASTER,
+            trace_proxy_t_min(trace_proxy_skip_height, direction, normal)
         );
         visible += occluded ? 0.0 : 1.0;
     }

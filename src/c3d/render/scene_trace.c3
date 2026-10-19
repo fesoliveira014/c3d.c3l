@@ -328,6 +328,8 @@ fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(
     Mat4 world = trace_instance_world(record, origin);
     bool masked = (record.flags & shader::TRACE_INSTANCE_ALPHA_MASK) != 0;
     bool double_sided = (record.flags & shader::TRACE_INSTANCE_DOUBLE_SIDED) != 0;
+    // A proxy's candidates reach the shader, which ignores the ones below a pixel's skip height.
+    bool candidates = masked || (record.flags & shader::TRACE_INSTANCE_PROXY) != 0;
     return {
         .transform_row_0 = { world.m00, world.m01, world.m02, world.m03 },
         .transform_row_1 = { world.m10, world.m11, world.m12, world.m13 },
@@ -339,8 +341,8 @@ fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(
         // front is the counter-clockwise side raster draws, so no row flips.
         .flags           = {
             .triangle_cull_disable = double_sided,
-            .force_opaque          = !masked,
-            .force_non_opaque      = masked,
+            .force_opaque          = !candidates,
+            .force_non_opaque      = candidates,
         },
     };
 }
@@ -395,6 +397,7 @@ fn TraceCollection collect_trace_instances(
                     layers:      node.layers,
                     cast_shadow: mesh.cast_shadow,
                     origin:      origin,
+                    proxy:       mesh.trace_only,
                 );
                 // Raster skins only a geometry with joints; a binding over another draws morphs alone.
                 SkinBinding* posed_skin = skin && geometry_has_joints(assets.geometry(mesh.geometry)) ? skin : null;
@@ -1398,11 +1401,13 @@ fn TraceInstance trace_record(
     Mat4 local = matrix::IDENTITY4,
     Vec3 origin = {},
     bool vertex_alpha_bend = false,
+    bool proxy = false,
 ) @local {
     Material* data = &assets.material(material).data;
     uint flags = data.common.alpha_mode == AlphaMode.MASK ? shader::TRACE_INSTANCE_ALPHA_MASK : 0;
     if (data.common.double_sided) flags |= shader::TRACE_INSTANCE_DOUBLE_SIDED;
     if (vertex_alpha_bend) flags |= shader::TRACE_INSTANCE_BEND_FROM_ALPHA;
+    if (proxy) flags |= shader::TRACE_INSTANCE_PROXY;
     TraceInstance record = {
         .entity        = entity,
         .flags         = flags,

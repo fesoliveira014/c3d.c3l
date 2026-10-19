@@ -3,6 +3,7 @@
 
 #include "gbuffer.glsl"
 #include "standard_surface.glsl"
+#include "trace_surface.glsl"
 
 #ifdef REFLECTION_PREPASS
 // The thin target the reflection pass reads: octahedral normal, roughness and specular weight.
@@ -31,7 +32,8 @@ void write_gbuffer(StandardMaterialSample material_sample, float specular_weight
     );
     out_emissive_specular = vec4(material_sample.emissive, specular_weight);
     out_layers = draw.layers;
-    out_flags = (draw.flags & DRAW_RECEIVE_SHADOW) != 0u ? GBUFFER_FLAG_RECEIVE_SHADOW : 0u;
+    out_flags = ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u ? GBUFFER_FLAG_RECEIVE_SHADOW : 0u)
+        | gbuffer_pack_proxy_skip(trace_proxy_skip_height);
 }
 #endif
 

@@ -67,6 +67,7 @@ void main() {
     float cone_spread = orthographic ? alpha : pixel_spread + alpha;
     SceneTraceRoot scene = SceneTraceRoot(frame.trace);
     vec3 origin = position + normal * TRACE_SURFACE_OFFSET;
+    float proxy_skip_height = root.flags != 0u ? gbuffer_proxy_skip_height(gpu_fetch_uint(root.flags, texel, 0)) : 0.0;
 
     vec3 radiance_sum = vec3(0.0);
     for (uint ray = 0u; ray < root.ray_count; ray++) {
@@ -81,7 +82,8 @@ void main() {
 
         SceneHit hit;
         vec3 radiance;
-        if (trace_scene(scene, origin, direction, RT_REFLECTION_FAR, TRACE_MASK_ALL, hit)) {
+        float proxy_t_min = trace_proxy_t_min(proxy_skip_height, direction, normal);
+        if (trace_scene(scene, origin, direction, RT_REFLECTION_FAR, TRACE_MASK_ALL, proxy_t_min, hit)) {
             TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width + hit.t * cone_spread);
             radiance = shade_hit(frame, HitLights(root.lights, root.light_count, root.light_spatial), surface, -direction);
             radiance = apply_fog_segment(frame, position, surface.position, radiance);

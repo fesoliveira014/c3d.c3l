@@ -24,6 +24,7 @@ const uint BVH_STACK_DEPTH = 32u;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1u;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2u;
 const uint TRACE_INSTANCE_BEND_FROM_ALPHA = 4u;
+const uint TRACE_INSTANCE_PROXY = 8u;
 const uint TRACE_MASK_ALL = 1u;
 const uint TRACE_MASK_SHADOW_CASTER = 2u;
 const uint TRACE_POSE_GROUP_SIZE = 64u;
@@ -77,6 +78,8 @@ const uint DRAW_VERTEX_HISTORY_INVALID = 64u;
 const uint DRAW_TRACED_REFLECTION = 128u;
 const uint DRAW_QUADTREE = 256u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
+const uint GBUFFER_PROXY_SKIP_SHIFT = 16u;
+const float GBUFFER_PROXY_SKIP_UNIT = 0.01;
 const uint FRAME_AO_BENT_NORMALS = 1024u;
 const uint AO_BLUR_FLAG_VECTOR_INPUT = 1u;
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1u;
@@ -802,7 +805,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtAoRoot {
     float intensity;
     uint noise_frame;
     uint ray_count;
-    uint _pad0;
+    uint flags;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionRoot {
@@ -819,7 +822,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflection
     uint light_count;
     uint ray_count;
     uint trace_shift;
-    uint _pad1;
+    uint flags;
     uint64_t light_spatial;
 };
 
