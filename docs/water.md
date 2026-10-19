@@ -64,6 +64,7 @@ physics.set_fluid_sampler(&water::fluid_sample, &lake_fluid);
 // when the weather changes: the waves follow the wind over four seconds
 water::set_sea_state(
     scene:              &scene,
+    assets:             &assets,
     node:               lake.id,
     wind_velocity:      { wind.x, wind.z },
     transition_seconds: 4,
@@ -102,7 +103,7 @@ scene.update_world();
   keeps the old desc, the payload, the material revision, the mesh and the grid. `WaterRuntime.desc` holds the
   checked copy; `update`, the mirror and the queries read it, so an edit of `Water.desc` itself has no effect
   until it goes through `set_desc`. It ends a running sea-state blend and applies the desc's waves at once.
-- `set_sea_state(scene, node, wind_velocity, transition_seconds)` sets the waves from a wind
+- `set_sea_state(scene, assets, node, wind_velocity, transition_seconds)` sets the waves from a wind
   ([Sea state](#sea-state)). It writes the target into `Water.desc` and `WaterRuntime.desc` and returns; the
   next `update` starts the blend.
 - `update` runs every frame with the `FrameInfo.time` the frame renders with. It tears down removed water
@@ -248,17 +249,18 @@ nothing: a steady frame uploads nothing for water. `update`'s wind scrolls the r
 
 ## Sea state
 
-`set_sea_state(scene, node, wind_velocity, transition_seconds)` sets a water body's four waves to the sea a wind
-raises. `wind_velocity` is world metres per second along x and z, and the waves travel along it. It faults
-`INVALID_ID` for a dead node or a node without `Water`, and `INVALID_ARGUMENT` for a non-finite wind or a negative or
-non-finite transition. A zero transition switches at the next `update`. The call needs no store and no time: it
-writes the target into `Water.desc.waves` and `WaterRuntime.desc.waves` (`wave_count` becomes `MAX_WAVES`) and marks
-the blend as starting. Water that is still pending only receives the target in `Water.desc`. A saved scene keeps the
-target; the blend is not saved, so a loaded body starts at its target.
+`set_sea_state(scene, assets, node, wind_velocity, transition_seconds)` sets a water body's four waves to the sea a
+wind raises. `wind_velocity` is world metres per second along x and z, and the waves travel along it. It faults
+`INVALID_ID` for a dead node, a node without `Water`, or pending water whose application geometry was removed, and
+`INVALID_ARGUMENT` for a non-finite wind or a negative or non-finite transition. A zero transition switches at the
+next `update`. The call needs no time: it writes the target into `Water.desc.waves` and `WaterRuntime.desc.waves`
+(`wave_count` becomes `MAX_WAVES`) and marks the blend as starting. The store resolves the rest rectangle of pending
+water, so a pending body gets the same sea as its prepared twin. Water that is still pending only receives the target
+in `Water.desc`. A saved scene keeps the target; the blend is not saved, so a loaded body starts at its target.
 
 **The table.** The sea is fetch-limited. The fetch `F` is the length of the rest rectangle through its centre along
-the wind, in world metres with the node's scale included; a pending body with application geometry has no rectangle
-yet and gets the fully developed sea. With `U` the wind speed (clamped to 25 m/s) and `g` = 9.81 m/s², the standard
+the wind, in world metres with the node's scale included; the rectangle is the built grid's or the application
+geometry's. With `U` the wind speed (clamped to 25 m/s) and `g` = 9.81 m/s², the standard
 JONSWAP relations give the significant height `Hs` and the peak period `Tp`, each capped at its fully developed
 Pierson-Moskowitz value:
 
@@ -280,8 +282,9 @@ The caps are reached at `g · F / U²` of about 17,000 and 16,000: at 14 m/s a f
 The squares of the amplitude shares sum to 0.116, near the 1/8 four sine waves carry of a sea of that height. Each wave
 runs at the deep-water speed `√(g λ / 2π)` and has the steepness that makes its crest shift twice its amplitude, the
 ratio of the default calm waves, at most 0.9 so the mean steepness stays below 1 at any fetch. Wavelengths floor at two
-cells of a built grid, else at 1 m, so the written target is always a valid desc; a small body therefore gets waves of
-the grid's shortest length and a few centimetres of height. The sea is sized in world metres: the node's scale is
+cells of a built grid, else at 1 m, so the written target is always a valid desc. A band whose wavelength falls below
+the floor is drawn at the floor and keeps its amplitude, so a small body gets waves of the grid's shortest length and a
+few centimetres of height. The sea is sized in world metres: the node's scale is
 divided out of the written lengths and amplitudes, so a scaled node draws the same sea. The heading is the wind in the
 node's frame.
 
@@ -503,7 +506,7 @@ between removing and adding a water body on the same node. Destroy the scene bef
 | `update_mirror` | `c3d::INVALID_ID` | A dead body, a node without prepared water or a dead viewing camera |
 | `update_mirror` | `c3d::INVALID_ARGUMENT` | The viewing camera's local transform is not finite |
 | `update_mirror` | `c3d::CAPACITY_EXCEEDED` | No scene node left to add the camera of a slot freed by `release_mirror` |
-| `set_sea_state` | `c3d::INVALID_ID` | Dead entity, or a node without `Water` |
+| `set_sea_state` | `c3d::INVALID_ID` | A dead entity, no `Water`, or pending water whose geometry was removed |
 | `set_sea_state` | `c3d::INVALID_ARGUMENT` | A non-finite wind, a negative or non-finite transition |
 | `surface_view` | `c3d::INVALID_ID` | Dead entity, no water body, the owned material removed |
 | `sample_surface`, `sample_surface_detail`, `fluid_sample` | `NOT_FOUND` | The point's rest position lies outside the rest rectangle |
