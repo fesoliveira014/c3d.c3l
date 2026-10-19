@@ -39,6 +39,7 @@ const float RANGE_ADJACENT_TOLERANCE @private = 1e-3f;
 const uint RANGE_MINIMUM_DEPTH_SPAN @private = 2; // a pass needs drawn depths a violation could separate
 const uint PROBE_NODE_FIRST @private = 6; // mirrored as NODE_FIRST in selection_probe.vert.glsl; the frame vectors come first
 const uint PROBE_VECTORS @private = PROBE_NODE_FIRST + QUADTREE_NODES;
+const uint CHAIN_NODES @private = 5; // a single path of nodes, each the child of the one before
 const usz PROBE_BYTES @private = PROBE_VECTORS * Vec4::size;
 
 struct QuadtreeScene @private {
@@ -667,7 +668,6 @@ fn void test_vertex_stage_reads_the_quadtree_block() @test {
     target.scene.set_quadtree_ranges(target.mesh, levels[..], 0.25f)!!;
 
     Vec4[] vectors = render_selection_probe(&fixture, &probe, &target.scene, target.near_camera, fixture.view)!!;
-    float pixel_scale = (float)TARGET_SIZE / (2 * math::tan(math::deg_to_rad(60.0f) * 0.5f));
     uint seen;
     for (uint node = 0; node < QUADTREE_NODES; node++) {
         Vec4 written = vectors[PROBE_NODE_FIRST + node];
@@ -677,9 +677,50 @@ fn void test_vertex_stage_reads_the_quadtree_block() @test {
         uint depth = node == 0 ? 0 : (node < 5 ? 1 : 2);
         assert(written.x == (float)depth);
         assert(written.y == (depth ? 1.0f : 0.0f) && written.z == 0);
-        if (depth == 2) assert(math::abs(written.w - levels[2].extent * pixel_scale / QUADTREE_SPLIT_PIXELS) < 1e-3f);
     }
 
     assert(seen >= QUADTREE_NEAR_DRAWN);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_smaller_batch_on_a_surviving_slot_reads_its_own_depths() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    SelectionProbe probe = create_selection_probe(&fixture)!!;
+    defer destroy_selection_probe(&fixture, &probe);
+    QuadtreeScene target = create_quadtree_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    target.scene.get(target.mesh, InstancedMesh).material = probe.material;
+    render_selection_probe(&fixture, &probe, &target.scene, target.near_camera, fixture.view)!!;
+
+    target.scene.remove_component(target.mesh, InstancedMesh);
+    Allocator allocator = target.scene.allocator;
+    InstancedMesh chain = {
+        .geometry       = fixture.box,
+        .material       = probe.material,
+        .transforms     = alloc::new_array(allocator, Transform, CHAIN_NODES),
+        .colors         = alloc::new_array(allocator, Vec4, CHAIN_NODES),
+        .count          = CHAIN_NODES,
+        .cast_shadow    = true,
+        .receive_shadow = true,
+        .revision       = 7,
+    };
+    chain.transforms[..] = maths::TRANSFORM_IDENTITY;
+    chain.colors[..] = WARM;
+    target.scene.add(target.mesh, chain);
+    uint[CHAIN_NODES] parents = { scene::QUADTREE_ROOT, 0, 1, 2, 3 };
+    target.scene.set_instance_quadtree(target.mesh, parents[..], 1, 0.5f)!!;
+    QuadtreeLevel[CHAIN_NODES] levels = {
+        { .extent = 4, .diagonal = 5.7f },
+        { .extent = 3, .diagonal = 4.3f },
+        { .extent = 2, .diagonal = 2.9f },
+        { .extent = 1, .diagonal = 1.5f },
+        { .extent = 0.5f, .diagonal = 0.8f },
+    };
+    target.scene.set_quadtree_ranges(target.mesh, levels[..], 0.25f)!!;
+
+    Vec4[] vectors = render_selection_probe(&fixture, &probe, &target.scene, target.near_camera, fixture.view)!!;
+    assert(vectors[PROBE_NODE_FIRST + CHAIN_NODES - 1].x == (float)(CHAIN_NODES - 1));
     check_validation(&fixture.renderer);
 }

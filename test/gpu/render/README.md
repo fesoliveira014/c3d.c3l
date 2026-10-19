@@ -21,7 +21,9 @@ pixels per extent drop to about one half by editing `split_pixels` in place); ea
 `selection_probe.vert.glsl` stores `FrameRoot.selection_camera` and `previous_selection_camera` from its shaded and its depth
 forms: `test_selection_camera_follows_the_owning_view` checks that a shadow layer holds its view's camera, not the light's, and
 `test_vertex_stage_reads_the_quadtree_block` that an instanced stage reaches the batch's `QuadtreeGpu` and per-node depth through
-the instance-effects block and gets the expected range and morph from `quadtree_morph.glsl`.
+the instance-effects block and gets the expected range and morph from `quadtree_morph.glsl`; a smaller batch placed on a
+node whose larger slot survived reads its own depths. The probe stores from the vertex stage through a device address, without
+`vertexPipelineStoresAndAtomics` enabled by the library; library shaders must not use that pattern.
 
 The vertex-motion cases in `test_vertex_motion.c3` move a stationary quad's base
 positions and compare the centre velocity with the CPU projection (2e-3 UV) on

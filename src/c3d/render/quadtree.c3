@@ -71,13 +71,7 @@ struct QuadtreeSelection @private {
     float                 pixel_scale;
 }
 
-<*
- Selection camera of a view: its position and the pixel scale of its working height, for both renderings.
- @param position : "Relative to the frame origin."
- @param height_pixels : "Height of the view's working extent."
- @require camera.projection == Projection.ORTHOGRAPHIC ? camera.ortho_height > 0 : camera.fov_y > 0
-*>
-fn SelectionCamera selection_camera_of(Camera* camera, Vec3 position, float height_pixels) {
+fn SelectionCamera selection_camera_of(Camera* camera, Vec3 position, float height_pixels) @private {
     float pixel_scale = camera.projection == Projection.ORTHOGRAPHIC
       ? height_pixels / camera.ortho_height
       : height_pixels / (2 * math::tan(camera.fov_y * 0.5f));
@@ -126,9 +120,11 @@ fn QuadtreeGpu pack_quadtree_parameters(InstanceQuadtree* quadtree) @private {
         .morph_band   = quadtree.morph_band,
         .depth_count  = quadtree.depth_count,
     };
+
     foreach (depth, level : quadtree.levels[:quadtree.depth_count]) {
         block.levels[depth] = { .extent = level.extent, .diagonal = level.diagonal };
     }
+
     return block;
 }
 
@@ -143,8 +139,8 @@ fn void? resolve_quadtree_nodes(Renderer* renderer, uint index, InstancedMesh* b
     GpuInstances* slot = &renderer.instances.slots[index];
     InstanceQuadtree* quadtree = &batch.quadtree;
 
-    QuadtreeOffsets offsets = quadtree_offsets(batch.transforms.len);
     if (slot.quadtree_capacity < batch.transforms.len) {
+        QuadtreeOffsets offsets = quadtree_offsets(batch.transforms.len);
         gpu::AllocationDesc desc = {
             .size         = offsets.size,
             .alignment    = STREAM_ALIGNMENT,
@@ -172,6 +168,8 @@ fn void? resolve_quadtree_nodes(Renderer* renderer, uint index, InstancedMesh* b
         slot.quadtree_capacity = (uint)batch.transforms.len;
     }
 
+    // A smaller batch can land on a slot that survived from a larger one, whose addresses keep their layout.
+    QuadtreeOffsets offsets = quadtree_offsets(slot.quadtree_capacity);
     usz nodes_bytes = (usz)batch.count * QuadtreeNodeGpu::size;
     usz leaves_bytes = (usz)quadtree.leaf_count * uint::size;
     usz depths_bytes = (usz)batch.count * uint::size;
@@ -337,6 +335,7 @@ fn QuadtreeSelection[]? prepare_quadtree_view(
     Scene* scene,
     Camera camera,
     CameraMatrices* matrices,
+    float pixel_scale,
 ) @private {
     QuadtreeHistory* histories = &record.quadtree_history;
     uint batches;
@@ -371,7 +370,6 @@ fn QuadtreeSelection[]? prepare_quadtree_view(
     if (!batches) return {};
 
     float height_pixels = (float)record.hdr_color.height;
-    float pixel_scale = selection_camera_of(&camera, matrices.position, height_pixels).current.w;
     QuadtreeSelection[] selections = alloc::new_array(tmem, QuadtreeSelection, batches);
     usz count;
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {

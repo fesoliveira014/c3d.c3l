@@ -292,6 +292,7 @@ fn void? Scene.set_quadtree_ranges(&self, Node* node, QuadtreeLevel[] levels, fl
     candidate.metric = QuadtreeMetric.SPHERE_PIXELS;
     candidate.morph_band = 0;
     candidate.levels = {};
+
     if (levels.len) {
         if (levels.len != quadtree.depth_count) return c3d::INVALID_ARGUMENT~;
 

@@ -130,6 +130,7 @@ float box_distance(InstanceCullRoot root, mat4 model, vec3 point) {
     vec3 axis_scale = vec3(length(model[0].xyz), length(model[1].xyz), length(model[2].xyz));
     vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
     vec3 half_extent = (root.bounds_max.xyz - root.bounds_min.xyz) * 0.5 * axis_scale;
+
     vec3 offset = point - center;
     vec3 local = abs(vec3(
         dot(model[0].xyz, offset) / axis_scale.x,
@@ -146,6 +147,7 @@ bool quadtree_box_splits(InstanceCullRoot root, uint node, bool was_split) {
         float size = tree.levels[depth].extent * root.quadtree_world_scale * root.quadtree_pixel_scale;
         return was_split ? size >= tree.split_pixels / (1.0 + tree.hysteresis) : size > tree.split_pixels;
     }
+
     float range = quadtree_range(tree, depth, root.quadtree_pixel_scale, root.quadtree_world_scale);
     float nearest = box_distance(root, CullInstances(root.instances).values[node].model, root.lod_camera_bias.xyz);
     return nearest < (was_split ? range * (1.0 + tree.hysteresis) : range);
@@ -153,9 +155,11 @@ bool quadtree_box_splits(InstanceCullRoot root, uint node, bool was_split) {
 
 bool quadtree_splits(InstanceCullRoot root, uint node) {
     if (QuadtreeNodes(root.quadtree_nodes).values[node].children == 0u) return false;
+
     bool was_split = root.quadtree_history_valid != 0u
         && (QuadtreeHistory(root.lod_previous).values[node] & QUADTREE_SPLIT) != 0u;
     if (root.quadtree_params != 0ul) return quadtree_box_splits(root, node, was_split);
+
     float size = quadtree_size(root, CullInstances(root.instances).values[node].model) * root.quadtree_height_pixels;
     return was_split ? size >= root.quadtree_split_pixels / (1.0 + root.quadtree_hysteresis)
         : size > root.quadtree_split_pixels;

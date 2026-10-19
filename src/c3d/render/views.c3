@@ -313,6 +313,7 @@ fn void ViewHistory.commit(
 *>
 fn Vec4 ViewHistory.previous_selection_camera(&self, Vec3 origin) {
     Vec3 shift = self.origin - origin;
+
     return {
         self.selection_camera.x + shift.x,
         self.selection_camera.y + shift.y,

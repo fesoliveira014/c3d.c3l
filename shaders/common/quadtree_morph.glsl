@@ -37,12 +37,14 @@ float quadtree_range(QuadtreeGpu tree, uint depth, float pixel_scale, float worl
     float per_extent = pixel_scale * world_scale / tree.split_pixels;
     uint finest = tree.depth_count - 1u;
     float range = tree.levels[finest].extent * per_extent;
+
     for (uint level = finest; level > depth; level--) {
         float natural = tree.levels[level - 1u].extent * per_extent;
         float clamped = (range * (1.0 + tree.hysteresis) + tree.levels[level].diagonal * world_scale)
             / (1.0 - tree.morph_band);
         range = max(natural, clamped);
     }
+
     return range;
 }
 
@@ -53,6 +55,7 @@ float quadtree_morph(QuadtreeGpu tree, uint depth, float vertex_distance, float 
 
     float parent = quadtree_range(tree, depth - 1u, pixel_scale, world_scale);
     float band = parent * tree.morph_band;
+
     return band > 0.0 ? clamp((vertex_distance - (parent - band)) / band, 0.0, 1.0) : step(parent, vertex_distance);
 }
 

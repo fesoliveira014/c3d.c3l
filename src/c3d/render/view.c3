@@ -312,12 +312,18 @@ fn void? record_raster_view(
             matrices: matrices,
         )!;
 
+        SelectionCamera selection = selection_camera_of(camera, matrices.position, viewport.y);
+        if (temporal && history_valid) {
+            selection.previous = record.history.previous_selection_camera(renderer.frame_origin);
+        }
+
         QuadtreeSelection[] quadtrees = prepare_quadtree_view(
             renderer: renderer,
             record: record,
             scene: scene,
             camera: *camera,
             matrices: matrices,
+            pixel_scale: selection.current.w,
         )!;
         MeshCandidate[] candidates;
         instrumentation::@scope("view.extract") {
@@ -340,11 +346,6 @@ fn void? record_raster_view(
             foreach (index, count : counts.lod_objects_visible) renderer.stats.lod_objects_visible[index] += count;
         };
         if (temporal) check_vertex_sources(renderer.assets, candidates)!;
-
-        SelectionCamera selection = selection_camera_of(camera, matrices.position, viewport.y);
-        if (temporal && history_valid) {
-            selection.previous = record.history.previous_selection_camera(renderer.frame_origin);
-        }
 
         InstanceEffectsView effects_view = {
             .scene       = scene,
