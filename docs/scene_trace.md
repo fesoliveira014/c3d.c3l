@@ -232,7 +232,9 @@ the plane of the surface at its origin. `trace_scene`, `trace_scene_any` and `tr
 `proxy_t_min` argument before the hit (or after the instance mask, for `trace_scene_any`): a hit on a proxy nearer than
 it is ignored, on both kinds. The kinds agree: the software walk skips the triangle, and the hardware kind makes proxy
 rows non-opaque and rejects the candidate in the shader. Every other instance, a box on the terrain among them, keeps
-counting from the ray's start, so contact shadows stay. Without the argument the entry points behave as before.
+counting from the ray's start, so contact shadows stay. Every `trace_only` mesh is a proxy and a pixel's skip height
+applies to all of them: a trace-only occluder standing on the terrain loses its contact shadow within that height of the
+surface. Without the argument the entry points behave as before.
 
 The forward shadow paths read `trace_proxy_skip_height` themselves. A deferred view carries it per pixel: `write_gbuffer`
 packs it into the upper 16 bits of the flags channel as centimetres, rounded up and clamped at 655.35 m, and the
