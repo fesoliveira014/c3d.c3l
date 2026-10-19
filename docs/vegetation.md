@@ -235,10 +235,10 @@ or past the fade end.
 - **Capacity.** Slots are `RendererDesc.max_posed_trace_instances` (64 by default), shared with skinned and
   morphed meshes and crowds, so size it for the instances that must follow the wind. Instances are admitted in
   collection order, not by distance. Swayed rows claim after every other kind, so a character that appears later
-  still gets a slot. Slots also draw on the device's 4,096-entry allocation and acceleration structure tables,
-  shared with every other resource: in the example's scene the hardware kind held 3,500 slots and faulted
-  `gpu::SLOT_TABLE_FULL` at 4,000, and the software kind, whose slots hold more buffers, held 1,900 and faulted
-  at 2,048. Keep the capacity well below those.
+  still gets a slot. Memory is not the only bound: slots also draw on the device's 4,096-entry allocation and
+  acceleration structure tables, shared with every other resource, and rendering faults `gpu::SLOT_TABLE_FULL`
+  past them. The software kind, whose slots hold more buffers, reaches them with fewer slots than the hardware
+  kind. Keep the capacity well below 4,096.
 - **At capacity.** An instance without a slot traces at rest, as without `trace_sway`, and each cell holding
   such an instance counts once in `Stats.trace_sway_at_rest`. The error is bounded by the sway reach.
   `Stats.trace_posed_instances` counts the posed instances.
@@ -390,7 +390,7 @@ fail:
 Switches: `--gpu-timings` (build with `python3 scripts/build.py --target vegetation --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading forward|deferred`,
 `--shadows atlas|traced`, `--trace-sway` (with `--shadows traced` and both layers: the tree layer sets
-`trace_sway` and the renderer holds 2,048 posed slots; a benchmark prints a `trace` line per segment with the
+`trace_sway` and the renderer holds 1,536 posed slots; a benchmark prints a `trace` line per segment with the
 medians of posed rows, pose dispatches, refits, bottom-level updates and batches traced at rest),
 `--capture FILE.png` (one frame at a fixed pose looking across a tree's shadow, in a wind of 25 m/s blowing across it,
 with the same options), `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,

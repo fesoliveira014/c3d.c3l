@@ -23,7 +23,7 @@ import landscape_ground;
 
 const uint FIXED_NODES @local = 16; // root, terrain, sun, camera and two layer nodes, with room to spare
 const uint TRACE_INSTANCE_CAPACITY @local = 16384; // traced trees at every map size; 3.4 MiB of trace table
-const uint POSED_INSTANCE_CAPACITY @local = 2048; // a bottom level each; a device's 4,096-entry tables cap this below 4,000
+const uint POSED_INSTANCE_CAPACITY @local = 1536; // software slots fill the device tables near 1,900 in this scene
 const float CAMERA_FOV_DEGREES @local = 60;
 const float CAMERA_NEAR @local = 0.1f; // blades brush the eye at walking height
 const float CAMERA_FAR @local = 8000; // covers the 4 km diagonal of the largest map from its middle
@@ -1090,6 +1090,7 @@ fn bool? run_benchmark(Options options) @local {
         desc:      desc,
     )!;
     defer render::destroy_renderer(&renderer);
+
     RenderTargetId target = render::create_render_target(
         renderer: &renderer,
         desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
@@ -1098,6 +1099,7 @@ fn bool? run_benchmark(Options options) @local {
         renderer: &renderer,
         desc:     configure_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options),
     )!;
+
     Scene scene = create_demo_scene(options);
     defer scene::destroy_scene(&scene);
     terrain::register_terrain(&scene, &assets)!;
@@ -1186,6 +1188,7 @@ fn void? run_capture(Options options) @local {
         desc:      renderer_desc(options, true, "c3d_vegetation_capture"),
     )!;
     defer render::destroy_renderer(&renderer);
+
     RenderTargetId target = render::create_render_target(
         renderer: &renderer,
         desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
@@ -1193,6 +1196,7 @@ fn void? run_capture(Options options) @local {
     ViewDesc view_desc = configure_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options);
     view_desc.post.anti_aliasing = AntiAliasing.NONE;
     ViewId view = render::create_view(&renderer, view_desc)!;
+
     Scene scene = create_demo_scene(options);
     defer scene::destroy_scene(&scene);
     terrain::register_terrain(&scene, &assets)!;
@@ -1203,6 +1207,7 @@ fn void? run_capture(Options options) @local {
     Vec3 wind = across * MAX_WIND_SPEED;
     scene.update_world();
     renderer.prepare_scene(&scene)!;
+
     for (uint frame = 0; frame < CAPTURE_SETTLE_FRAMES; frame++) {
         terrain::update(&scene, &assets)!;
         foliage::update(&scene, &assets, wind)!;
