@@ -2,6 +2,7 @@
 #define C3D_IRRADIANCE_GLSL
 
 #include "buffer_reference.glsl"
+#include "constants.glsl"
 
 GPU_DECLARE_READONLY_REF(IrradianceReadonly, IrradianceGpu);
 GPU_DECLARE_WRITEONLY_REF(IrradianceWriteonly, IrradianceGpu);
@@ -32,6 +33,12 @@ vec3 environment_irradiance(uint64_t address, vec3 direction) {
     }
     // Coefficients include cosine convolution, so evaluation yields E rather than E/pi.
     return max(result, vec3(0.0));
+}
+
+// Radiance averaged over all directions: the first coefficient carries the cosine weight pi.
+vec3 environment_mean_radiance(uint64_t address) {
+    IrradianceGpu irradiance = IrradianceReadonly(address).value;
+    return max(irradiance.coefficients[0].rgb, vec3(0.0)) * environment_sh_basis(0u, vec3(0.0)) / PI;
 }
 
 #endif

@@ -10,13 +10,6 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-// Henyey-Greenstein: the share of the sun's light scattered through an angle, per steradian.
-float fog_phase(float cos_angle, float anisotropy) {
-    float squared = anisotropy * anisotropy;
-    float denominator = 1.0 + squared - 2.0 * anisotropy * cos_angle;
-    return (1.0 - squared) / (4.0 * PI * denominator * sqrt(denominator));
-}
-
 // A light's in-scatter toward the camera from one sample point, before shadowing.
 vec3 light_in_scatter(LightSample light_sample, vec3 direction, float anisotropy) {
     return fog_phase(dot(direction, light_sample.direction), anisotropy) * light_sample.radiance;
