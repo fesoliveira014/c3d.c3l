@@ -913,6 +913,10 @@ fn void test_terrain_set_rejects_incompatible_tiles() @test {
     eager_lod.lod_threshold = sets.desc.lod_threshold + 1;
     assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), eager_lod);
 
+    TerrainDesc morphing = sets.desc;
+    morphing.morph_band = 0.1f;
+    assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), morphing);
+
     TerrainDesc extra_layer = sets.desc;
     extra_layer.layers[1] = sets.base.assets.add_material(material::standard())!!;
     assert_tile_rejected(&sets, add_tile_node(&sets, 1, 0), extra_layer);

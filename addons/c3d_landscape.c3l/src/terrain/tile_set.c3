@@ -147,7 +147,7 @@ fn void? check_tile(
         if (link.x == tile.x && link.z == tile.z) return c3d::INVALID_ARGUMENT~;
         TerrainDesc* peer = &scene.get(scene.node(link.tile), Terrain).desc;
         if (peer.lod_threshold != desc.lod_threshold || peer.lod_hysteresis != desc.lod_hysteresis
-            || !same_layers(peer, desc)) {
+            || peer.morph_band != desc.morph_band || !same_layers(peer, desc)) {
             return c3d::INVALID_ARGUMENT~;
         }
     }

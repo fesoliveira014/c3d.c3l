@@ -197,8 +197,8 @@ that touch differ by at most one level. `morph_band <= (1 - lod_hysteresis) / 2`
 **Limits.** Selection and morph measure distance, which an orthographic view does not have: every node of a depth takes
 the level its extent gives and the stage morphs nothing in the view's own passes. A shadow layer cannot tell that its
 view is orthographic and morphs by distance, so keep `morph_band` zero for terrain drawn into orthographic views. Tiles
-of a [set](#tile-sets) morph each in their own quadtree; `morph_band` is not part of the tiles' validation, so the
-tiles of a set should share it.
+of a [set](#tile-sets) morph each in their own quadtree, and share one `morph_band`, so the edge vertices of
+neighbouring tiles morph alike.
 
 ## The node
 
@@ -238,7 +238,7 @@ foreach (tile : tiles) {
 
 - be a direct child of a node that carries `TerrainSet`;
 - have a height map of exactly the set's `texels`, and the set's `cell_size` and `height_scale`;
-- have the same `lod_threshold`, `lod_hysteresis` and `layers` as every tile already linked;
+- have the same `lod_threshold`, `lod_hysteresis`, `morph_band` and `layers` as every tile already linked;
 - have a `PARENT`-space transform relative to the set node that is a pure translation to
   `(x · tile_extent, 0, z · tile_extent)`: no rotation and unit scale, within 1e-4;
 - not share its `(x, z)` with a linked tile. The first tile prepared at a coordinate keeps it.
