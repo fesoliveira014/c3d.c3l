@@ -39,6 +39,13 @@ const uint INTERIOR_ROW @local = 60; // clear of both outer bands of a 129-texel
 const float SEAM_AGREEMENT @local = 1e-6f; // both sides difference the same four heights
 const float ONE_SIDED_DISAGREEMENT @local = 0.01f; // random texels: far above the agreement, so a missing ring fails
 const uint MID_EDGE_ROW @local = 40; // an edit from here stays clear of both corners of a 129-texel tile
+const uint TRACE_LEVEL @local = 1; // grid cells span two texels
+const ushort BUMP_TEXELS @local = 4096;
+const uint CELL_CENTER_X @local = 101; // odd x and z: the middle of a two-texel grid cell, on its diagonal
+const uint CELL_CENTER_Z @local = 77;
+const uint GRID_CORNER_X @local = 100; // even x and z: a vertex of the two-texel grid
+const uint GRID_CORNER_Z @local = 76;
+const float TRACE_ERROR_TOLERANCE @local = 1e-6f; // float rounding of the same product of texels and scale
 
 struct Fixture @local {
     AssetStore   assets;
@@ -187,6 +194,7 @@ fn void update_terrain(Fixture* fixture) @local {
 fn void assert_same_bounds(TerrainRuntime* edited, TerrainRuntime* fresh) @local {
     assert(mem::equals(edited.minimum, fresh.minimum));
     assert(mem::equals(edited.maximum, fresh.maximum));
+    assert(mem::equals(edited.trace_deviation, fresh.trace_deviation) && edited.trace_error == fresh.trace_error);
 }
 
 fn void write_random_texels(
@@ -337,6 +345,136 @@ fn void test_rectangle_refresh_matches_a_fresh_build() @test {
 
     Node* fresh = add_terrain_node(&fixture, terrain_desc(&fixture, copy_height_map(&fixture, desc.height_map)));
     assert_same_bounds(fixture.scene.get(edited, TerrainRuntime), fixture.scene.get(fresh, TerrainRuntime));
+}
+
+fn TerrainDesc traced_desc(Fixture* fixture, TextureId height_map, uint level = TRACE_LEVEL) @local {
+    TerrainDesc desc = terrain_desc(fixture, height_map);
+    desc.trace = true;
+    desc.trace_level = level;
+    return desc;
+}
+
+// The map is the plane height = MAP_LOW + 3x + 5z: linear, so any triangulation of it is exact.
+fn TextureId add_plane_map(Fixture* fixture, uint texels) @local {
+    TextureId texture = add_height_map(fixture, texels, SEED, flat: true);
+    ushort* pixels = (ushort*)fixture.assets.texture(texture).pixels.ptr;
+    for (uint z = 0; z < texels; z++) {
+        for (uint x = 0; x < texels; x++) pixels[z * texels + x] = (ushort)(MAP_LOW + 3 * x + 5 * z);
+    }
+    fixture.assets.mark_texture_dirty(texture);
+    return texture;
+}
+
+// Grid vertices alternate between 0 and BUMP_TEXELS and every other texel is what the grid's triangles give there, so
+// the map is exact under the (x + 1, z) to (x, z + 1) split and a cell's other diagonal would miss its middle texel.
+fn TextureId add_checker_map(Fixture* fixture, uint texels) @local {
+    TextureId texture = add_height_map(fixture, texels, SEED, flat: true);
+    ushort* pixels = (ushort*)fixture.assets.texture(texture).pixels.ptr;
+    for (uint z = 0; z < texels; z++) {
+        for (uint x = 0; x < texels; x++) {
+            uint cell_x = x / 2;
+            uint cell_z = z / 2;
+            ushort height = BUMP_TEXELS / 2;
+            if (x % 2 == 0 && z % 2 == 0) height = (ushort)((cell_x + cell_z) % 2) * BUMP_TEXELS;
+            if (x % 2 == 1 && z % 2 == 1) height = (ushort)((cell_x + cell_z + 1) % 2) * BUMP_TEXELS;
+            pixels[z * texels + x] = height;
+        }
+    }
+    fixture.assets.mark_texture_dirty(texture);
+    return texture;
+}
+
+fn void raise_texel(Fixture* fixture, TextureId texture, uint x, uint z) @local {
+    TextureAsset* record = fixture.assets.texture(texture);
+    ((ushort*)record.pixels.ptr)[z * record.desc.width + x] += BUMP_TEXELS;
+    fixture.assets.mark_texture_dirty(texture);
+}
+
+fn float texel_metres(float texels) @local => texels * HEIGHT_SCALE / TEXEL_MAX;
+
+fn void test_terrain_trace_error_bound() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* plane = add_terrain_node(&fixture, traced_desc(&fixture, add_plane_map(&fixture, TWO_LEVEL_TEXELS)));
+    assert(fixture.scene.get(plane, TerrainRuntime).trace_error == 0);
+
+    // A texel in the middle of a cell lies on its diagonal, so the grid misses it by the whole bump.
+    TextureId centered = add_plane_map(&fixture, TWO_LEVEL_TEXELS);
+    raise_texel(&fixture, centered, CELL_CENTER_X, CELL_CENTER_Z);
+    Node* middle = add_terrain_node(&fixture, traced_desc(&fixture, centered));
+    float expected = texel_metres(BUMP_TEXELS);
+    assert(math::abs(fixture.scene.get(middle, TerrainRuntime).trace_error - expected) <= TRACE_ERROR_TOLERANCE);
+
+    // A grid vertex that rises takes its neighbours' midpoints half way.
+    TextureId cornered = add_plane_map(&fixture, TWO_LEVEL_TEXELS);
+    raise_texel(&fixture, cornered, GRID_CORNER_X, GRID_CORNER_Z);
+    Node* vertex = add_terrain_node(&fixture, traced_desc(&fixture, cornered));
+    assert(math::abs(fixture.scene.get(vertex, TerrainRuntime).trace_error - expected / 2) <= TRACE_ERROR_TOLERANCE);
+
+    // The grid's diagonal runs from (x + 1, z) to (x, z + 1); the other one would miss every middle texel here.
+    Node* checker = add_terrain_node(&fixture, traced_desc(&fixture, add_checker_map(&fixture, TWO_LEVEL_TEXELS)));
+    assert(fixture.scene.get(checker, TerrainRuntime).trace_error == 0);
+
+    // The finest grid is the surface itself.
+    TextureId finest = add_plane_map(&fixture, TWO_LEVEL_TEXELS);
+    raise_texel(&fixture, finest, CELL_CENTER_X, CELL_CENTER_Z);
+    Node* exact = add_terrain_node(&fixture, traced_desc(&fixture, finest, level: 0));
+    assert(fixture.scene.get(exact, TerrainRuntime).trace_error == 0);
+
+    // An edit refreshes the chunks its rectangle meets and agrees with a build from the edited texels.
+    TextureId edited_map = copy_height_map(&fixture, add_plane_map(&fixture, TWO_LEVEL_TEXELS));
+    Node* edited = add_terrain_node(&fixture, traced_desc(&fixture, edited_map));
+    update_terrain(&fixture);
+    raise_texel(&fixture, edited_map, CELL_CENTER_X, CELL_CENTER_Z);
+    terrain::mark_dirty(&fixture.scene, edited, { .x = CELL_CENTER_X, .z = CELL_CENTER_Z, .columns = 1, .rows = 1 });
+    update_terrain(&fixture);
+    assert(math::abs(fixture.scene.get(edited, TerrainRuntime).trace_error - expected) <= TRACE_ERROR_TOLERANCE);
+    Node* fresh = add_terrain_node(&fixture, traced_desc(&fixture, copy_height_map(&fixture, edited_map)));
+    assert_same_bounds(fixture.scene.get(edited, TerrainRuntime), fixture.scene.get(fresh, TerrainRuntime));
+}
+
+fn void test_trace_level_past_the_level_count_is_invalid_argument() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = fixture.scene.add_node()!!;
+
+    TerrainDesc desc = traced_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED), level: 2);
+    assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::INVALID_ARGUMENT);
+    assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, TerrainRuntime));
+
+    desc.trace_level = 1;
+    try_add_terrain(&fixture, node, desc)!!;
+}
+
+fn void test_trace_grid_is_a_trace_only_child_that_leaves_with_its_terrain() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = traced_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED));
+    uint meshes = fixture.scene.count(Mesh);
+    Node* node = add_terrain_node(&fixture, desc);
+    TerrainRuntime* runtime = fixture.scene.get(node, TerrainRuntime);
+
+    uint side = (TWO_LEVEL_TEXELS - 1) / 2 + 1;
+    Node* grid = fixture.scene.node(runtime.trace_grid);
+    Mesh* mesh = fixture.scene.get(grid, Mesh);
+    assert(grid.parent == node && mesh.trace && mesh.trace_only && mesh.cast_shadow);
+    assert(c3d::same_id(mesh.material, runtime.material));
+    assert(fixture.assets.geometry(mesh.geometry).vertex_count == side * side);
+    assert(mesh.has_bounds_override && mesh.local_bounds.min.x == 0);
+    assert(mesh.local_bounds.max.x == (float)(TWO_LEVEL_TEXELS - 1) * CELL_SIZE);
+    assert(fixture.scene.count(Mesh) == meshes + 1);
+
+    fixture.scene.get(node, Terrain).desc.cast_shadow = false;
+    update_terrain(&fixture);
+    assert(!fixture.scene.get(grid, Mesh).cast_shadow);
+
+    fixture.scene.remove_component(node, Terrain);
+    update_terrain(&fixture);
+    assert(fixture.scene.count(Mesh) == meshes && node.first_child == null);
 }
 
 fn void test_revision_bump_without_mark_dirty_rebuilds_bounds() @test {

@@ -84,6 +84,8 @@ struct TerrainDesc {
     float      triplanar_sharpness; // plane-weight exponent in MIN_ to MAX_TRIPLANAR_SHARPNESS; read under TRIPLANAR
     bool       cast_shadow;
     bool       receive_shadow;
+    bool       trace;          // scene traces see the terrain through a trace-only grid at trace_level
+    uint       trace_level;    // grid cells span 2^trace_level texels; below the level count; read under trace
 }
 
 <*
@@ -113,6 +115,10 @@ struct TerrainRuntime {
     ushort[]                 minimum;          // per node: lowest texel of its footprint
     ushort[]                 maximum;          // per node: highest texel of its footprint
     TerrainRefresh           last_refresh;     // kept until the next accepted refresh
+    Entity                   trace_grid;       // owned trace-only child node; zero generation without trace
+    uint                     trace_level;      // the desc's level, set with trace
+    float                    trace_error;      // metres: largest gap between the trace grid and the full surface
+    float[]                  trace_deviation;  // per finest chunk: largest gap in height texels; empty without trace
 }
 
 <*
@@ -236,7 +242,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     if (tiled) ring = attach_border_ring(assets, owned, texels)!;
     defer catch if (ring.generation) assets.remove_texture(ring);
 
-    TerrainRuntime runtime = create_runtime(scene.allocator, texels)!;
+    TerrainRuntime runtime = create_runtime(scene.allocator, texels, &desc)!;
     defer catch free_runtime(&runtime);
     runtime.material = owned;
     runtime.border_ring = ring;
@@ -247,7 +253,12 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .revision_after  = runtime.revision,
         .rect            = whole_map(texels),
     };
-    refresh_bounds(&runtime, height_texels(height_map), whole_map(texels));
+    refresh_bounds(
+        runtime:      &runtime,
+        texels:       height_texels(height_map),
+        rect:         whole_map(texels),
+        height_scale: desc.height_scale,
+    );
     link_tile(scene, assets, node)!;
     defer catch unlink_tile(scene, node.id);
     InstancedMesh batch = create_batch(
@@ -262,6 +273,15 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     scene.add(node, batch);
     defer catch scene.remove_component(node, InstancedMesh);
     install_quadtree(scene, node, &runtime, &desc)!;
+    if (desc.trace) {
+        runtime.trace_grid = add_trace_grid(
+            scene:   scene,
+            assets:  assets,
+            node:    node,
+            runtime: &runtime,
+            desc:    &desc,
+        )!;
+    }
     scene.add(node, runtime);
     if (tiled) refresh_tile_rings(scene, assets, node);
 }
@@ -335,6 +355,7 @@ fn void? update_node(Scene* scene, AssetStore* assets, Node* node) @private {
     if (catch excuse = refresh_changed_bounds(assets, &terrain.desc, runtime)) {
         // The GPU copy may already hold the rejected shape; draw nothing until a conforming revision.
         hide_batch(scene, node);
+        if (runtime.trace_grid.generation) show_trace_grid(scene, node, runtime, false);
         runtime.stale = true;
         return excuse~;
     }
@@ -346,6 +367,10 @@ fn void? update_node(Scene* scene, AssetStore* assets, Node* node) @private {
     apply_lod_tunables(batch, &terrain.desc);
     batch.cast_shadow = terrain.desc.cast_shadow;
     batch.receive_shadow = terrain.desc.receive_shadow;
+    if (runtime.trace_grid.generation) {
+        sync_trace_grid(scene, node, runtime, &terrain.desc);
+        show_trace_grid(scene, node, runtime, true);
+    }
 }
 
 fn TexelRect union_rect(TexelRect first, TexelRect second) @private {
@@ -375,7 +400,12 @@ fn void? refresh_changed_bounds(AssetStore* assets, TerrainDesc* desc, TerrainRu
         && texture.pixels.ptr == runtime.pixels
         && texture.header.replaced_revision <= runtime.revision;
     TexelRect refreshed = in_place ? runtime.pending : whole_map(runtime.texels);
-    refresh_bounds(runtime, height_texels(texture), refreshed);
+    refresh_bounds(
+        runtime:      runtime,
+        texels:       height_texels(texture),
+        rect:         refreshed,
+        height_scale: desc.height_scale,
+    );
     runtime.last_refresh = {
         .revision_before = runtime.revision,
         .revision_after  = texture.header.revision,
@@ -406,6 +436,8 @@ fn void remove_orphans(Scene* scene) @private {
         };
         if (!orphan.generation) return;
         Node* node = scene.node(orphan);
+        Entity trace_grid = scene.get(node, TerrainRuntime).trace_grid;
+        if (trace_grid.generation) scene.remove(scene.node(trace_grid));
         scene.remove_component(node, InstancedMesh);
         scene.remove_component(node, TerrainRuntime);
     }

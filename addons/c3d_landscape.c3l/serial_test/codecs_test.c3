@@ -9,16 +9,22 @@ import c3d::landscape @public;
 import c3d::landscape::terrain;
 import c3d::landscape::foliage;
 import c3d::landscape::water;
+import c3d::material;
 import c3d::scene;
 import c3d::serial;
 
 const char[*] TERRAIN_V1_BINARY @private = $embed("fixtures/terrain_v1.bin");
 const char[*] TERRAIN_V1_TEXT @private = $embed("fixtures/terrain_v1.json");
+const char[*] TERRAIN_V2_BINARY @private = $embed("fixtures/terrain_v2.bin");
+const char[*] TERRAIN_V2_TEXT @private = $embed("fixtures/terrain_v2.json");
+const uint TRACE_TEXELS @private = 257; // two quadtree levels, so a trace level above 0 is valid
+const uint TRACE_LEVEL @private = 1;
 
 fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
-    assert(serial::described_type(TerrainDesc)!!.version == 2);
-    assert(serial::described_type(TerrainDesc)!!.layout == 0xbbb8c4e5931f82a4);
+    assert(serial::described_type(TerrainDesc)!!.version == 3);
+    assert(serial::described_type(TerrainDesc)!!.layout == 0x2f4b757be96fae42);
+    assert(serial::described_type(landscape::TerrainDescV2)!!.layout == 0xbbb8c4e5931f82a4);
     assert(serial::described_type(landscape::TerrainDescV1)!!.layout == 0x7638a7507fa65b33);
     assert(serial::described_type(TerrainTile)!!.layout == 0x3fe780c7be5416e1);
     assert(serial::described_type(landscape::TerrainSetAuthoring)!!.layout == 0x6b17270c6b53663f);
@@ -49,6 +55,57 @@ fn void test_terrain_v1_fixtures_read_with_default_projection() @test {
             TerrainDesc* desc = &fixture.destination.get(ground, Terrain).desc;
             assert(desc.height_scale == 4 && desc.lod_threshold == 123 && !desc.cast_shadow);
             assert(desc.slope_projection == TOP && desc.triplanar_sharpness == terrain::DEFAULT_TRIPLANAR_SHARPNESS);
+        };
+    }
+}
+
+fn void test_terrain_v2_fixtures_read_with_tracing_off() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? TERRAIN_V2_TEXT[..] : TERRAIN_V2_BINARY[..];
+            Node* ground = decode(&fixture, bytes, text_mode)!!;
+            TerrainDesc* desc = &fixture.destination.get(ground, Terrain).desc;
+            assert(desc.height_scale == 4 && desc.lod_threshold == 123 && !desc.cast_shadow);
+            assert(desc.slope_projection == TRIPLANAR && desc.triplanar_sharpness == 7);
+            assert(!desc.trace && desc.trace_level == 0);
+        };
+    }
+}
+
+fn void test_trace_fields_round_trip_and_the_trace_grid_stays_out_of_exports() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+            TextureId height;
+            @pool() {
+                char[] pixels = alloc::new_array(tmem, char, (usz)TRACE_TEXELS * TRACE_TEXELS * ushort::size);
+                TextureDesc texture = material::texture_2d_desc(TRACE_TEXELS, TRACE_TEXELS, R16_UINT);
+                texture.generate_mips = false;
+                height = fixture.assets.add_texture(texture, pixels, "trace-height")!!;
+            };
+            TerrainDesc desc = fixture.source.get(fixture.terrain_node, Terrain).desc;
+            desc.height_map = height;
+            desc.trace = true;
+            desc.trace_level = TRACE_LEVEL;
+            Node* ground = fixture.source.add_node(fixture.root, "trace-ground")!!;
+            terrain::attach_terrain(&fixture.source, &fixture.assets, ground, desc)!!;
+            char[] pending = encode(&fixture.source, &fixture.assets, ground, text_mode)!!;
+
+            fixture.source.update_world();
+            terrain::prepare(&fixture.source, &fixture.assets, ground)!!;
+            assert(fixture.source.get(ground, TerrainRuntime).trace_grid.generation != 0);
+            assert(pending == encode(&fixture.source, &fixture.assets, ground, text_mode)!!);
+
+            Node* restored = decode(&fixture, pending, text_mode)!!;
+            TerrainDesc* restored_desc = &fixture.destination.get(restored, Terrain).desc;
+            assert(restored_desc.trace && restored_desc.trace_level == TRACE_LEVEL);
+            assert(!terrain::is_prepared(&fixture.destination, restored) && fixture.destination.count(Mesh) == 0);
         };
     }
 }

@@ -46,6 +46,9 @@ fn uint? check_terrain_desc(AssetStore* assets, TerrainDesc* desc) @private {
     if (desc.slope_projection == TRIPLANAR && !sharpness_valid) return c3d::INVALID_ARGUMENT~;
     if (!assets.textures.is_live(desc.height_map)) return c3d::INVALID_ID~;
     check_height_map(assets.texture(desc.height_map))!;
+    if (desc.trace && desc.trace_level >= level_count_of(assets.texture(desc.height_map).desc.width)!) {
+        return c3d::INVALID_ARGUMENT~;
+    }
     if (desc.control_map.generation) {
         if (!assets.textures.is_live(desc.control_map)) return c3d::INVALID_ID~;
         // The stage samples weights through the float heap, unconverted.
@@ -84,6 +87,7 @@ fn ShaderId? terrain_shader(AssetStore* assets, bool* created = null) @private {
             .velocity           = landscape::TERRAIN_VERTEX_VELOCITY_SPIRV[..],
             .instanced_velocity = landscape::TERRAIN_VERTEX_INSTANCED_VELOCITY_SPIRV[..],
         },
+        .trace_pose       = { .single = landscape::TERRAIN_TRACE_POSE_SPIRV[..] },
         .param_block_size = TerrainParams::size,
     };
     ShaderId shader = assets.add_shader(&desc, SHADER_KEY)!;

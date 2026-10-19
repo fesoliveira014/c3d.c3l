@@ -510,11 +510,13 @@ fields in VALUE; the set's neighbour links are runtime state, rebuilt when the
 tiles prepare. Foliage restores its ground reference and copied
 scatter, sway, fade, render and optional LOD authoring in OWNER. Prepare terrain
 before foliage, and publish world matrices before dependent preparation.
-The Terrain payload is version 2, which adds `slope_projection` and
-`triplanar_sharpness`; version 1 payloads in both encodings read `TOP` and the
-default sharpness. The Foliage payload is version 2, which adds
+The Terrain payload is version 3, which adds `trace` and `trace_level`; version 2
+payloads in both encodings read tracing off. Version 2 added `slope_projection`
+and `triplanar_sharpness`; version 1 payloads read `TOP` and the default
+sharpness. The Foliage payload is version 2, which adds
 `rules.slope_normal`; version 1 payloads in both encodings read `FACE`.
-Foliage cells and water mirrors are omitted only through verified ownership.
+Foliage cells, water mirrors and a terrain's trace grid are omitted only through
+verified ownership.
 See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).
 
 ParticleSystem restores its descriptor and emitting flag in VALUE. Its pool,

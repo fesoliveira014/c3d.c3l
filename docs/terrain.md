@@ -70,7 +70,7 @@ renderer.render_view(&scene, camera, view)!;
 ## TerrainDesc
 
 `terrain::default_terrain_desc()` sets `lod_threshold = 512`, `lod_hysteresis = 0.25`, `slope_projection = TOP`,
-`triplanar_sharpness = 4` and both shadow flags; the maps, scales and layers are the application's. Every value is checked by `add_terrain` and faults rather
+`triplanar_sharpness = 4`, both shadow flags and `trace = false`; the maps, scales and layers are the application's. Every value is checked by `add_terrain` and faults rather
 than asserts, since descs also come from files.
 
 | Field | Rule |
@@ -84,7 +84,9 @@ than asserts, since descs also come from files.
 | `lod_hysteresis` | A split node merges below `lod_threshold / (1 + lod_hysteresis)`; finite, zero or more |
 | `slope_projection` | `TOP` projects the layers from above; `TRIPLANAR` projects them along all three axes ([slope projection](#slope-projection)) |
 | `triplanar_sharpness` | Exponent of the plane weights: `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read and checked only under `TRIPLANAR` |
-| `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update` |
+| `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update`; `cast_shadow` also onto the [trace grid](#scene-traces) |
+| `trace` | Adds a trace-only grid, so [scene traces](scene_trace.md) see the terrain; baked at preparation |
+| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel, and the value stays below the map's level count (1 at 257 texels, 3 at 1025); read and checked only with `trace`, baked at preparation |
 
 **Height maps.** `image::load_texture_r16` loads a 16-bit PNG as `R16_UINT`; an 8-bit file widens by 257, so
 255 becomes 65535. Generated heights go through `AssetStore.add_texture` with
@@ -157,6 +159,46 @@ value the [quadtree contract](instancing.md#quadtree-selection) rejects.
   levels of its own pixel count.
 - The renderer reports the drawn nodes of a frame, over all its passes, as `Stats.instances_visible`, and
   `Stats.quadtree_fallbacks` counts batches that drew their finest level because the culling arena had no room.
+
+## Scene traces
+
+Traced shadows, reflections, ambient occlusion, probe updates and path tracing read the [scene trace](scene_trace.md),
+not the drawn chunks, whose levels each view selects for itself. With `trace` set, `prepare` adds one trace-only grid
+of the whole extent, built from the same height map and independent of any view.
+
+- **The grid.** A child node named `terrain_trace` carries a `Mesh` with `trace` and `trace_only` set, the terrain's
+  material and its `cast_shadow` and the node's `layers`, which `update` keeps current. The grid has one vertex per
+  `2^trace_level` texels along each side, ends included: `(texels - 1) / 2^trace_level + 1`, which is 257 at 1025 texels
+  and level 2. Its triangles split each cell along the diagonal from `(x + 1, z)` to `(x, z + 1)`, as the drawn chunks
+  and the physics height field do. The geometry is shared by every terrain of that side length in a store.
+- **The stage.** The terrain shader carries a `trace_pose.single` form, `terrain_trace_pose.comp.glsl`
+  ([trace pose](custom_shaders.md#trace-pose)). Each vertex takes the height of the texel it stands on from the height
+  map, and its normal from the central differences the fragment stage uses, through the [border ring](#tile-sets) at a
+  linked tile's edge. It reads no time, so the pose runs again only when the height map, the border ring or the
+  material changes.
+- **The error bound.** The grid keeps the heights of every `2^trace_level`-th texel, so it leaves the drawn full
+  resolution surface by a vertical gap that is largest at a texel: both surfaces are linear on each triangle of the
+  texels' own triangulation, which the grid's triangles refine. `TerrainRuntime.trace_error` is that largest gap in
+  metres over the whole map; it is 0 at `trace_level` 0 and on a map that is linear over each grid cell. Each finest chunk
+  keeps its own maximum, in `TerrainRuntime.trace_deviation` as height texels, so a `mark_dirty` rectangle recomputes
+  only the chunks it touches, and the bounds then take the new maximum. The Mesh's bounds are the terrain's own
+  box, widened by `trace_error` above and below.
+- **A drawn level.** A view that draws a coarser chunk level than 0 differs from the full resolution surface by that
+  level's own error; the grid does not follow the selection. `lod_threshold = 0` draws the full resolution surface.
+- **Edits.** A height-map revision poses the whole grid again: one dispatch and, on the hardware trace kind, one new
+  bottom level, because a first pose from flat geometry would leave a poor tree to update; the software kind refits.
+  A frame with no revision poses nothing. A tile's ring revision does the same for its own grid.
+- **Hidden and rejected.** The grid follows the terrain node's visibility. A rejected height-map revision hides it with
+  the batch until a conforming revision.
+- **Cost.** One posed slot, one bottom level or tree copy, one dispatch of one thread per vertex. The posed streams
+  hold 24 B per vertex (position and normal): 1.6 MB at 257 vertices a side, 6.3 MB at 513, 25 MB at the 1,025 of level 0
+  on a 1025 map. The shared rest geometry adds about 48 B per vertex on the CPU and on the GPU. A terrain that
+  finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace.md#custom-trace-poses)).
+  `update` does one error pass over the texels of the chunks it refreshes, which at preparation is every texel.
+- **Hits.** Traced terrain shades grey and ignores layers, the control map and decals, like any custom material hit.
+- **Lifetime.** The grid is runtime-owned: removing the `Terrain` component or the node removes it at the next `update`
+  or with the node. It is never serialized; `prepare` creates it again after a read. Each tile of a [set](#tile-sets)
+  owns its grid. A terrain takes two scene nodes and one `Mesh`.
 
 ## The node
 
@@ -386,17 +428,17 @@ scene.get(ground, PhysicsBody).mark_changed();
 
 ## Removal
 
-Remove the `Terrain` component, or the node. A [tile](#tile-sets) also leaves its set's links. The next `update` removes the node's `InstancedMesh` and
-`TerrainRuntime` first thing, so a removed terrain never draws a stale frame; a removed node's batch goes with
-the node. The runtime's remove hook frees its arrays and removes the terrain's own material and border ring. Removing
+Remove the `Terrain` component, or the node. A [tile](#tile-sets) also leaves its set's links. The next `update` removes the node's `InstancedMesh`,
+its [trace grid](#scene-traces) node and `TerrainRuntime` first thing, so a removed terrain never draws a stale frame; a
+removed node's batch and grid go with the node. The runtime's remove hook frees its arrays and removes the terrain's own material and border ring. Removing
 `TerrainRuntime` directly is not supported.
 
 The shared shader (`"c3d_landscape/terrain_shader"`) and chunk grid (`"c3d_landscape/terrain_grid"`) are
 added to the store by the first `add_terrain` and live as long as the store. Destroy physics worlds first, then
 the scene, then the store.
 
-**Serialisation.** `Terrain` is the authored component; `TerrainRuntime` and the terrain's `InstancedMesh` are
-derived. `attach_terrain` attaches validated authoring without generating either.
+**Serialisation.** `Terrain` is the authored component; `TerrainRuntime`, the terrain's `InstancedMesh` and its
+[trace grid](#scene-traces) node are derived. `attach_terrain` attaches validated authoring without generating either.
 Use `is_prepared`, `prepare` or `prepare_subtree` to complete pending terrain;
 ordinary updates skip it until preparation succeeds. A pending terrain produces
 no generated draws. The [landscape preparation contract](../addons/c3d_landscape.c3l/README.md#pending-authoring-and-preparation)
@@ -434,7 +476,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::UNSUPPORTED` | Height map not `R16_UINT`, not a `MIP_ZERO` source, or a layered, 3D or cube texture |
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
-| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain`, `prepare`, `update` | `c3d::UNSUPPORTED` | The node carries a `LodGroup`, which cannot share a batch with a quadtree |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
@@ -445,10 +487,10 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 
 ## Limits
 
-- The batch never traces (`trace = false`, and its custom vertex stage keeps it out whatever `trace` says). Under traced
-  shadows ridges do not shadow valleys, though other
-  objects still cast onto the terrain; ray-traced ambient occlusion, reflections, probes and path tracing do
-  not see it.
+- The batch never traces (`trace = false`, and its custom vertex stage keeps it out whatever `trace` says). Without
+  `trace`, ridges do not shadow valleys under traced shadows, though other objects still cast onto the terrain, and
+  ray-traced ambient occlusion, reflections, probes and path tracing do not see it. With `trace` they see the
+  [trace grid](#scene-traces) at `trace_level`.
 - Level changes pop and carry no motion vector; temporal history rejection handles them. The velocity forms
   ignore per-instance previous matrices: a chunk's shape comes from its record, so only node motion and the
   camera produce velocity.
@@ -474,6 +516,8 @@ drops a crate onto the height-field collider, B held raises a bump under the cam
 the frame rate and B released ends the stroke, P toggles the collider, T toggles a decal on the ground ahead of the start pose, and a click tosses the crate under the
 cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows the node count, the instances drawn over all passes, the height and normal under the
 camera beside the physics ray height, and the LOD threshold.
+
+`--shadows traced` sets `trace` on the ground, at a `trace_level` of 2, so ridges shadow valleys.
 
 The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
 `--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.
