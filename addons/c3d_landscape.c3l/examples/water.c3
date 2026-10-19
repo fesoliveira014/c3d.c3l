@@ -501,7 +501,7 @@ fn float water_level(HeightView* view, Vec2 centre, float extent) @local {
 }
 
 // A cosine bowl BASIN_DEPTH under the level at the centre, reaching the level at the radius; nothing is raised.
-fn void carve_basin(
+fn void? carve_basin(
     Scene* scene,
     AssetStore* assets,
     Ground* ground,
@@ -530,13 +530,17 @@ fn void carve_basin(
             texels[index] = (ushort)math::min((float)texels[index], bed);
         }
     }
-    assets.mark_texture_dirty(ground.desc.height_map);
-    terrain::mark_dirty(scene, ground.node, {
-        .x       = first_x,
-        .z       = first_z,
-        .columns = last_x - first_x + 1,
-        .rows    = last_z - first_z + 1,
-    });
+    terrain::mark_dirty(
+        scene:  scene,
+        assets: assets,
+        node:   ground.node,
+        rect:   {
+            .x       = first_x,
+            .z       = first_z,
+            .columns = last_x - first_x + 1,
+            .rows    = last_z - first_z + 1,
+        },
+    )!;
 }
 
 // The node's transform places the collider and the drawn surface alike.
@@ -880,7 +884,7 @@ fn void? build_demo(Demo* demo) @local {
         centre: site,
         level:  level,
         radius: BASIN_RADIUS,
-    );
+    )!;
 
     Vec2 pool_site;
     float pool_level;
@@ -903,7 +907,7 @@ fn void? build_demo(Demo* demo) @local {
             centre: pool_site,
             level:  pool_level,
             radius: POOL_BASIN_RADIUS,
-        );
+        )!;
     }
 
     landscape_ground::add_sun_and_sky(scene, false, demo.options.sky)!;

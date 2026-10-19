@@ -41,6 +41,8 @@ const float TINT_LOW @local = 0.8f;
 const float SCALE_LOW @local = 0.8f;
 const float SCALE_HIGH @local = 1.2f;
 const uint EDIT_SIDE @local = 9;
+const uint DENSITY_SIDE @local = 8; // one density texel per layer cell
+const uint DENSITY_REACH_CELLS @local = 4; // a corner texel and its reach cover four cells along each axis
 const uint CELL_EDGE_TEXEL @local = 64; // 32 m, a cell edge: the edit reaches into the cell before it
 const uint QUADRANT_TEXELS @local = 65; // the first quadrant's side; the second takes the other 64
 const uint SMALL_SCENE_NODES @local = 47; // a ground, a layer and up to 36 cells; not 64
@@ -482,7 +484,6 @@ fn void copy_texels(
     for (uint z = rect.z; z < rect.z + rect.rows; z++) {
         for (uint x = rect.x; x < rect.x + rect.columns; x++) to[z * TEXELS + x] = from[z * TEXELS + x];
     }
-    fixture.assets.mark_texture_dirty(target);
 }
 
 fn void write_extreme_texels(Fixture* fixture, TextureId texture, TexelRect rect) @local {
@@ -490,12 +491,11 @@ fn void write_extreme_texels(Fixture* fixture, TextureId texture, TexelRect rect
     for (uint z = rect.z; z < rect.z + rect.rows; z++) {
         for (uint x = rect.x; x < rect.x + rect.columns; x++) texels[z * TEXELS + x] = (x + z) % 2 ? ushort::max : 0;
     }
-    fixture.assets.mark_texture_dirty(texture);
 }
 
 fn void stamp(Fixture* fixture, Node* ground, TexelRect rect) @local {
     write_extreme_texels(fixture, height_map_of(fixture, ground), rect);
-    terrain::mark_dirty(&fixture.scene, ground, rect);
+    terrain::mark_dirty(&fixture.scene, &fixture.assets, ground, rect)!!;
 }
 
 // A texel shapes the surface between its neighbours, so an edit reaches one texel past its rectangle.
@@ -536,7 +536,7 @@ fn void test_scatter_is_identical_in_any_cell_order() @test {
             target:  height_map_of(&fixture, flat),
             rect:    rect,
         );
-        terrain::mark_dirty(&fixture.scene, flat, rect);
+        terrain::mark_dirty(&fixture.scene, &fixture.assets, flat, rect)!!;
         update_landscape(&fixture);
     }
     assert_same_layers(&fixture, in_rows, by_quadrants);
@@ -575,19 +575,32 @@ fn void test_terrain_edit_replaces_only_the_touched_cells() @test {
     };
 }
 
-fn void test_two_refreshes_between_updates_replace_the_whole_layer() @test {
+fn void test_two_edits_between_updates_stay_local() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
     Node* ground = add_ground(&fixture, RANDOM);
     Node* layer = add_layer(&fixture, layer_desc(&fixture, ground));
 
-    stamp(&fixture, ground, { .x = 8, .z = 8, .columns = EDIT_SIDE, .rows = EDIT_SIDE });
-    update_terrain(&fixture);
-    stamp(&fixture, ground, { .x = 100, .z = 100, .columns = EDIT_SIDE, .rows = EDIT_SIDE });
-    update_terrain(&fixture);
-    foliage::update(&fixture.scene, &fixture.assets, {})!!;
-    assert_layer_on_ground(&fixture, layer, ground);
+    @pool() {
+        CellCopy[] before = copy_cells(tmem, &fixture, layer);
+        TexelRect first = { .x = 8, .z = 8, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+        TexelRect second = { .x = 20, .z = 12, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+        stamp(&fixture, ground, first);
+        update_terrain(&fixture);
+        stamp(&fixture, ground, second);
+        update_terrain(&fixture);
+        foliage::update(&fixture.scene, &fixture.assets, {})!!;
+
+        FoliageRuntime* runtime = runtime_of(&fixture, layer);
+        assert(runtime.placed_cells > 0 && runtime.placed_cells < runtime.cell_nodes);
+        foreach (usz index, copy : before) {
+            if (!cell_meets_edit(index, first) && !cell_meets_edit(index, second)) {
+                assert(cell_unchanged(&fixture, layer, copy));
+            }
+        }
+        assert_layer_on_ground(&fixture, layer, ground);
+    };
 }
 
 fn void test_slope_limit_removes_exactly_the_steep_candidates() @test {
@@ -712,6 +725,41 @@ fn void test_density_edit_rescatters_like_a_fresh_layer() @test {
             if (!copy.cell.generation && cell.generation) filled++;
         }
         assert(emptied > 0 && filled > 0);
+    };
+}
+
+fn void test_density_region_replaces_only_touched_cells() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* ground = add_ground(&fixture, RANDOM);
+
+    @pool() {
+        char[] texels = alloc::new_array(tmem, char, (sz)(DENSITY_SIDE * DENSITY_SIDE * RGBA8_BYTES));
+        texels[..] = 255;
+        TextureId density = add_density_map(&fixture, DENSITY_SIDE, texels);
+        Node* layer = add_layer(&fixture, layer_desc(&fixture, ground, density));
+        CellCopy[] before = copy_cells(tmem, &fixture, layer);
+        uint count_passes = runtime_of(&fixture, layer).count_passes;
+
+        fixture.assets.texture(density).pixels[0] = 0;
+        fixture.assets.mark_texture_region_dirty(density, 0, { .width = 1, .height = 1, .depth = 1 })!!;
+        update_landscape(&fixture);
+
+        FoliageRuntime* runtime = runtime_of(&fixture, layer);
+        assert(runtime.count_passes == count_passes + 1);
+        assert(runtime.placed_cells > 0 && runtime.placed_cells < runtime.cell_nodes);
+        uint changed;
+        foreach (usz index, copy : before) {
+            if (cell_unchanged(&fixture, layer, copy)) continue;
+
+            assert(index % runtime.cells_per_side < DENSITY_REACH_CELLS);
+            assert(index / runtime.cells_per_side < DENSITY_REACH_CELLS);
+            changed++;
+        }
+        assert(changed > 0);
+        Node* fresh = add_layer(&fixture, layer_desc(&fixture, ground, density));
+        assert_same_layers(&fixture, layer, fresh);
     };
 }
 
@@ -1467,8 +1515,7 @@ fn void test_neighbour_ring_change_replaces_only_smooth_layers_along_the_edge() 
     TexelRect inner_column = { .x = 1, .z = 0, .columns = 1, .rows = TEXELS };
     ushort* texels = (ushort*)fixture.assets.texture(height_map_of(&fixture, east)).pixels.ptr;
     for (uint row = 0; row < TEXELS; row++) texels[row * TEXELS + inner_column.x] = ushort::max;
-    fixture.assets.mark_texture_dirty(height_map_of(&fixture, east));
-    terrain::mark_dirty(&fixture.scene, east, inner_column);
+    terrain::mark_dirty(&fixture.scene, &fixture.assets, east, inner_column)!!;
     terrain::refresh_neighbour_rings(
         scene:  &fixture.scene,
         assets: &fixture.assets,

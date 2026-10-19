@@ -217,7 +217,6 @@ fn void write_random_texels(
     for (uint z = rect.z; z < rect.z + rect.rows; z++) {
         for (uint x = rect.x; x < rect.x + rect.columns; x++) texels[z * record.desc.width + x] = middle_texel(&state);
     }
-    fixture.assets.mark_texture_dirty(texture);
 }
 
 // Every chunk whose footprint meets the rectangle gets a new minimum and maximum.
@@ -229,7 +228,19 @@ fn void write_extreme_texels(Fixture* fixture, TextureId texture, TexelRect rect
             texels[z * record.desc.width + x] = (x + z) % 2 ? ushort::max : 0;
         }
     }
-    fixture.assets.mark_texture_dirty(texture);
+}
+
+fn void mark_edit(Fixture* fixture, Node* node, TexelRect rect) @local {
+    try_mark_edit(fixture, node, rect)!!;
+}
+
+fn void? try_mark_edit(Fixture* fixture, Node* node, TexelRect rect) @local {
+    return terrain::mark_dirty(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   node,
+        rect:   rect,
+    );
 }
 
 fn TextureId copy_height_map(Fixture* fixture, TextureId source) @local {
@@ -260,7 +271,7 @@ fn void test_heights_match_physics_ray_casts() @test {
             rect:    edit,
             seed:    SEED + 1,
         );
-        terrain::mark_dirty(&fixture.scene, node, edit);
+        mark_edit(&fixture, node, edit);
         update_terrain(&fixture);
         fixture.scene.get(node, PhysicsBody).mark_changed();
         fixture.physics.update(0);
@@ -343,12 +354,12 @@ fn void test_rectangle_refresh_matches_a_fresh_build() @test {
 
     TexelRect inside = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
     write_extreme_texels(&fixture, desc.height_map, inside);
-    terrain::mark_dirty(&fixture.scene, edited, inside);
+    mark_edit(&fixture, edited, inside);
     update_terrain(&fixture);
     // Texel (128, 128) is a corner of all four finest chunks.
     TexelRect shared_corner = { .x = 128, .z = 128, .columns = 1, .rows = 1 };
     write_extreme_texels(&fixture, desc.height_map, shared_corner);
-    terrain::mark_dirty(&fixture.scene, edited, shared_corner);
+    mark_edit(&fixture, edited, shared_corner);
     update_terrain(&fixture);
 
     Node* fresh = add_terrain_node(&fixture, terrain_desc(&fixture, copy_height_map(&fixture, desc.height_map)));
@@ -395,7 +406,6 @@ fn TextureId add_checker_map(Fixture* fixture, uint texels) @local {
 fn void raise_texel(Fixture* fixture, TextureId texture, uint x, uint z) @local {
     TextureAsset* record = fixture.assets.texture(texture);
     ((ushort*)record.pixels.ptr)[z * record.desc.width + x] += BUMP_TEXELS;
-    fixture.assets.mark_texture_dirty(texture);
 }
 
 fn float texel_metres(float texels) @local => texels * HEIGHT_SCALE / TEXEL_MAX;
@@ -427,7 +437,8 @@ fn void test_terrain_trace_error_bound() @test {
     Node* edited = add_terrain_node(&fixture, traced_desc(&fixture, edited_map));
     update_terrain(&fixture);
     raise_texel(&fixture, edited_map, CELL_CENTER_X, CELL_CENTER_Z);
-    terrain::mark_dirty(&fixture.scene, edited, { .x = CELL_CENTER_X, .z = CELL_CENTER_Z, .columns = 1, .rows = 1 });
+    TexelRect center = { .x = CELL_CENTER_X, .z = CELL_CENTER_Z, .columns = 1, .rows = 1 };
+    mark_edit(&fixture, edited, center);
     update_terrain(&fixture);
     assert(math::abs(fixture.scene.get(edited, TerrainRuntime).trace_error - expected) <= TRACE_ERROR_TOLERANCE);
     Node* fresh = add_terrain_node(&fixture, traced_desc(&fixture, copy_height_map(&fixture, edited_map)));
@@ -470,7 +481,7 @@ fn void test_terrain_drawn_deviation_per_level() @test {
     update_terrain(&fixture);
     raise_texel(&fixture, edited_map, LEVEL_TWO_CENTER_X, LEVEL_TWO_CENTER_Z);
     TexelRect rect = { .x = LEVEL_TWO_CENTER_X, .z = LEVEL_TWO_CENTER_Z, .columns = 1, .rows = 1 };
-    terrain::mark_dirty(&fixture.scene, edited, rect);
+    mark_edit(&fixture, edited, rect);
     update_terrain(&fixture);
     Node* fresh = add_terrain_node(&fixture, traced_desc(&fixture, copy_height_map(&fixture, edited_map)));
     TerrainRuntime* after = fixture.scene.get(edited, TerrainRuntime);
@@ -534,6 +545,7 @@ fn void test_revision_bump_without_mark_dirty_rebuilds_bounds() @test {
     update_terrain(&fixture);
 
     write_extreme_texels(&fixture, desc.height_map, { .x = 100, .z = 100, .columns = 60, .rows = 60 });
+    fixture.assets.mark_texture_dirty(desc.height_map);
     update_terrain(&fixture);
 
     Node* fresh = add_terrain_node(&fixture, terrain_desc(&fixture, copy_height_map(&fixture, desc.height_map)));
@@ -549,7 +561,7 @@ fn void test_size_changing_replacement_faults_invalid_argument() @test {
     update_terrain(&fixture);
 
     TexelRect before = { .x = 10, .z = 10, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
-    terrain::mark_dirty(&fixture.scene, node, before);
+    mark_edit(&fixture, node, before);
     TextureId smaller = add_height_map(&fixture, SMALL_TEXELS, SEED);
     TextureAsset* record = fixture.assets.texture(desc.height_map);
     char[] original = record.pixels;
@@ -718,7 +730,7 @@ fn void test_morph_ranges_follow_the_desc_the_bounds_and_a_restored_batch() @tes
     float root_diagonal = quadtree.levels[0].diagonal;
     TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
     write_extreme_texels(&fixture, desc.height_map, edit);
-    terrain::mark_dirty(&fixture.scene, node, edit);
+    mark_edit(&fixture, node, edit);
     update_terrain(&fixture);
     assert(quadtree.levels[0].diagonal > root_diagonal);
     assert(quadtree.parameter_revision != parameters && quadtree.revision == topology);
@@ -809,7 +821,7 @@ fn void test_height_edit_republishes_records_and_keeps_the_topology() @test {
 
     TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
     write_extreme_texels(&fixture, desc.height_map, edit);
-    terrain::mark_dirty(&fixture.scene, edited, edit);
+    mark_edit(&fixture, edited, edit);
     update_terrain(&fixture);
     assert(batch.revision != records && batch.quadtree.revision == topology);
 
@@ -1012,9 +1024,15 @@ fn void test_replaced_height_map_refreshes_whole_map() @test {
     TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED));
     Node* node = add_terrain_node(&fixture, desc);
     update_terrain(&fixture);
+    TerrainRuntime* runtime = fixture.scene.get(node, TerrainRuntime);
+    uint before = runtime.revision;
 
     TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
-    terrain::mark_dirty(&fixture.scene, node, edit);
+    mark_edit(&fixture, node, edit);
+    update_terrain(&fixture);
+    assert(runtime.refreshes.count == 1);
+
+    mark_edit(&fixture, node, edit);
     TextureAsset* record = fixture.assets.texture(desc.height_map);
     @pool() {
         char[] next = alloc::new_array(tmem, char, record.pixels.len);
@@ -1022,12 +1040,90 @@ fn void test_replaced_height_map_refreshes_whole_map() @test {
         fixture.assets.replace_texture(desc.height_map, record.desc, next)!!;
     };
     // A replacement may reuse the address of the pixels the runtime last read.
-    fixture.scene.get(node, TerrainRuntime).pixels = record.pixels.ptr;
+    runtime.pixels = record.pixels.ptr;
     update_terrain(&fixture);
 
-    TexelRect refreshed = fixture.scene.get(node, TerrainRuntime).last_refresh.rect;
-    assert(refreshed.x == 0 && refreshed.z == 0);
-    assert(refreshed.columns == TWO_LEVEL_TEXELS && refreshed.rows == TWO_LEVEL_TEXELS);
+    assert(runtime.refreshes.count == 0);
+    assert(@catch(terrain::refreshed_since(&fixture.scene, node, before)) == NOT_FOUND);
+}
+
+fn void test_mark_dirty_marks_the_height_map_region() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    Node* node = add_terrain_node(&fixture, desc);
+    TextureAsset* height_map = fixture.assets.texture(desc.height_map);
+    uint revision = height_map.header.revision;
+
+    TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE + 2 };
+    mark_edit(&fixture, node, edit);
+
+    assert(height_map.header.revision == revision + 1);
+    TextureRegion[1] regions;
+    assert(height_map.regions_since(revision, regions[..]) == REGIONS);
+    assert(regions[0].x == edit.x && regions[0].y == edit.z);
+    assert(regions[0].width == edit.columns && regions[0].height == edit.rows);
+}
+
+fn void test_mark_dirty_faults_for_a_removed_or_resized_height_map() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED));
+    Node* node = add_terrain_node(&fixture, desc);
+    TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+
+    TextureAsset* record = fixture.assets.texture(desc.height_map);
+    TextureAsset* smaller = fixture.assets.texture(add_height_map(&fixture, SMALL_TEXELS, SEED));
+    char[] original = record.pixels;
+    TextureDesc original_desc = record.desc;
+    record.desc = smaller.desc;
+    record.pixels = smaller.pixels;
+    uint revision = record.header.revision;
+    assert(@catch(try_mark_edit(&fixture, node, edit)) == c3d::INVALID_ARGUMENT);
+    assert(record.header.revision == revision && !fixture.scene.get(node, TerrainRuntime).has_pending);
+    record.desc = original_desc;
+    record.pixels = original;
+
+    fixture.assets.remove_texture(desc.height_map);
+    assert(@catch(try_mark_edit(&fixture, node, edit)) == c3d::INVALID_ID);
+}
+
+fn void test_refreshed_since_unions_later_refreshes_and_reaches_back() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED));
+    Node* node = add_terrain_node(&fixture, desc);
+    update_terrain(&fixture);
+    TerrainRuntime* runtime = fixture.scene.get(node, TerrainRuntime);
+    uint start = runtime.revision;
+
+    TexelRect first = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    mark_edit(&fixture, node, first);
+    update_terrain(&fixture);
+    uint after_first = runtime.revision;
+    TexelRect second = { .x = 40, .z = 30, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    mark_edit(&fixture, node, second);
+    update_terrain(&fixture);
+
+    assert(same_rect(terrain::refreshed_since(&fixture.scene, node, after_first)!!, second));
+    TexelRect both = { .x = 10, .z = 20, .columns = 39, .rows = 19 };
+    assert(same_rect(terrain::refreshed_since(&fixture.scene, node, start)!!, both));
+    assert(terrain::refreshed_since(&fixture.scene, node, runtime.revision)!!.columns == 0);
+
+    for (uint refresh = 0; refresh < terrain::REFRESH_HISTORY; refresh++) {
+        mark_edit(&fixture, node, { .x = 60 + refresh, .z = 60, .columns = 1, .rows = 1 });
+        update_terrain(&fixture);
+    }
+    assert(runtime.refreshes.count == terrain::REFRESH_HISTORY);
+    TexelRect reach = { .x = 10, .z = 20, .columns = 54, .rows = 41 };
+    assert(same_rect(terrain::refreshed_since(&fixture.scene, node, start)!!, reach));
+
+    fixture.assets.mark_texture_dirty(desc.height_map);
+    update_terrain(&fixture);
+    assert(@catch(terrain::refreshed_since(&fixture.scene, node, start)) == NOT_FOUND);
 }
 
 struct SetFixture @local {
@@ -1142,7 +1238,7 @@ fn void test_linked_tiles_hold_identical_morph_ranges() @test {
     // The flat tile now holds the tallest nodes of the set.
     TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
     write_extreme_texels(&sets.base, flat_desc.height_map, edit);
-    terrain::mark_dirty(&sets.base.scene, flat, edit);
+    mark_edit(&sets.base, flat, edit);
     update_terrain(&sets.base);
     assert(flat_ranges.levels[0].diagonal > shared);
     assert(rough_ranges.levels[0].diagonal == flat_ranges.levels[0].diagonal);
@@ -1487,7 +1583,7 @@ fn uint SetFixture.edit_and_propagate(
     ulong seed,
 ) {
     write_random_texels(&self.base, self.base.scene.get(tile, Terrain).desc.height_map, rect, seed);
-    terrain::mark_dirty(&self.base.scene, tile, rect);
+    mark_edit(&self.base, tile, rect);
     return self.propagate(tile, rect);
 }
 
