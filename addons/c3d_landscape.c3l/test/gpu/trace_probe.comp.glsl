@@ -4,7 +4,8 @@
 #include "descriptor_heap.glsl"
 #include "scene_trace.glsl"
 
-layout(local_size_x = 8, local_size_y = 8) in; // mirrored as TRACE_GROUP_SIZE in terrain_trace_acceptance.c3
+// mirrored as TRACE_GROUP_SIZE in terrain_trace_acceptance.c3 and water_acceptance.c3
+layout(local_size_x = 8, local_size_y = 8) in;
 
 layout(push_constant) uniform Push {
     uint64_t root_gpu;
@@ -31,8 +32,14 @@ struct TraceProbeResult {
 GPU_DECLARE_WRITEONLY_ARRAY_REF(TraceProbeOutput, TraceProbeResult);
 
 const float TRACE_FAR = 1.0e30;
-const uint RASTER_HIT = 1u; // mirrored as RASTER_HIT in terrain_trace_acceptance.c3
-const uint TRACE_HIT = 2u;  // mirrored as TRACE_HIT in terrain_trace_acceptance.c3
+const uint RASTER_HIT = 1u; // mirrored as RASTER_HIT in terrain_trace_acceptance.c3 and water_acceptance.c3
+const uint TRACE_HIT = 2u;  // mirrored as TRACE_HIT in terrain_trace_acceptance.c3 and water_acceptance.c3
+
+#ifdef SHADOW_CASTERS
+const uint PROBE_MASK = TRACE_MASK_SHADOW_CASTER;
+#else
+const uint PROBE_MASK = TRACE_MASK_ALL;
+#endif
 
 // Raster distance from the view's reverse-Z depth and traced distance along the same pixel-centre ray.
 void main() {
@@ -55,7 +62,7 @@ void main() {
         result.flags |= RASTER_HIT;
     }
     SceneHit hit;
-    if (trace_scene(SceneTraceRoot(root.scene), root.camera.xyz, direction, TRACE_FAR, TRACE_MASK_ALL, hit)) {
+    if (trace_scene(SceneTraceRoot(root.scene), root.camera.xyz, direction, TRACE_FAR, PROBE_MASK, hit)) {
         result.traced = hit.t;
         result.flags |= TRACE_HIT;
     }

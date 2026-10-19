@@ -8,7 +8,8 @@ existing local/absolute contracts; no simulation coordinates are shifted.
 
 The `c3d_landscape` add-on's `c3d::landscape::water` module draws water bodies. A `Water` component on a node
 is a Gerstner surface of up to four waves in the node's local XZ, drawn by the package's shader through a
-custom material the library owns. The vertex stage displaces a grid and supplies the depth and velocity forms;
+custom material the library owns. The vertex stage displaces a grid and supplies the depth and velocity forms, and a
+compute twin poses the grid for [scene traces](#scene-traces);
 the fragment stage reads the scene's colour and depth snapshots after opaque (a scene-read material, see
 [custom shaders](custom_shaders.md)), refracts and absorbs what lies behind the surface, reflects from a
 planar mirror target, else a screen-space march over the snapshot, else the environment or the frame's
@@ -128,24 +129,25 @@ references. Every rule below is a fault, not a contract: descs come from files a
 | `march_reflections` | The screen-space march where the planar sample is missing |
 | `max_mirrors` | At least 1 and at most `MAX_MIRRORS` (8): the mirror slots, one per viewing view |
 | `reflection_view_slot` | Below `material::MAX_VIEW_TEXTURES` (4): the [view texture](views.md#view-textures) the material samples |
+| `trace` | Scene traces see the displaced surface, posed every frame ([Scene traces](#scene-traces)); off by default |
 
 ## Surface geometry
 
-A built grid has `ceil(extent / cell_size)` cells per side centred on the node, positions only, two
-counter-clockwise triangles per cell facing +Y, and is shared per shape through the store key
+A built grid has `ceil(extent / cell_size)` cells per side centred on the node, a position and a +Y normal per
+vertex, two counter-clockwise triangles per cell facing +Y, and is shared per shape through the store key
 `c3d_landscape/water_grid/<extent>/<cell_size>` with both values as exact hex floats (120 m at 1.25 m is
 `c3d_landscape/water_grid/0x1.ep+6/0x1.4p+0`). A grid stays in the store for the store's lifetime when no body
 uses it any more. Past 254 cells per side (65,535 vertices) the renderer switches to 32-bit indices: 120 m at
-1.25 m is 9,409 vertices and 55,296 16-bit indices.
+1.25 m is 9,409 vertices and 55,296 16-bit indices. The normals stream is not read by the drawn surface, which
+computes its own; it carries the posed normals of a [traced](#scene-traces) body.
 
 Application geometry rests at y = 0; its topology and UVs are its own, and it follows the aliasing rule
 (shortest wavelength at least twice its edge length) by itself. Either way the stage writes `uv0` and `uv1` as
 the rest position in metres.
 
 `Mesh.local_bounds` is the rest bounds grown by the total amplitude in y and by the sum of the waves'
-horizontal crest shifts in x and z, always as a bounds override. The water's custom vertex stage keeps it out of every
-trace
-([scene trace](scene_trace.md)), whatever `trace` says. The mesh casts no shadow and receives shadows.
+horizontal crest shifts in x and z, always as a bounds override. The mesh casts no shadow, receives shadows and
+traces only with `WaterDesc.trace` ([Scene traces](#scene-traces)).
 
 ## Waves
 
@@ -342,6 +344,37 @@ renderer.finish_view(view)!;
 - Set the viewing camera's `Camera.aspect` to the viewer's extent (the example's `follow_viewports`), so the
   mirror's projection at its scaled extent equals the viewer's.
 
+## Scene traces
+
+`WaterDesc.trace` puts the displaced grid in [scene traces](scene_trace.md): ray-traced reflections and ambient
+occlusion, path-traced views, probe updates and global illumination then see the water surface, not the bed under
+it. `add_water` and `set_desc` write it to `Mesh.trace`. The mesh is the drawn one, not a
+[trace proxy](scene_trace.md#trace-proxies): `Mesh.trace_only` stays false, so the proxy skip height does not
+apply and the row carries `TRACE_MASK_ALL`.
+
+- **The stage.** The water shader carries a `trace_pose.single` form, `water_trace_pose.comp.glsl`
+  ([trace pose](custom_shaders.md#trace-pose)). It runs the vertex stage's `water_surface_point` over each rest
+  vertex at `TraceCustomPoseRoot.time`, the frame time narrowed to a float like `frame.jitter_time.z`, so the traced
+  surface is the one drawn in the same frame. It writes the position and, when the geometry has a normals stream, the
+  normal; the tangent keeps `w = 1`, as the vertex stage writes it. A built grid carries a normals stream; application
+  geometry without one traces with face normals.
+- **Every frame.** The stage reads the time (`reads_time`), so a frame whose time moved poses the grid again and
+  refits it: the software kind refits the tree and the hardware kind updates the bottom level in place, after the
+  first frame builds it. A frame at an unchanged time poses nothing.
+- **Cost.** One posed slot, one dispatch of one thread per vertex and one refit or bottom-level update per traced body
+  each frame. The posed streams hold 24 B per vertex (position and normal): 226 kB for the 120 m lake at the default
+  cell size (9,409 vertices) and 6.3 MB at the largest built grid (263,169). The software kind adds a copy of the
+  tree's nodes (about 328 kB for the lake) and the hardware kind a bottom level; `Stats.trace_posed_bytes` totals
+  the slot. The cost follows the vertex count, so `cell_size` is its lever. A body that finds no posed slot is left
+  out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace.md#custom-trace-poses)).
+- **Shadows.** The mesh casts no shadow, and a trace row carries `TRACE_MASK_SHADOW_CASTER` only for a mesh with
+  `cast_shadow`: traced sun shadows ignore the water, as the shadow atlas does, and the bed under a lake is lit alike in
+  both. Traced shadows on the water work as before.
+- **Hits.** A hit on the water shades as any custom material hit does, grey under Lambert lighting; foam, refraction,
+  reflection and ripples do not run there.
+- **Bounds.** The pose stays inside `Mesh.local_bounds`, the rest bounds grown by the total amplitude and the crest
+  shift ([Surface geometry](#surface-geometry)).
+
 ## Buoyancy
 
 The physics add-on's `Buoyancy` component samples a fluid the application installs per world
@@ -386,10 +419,10 @@ between removing and adding a water body on the same node. Destroy the scene bef
 
 ## Limits
 
-- **Not traced.** Its custom vertex stage keeps water out of every trace: under ray-traced reflections and in
-  path-traced views the water surface is absent, not merely unreflected (the lake bed shows through, reflections
-  show no water); probe updates see through it; traced shadows ignore it (it casts none). Traced shadows on the
-  water work.
+- **Tracing is opt-in.** Without `trace` the water is absent from every trace: under ray-traced reflections and in
+  path-traced views the lake bed shows through and reflections show no water; probe updates see through it. With
+  it the water hits shade grey, and its cost is a pose and a refit per frame ([Scene traces](#scene-traces)).
+  Traced shadows ignore the water either way (it casts none); traced shadows on the water work.
 - **One mirror per body and viewing view**, at most `MAX_MIRRORS` (8) slots on a body; the viewing camera is a
   root node. One view reflects at most `MAX_VIEW_TEXTURES` (4) bodies. The first mirror of a viewing view records
   the frame's only shadow atlas, fitted to the viewing camera, and the rest bind it
@@ -467,7 +500,8 @@ the crates' bob needs to decay.
 
 It prints the header, `sample_ns` (100,000 `sample_surface` calls before the segments), and per segment the
 mirror view's summed passes, shadow atlas and shadow share of the frame (planar, still and orbit), the main
-view's passes with `--gpu-timings`, the frame time, `shadow_sets segment=<name> recorded=<n> shared=<n>` (the
+view's passes with `--gpu-timings` (with `--traced`, also the frame's `TRACE_POSE` and `ACCELERATION_BUILD`
+passes as `gpu_ms view=frame`), the frame time, `shadow_sets segment=<name> recorded=<n> shared=<n>` (the
 last frame's shadow sets), `buoyancy_us` (the physics step time per fixed step in
 `waves`, at the crate count) and the still segment's upload bytes. Two gates exit 1 when they fail:
 
@@ -480,7 +514,8 @@ Switches: `--split`, `--gpu-timings` (build with `python3 scripts/build.py --tar
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--validation`, `--shading
 forward|deferred`, `--size 1025|2049|4097`, `--reflection planar|march|env` (march: no target; env: no target
 and the march off), `--mirror-scale 0.5|1`, `--crates 16|256`, `--ssgi` (SSGI on the main view),
-`--traced` (the main view path-traced: the water is absent), `--capture` (a second view on a 384² target whose
+`--traced` (the main view path-traced, with the water traced: a grey surface that follows the waves; without
+`trace` it is absent), `--capture` (a second view on a 384² target whose
 camera leaves out the water's layer and has no mirror), `--ripples on|off`, `--width W --height H` (2560 × 1440 by default in
 benchmark mode) and `--sky` (an [atmosphere](sky.md) on the sun, which replaces the generated sky, and a haze
 pooling in the valleys, off by default; with `--gpu-timings` the main and mirror views print `SKY_VIEW`,

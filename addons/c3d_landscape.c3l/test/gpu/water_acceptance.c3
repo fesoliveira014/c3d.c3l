@@ -59,6 +59,19 @@ const uint VELOCITY_ROW_SAMPLES @local = 9;
 const float VELOCITY_TOLERANCE @local = 0.01f; // encoded units, about two and a half 8-bit steps
 const float MIN_VELOCITY_ENCODED @local = 0.03f; // every sample moves well above the tolerance
 const uint BISECTION_STEPS @local = 60;
+const char[*] TRACE_PROBE_SOURCE @local = $embed("trace_probe.comp.glsl");
+const uint TRACE_GROUP_SIZE @local = 8; // mirrored as local_size_x and _y in trace_probe.comp.glsl
+const uint RASTER_HIT @local = 1; // mirrored as RASTER_HIT in trace_probe.comp.glsl
+const uint TRACE_HIT @local = 2; // mirrored as TRACE_HIT in trace_probe.comp.glsl
+const uint PROBE_SIZE @local = 64;
+const usz PROBE_PIXELS @local = PROBE_SIZE * PROBE_SIZE;
+const usz PROBE_RESULT_BYTES @local = PROBE_PIXELS * TraceProbeResult::size;
+const usz COVERAGE_MINIMUM @local = PROBE_PIXELS * 9 / 10; // the whole view looks at water
+const float PROBE_CELL_SIZE @local = 0.2f; // ten cells to the shortest choppy wavelength
+const double[3] PROBE_TIMES @local = { 0.5, 1.0, 1.5 }; // seconds; half a second moves wave 0 by a tenth of a cycle
+const double SHADOW_PROBE_TIME @local = 2;
+const float MOVE_MINIMUM @local = 0.05f; // metres: wave 0 moves the surface by up to 0.22 m in half a second
+const bool[2] TRACE_KINDS @local = { false, true }; // ray_queries: software walk, then ray queries
 
 const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with default_water_desc, the example's waves
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
@@ -90,6 +103,42 @@ struct ReadbackOutput @local {
     Vec4[READBACK_POINTS] texels;
 }
 
+struct TraceProbeRoot @local {
+    Mat4f           inv_view_proj;
+    Vec4f           camera;
+    gpu::GpuAddress scene;
+    gpu::GpuAddress output_address;
+    uint            size;
+    uint            _pad0;
+    uint            _pad1;
+    uint            _pad2;
+}
+$assert TraceProbeRoot::size == 112;
+
+struct TraceProbeResult @local {
+    float raster; // distance to the drawn surface from the view's depth
+    float traced; // distance to the traced surface
+    uint  flags;
+    uint  padding;
+}
+$assert TraceProbeResult::size == 16;
+
+struct TraceProbe @local {
+    ViewId             view;
+    Node*              camera;
+    BufferId           output;
+    gpu::MappedGpuSpan readback;
+    ComputeShaderId    shader;
+    ComputeShaderId    shadow_shader; // the same rays with the shadow-caster mask
+    TraceKind          kind;
+}
+
+struct TraceAgreement @local {
+    usz   covered;  // pixels where the drawn and the traced surface both answer
+    usz   mismatch; // pixels where only one does
+    float worst;    // largest distance between the two over covered pixels, in metres
+}
+
 struct Fixture @local {
     AssetStore         assets;
     Scene              scene;
@@ -101,7 +150,7 @@ struct Fixture @local {
     gpu::MappedGpuSpan readback;
 }
 
-fn void? create_fixture(Fixture* fixture) @local {
+fn void? create_fixture(Fixture* fixture, bool ray_queries = false) @local {
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
     fixture.scene.background = { .kind = COLOR, .color = { 0, 0, 0, 1 } };
@@ -131,7 +180,7 @@ fn void? create_fixture(Fixture* fixture) @local {
     fixture.renderer = render::create_renderer(
         allocator: mem,
         assets:    &fixture.assets,
-        desc:      { .validation = true, .application_name = "water_acceptance" },
+        desc:      { .validation = true, .application_name = "water_acceptance", .ray_queries = ray_queries },
     )!;
     fixture.output = fixture.renderer.create_buffer({ .size = ReadbackOutput::size, .debug_name = "water_readback" })!;
     gpu::AllocationDesc readback_desc = {
@@ -904,4 +953,184 @@ fn void test_velocity_form_follows_the_wave_motion() @test {
     }
     assert(moving >= VELOCITY_ROW_SAMPLES / 2, "only %d samples move", moving);
     check_validation(&fixture.renderer);
+}
+
+fn ComputeShaderId? add_probe_shader(Fixture* fixture, String[] defines) @local {
+    char[] spirv = compile::compile_glsl(
+        allocator: mem,
+        source:    (String)TRACE_PROBE_SOURCE[..],
+        stage:     ShaderStage.COMPUTE,
+        defines:   defines,
+    )!;
+    defer alloc::free(mem, spirv.ptr);
+
+    ComputeShaderDesc desc = { .compute = spirv };
+    return fixture.assets.add_compute_shader(&desc);
+}
+
+fn TraceProbe? create_trace_probe(Fixture* fixture, Node* camera, bool ray_queries) @local {
+    Renderer* renderer = &fixture.renderer;
+    String kind = ray_queries ? "SCENE_TRACE_RAY_QUERY" : "SCENE_TRACE_BVH";
+    String[1] all_rays = { kind };
+    String[2] shadow_rays = { kind, "SHADOW_CASTERS" };
+    gpu::AllocationDesc readback_desc = {
+        .size         = PROBE_RESULT_BYTES,
+        .alignment    = 16,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access       = { .graphics },
+        .debug_name   = "water_trace_probe_host",
+    };
+
+    return {
+        .view          = add_view(fixture, PROBE_SIZE),
+        .camera        = camera,
+        .output        = renderer.create_buffer({ .size = PROBE_RESULT_BYTES, .debug_name = "water_trace_probe" })!,
+        .readback      = gpu::allocate_mapped_memory(&renderer.device, &readback_desc)!,
+        .shader        = add_probe_shader(fixture, all_rays[..])!,
+        .shadow_shader = add_probe_shader(fixture, shadow_rays[..])!,
+        .kind          = ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE,
+    };
+}
+
+fn void destroy_trace_probe(Fixture* fixture, TraceProbe* probe) @local {
+    render::wait_frames(&fixture.renderer)!!;
+    gpu::GpuAllocation allocation = probe.readback.span.allocation();
+    gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
+}
+
+fn void? record_probe(
+    Fixture* fixture,
+    TraceProbe* probe,
+    gpu::GpuAddress trace_scene,
+    bool shadow_rays,
+) @local {
+    Renderer* renderer = &fixture.renderer;
+    CameraMatrices matrices = matrices_of(fixture, probe.camera, PROBE_SIZE);
+    TraceProbeRoot root = {
+        .inv_view_proj  = bitcast(matrices.inv_view_proj, Mat4f),
+        .camera         = { matrices.position.x, matrices.position.y, matrices.position.z, 1 },
+        .scene          = trace_scene,
+        .output_address = renderer.buffer_address(probe.output),
+        .size           = PROBE_SIZE,
+    };
+
+    BufferId[1] writes = { probe.output };
+    DispatchTexture[1] textures = { render::read_view_depth(probe.view, asset::SAMPLER_NEAREST) };
+    uint groups = PROBE_SIZE / TRACE_GROUP_SIZE;
+    renderer.dispatch({
+        .shader   = shadow_rays ? probe.shadow_shader : probe.shader,
+        .root     = ((char*)&root)[:TraceProbeRoot::size],
+        .groups   = { groups, groups, 1 },
+        .writes   = writes[..],
+        .textures = textures[..],
+    })!;
+
+    gpu::Barrier written = { .before = { .all }, .after = { .transfer } };
+    gpu::cmd_barrier(&renderer.commands, &written)!;
+    gpu::BufferCopyDesc copy = {
+        .src = gpu::get_allocation_span(&renderer.device, renderer.buffers.get(probe.output).allocation)!,
+        .dst = probe.readback.span,
+    };
+    gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
+    gpu::Barrier host_read = { .before = { .transfer }, .after = { .host } };
+    return gpu::cmd_barrier(&renderer.commands, &host_read);
+}
+
+// The view draws the water at the time, then one scene trace answers the pixel rays of the same frame.
+fn void? trace_frame(
+    Fixture* fixture,
+    TraceProbe* probe,
+    double time,
+    bool shadow_rays = false,
+) @local {
+    Renderer* renderer = &fixture.renderer;
+    update_water(fixture, time);
+
+    renderer.begin_frame({ .time = time, .delta = (float)VELOCITY_STEP })!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(&fixture.scene, probe.camera, probe.view)!;
+    gpu::GpuAddress trace_scene = renderer.prepare_scene_trace(&fixture.scene, probe.kind)!;
+    record_probe(
+        fixture:     fixture,
+        probe:       probe,
+        trace_scene: trace_scene,
+        shadow_rays: shadow_rays,
+    )!;
+    renderer.finish_view(probe.view)!;
+    renderer.end_frame()!;
+    return render::wait_frames(renderer);
+}
+
+fn TraceProbeResult[] read_probe(Fixture* fixture, TraceProbe* probe) @local {
+    gpu::invalidate_mapped_span(&fixture.renderer.device, probe.readback.span)!!;
+    return ((TraceProbeResult*)probe.readback.bytes.ptr)[:PROBE_PIXELS];
+}
+
+fn TraceAgreement trace_agreement(Fixture* fixture, TraceProbe* probe) @local {
+    TraceAgreement agreement;
+    foreach (&result : read_probe(fixture, probe)) {
+        bool raster = (result.flags & RASTER_HIT) != 0;
+        bool traced = (result.flags & TRACE_HIT) != 0;
+        if (raster != traced) {
+            agreement.mismatch++;
+        } else if (raster) {
+            agreement.covered++;
+            agreement.worst = math::max(agreement.worst, math::abs(result.traced - result.raster));
+        }
+    }
+    return agreement;
+}
+
+// The largest change of a pixel's traced distance since the distances taken last; stores the new ones.
+fn float follow_distances(Fixture* fixture, TraceProbe* probe, float[] distances) @local {
+    float largest;
+    foreach (index, &result : read_probe(fixture, probe)) {
+        largest = math::max(largest, math::abs(result.traced - distances[index]));
+        distances[index] = result.traced;
+    }
+    return largest;
+}
+
+fn void test_traced_water_agrees_with_the_drawn_surface_and_follows_the_waves() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(&fixture, ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        Renderer* renderer = &fixture.renderer;
+
+        WaterDesc desc = surface_desc(CHOPPY_WAVES[..], TWIN_EXTENT, PROBE_CELL_SIZE);
+        desc.trace = true;
+        add_water_node(&fixture, desc);
+        Node* camera_node = add_camera_node(
+            fixture:     &fixture,
+            fov_degrees: TWIN_FOV_DEGREES,
+            position:    TWIN_CAMERA_POSITION,
+            forward:     { 0, -1, 0 },
+            up:          { 0, 0, -1 },
+        );
+        TraceProbe probe = create_trace_probe(&fixture, camera_node, ray_queries)!!;
+        defer destroy_trace_probe(&fixture, &probe);
+
+        float[PROBE_PIXELS] distances;
+        foreach (frame, time : PROBE_TIMES) {
+            bool first = frame == 0;
+            trace_frame(&fixture, &probe, time)!!;
+            assert(renderer.stats.trace_posed_instances == 1 && renderer.stats.trace_deform_overflow == 0);
+            assert(renderer.stats.trace_skipped == 0 && renderer.stats.shader_rejections == 0);
+            assert(renderer.stats.trace_poses == 1 && renderer.stats.trace_refits == (ray_queries ? 0 : 1));
+            assert(renderer.stats.blas_builds == (ray_queries && first ? 1 : 0));
+            assert(renderer.stats.blas_updates == (ray_queries && !first ? 1 : 0));
+
+            TraceAgreement agreement = trace_agreement(&fixture, &probe);
+            assert(agreement.covered >= COVERAGE_MINIMUM && agreement.mismatch == 0);
+            assert(agreement.worst <= SURFACE_TOLERANCE, "worst %f at %f s", agreement.worst, time);
+            float change = follow_distances(&fixture, &probe, distances[..]);
+            assert(first || change >= MOVE_MINIMUM, "the traced surface moved %f m between frames", change);
+        }
+
+        trace_frame(&fixture, &probe, SHADOW_PROBE_TIME, shadow_rays: true)!!;
+        TraceAgreement shadowed = trace_agreement(&fixture, &probe);
+        assert(shadowed.covered == 0 && shadowed.mismatch >= COVERAGE_MINIMUM, "the water cast a traced shadow");
+        check_validation(renderer);
+    }
 }

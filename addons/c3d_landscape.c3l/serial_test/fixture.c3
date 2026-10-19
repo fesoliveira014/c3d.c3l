@@ -215,6 +215,7 @@ fn void create_fixture(
     water_desc.march_reflections = false;
     water_desc.max_mirrors = 2;
     water_desc.reflection_view_slot = 2;
+    water_desc.trace = true;
     water::attach_water(
         scene: &fixture.source,
         assets: &fixture.assets,
