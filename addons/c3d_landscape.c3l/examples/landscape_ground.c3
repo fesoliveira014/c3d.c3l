@@ -16,6 +16,9 @@ const uint[3] MAP_SIZES = { 1025, 2049, 4097 }; // four, five and six levels
 <* Height-map size when none is chosen, in texels per side. *>
 const uint DEFAULT_MAP_SIZE = 2049; // 2 km across at 1 m cells: 256 finest chunks
 
+<* Trace-grid level of a traced ground. *>
+const uint TRACE_LEVEL = 2; // four-texel grid cells: 257 vertices a side at 1025 texels
+
 <* Metres between height-map texels of the ground. *>
 const float CELL_SIZE = 1;
 
@@ -392,8 +395,10 @@ fn bool is_map_size(uint size) {
     return false;
 }
 
-fn TerrainDesc? ground_desc(AssetStore* assets, uint layers, float lod_threshold) @local {
+fn TerrainDesc? ground_desc(AssetStore* assets, uint layers, float lod_threshold, bool trace) @local {
     TerrainDesc desc = terrain::default_terrain_desc();
+    desc.trace = trace;
+    desc.trace_level = TRACE_LEVEL;
     for (uint index = 0; index < layers; index++) {
         desc.layers[index] = add_layer(assets, LAYER_LOOKS[index], index)!;
     }
@@ -410,6 +415,7 @@ fn TerrainDesc? ground_desc(AssetStore* assets, uint layers, float lod_threshold
  @param size : "Height-map texels per side."
  @param layers : "Material layers generated, grass first."
  @param lod_threshold : "Chunk split threshold in output pixels."
+ @param trace : "Scene traces see the terrain through its trace grid."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
  @require is_map_size(size)
  @require layers > 0 && layers <= LAYER_COUNT
@@ -420,8 +426,9 @@ fn Ground? add_ground(
     uint size,
     uint layers,
     float lod_threshold,
+    bool trace = false,
 ) {
-    TerrainDesc desc = ground_desc(assets, layers, lod_threshold)!;
+    TerrainDesc desc = ground_desc(assets, layers, lod_threshold, trace)!;
     desc.height_map = add_height_map(assets, size)!;
     TextureAsset* heights = assets.texture(desc.height_map);
     desc.control_map = add_control_map(
@@ -480,6 +487,7 @@ fn TextureId? add_height_tile(
  @param size : "Height-map texels per side of the whole landscape."
  @param layers : "Material layers generated, grass first."
  @param lod_threshold : "Chunk split threshold in output pixels."
+ @param trace : "Scene traces see every tile through its trace grid."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
  @require is_map_size(size)
  @require layers > 0 && layers <= LAYER_COUNT
@@ -490,8 +498,9 @@ fn Ground? add_ground_tiles(
     uint size,
     uint layers,
     float lod_threshold,
+    bool trace = false,
 ) {
-    TerrainDesc desc = ground_desc(assets, layers, lod_threshold)!;
+    TerrainDesc desc = ground_desc(assets, layers, lod_threshold, trace)!;
     TextureId whole = add_height_map(assets, size)!;
     defer assets.remove_texture(whole);
     ushort[] whole_heights = ((ushort*)assets.texture(whole).pixels.ptr)[:(usz)size * size];

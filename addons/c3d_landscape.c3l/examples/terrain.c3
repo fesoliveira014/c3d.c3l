@@ -249,6 +249,7 @@ fn Demo? build_demo(
             size:          options.size,
             layers:        options.layers,
             lod_threshold: options.lod_threshold,
+            trace:         options.traced_shadows,
         )!;
     } else {
         ground = landscape_ground::add_ground(
@@ -257,6 +258,7 @@ fn Demo? build_demo(
             size:          options.size,
             layers:        options.layers,
             lod_threshold: options.lod_threshold,
+            trace:         options.traced_shadows,
         )!;
     }
     ground.node.visible = !options.hide_terrain;
