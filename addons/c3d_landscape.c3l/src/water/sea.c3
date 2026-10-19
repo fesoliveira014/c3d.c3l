@@ -43,7 +43,7 @@ struct SeaBlend {
 // One wave of the table, relative to the sea's peak wave.
 struct SeaBand @private {
     float wavelength_share;
-    float amplitude_share;   // of the significant height; the squares sum to 1/8, the share four waves carry
+    float amplitude_share;   // of the significant height; the squares sum to about 1/8, the share four waves carry
     float spread_degrees;    // off the wind
 }
 

@@ -266,7 +266,7 @@ target; the blend is not saved, so a loaded body starts at its target.
 | 2 | 0.25 × peak | 0.12 × height | −30° |
 | 3 | 0.125 × peak | 0.08 × height | +45° |
 
-The squares of the amplitude shares sum to 1/8, the share four sine waves carry of a sea of that height. Each wave
+The squares of the amplitude shares sum to 0.116, near the 1/8 four sine waves carry of a sea of that height. Each wave
 runs at the deep-water speed `√(g λ / 2π)` and has the steepness that makes its crest shift twice its amplitude, the
 ratio of the default calm waves. Wavelengths floor at two cells of a built grid, else at 1 m, so the written target is
 always a valid desc; a calm wind therefore gives waves of the grid's shortest length and almost no height. Lengths
