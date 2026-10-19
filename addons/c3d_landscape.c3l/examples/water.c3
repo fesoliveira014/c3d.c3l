@@ -68,6 +68,9 @@ const float POOL_EXTENT @local = 60; // metres along each side; 49 x 49 vertices
 const float POOL_BASIN_RADIUS @local = 27; // metres; inside the pool's square
 const float POOL_SEARCH_DISTANCE @local = 110; // metres between the pool's and the lake's centres at least
 const float POOL_LEVEL_GAP @local = 3; // metres under the lake's water at least; the lake's grass line clears the pool
+const float OCEAN_EXTENT @local = 20000; // metres: 256 chunks of 80 m, 87,381 nodes; reaches past the far plane
+const float OCEAN_DEPTH @local = 200; // metres below the sea: past the deepest ground under it
+const float OCEAN_BED_CLEARANCE @local = 12; // metres between the sea and the highest ground under it
 const float BASIN_DEPTH @local = 6; // metres of water over the bed at the centre
 const float SHORE_CLEARANCE @local = 0.3f; // metres above the water under which no grass or tree grows
 
@@ -212,6 +215,7 @@ struct Options @local {
     bool        capture;
     bool        ripples;
     bool        sea_state;
+    bool        ocean;
     float       wind_speed;
     String      shot;
     uint        width;
@@ -590,6 +594,11 @@ fn void? add_body(
     uint index = demo.body_count;
     WaterDesc desc = water::default_water_desc();
     desc.extent = extent;
+    if (demo.options.ocean) {
+        desc.mode = OCEAN;
+        desc.depth = OCEAN_DEPTH;
+        desc.wave_count = 0; // flat until the sea state: the lake's 3.5 m wave is under an ocean's four-cell floor
+    }
     desc.ripples = demo.options.ripples ? demo.ripples : (MaterialId){};
     desc.foam = demo.foam;
     desc.march_reflections = demo.options.reflection != Reflection.ENV;
@@ -597,7 +606,7 @@ fn void? add_body(
     desc.reflection_view_slot = index;
     desc.trace = demo.options.traced;
 
-    Node* node = scene.add_node(name: index == 0 ? "lake" : "pool")!;
+    Node* node = scene.add_node(name: demo.options.ocean ? "sea" : (index == 0 ? "lake" : "pool"))!;
     node.local.position = { site.x, level, site.y };
     node.layers = WATER_LAYER;
     scene.update_world();
@@ -878,17 +887,9 @@ fn void? place_second_viewer(Demo* demo) @local {
     );
 }
 
-fn void? build_demo(Demo* demo) @local {
+fn void? add_lake_scene(Demo* demo) @local {
     Scene* scene = demo.scene;
     AssetStore* assets = demo.assets;
-    demo.viewer_count = demo.options.split ? 2 : 1;
-    demo.ground = landscape_ground::add_ground(
-        scene:         scene,
-        assets:        assets,
-        size:          demo.options.size,
-        layers:        landscape_ground::LAYER_COUNT,
-        lod_threshold: terrain::DEFAULT_LOD_THRESHOLD,
-    )!;
     HeightView view = terrain::height_view(scene, assets, demo.ground.node.id)!;
     Vec2 site = find_site(
         view:          &view,
@@ -973,6 +974,50 @@ fn void? build_demo(Demo* demo) @local {
             extent: POOL_EXTENT,
         )!;
     }
+}
+
+// The ground sinks under the sea, so the water reaches the horizon over a bed no one stands on.
+fn void? add_ocean_scene(Demo* demo) @local {
+    Scene* scene = demo.scene;
+    AssetStore* assets = demo.assets;
+    TerrainHeightRange range = terrain::height_range(scene, demo.ground.node.id)!;
+    demo.ground.node.local.position.y -= range.maximum + OCEAN_BED_CLEARANCE;
+    scene.update_world();
+
+    landscape_ground::add_sun_and_sky(scene, false, demo.options.sky)!;
+    EnvironmentId sky = add_sky(assets)!;
+    scene.environment = sky;
+    scene.background = scene::BACKGROUND_DEFAULT;
+    scene.background.kind = BackgroundKind.ENVIRONMENT;
+    scene.background.environment = sky;
+    add_terrain_collider(scene, demo.physics, demo.ground.node)!;
+
+    demo.ripples = add_ripples(assets)!;
+    demo.foam = add_foam(assets)!;
+    add_body(
+        demo:   demo,
+        site:   { demo.ground.extent / 2, demo.ground.extent / 2 },
+        level:  0,
+        extent: OCEAN_EXTENT,
+    )!;
+}
+
+fn void? build_demo(Demo* demo) @local {
+    Scene* scene = demo.scene;
+    AssetStore* assets = demo.assets;
+    demo.viewer_count = demo.options.split ? 2 : 1;
+    demo.ground = landscape_ground::add_ground(
+        scene:         scene,
+        assets:        assets,
+        size:          demo.options.size,
+        layers:        landscape_ground::LAYER_COUNT,
+        lod_threshold: terrain::DEFAULT_LOD_THRESHOLD,
+    )!;
+    if (demo.options.ocean) {
+        add_ocean_scene(demo)!;
+    } else {
+        add_lake_scene(demo)!;
+    }
 
     foreach (index, &viewer : demo.viewers[:demo.viewer_count]) {
         viewer.camera_node = scene.add_camera(
@@ -1030,6 +1075,17 @@ fn void? place_mirrors(Demo* demo) @local {
     }
 }
 
+// The sea follows the viewer in snap steps, so no level's vertices slide under the waves.
+fn void follow_ocean(Demo* demo) @local {
+    if (!demo.options.ocean) return;
+
+    Body* sea = &demo.bodies[0];
+    float step = water::ocean_snap_step(&sea.desc);
+    Vec3 eye = demo.viewers[0].camera_node.local.position;
+    sea.node.local.position.x = math::round(eye.x / step) * step;
+    sea.node.local.position.z = math::round(eye.z / step) * step;
+}
+
 // The frame order of docs/water.md, after the cameras moved and before begin_frame.
 fn double? step_scene(
     Demo* demo,
@@ -1039,6 +1095,7 @@ fn double? step_scene(
     float delta,
 ) @local {
     Scene* scene = demo.scene;
+    follow_ocean(demo);
     scene.update_world();
     terrain::update(scene, demo.assets)!;
     foliage::update(scene, demo.assets, wind)!;
@@ -1184,6 +1241,7 @@ fn Options? parse_options(String[] args) @local {
                     default: return c3d::INVALID_ARGUMENT~;
                 }
             case "--sea-state": options.sea_state = true;
+            case "--ocean": options.ocean = true;
             case "--wind":
                 options.wind_speed = option_value(args, &index)!.to_float()!;
                 if (!(options.wind_speed >= 0 && options.wind_speed <= MAX_WIND_SPEED)) return c3d::INVALID_ARGUMENT~;
@@ -1196,6 +1254,11 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
+    if (options.ocean && (options.split || options.traced)) return c3d::INVALID_ARGUMENT~;
+    if (options.ocean) {
+        options.sea_state = true;
+        options.crates = 0;
+    }
     if (options.benchmark && options.current != (Vec3){}) return c3d::INVALID_ARGUMENT~;
     if (options.shot.len && options.benchmark) return c3d::INVALID_ARGUMENT~;
     bool offscreen = options.benchmark || options.shot.len;
@@ -1240,13 +1303,15 @@ fn void? water_panel(
             v_min: 0,
             v_max: MAX_WIND_SPEED,
         );
-        imgui::separator_text("Crates");
-        imgui::text(
-            "%u crates, mean submerged fraction %.3f (expected %.2f)",
-            (uint)demo.crates.len,
-            mean_submerged_fraction(demo),
-            CRATE_DENSITY / physics::DEFAULT_FLUID_DENSITY,
-        );
+        if (demo.crates.len) {
+            imgui::separator_text("Crates");
+            imgui::text(
+                "%u crates, mean submerged fraction %.3f (expected %.2f)",
+                (uint)demo.crates.len,
+                mean_submerged_fraction(demo),
+                CRATE_DENSITY / physics::DEFAULT_FLUID_DENSITY,
+            );
+        }
         imgui::text("physics.update %.1f us per step", physics_us);
         imgui::text("Scene snapshots %u, upload %u bytes", renderer.stats.scene_snapshots, renderer.stats.upload_bytes);
     }
@@ -1797,9 +1862,11 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
         result.settle_worst,
         expected,
     );
-    bool density_gate = result.settle_count > 0 && math::abs(result.settle_worst - expected) <= GATE_TOLERANCE;
+    bool crated = demo.crates.len > 0;
+    bool density_gate = !crated
+      || (result.settle_count > 0 && math::abs(result.settle_worst - expected) <= GATE_TOLERANCE);
     io::printfn("gate steady_uploads %s", steady_gate ? "pass" : "fail");
-    io::printfn("gate crates_at_density_line %s", density_gate ? "pass" : "fail");
+    io::printfn("gate crates_at_density_line %s", !crated ? "skipped: no crates" : (density_gate ? "pass" : "fail"));
     return steady_gate && density_gate;
 }
 
@@ -1813,7 +1880,7 @@ fn String reflection_name(Reflection reflection) @local {
 
 fn void print_header(Options options) @local {
     io::printfn(
-        "# water size=%d shading=%s reflection=%s mirror_scale=%g crates=%d ripples=%s foliage=both ssgi=%s "
+        "# water size=%d shading=%s reflection=%s mirror_scale=%g crates=%d ripples=%s foliage=%s ssgi=%s "
           "extent=%dx%d frames=%d sky=%s volumetric_fog=%s split=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
@@ -1821,6 +1888,7 @@ fn void print_header(Options options) @local {
         options.mirror_scale,
         options.crates,
         options.ripples ? "on" : "off",
+        options.ocean ? "none" : "both",
         options.ssgi ? "on" : "off",
         options.width,
         options.height,
@@ -2008,7 +2076,7 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
               "[--current X,Z] [--ssgi] [--traced] [--capture] [--split] [--ripples on|off] [--width W] [--height H] "
-              "[--sky] [--volumetric-fog] [--sea-state] [--wind SPEED] [--shot FILE.png].");
+              "[--sky] [--volumetric-fog] [--sea-state] [--ocean] [--wind SPEED] [--shot FILE.png].");
         }
         return 1;
     }

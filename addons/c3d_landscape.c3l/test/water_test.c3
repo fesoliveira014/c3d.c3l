@@ -45,6 +45,19 @@ const Vec2 FETCH_WIND @local = { 14, 0 }; // metres per second along world x
 const Vec2 LIGHT_WIND @local = { 1, 0 }; // metres per second: a fully developed sea at 2 km
 const float FULLY_DEVELOPED_HEIGHT @local = 0.21f; // g Hs / U^2 of a sea that has stopped growing
 const float GRAVITY @local = 9.81f;
+const float OCEAN_CELL_SIZE @local = 0.5f; // metres: 32 m chunks; the finest level passes waves of 2 m and more
+const float OCEAN_EXTENT @local = 256; // eight chunks per side: four levels
+const float ANCHOR_TOLERANCE @local = 0.0005f; // metres: float rounding of two local frames' positions and phases
+const float ANCHOR_CONTRAST @local = 0.02f; // metres: node-local waves of two bodies differ at least this much here
+const Vec3 FIRST_OCEAN @local = { 10, 0, 20 };
+const Vec3 SECOND_OCEAN @local = { -37, 0, 51 };
+const Vec3 SHARED_POINT @local = { 5, 0, 30 }; // inside the 128 m reach of both oceans
+const double ANCHOR_TIME @local = 3.7;
+const Vec3 OCEAN_SNAP @local = { 24, 0, -16 }; // metres a node follows the view by: 28.8 m
+const uint OCEAN_MOVE_FRAME @local = 40; // blend frame on which the node moves
+const float OCEAN_REACH @local = 33; // metres from the moved anchor to the farthest test point: snap plus 4 m
+const uint LARGEST_OCEAN_NODES @local = 87381; // nodes of the largest ocean: levels of 256², 128², ... 1 chunks
+const uint OCEAN_LEVELS @local = 9;
 
 struct Fixture @local {
     AssetStore assets;
@@ -305,7 +318,7 @@ fn void test_invalid_desc_values_are_invalid_argument() @test {
     aliased.cell_size = 1.25f;
     aliased.waves[1].wavelength = 2.49f;
     assert_fault(@catch(try_add(&fixture, node, aliased)), c3d::INVALID_ARGUMENT, "A wave shorter than two cells");
-    WaterDesc[12] rejected;
+    WaterDesc[14] rejected;
     foreach (&desc : rejected) *desc = calm_desc();
     rejected[0].wave_count = water::MAX_WAVES + 1;
     rejected[1].waves[0].wavelength = 0;
@@ -319,6 +332,8 @@ fn void test_invalid_desc_values_are_invalid_argument() @test {
     rejected[9].roughness = 1.5f;
     rejected[10].foam_crest = 1;
     rejected[11].ripple_drift = float::nan;
+    rejected[12].depth = 0;
+    rejected[13].depth = float::nan;
     foreach (index, desc : rejected) {
         assert_fault(@catch(try_add(&fixture, node, desc)), c3d::INVALID_ARGUMENT, "A rejected desc");
     }
@@ -1141,7 +1156,9 @@ fn void test_sea_state_target_is_a_valid_desc_whatever_the_grid_and_wind() @test
     application.geometry = plane;
     application.extent = 0;
 
-    WaterDesc[3] bodies = { sea_desc(SMALL_BODY_EXTENT), sea_desc(BODY_EXTENT), application };
+    WaterDesc ocean = sea_desc(BODY_EXTENT);
+    ocean.mode = OCEAN;
+    WaterDesc[4] bodies = { sea_desc(SMALL_BODY_EXTENT), sea_desc(BODY_EXTENT), application, ocean };
     Vec2[4] winds = { {}, { 0.5f, 0 }, { 14, 0 }, { 40, 30 } };
     foreach (&body : bodies) {
         Node* node = add_water_node(&fixture, *body);
@@ -1185,4 +1202,245 @@ fn void test_sea_state_grows_with_the_fetch_and_stops_at_the_fully_developed_sea
     float wider = sea_amplitude(&fixture, 2 * BODY_EXTENT, LIGHT_WIND);
     assert(wider == developed, "%f m past the fully developed fetch, %f m at it", wider, developed);
     assert(developed <= FULLY_DEVELOPED_HEIGHT * LIGHT_WIND.x * LIGHT_WIND.x / GRAVITY);
+}
+
+fn WaterDesc ocean_desc() @local {
+    WaterDesc desc = calm_desc();
+    desc.mode = OCEAN;
+    desc.extent = OCEAN_EXTENT;
+    desc.cell_size = OCEAN_CELL_SIZE;
+    return desc;
+}
+
+fn float anchor_height(Fixture* fixture, Node* node, Vec3 point) @local {
+    SurfaceView view = water::surface_view(&fixture.scene, &fixture.assets, node.id)!!;
+    return height_over(&view, point, ANCHOR_TIME);
+}
+
+fn uint material_revision(Fixture* fixture, Node* node) @local {
+    return fixture.assets.material(fixture.scene.get(node, WaterRuntime).material).header.revision;
+}
+
+fn void test_ocean_phase_is_world_anchored() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    // A turn about Y turns the waves with the node: oceans that share it share their crests.
+    Node* first = add_water_node(&fixture, ocean_desc(), FIRST_OCEAN, WATER_YAW_DEGREES);
+    Node* second = add_water_node(&fixture, ocean_desc(), SECOND_OCEAN, WATER_YAW_DEGREES);
+    Node* body_first = add_water_node(&fixture, calm_desc(), FIRST_OCEAN, WATER_YAW_DEGREES);
+    Node* body_second = add_water_node(&fixture, calm_desc(), SECOND_OCEAN, WATER_YAW_DEGREES);
+    update_water(&fixture, {}, ANCHOR_TIME);
+
+    float height = anchor_height(&fixture, first, SHARED_POINT);
+    float other = anchor_height(&fixture, second, SHARED_POINT);
+    assert(math::abs(height - other) <= ANCHOR_TOLERANCE, "oceans disagree: %f m and %f m", height, other);
+    float body = anchor_height(&fixture, body_first, SHARED_POINT);
+    float other_body = anchor_height(&fixture, body_second, SHARED_POINT);
+    assert(math::abs(body - other_body) >= ANCHOR_CONTRAST, "bodies agree: %f m and %f m", body, other_body);
+
+    first.local.position += OCEAN_SNAP;
+    fixture.scene.update_world();
+    update_water(&fixture, {}, ANCHOR_TIME);
+    float moved = anchor_height(&fixture, first, SHARED_POINT);
+    assert(math::abs(moved - height) <= ANCHOR_TOLERANCE, "a move changed the surface: %f m to %f m", height, moved);
+
+    uint revision = material_revision(&fixture, first);
+    fixture.scene.shift_origin(ORIGIN_SHIFT);
+    fixture.scene.update_world();
+    update_water(&fixture, {}, ANCHOR_TIME);
+    Vec3 shifted = SHARED_POINT - ORIGIN_SHIFT;
+    float after = anchor_height(&fixture, first, shifted);
+    float other_after = anchor_height(&fixture, second, shifted);
+    assert(math::abs(after - height) <= ANCHOR_TOLERANCE, "a rebase moved the surface: %f m to %f m", height, after);
+    assert(math::abs(other_after - height) <= ANCHOR_TOLERANCE);
+    assert(material_revision(&fixture, first) == revision, "an exact rebase uploaded");
+}
+
+fn void test_ocean_uploads_only_on_a_move_or_a_blend() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_water_node(&fixture, ocean_desc(), FIRST_OCEAN);
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    uint revision = material_revision(&fixture, node);
+    uint records = batch.revision;
+    for (uint frame = 0; frame < SEA_SETTLE_FRAMES; frame++) {
+        update_water(&fixture, {}, SEA_START_TIME + (double)frame * SEA_FRAME_STEP);
+    }
+    assert(material_revision(&fixture, node) == revision && batch.revision == records, "a steady ocean uploaded");
+
+    node.local.position += OCEAN_SNAP;
+    fixture.scene.update_world();
+    update_water(&fixture, {}, SEA_START_TIME);
+    uint uploads = material_revision(&fixture, node) - revision;
+    assert(uploads == 1, "a move uploaded %d times", uploads);
+    assert(batch.revision == records, "a move wrote the records");
+    update_water(&fixture, {}, SEA_START_TIME + SEA_FRAME_STEP);
+    assert(material_revision(&fixture, node) == revision + 1);
+
+    try_set_sea_state(&fixture, node.id)!!;
+    uint blend_frames = (uint)(SEA_TRANSITION / (float)SEA_FRAME_STEP);
+    for (uint frame = 1; frame <= blend_frames + SEA_SETTLE_FRAMES; frame++) {
+        update_water(&fixture, {}, SEA_START_TIME + (double)frame * SEA_FRAME_STEP);
+    }
+    uint settled = material_revision(&fixture, node);
+    assert(settled == revision + 1 + blend_frames + 2, "a blend uploaded %d times", settled - revision - 1);
+    update_water(&fixture, {}, SEA_START_TIME + SEA_TRANSITION + 1);
+    assert(material_revision(&fixture, node) == settled);
+}
+
+// Height change per frame, in metres, that the shrinking or growing wavelengths of a blend add at a distance.
+fn float stretch_per_frame(WaterDesc* from, WaterDesc* to, float reach) @local {
+    float total;
+    foreach (index, &wave : to.waves[:to.wave_count]) {
+        float start = index < from.wave_count ? from.waves[index].wavelength : wave.wavelength;
+        float shortest = min(start, wave.wavelength);
+        float rate = math::abs(wave.wavelength - start) / (SEA_TRANSITION * shortest * shortest);
+        float amplitude = max(wave.amplitude, index < from.wave_count ? from.waves[index].amplitude : 0);
+        total += reach * rate * (float)SEA_FRAME_STEP * 2 * (float)math::PI * amplitude;
+    }
+    return total;
+}
+
+fn void test_ocean_blend_stays_continuous_across_a_node_move() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    WaterDesc desc = sea_desc(BODY_EXTENT);
+    desc.mode = OCEAN;
+    desc.cell_size = BODY_EXTENT / BODY_CELLS * 2;
+    desc.waves[0].wavelength = 4 * desc.cell_size;
+    desc.waves[1].wavelength = 5 * desc.cell_size;
+    Node* node = add_water_node(&fixture, desc);
+    WaterDesc calm = fixture.scene.get(node, Water).desc;
+    update_water(&fixture, {}, SEA_START_TIME);
+    try_set_sea_state(&fixture, node.id)!!;
+    WaterDesc storm = fixture.scene.get(node, Water).desc;
+
+    uint blend_frames = (uint)(SEA_TRANSITION / (float)SEA_FRAME_STEP);
+    float swell = max(amplitude_sum(&calm), amplitude_sum(&storm)) * 2 * (float)math::PI * (float)SEA_FRAME_STEP
+        * max(fastest_cycles_per_second(&calm), fastest_cycles_per_second(&storm));
+    float growth = math::abs(amplitude_sum(&storm) - amplitude_sum(&calm)) / (float)blend_frames;
+    float stretch = stretch_per_frame(&calm, &storm, OCEAN_REACH);
+    float largest_step = (swell + growth + stretch) * CREST_COUPLING;
+
+    float[SEA_POINTS.len] heights = surface_heights(&fixture, node, SEA_START_TIME);
+    for (uint frame = 1; frame <= blend_frames + SEA_SETTLE_FRAMES; frame++) {
+        if (frame == OCEAN_MOVE_FRAME) {
+            node.local.position += OCEAN_SNAP;
+            fixture.scene.update_world();
+        }
+        double time = SEA_START_TIME + (double)frame * SEA_FRAME_STEP;
+        update_water(&fixture, {}, time);
+        float[SEA_POINTS.len] next = surface_heights(&fixture, node, time);
+        foreach (index, height : next) {
+            float step = math::abs(height - heights[index]);
+            assert(step <= largest_step, "frame %d point %d moved %f, at most %f", frame, index, step, largest_step);
+        }
+        heights = next;
+    }
+}
+
+fn void test_ocean_desc_limits_are_invalid_argument() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = fixture.scene.add_node()!!;
+    GeometryId plane;
+    @pool() {
+        Geometry flat = geometry::plane(tmem, 30, 10, 6, 2);
+        plane = fixture.assets.add_geometry(&flat)!!;
+    };
+
+    float chunk = OCEAN_CELL_SIZE * (float)water::OCEAN_CHUNK_CELLS;
+    WaterDesc[8] rejected;
+    foreach (&desc : rejected) *desc = ocean_desc();
+    rejected[0].extent = chunk * (float)(water::MAX_OCEAN_CHUNKS + 1);
+    rejected[1].trace = true;
+    rejected[2].geometry = plane;
+    rejected[3].extent = 0;
+    rejected[4].cell_size = float::nan;
+    rejected[5].waves[1].wavelength = 3 * OCEAN_CELL_SIZE; // a body takes two cells; an ocean draws four whole
+    rejected[6].depth = -1;
+    rejected[7].depth = float::inf;
+    foreach (desc : rejected) {
+        assert_fault(@catch(try_add(&fixture, node, desc)), c3d::INVALID_ARGUMENT, "A rejected ocean desc");
+    }
+    assert(!fixture.scene.has(node, Water) && !fixture.scene.has(node, InstancedMesh));
+
+    WaterDesc four_cells = ocean_desc();
+    four_cells.waves[1].wavelength = 4 * OCEAN_CELL_SIZE;
+    try_add(&fixture, node, four_cells)!!;
+    fixture.scene.remove(node);
+
+    WaterDesc largest = ocean_desc();
+    largest.extent = chunk * (float)water::MAX_OCEAN_CHUNKS;
+    Node* sea = add_water_node(&fixture, largest);
+    InstancedMesh* batch = fixture.scene.get(sea, InstancedMesh);
+    assert(batch.count == LARGEST_OCEAN_NODES && batch.quadtree.depth_count == OCEAN_LEVELS);
+    assert(!fixture.scene.has(sea, Mesh));
+    WaterRuntime* runtime = fixture.scene.get(sea, WaterRuntime);
+    assert(runtime.rest_max.x == largest.extent / 2 && runtime.rest_min.y == -largest.extent / 2);
+
+    WaterDesc rounded = ocean_desc();
+    rounded.extent = chunk * 2.5f;
+    Node* between = add_water_node(&fixture, rounded);
+    assert(fixture.scene.get(between, WaterRuntime).rest_max.x == 2 * chunk);
+    assert(math::abs(water::ocean_snap_step(&rounded) - 4 * OCEAN_CELL_SIZE) == 0);
+}
+
+fn void test_ocean_set_desc_keeps_its_shape() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_water_node(&fixture, ocean_desc());
+    uint revision = fixture.scene.get(node, InstancedMesh).revision;
+    WaterDesc edited = fixture.scene.get(node, Water).desc;
+    edited.depth = 12;
+    try_set_desc(&fixture, node, edited)!!;
+    assert(fixture.scene.get(node, WaterRuntime).desc.depth == 12);
+    assert(fixture.scene.get(node, InstancedMesh).revision == revision, "an unrelated edit wrote the records");
+
+    edited.waves[0].amplitude *= 2;
+    try_set_desc(&fixture, node, edited)!!;
+    assert(fixture.scene.get(node, InstancedMesh).revision != revision, "larger waves left the boxes");
+
+    WaterDesc body = edited;
+    body.mode = BODY;
+    assert_fault(@catch(try_set_desc(&fixture, node, body)), c3d::INVALID_ARGUMENT, "A mode change");
+    WaterDesc wider = edited;
+    wider.extent *= 2;
+    assert_fault(@catch(try_set_desc(&fixture, node, wider)), c3d::INVALID_ARGUMENT, "An extent change");
+    WaterDesc finer = edited;
+    finer.cell_size /= 2;
+    assert_fault(@catch(try_set_desc(&fixture, node, finer)), c3d::INVALID_ARGUMENT, "A cell size change");
+    assert(fixture.scene.get(node, WaterRuntime).desc.extent == OCEAN_EXTENT);
+}
+
+fn void test_ocean_batch_is_freed_on_failure_and_on_removal() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    fixture.assets = asset::create_asset_store(&tracking, asset::default_asset_store_desc());
+    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 3 });
+    water::register_water(&fixture.scene, &fixture.assets)!!;
+    fixture.camera = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    Node* node = fixture.scene.add_node()!!;
+    fixture.scene.update_world();
+
+    WaterDesc crowded = ocean_desc();
+    crowded.max_mirrors = 2;
+    assert(@catch(try_add(&fixture, node, crowded)) == c3d::CAPACITY_EXCEEDED);
+    assert(!fixture.scene.has(node, Water) && !fixture.scene.has(node, InstancedMesh));
+    assert(fixture.scene.count(WaterMirror) == 0);
+
+    try_add(&fixture, node, ocean_desc())!!;
+    assert(fixture.scene.has(node, InstancedMesh));
+    fixture.scene.remove_component(node, Water);
+    update_water(&fixture);
+    assert(!fixture.scene.has(node, InstancedMesh) && !fixture.scene.has(node, WaterRuntime));
+    teardown(&fixture);
+    assert(!tracking.has_leaks());
 }

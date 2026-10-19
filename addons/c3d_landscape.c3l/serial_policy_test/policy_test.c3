@@ -40,7 +40,7 @@ fn void test_every_landscape_component_has_one_expected_serialization_policy() @
         { .slot = ecs::assigned_slot(Foliage)!!, .name = "foliage",
             .identity = FoliageAuthoring::typeid, .phase = OWNER, .version = 3 },
         { .slot = ecs::assigned_slot(Water)!!, .name = "water", .identity = WaterDesc::typeid,
-            .phase = VALUE, .version = 3 },
+            .phase = VALUE, .version = 4 },
     };
     uint[5] transient = {
         ecs::assigned_slot(TerrainRuntime)!!, ecs::assigned_slot(FoliageRuntime)!!,

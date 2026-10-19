@@ -13,6 +13,7 @@ import c3d::scene;
 import c3d::shader;
 import c3d::shader::compile;
 import gpu;
+import std::io;
 import std::math;
 
 const char[*] READBACK_SOURCE @local = $embed("water_readback.comp.glsl");
@@ -24,6 +25,26 @@ const Vec3 TWIN_CAMERA_POSITION @local = { 0, 20, 0 };
 const float TWIN_EXTENT @local = 12.8f;
 const float TWIN_CELL_SIZE @local = 0.05f; // triangulation error under 0.2 mm on the 2 m wave
 const float SURFACE_TOLERANCE @local = 0.01f; // metres, the render and physics contract
+const Vec3 OCEAN_POSITION @local = { 1.7f, 0, -2.3f }; // off the origin, so the anchor's fold is not zero
+const float OCEAN_SPLIT_PIXELS @local = 16; // small: the whole 12.8 m ocean draws at its finest level
+const float LEVELS_CELL_SIZE @local = 0.1f; // 6.4 m chunks
+const uint LEVELS_CHUNKS @local = 16; // five levels over 102.4 m
+const Vec3 LEVELS_CAMERA @local = { -30, 3, -30 }; // in a corner of the ocean: the nearer levels cover a quarter plane
+const uint LEVELS_VIEW_SIZE @local = 64;
+const float LEVELS_FOV_DEGREES @local = 60;
+const uint LEVELS_FRAMES @local = 3; // the view's selection history is valid from the second
+const uint MINIMUM_LEVEL_SPAN @local = 2; // the camera sees at least three levels
+const float ADJACENT_TOLERANCE @local = 0.001f; // metres: shared edges of boxes computed from the same lattice
+const float SEAM_SPLIT_PIXELS @local = 1e9f; // the natural ranges vanish: the levels follow the camera position alone
+const uint ZOOM_SIZE @local = 256;
+const float ZOOM_FOV_DEGREES @local = 3; // 2.1 mm per pixel along a seam at 11 m, twice that across it
+const uint SEAM_POINTS @local = 48; // pixels along a line across the seam
+const float SEAM_POINT_STEP @local = 0.005f; // metres between them: the coarse cell is 0.2 m
+const uint SEAM_LINES @local = 8; // lines along the seam
+const float SEAM_LINE_STEP @local = 0.08f; // metres between lines: an eighth of the waves' 0.8 m
+const float SEAM_SLACK @local = 0.0005f; // metres of depth reconstruction noise
+const Vec3 SEAM_CAMERA @local = { -30, 8, -30 }; // high enough that the waves' slope stays under the line of sight
+const Vec3 OCEAN_FOLLOW @local = { -1.6f, 0, 1 }; // metres a node follows the view by: eight steps of its 0.2 m snap
 const double[3] TWIN_TIMES @local = { 0.5, 4.8, 65540.8 }; // 4.8 s puts wave 0's largest crest shift at the origin
 const Vec3 POST_HALF_EXTENTS @local = { 0.05f, 0.5f, 0.05f }; // a slender crate: its eight cells see one surface
 const float POST_DENSITY @local = 600;
@@ -407,9 +428,17 @@ fn Node* add_post(Fixture* fixture, float bottom) @local {
     return post;
 }
 
-fn void check_twin(Fixture* fixture, Wave[] waves, bool sea_state = false) @local {
-    Node* water_node = add_water_node(fixture, surface_desc(waves, TWIN_EXTENT, TWIN_CELL_SIZE));
+fn void check_twin(
+    Fixture* fixture,
+    Wave[] waves,
+    bool sea_state = false,
+    bool ocean = false,
+) @local {
+    WaterDesc desc = surface_desc(waves, TWIN_EXTENT, TWIN_CELL_SIZE);
+    if (ocean) desc.mode = OCEAN;
+    Node* water_node = add_water_node(fixture, desc, ocean ? OCEAN_POSITION : (Vec3){});
     defer fixture.scene.remove(water_node);
+    if (ocean) fixture.scene.get(water_node, InstancedMesh).quadtree.split_pixels = OCEAN_SPLIT_PIXELS;
     Node* camera_node = add_camera_node(
         fixture:     fixture,
         fov_degrees: TWIN_FOV_DEGREES,
@@ -496,6 +525,445 @@ fn void test_drawn_surface_matches_the_cpu_twin() @test {
     check_twin(&fixture, EXAMPLE_WAVES[..]);
     check_twin(&fixture, CHOPPY_WAVES[..]);
     check_twin(&fixture, EXAMPLE_WAVES[..], sea_state: true);
+}
+
+fn void test_drawn_ocean_matches_the_cpu_twin() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    check_twin(&fixture, EXAMPLE_WAVES[..], ocean: true);
+    check_twin(&fixture, CHOPPY_WAVES[..], ocean: true);
+}
+
+// A chunk of an ocean: its level (0 is the finest) and footprint, from the layout the instance records follow.
+struct OceanTile @local {
+    uint  level;
+    float min_x;
+    float min_z;
+    float edge;
+}
+
+fn OceanTile ocean_tile(uint index, uint chunks, float chunk_edge, Vec3 centre) @local {
+    uint level;
+    uint first;
+    uint side = chunks;
+    while (index >= first + side * side) {
+        first += side * side;
+        side >>= 1;
+        level++;
+    }
+    uint offset = index - first;
+    float edge = chunk_edge * (float)(1u << level);
+    float corner = -(float)chunks * chunk_edge / 2;
+    return {
+        .level = level,
+        .min_x = centre.x + corner + (float)(offset % side) * edge,
+        .min_z = centre.z + corner + (float)(offset / side) * edge,
+        .edge  = edge,
+    };
+}
+
+// Two tiles touch when their footprints share an edge of positive length.
+fn bool tiles_touch(OceanTile first, OceanTile second) @local {
+    float end_x = math::min(first.min_x + first.edge, second.min_x + second.edge);
+    float end_z = math::min(first.min_z + first.edge, second.min_z + second.edge);
+    float along_x = end_x - math::max(first.min_x, second.min_x);
+    float along_z = end_z - math::max(first.min_z, second.min_z);
+    bool beside_x = math::abs(along_x) <= ADJACENT_TOLERANCE && along_z > ADJACENT_TOLERANCE;
+    bool beside_z = math::abs(along_z) <= ADJACENT_TOLERANCE && along_x > ADJACENT_TOLERANCE;
+    return beside_x || beside_z;
+}
+
+// Copies the selection words the renderer wrote for the view, one per node of the ocean.
+fn void? record_selection_copy(
+    Fixture* fixture,
+    ViewId view,
+    Node* ocean,
+    gpu::MappedGpuSpan readback,
+) @local {
+    Renderer* renderer = &fixture.renderer;
+    render::QuadtreeHistoryEntry* history = &renderer.views.get(view).quadtree_history.entries[ocean.id.index];
+    assert(history.allocation.is_valid());
+    usz offset = (usz)(history.committed_slot ^ 1) * history.capacity * uint::size;
+    gpu::GpuSpan source = gpu::get_allocation_span(&renderer.device, history.allocation)!;
+    gpu::Barrier produced = { .before = { .compute, .vertex_shader }, .after = { .transfer } };
+    gpu::cmd_barrier(&renderer.commands, &produced)!;
+    gpu::BufferCopyDesc copy = { .src = source.checked_subspan(offset, readback.bytes.len)!, .dst = readback.span };
+    gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
+    gpu::Barrier copied = { .before = { .transfer }, .after = { .host } };
+    return gpu::cmd_barrier(&renderer.commands, &copied);
+}
+
+// Renders frames of the view at one camera and returns the selection words of the last.
+fn uint[]? render_selection(
+    Fixture* fixture,
+    Node* viewing,
+    ViewId view,
+    Node* ocean,
+    gpu::MappedGpuSpan readback,
+    uint frames,
+) @local {
+    Renderer* renderer = &fixture.renderer;
+    for (uint frame = 0; frame < frames; frame++) {
+        update_water(fixture, 0);
+        renderer.begin_frame({ .time = 0, .delta = (float)VELOCITY_STEP })!;
+        defer catch render::abort_frame(renderer);
+        renderer.render_view(&fixture.scene, viewing, view)!;
+        if (frame + 1 == frames) {
+            record_selection_copy(
+                fixture:  fixture,
+                view:     view,
+                ocean:    ocean,
+                readback: readback,
+            )!;
+        }
+        renderer.finish_view(view)!;
+        renderer.end_frame()!;
+    }
+    render::wait_frames(renderer)!;
+    gpu::invalidate_mapped_span(&renderer.device, readback.span)!;
+    return ((uint*)readback.bytes.ptr)[:readback.bytes.len / uint::size];
+}
+
+fn gpu::MappedGpuSpan? create_selection_readback(Fixture* fixture, uint nodes) @local {
+    gpu::AllocationDesc desc = {
+        .size         = nodes * uint::size,
+        .alignment    = render::STREAM_ALIGNMENT,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access       = { .graphics },
+        .debug_name   = "ocean_selection_host",
+    };
+    return gpu::allocate_mapped_memory(&fixture.renderer.device, &desc);
+}
+
+fn void free_selection_readback(Fixture* fixture, gpu::MappedGpuSpan readback) @local {
+    render::wait_frames(&fixture.renderer)!!;
+    gpu::GpuAllocation allocation = readback.span.allocation();
+    gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
+}
+
+fn WaterDesc levels_desc() @local {
+    WaterDesc desc = surface_desc(EXAMPLE_WAVES[..], 0, LEVELS_CELL_SIZE);
+    desc.mode = OCEAN;
+    desc.extent = (float)LEVELS_CHUNKS * LEVELS_CELL_SIZE * (float)water::OCEAN_CHUNK_CELLS;
+    return desc;
+}
+
+fn void test_ocean_levels_differ_by_at_most_one() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    WaterDesc desc = levels_desc();
+    Node* ocean = add_water_node(&fixture, desc);
+    Node* camera = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: LEVELS_FOV_DEGREES,
+        position:    LEVELS_CAMERA,
+        forward:     { 1, -0.4f, 1 },
+        up:          { 0, 1, 0 },
+    );
+    ViewId view = add_view(&fixture, LEVELS_VIEW_SIZE);
+    uint nodes = fixture.scene.get(ocean, InstancedMesh).count;
+    gpu::MappedGpuSpan readback = create_selection_readback(&fixture, nodes)!!;
+    defer free_selection_readback(&fixture, readback);
+
+    uint[] words = render_selection(
+        fixture:  &fixture,
+        viewing:  camera,
+        view:     view,
+        ocean:    ocean,
+        readback: readback,
+        frames:   LEVELS_FRAMES,
+    )!!;
+    float chunk_edge = LEVELS_CELL_SIZE * (float)water::OCEAN_CHUNK_CELLS;
+    OceanTile[] drawn = alloc::new_array(tmem, OceanTile, nodes);
+    uint drawn_count;
+    uint[LEVELS_CHUNKS] per_level;
+    uint finest = uint::max;
+    uint coarsest;
+    foreach (uint index, word : words) {
+        if (!(word & shader::QUADTREE_DRAW)) continue;
+
+        OceanTile tile = ocean_tile(
+            index:      index,
+            chunks:     LEVELS_CHUNKS,
+            chunk_edge: chunk_edge,
+            centre:     {},
+        );
+        drawn[drawn_count++] = tile;
+        per_level[tile.level]++;
+        finest = math::min(finest, tile.level);
+        coarsest = math::max(coarsest, tile.level);
+    }
+    foreach (first : drawn[:drawn_count]) {
+        foreach (second : drawn[:drawn_count]) {
+            if (!tiles_touch(first, second)) continue;
+
+            uint difference = first.level > second.level ? first.level - second.level : second.level - first.level;
+            assert(difference <= 1, "levels %d and %d share an edge", first.level, second.level);
+        }
+    }
+    assert(coarsest - finest >= MINIMUM_LEVEL_SPAN, "only levels %d to %d drew", finest, coarsest);
+    io::printfn("Ocean chunks per level, finest first: %s", per_level[:coarsest + 1]);
+    check_validation(&fixture.renderer);
+}
+
+// The edge two tiles of neighbouring levels share, with the normal that points from the finer tile to the coarser.
+struct SeamEdge @local {
+    OceanTile fine;
+    OceanTile coarse;
+    Vec2      midpoint;
+    Vec2      normal;
+}
+
+fn bool shared_edge(OceanTile fine, OceanTile coarse, SeamEdge* edge) @local {
+    if (coarse.level != fine.level + 1 || !tiles_touch(fine, coarse)) return false;
+
+    float fine_right = fine.min_x + fine.edge;
+    float fine_top = fine.min_z + fine.edge;
+    float overlap_x = math::max(fine.min_x, coarse.min_x) + 0.5f * (math::min(fine_right, coarse.min_x + coarse.edge)
+      - math::max(fine.min_x, coarse.min_x));
+    float overlap_z = math::max(fine.min_z, coarse.min_z) + 0.5f * (math::min(fine_top, coarse.min_z + coarse.edge)
+      - math::max(fine.min_z, coarse.min_z));
+    *edge = { .fine = fine, .coarse = coarse };
+    if (math::abs(fine_right - coarse.min_x) <= ADJACENT_TOLERANCE) {
+        edge.midpoint = { fine_right, overlap_z };
+        edge.normal = { 1, 0 };
+    } else if (math::abs(coarse.min_x + coarse.edge - fine.min_x) <= ADJACENT_TOLERANCE) {
+        edge.midpoint = { fine.min_x, overlap_z };
+        edge.normal = { -1, 0 };
+    } else if (math::abs(fine_top - coarse.min_z) <= ADJACENT_TOLERANCE) {
+        edge.midpoint = { overlap_x, fine_top };
+        edge.normal = { 0, 1 };
+    } else {
+        edge.midpoint = { overlap_x, fine.min_z };
+        edge.normal = { 0, -1 };
+    }
+    return true;
+}
+
+fn bool tile_contains(OceanTile tile, Vec3 point) @local {
+    return point.x >= tile.min_x && point.x <= tile.min_x + tile.edge
+      && point.z >= tile.min_z && point.z <= tile.min_z + tile.edge;
+}
+
+fn WaterDesc seam_desc() @local {
+    WaterDesc desc = levels_desc();
+    // Four cells of the level above the finest, along x and along z, so a seam has waves running along it.
+    desc.waves[0] = { .amplitude = 0.025f, .wavelength = 0.8f, .speed = 0, .direction = { 1, 0 }, .steepness = 0.1f };
+    desc.waves[1] = { .amplitude = 0.025f, .wavelength = 0.8f, .speed = 0, .direction = { 0, 1 }, .steepness = 0.1f };
+    return desc;
+}
+
+fn void test_ocean_seam_is_continuous() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    WaterDesc desc = seam_desc();
+    Node* ocean = add_water_node(&fixture, desc);
+    fixture.scene.get(ocean, InstancedMesh).quadtree.split_pixels = SEAM_SPLIT_PIXELS;
+    uint nodes = fixture.scene.get(ocean, InstancedMesh).count;
+    gpu::MappedGpuSpan readback = create_selection_readback(&fixture, nodes)!!;
+    defer free_selection_readback(&fixture, readback);
+
+    Node* wide = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: LEVELS_FOV_DEGREES,
+        position:    SEAM_CAMERA,
+        forward:     { 1, -0.4f, 1 },
+        up:          { 0, 1, 0 },
+    );
+    ViewId wide_view = add_view(&fixture, LEVELS_VIEW_SIZE);
+    uint[] wide_words = alloc::new_array(tmem, uint, nodes);
+    wide_words[..] = render_selection(
+        fixture:  &fixture,
+        viewing:  wide,
+        view:     wide_view,
+        ocean:    ocean,
+        readback: readback,
+        frames:   LEVELS_FRAMES,
+    )!![..];
+
+    float chunk_edge = LEVELS_CELL_SIZE * (float)water::OCEAN_CHUNK_CELLS;
+    OceanTile[] drawn = alloc::new_array(tmem, OceanTile, nodes);
+    uint drawn_count;
+    foreach (uint index, word : wide_words) {
+        if (!(word & shader::QUADTREE_DRAW)) continue;
+
+        drawn[drawn_count++] = ocean_tile(
+            index:      index,
+            chunks:     LEVELS_CHUNKS,
+            chunk_edge: chunk_edge,
+            centre:     {},
+        );
+    }
+    SeamEdge seam;
+    float nearest = float::max;
+    foreach (fine : drawn[:drawn_count]) {
+        foreach (coarse : drawn[:drawn_count]) {
+            SeamEdge candidate;
+            if (!shared_edge(fine, coarse, &candidate)) continue;
+
+            float distance = (candidate.midpoint - (Vec2){ SEAM_CAMERA.x, SEAM_CAMERA.z }).length();
+            if (distance < nearest) {
+                nearest = distance;
+                seam = candidate;
+            }
+        }
+    }
+    assert(nearest < float::max, "No level changes within the view.");
+
+    // The same camera position selects the same levels, so a camera that looks at the seam through a narrow lens
+    // draws the edge the wide view found.
+    Vec3 target = { seam.midpoint.x, 0, seam.midpoint.y };
+    Node* zoom = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: ZOOM_FOV_DEGREES,
+        position:    SEAM_CAMERA,
+        forward:     target - SEAM_CAMERA,
+        up:          { 0, 1, 0 },
+    );
+    ViewId zoom_view = add_view(&fixture, ZOOM_SIZE);
+    uint[] zoom_words = render_selection(
+        fixture:  &fixture,
+        viewing:  zoom,
+        view:     zoom_view,
+        ocean:    ocean,
+        readback: readback,
+        frames:   LEVELS_FRAMES,
+    )!!;
+    assert(zoom_words[..] == wide_words[..], "The two lenses selected different levels.");
+
+    SurfaceView surface = water::surface_view(&fixture.scene, &fixture.assets, ocean.id)!!;
+    WaterDesc checked = fixture.scene.get(ocean, WaterRuntime).desc;
+    float slope_limit = height_slope_bound(&checked);
+    CameraMatrices matrices = matrices_of(&fixture, zoom, ZOOM_SIZE);
+    Vec2 along = { -seam.normal.y, seam.normal.x };
+    float worst;
+    uint crossed;
+    for (uint line = 0; line < SEAM_LINES; line++) {
+        int[<2>][SEAM_POINTS] pixels;
+        foreach (point, &pixel : pixels) {
+            Vec2 offset = seam.normal * (((float)point - 0.5f * (SEAM_POINTS - 1)) * SEAM_POINT_STEP)
+              + along * (((float)line - 0.5f * (SEAM_LINES - 1)) * SEAM_LINE_STEP);
+            Vec2 ground = seam.midpoint + offset;
+            float height = water::sample_surface(
+                view:    &surface,
+                world_x: ground.x,
+                world_z: ground.y,
+                time:    0,
+            ) ?? 0;
+            *pixel = pixel_of(&matrices, { ground.x, height, ground.y }, ZOOM_SIZE);
+        }
+        Vec4[] depths = render_and_read(
+            fixture: &fixture,
+            viewing: zoom,
+            view:    zoom_view,
+            time:    0,
+            pixels:  pixels[..],
+            depth:   true,
+        )!!;
+        Vec3[SEAM_POINTS] hits;
+        foreach (point, hit : hits) {
+            hits[point] = unproject(
+                matrices: &matrices,
+                pixel:    pixels[point],
+                size:     ZOOM_SIZE,
+                depth:    depths[point].x,
+            );
+        }
+        if (tile_contains(seam.fine, hits[0]) != tile_contains(seam.fine, hits[SEAM_POINTS - 1])) crossed++;
+        for (uint point = 1; point < SEAM_POINTS; point++) {
+            float run = (Vec2){ hits[point].x - hits[point - 1].x, hits[point].z - hits[point - 1].z }.length();
+            if (pixels[point] == pixels[point - 1]) continue;
+
+            float step = math::abs(hits[point].y - hits[point - 1].y);
+            worst = math::max(worst, step / (slope_limit * run + SEAM_SLACK));
+            assert(step <= slope_limit * run + SEAM_SLACK, "line %d: depth stepped %f m over %f m", line, step, run);
+        }
+    }
+    assert(crossed == SEAM_LINES, "Only %d of %d lines cross the seam.", crossed, SEAM_LINES);
+    io::printfn(
+        "Ocean seam at (%f, %f) between levels %d and %d: the largest step is %f of the bound",
+        seam.midpoint.x,
+        seam.midpoint.y,
+        seam.fine.level,
+        seam.coarse.level,
+        worst,
+    );
+    check_validation(&fixture.renderer);
+}
+
+// Metres of height per metre of drawn surface, at most: the gradient the waves add in quadrature, over what the
+// horizontal shift leaves.
+fn float height_slope_bound(WaterDesc* desc) @local {
+    float squares;
+    float steepness;
+    foreach (&wave : desc.waves[:desc.wave_count]) {
+        float slope = wave.amplitude * 2 * (float)math::PI / wave.wavelength;
+        squares += slope * slope;
+        steepness += wave.steepness;
+    }
+    return math::sqrt(squares) / (1 - steepness / (float)desc.wave_count);
+}
+
+// The velocities of a running ocean after SETTLE_FRAMES frames, the last of them after the node moved by follow.
+fn Vec4[VELOCITY_ROW_SAMPLES] ocean_velocities_after(Vec3 follow) @local {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Wave[1] running = { RUNNING_WAVE };
+    WaterDesc desc = surface_desc(running[..], TWIN_EXTENT, TWIN_CELL_SIZE);
+    desc.mode = OCEAN;
+    Node* ocean = add_water_node(&fixture, desc, OCEAN_POSITION);
+    fixture.scene.get(ocean, InstancedMesh).quadtree.split_pixels = OCEAN_SPLIT_PIXELS;
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: TWIN_FOV_DEGREES,
+        position:    VELOCITY_CAMERA_POSITION,
+        forward:     { 0, -1, 0 },
+        up:          { 0, 0, -1 },
+    );
+    ViewId view = add_view(&fixture, VELOCITY_SIZE, AntiAliasing.TAA);
+    ViewDesc view_desc = fixture.renderer.views.get(view).desc;
+    view_desc.post.taa_params.debug = TaaDebug.VELOCITY;
+    render::configure_view(&fixture.renderer, view, view_desc)!!;
+
+    int[<2>][VELOCITY_ROW_SAMPLES] pixels;
+    int row = (int)VELOCITY_SIZE / 2;
+    foreach (index, &pixel : pixels) *pixel = { 8 + 6 * (int)index, row };
+    Vec4[] velocities;
+    for (uint frame = 0; frame < SETTLE_FRAMES; frame++) {
+        if (frame + 1 == SETTLE_FRAMES) {
+            ocean.local.position += follow;
+            fixture.scene.update_world();
+        }
+        velocities = render_and_read(
+            fixture: &fixture,
+            viewing: camera_node,
+            view:    view,
+            time:    (double)frame * VELOCITY_STEP,
+            pixels:  pixels[..],
+            depth:   false,
+        )!!;
+    }
+    Vec4[VELOCITY_ROW_SAMPLES] result;
+    result[..] = velocities[:VELOCITY_ROW_SAMPLES];
+    check_validation(&fixture.renderer);
+    return result;
+}
+
+fn void test_ocean_velocity_ignores_a_node_move() @test {
+    Vec4[VELOCITY_ROW_SAMPLES] steady = ocean_velocities_after({});
+    Vec4[VELOCITY_ROW_SAMPLES] followed = ocean_velocities_after(OCEAN_FOLLOW);
+    uint moving;
+    foreach (index, velocity : steady) {
+        if (math::abs(velocity.x - 0.5f) >= MIN_VELOCITY_ENCODED) moving++;
+        Vec4 after = followed[index];
+        assert(math::abs(velocity.x - after.x) <= VELOCITY_TOLERANCE, "x %f against %f", after.x, velocity.x);
+        assert(math::abs(velocity.y - after.y) <= VELOCITY_TOLERANCE, "y %f against %f", after.y, velocity.y);
+    }
+    assert(moving >= VELOCITY_ROW_SAMPLES / 2, "only %d samples move", moving);
 }
 
 fn void test_mirror_view_reflects_what_is_above_the_water() @test {

@@ -17,6 +17,8 @@ ambient, adds lit foam, and shades sun glints through the public Standard parts.
 come from referenced Standard materials; the application's wind scrolls the ripples, and `set_sea_state` turns a
 wind into the waves ([Sea state](#sea-state)). A CPU twin of the stage answers world-space height queries, and
 `update_mirror` places a mirror camera per water body and viewing view for the reflection the application renders.
+`WaterDesc.mode = OCEAN` draws the surface as a quadtree of chunks that each view selects, with waves anchored to the
+world instead of the node ([Ocean](#ocean)).
 
 The module imports the standard library, core (`c3d`), `c3d::landscape` (its SPIR-V) and
 `c3d::landscape::terrain` (a query predicate); it never imports `gpu`, `c3d::render` or `c3d::physics`.
@@ -97,18 +99,20 @@ scene.update_world();
 - `add_water` attaches a water body to a node without `Mesh`, `Water` or `WaterRuntime` whose world matrix is
   current. It checks the desc, finds or adds the shared shader, finds or builds the grid, adds the owned
   material (its reflection slot a view texture at `reflection_view_slot`), `max_mirrors` mirror camera nodes and
-  the node's `Mesh`, all or nothing: a fault leaves the node, the scene's free nodes and the store's free
-  materials as they were.
+  the node's `Mesh` (an `InstancedMesh` for an [ocean](#ocean)), all or nothing: a fault leaves the node, the scene's
+  free nodes and the store's free materials as they were.
 - `set_desc` is the only way to change a water body. It checks the new desc before it writes anything: a fault
   keeps the old desc, the payload, the material revision, the mesh and the grid. `WaterRuntime.desc` holds the
   checked copy; `update`, the mirror and the queries read it, so an edit of `Water.desc` itself has no effect
-  until it goes through `set_desc`. It ends a running sea-state blend and applies the desc's waves at once.
+  until it goes through `set_desc`. It ends a running sea-state blend and applies the desc's waves at once. An
+  ocean keeps its `mode`, `extent` and `cell_size`: a change faults `INVALID_ARGUMENT` and leaves the body as it was.
 - `set_sea_state(scene, assets, node, wind_velocity, transition_seconds)` sets the waves from a wind
   ([Sea state](#sea-state)). It writes the target into `Water.desc` and `WaterRuntime.desc` and returns; the
   next `update` starts the blend.
 - `update` runs every frame with the `FrameInfo.time` the frame renders with. It tears down removed water
-  bodies, with their mirror cameras, scrolls the ripples and advances sea-state blends. It places no mirror and
-  takes no camera; the material reads its reflection from a view texture, so no target is set on the body.
+  bodies, with their mirror cameras, scrolls the ripples, advances sea-state blends and re-anchors oceans whose node
+  moved. It places no mirror and takes no camera; the material reads its reflection from a view texture, so no
+  target is set on the body.
 - `update_mirror(scene, body, slot, viewing_camera)` places the mirror camera of one slot of one body for one
   viewing camera ([The mirror](#the-mirror)). It reads the camera's `local`, which must be a root node, so it
   may run before or after `update_world`; the body's world matrix is read as the last `update_world` left it.
@@ -127,8 +131,8 @@ references. Every rule below is a fault, not a contract: descs come from files a
 | --- | --- |
 | `waves`, `wave_count` | At most `MAX_WAVES` (4). Per wave: amplitude ≥ 0, wavelength > 0, finite speed, a unit direction within 0.001, steepness ≥ 0 |
 | steepness | Σ steepness < `wave_count`: the mean steepness stays below 1 (one wave may pass 1 when others are lower) |
-| `geometry` | Zero builds a grid; else a live geometry whose bounds lie at y = 0 |
-| `extent`, `cell_size` | A built grid only: both positive and finite, at most `MAX_GRID_CELLS` (512) cells per side, every wavelength at least two cells |
+| `geometry` | Zero builds a grid; else a live geometry whose bounds lie at y = 0. An ocean takes none |
+| `extent`, `cell_size` | A built grid only: both positive and finite, at most `MAX_GRID_CELLS` (512) cells per side, every wavelength at least two cells. An ocean: both positive and finite, at most `MAX_OCEAN_CHUNKS` (256) chunks of `cell_size * OCEAN_CHUNK_CELLS` per side, every wavelength at least four cells of the finest level |
 | `absorption_color`, `absorption_distance` | Transmittance after the distance, each channel in (0, 1]; the distance positive and finite |
 | `scatter_color` | Non-negative and finite: the albedo of the water body under ambient and indirect light |
 | `roughness` | In [0, 1] |
@@ -140,7 +144,9 @@ references. Every rule below is a fault, not a contract: descs come from files a
 | `march_reflections` | The screen-space march where the planar sample is missing |
 | `max_mirrors` | At least 1 and at most `MAX_MIRRORS` (8): the mirror slots, one per viewing view |
 | `reflection_view_slot` | Below `material::MAX_VIEW_TEXTURES` (4): the [view texture](views.md#view-textures) the material samples |
-| `trace` | Scene traces see the displaced surface, posed every frame ([Scene traces](#scene-traces)); off by default |
+| `trace` | Scene traces see the displaced surface, posed every frame ([Scene traces](#scene-traces)); off by default; an ocean cannot trace |
+| `mode` | `BODY` (default) or `OCEAN` ([Ocean](#ocean)) |
+| `depth` | Positive and finite metres below the rest plane (`DEFAULT_WATER_DEPTH`, 40 m, by default). Validated and saved; nothing reads it yet |
 
 ## Surface geometry
 
@@ -156,8 +162,9 @@ Application geometry rests at y = 0; its topology and UVs are its own, and it fo
 (shortest wavelength at least twice its edge length) by itself. Either way the stage writes `uv0` and `uv1` as
 the rest position in metres.
 
-`Mesh.local_bounds` is the rest bounds grown by the total amplitude in y and by the sum of the waves'
-horizontal crest shifts in x and z, always as a bounds override. The mesh casts no shadow, receives shadows and
+An [ocean](#ocean) draws instances of one shared unit chunk instead of a grid. For a body, `Mesh.local_bounds` is the
+rest bounds grown by the total amplitude in y and by the sum of the waves' horizontal crest shifts in x and z, always
+as a bounds override. The mesh casts no shadow, receives shadows and
 traces only with `WaterDesc.trace` ([Scene traces](#scene-traces)).
 
 ## Waves
@@ -172,7 +179,9 @@ wavelength `λ`, speed `c`, amplitude `a` and steepness `s` over `N` waves:
 - drawn point `(p.x + D.x, y, p.y + D.y)`; the normal from the Jacobian of that map; the crest factor
   `clamp(1 − det J, 0, 1)` feeds wave foam.
 
-The waves are node-local: node scale scales wavelengths and amplitudes, node rotation turns the directions.
+The waves of a `BODY` are node-local: node scale scales wavelengths and amplitudes, node rotation turns the
+directions. An [ocean](#ocean) evaluates the same sum on the node-local rest position, with `φ` carrying the node's
+absolute position, so its crests stay where they are in the world when the node moves.
 
 ## Height queries
 
@@ -282,11 +291,11 @@ The caps are reached at `g · F / U²` of about 17,000 and 16,000: at 14 m/s a f
 The squares of the amplitude shares sum to 0.116, near the 1/8 four sine waves carry of a sea of that height. Each wave
 runs at the deep-water speed `√(g λ / 2π)` and has the steepness that makes its crest shift twice its amplitude, the
 ratio of the default calm waves, at most 0.9 so the mean steepness stays below 1 at any fetch. Wavelengths floor at two
-cells of a built grid, else at 1 m, so the written target is always a valid desc. A band whose wavelength falls below
-the floor is drawn at the floor and keeps its amplitude, so a small body gets waves of the grid's shortest length and a
-few centimetres of height. The sea is sized in world metres: the node's scale is
-divided out of the written lengths and amplitudes, so a scaled node draws the same sea. The heading is the wind in the
-node's frame.
+cells of a built grid, four cells of an ocean's finest level, else at 1 m, so the written target is always a valid
+desc. A band whose wavelength falls below the floor is drawn at the floor and keeps its amplitude, so a small body
+gets waves of the grid's shortest length and a few centimetres of height. The sea is sized in world metres: the node's
+scale is divided out of the written lengths and amplitudes, so a scaled node draws the same sea. The heading is the
+wind in the node's frame.
 
 **The blend.** `update` advances it. Amplitude, wavelength, speed and steepness blend linearly from the set drawn
 when `set_sea_state` ran, with each direction turned along the shorter arc. The mean steepness of the blend stays
@@ -307,10 +316,11 @@ sample at `time + step_offset` extrapolates linearly from the frame's waves, as 
 surface runs the stage's code and agrees in and out of a blend.
 
 The stretch limit: a changing wavelength stretches the pattern about the node origin, because `dot(d, p) / λ` scales
-with the distance. A point at distance `r` sees `r · |1/λ_from − 1/λ_to|` extra crests pass during the blend, so the
-per-frame height step grows with the distance from the node origin, and a longer `transition_seconds` spreads it over
-more frames. Near the origin the step is the motion of the waves themselves. The wavelength blends linearly: blending
-`1/λ` linearly steps further.
+with the distance. An [ocean](#ocean) keeps its pattern anchored at its node through a blend, so the stretch centres on
+the node and not on the world origin. A point at distance `r` sees `r · |1/λ_from − 1/λ_to|` extra crests pass during
+the blend, so the per-frame height step grows with the distance from the node origin, and a longer
+`transition_seconds` spreads it over more frames. Near the origin the step is the motion of the waves themselves. The
+wavelength blends linearly: blending `1/λ` linearly steps further.
 
 **Motion vectors.** `WaterParams` also holds the waves of the update before, and the velocity form draws a rest
 point at the previous frame's time with them: during a blend the vectors are the reprojection of the surface that
@@ -321,6 +331,98 @@ rendered every frame reads a previous set newer than its previous time, for the 
 that reaches the target, so the previous waves catch up with the current ones. After that a steady frame uploads
 nothing for water ([Ripples and wind](#ripples-and-wind)). `set_desc` ends a blend: it applies the desc's waves at
 once, keeps each wave's `φ`, and copies the waves into the previous set.
+
+## Ocean
+
+`WaterDesc.mode = OCEAN` draws a sea that reaches the horizon. The body is an `InstancedMesh` quadtree under
+[box ranges](instancing.md#box-ranges), like the [terrain](terrain.md) of the same package: every node is an instance
+of one shared unit chunk of `OCEAN_CHUNK_CELLS` (64) cells per side, and each view selects the nodes it draws. The
+node's local XZ plane is the rest plane, as for a body, and mirrors, the clip plane, `surface_view`, the queries and
+`fluid_sample` work on it as before.
+
+```c3
+WaterDesc desc = water::default_water_desc();
+desc.mode = OCEAN;
+desc.extent = 20000;   // metres
+desc.cell_size = 1.25f;
+desc.depth = 200;
+desc.wave_count = 0;   // flat until water::set_sea_state: the default's 3.5 m wave is under the four-cell floor
+water::add_water(
+    scene:  &scene,
+    assets: &assets,
+    node:   sea,
+    desc:   desc,
+)!;
+// every frame, before water::update: follow the view in whole steps
+float step = water::ocean_snap_step(&desc);
+sea.local.position.x = math::round(camera_position.x / step) * step;
+sea.local.position.z = math::round(camera_position.z / step) * step;
+scene.update_world();
+```
+
+- **Extent.** A chunk is `cell_size * OCEAN_CHUNK_CELLS` metres wide at the finest level and twice that at each level
+  above. The tree has the next power of two of chunks per side at or above `extent / chunk` (at most `MAX_OCEAN_CHUNKS`,
+  256), so the body covers up to twice the requested extent, centred on the node; `WaterRuntime.rest_min` and `rest_max`
+  hold what it covers, and queries outside answer `NOT_FOUND`. At the default 1.25 m cell a chunk is 80 m: 128 chunks
+  cover 10 km and 256 cover 20 km. A 10 km sea has eight levels and 21,845 nodes. The largest tree has nine levels and
+  87,381 nodes: 4.9 MiB of instance records on the CPU, 11 MiB on the device, 1.4 MB of selection state shared by the
+  views and 0.7 MB more for each ([instancing](instancing.md#quadtree-selection)).
+- **Chunk size.** The box ranges of a level grow with its chunk's diagonal, so large chunks draw their finest cells far
+  past the distance where a cell is a pixel. A chunk of 64 cells keeps that reach short. The price is four times the
+  nodes for an extent that 128-cell chunks would cover, and half the extent at the cap for a cell size.
+- **Per-view levels.** The split threshold is 512 px, the hysteresis 0.25 and the morph band 0.25, constants of the
+  package (the terrain's defaults). An application tunes the threshold in place on the node's
+  `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing.md#quadtree-selection)); it survives `set_desc`.
+  Each view selects its own levels. Adjacent chunks differ by at most one level. The body casts no shadow.
+- **Morph.** A vertex at an odd lattice position moves toward the mean of its two parent-lattice neighbours' points
+  over the last quarter of its level's range: the full displaced position, the normal and the crest factor, not a
+  height. At the end of the range it lies on the segment the coarser level draws, so a level change leaves neither a
+  crack nor a pop. Lattice coordinates are integers, so a coarse vertex and the fine neighbour compute the same float.
+- **Bounds.** Each node's box is its rest footprint grown by the total amplitude in y and the largest crest shift in x
+  and z, the growth `Mesh.local_bounds` has for a body. The records and the box ranges are rewritten when that growth
+  changes (`set_desc`, the start and the end of a sea-state blend, which bounds the blend by the larger of both sets)
+  and uploaded once; a frame without such a change writes and uploads nothing for them.
+- **Filtering.** A wave far from the camera is shorter than the lattice can show. At a vertex whose effective cell is
+  `c` metres (the level's cell size times `2^morph`, so it is continuous in the morph), a wave of wavelength `λ`
+  keeps its full amplitude and crest shift at `λ ≥ 4c`, loses them linearly and is gone at `λ ≤ 2c`. Far levels
+  therefore draw a filtered surface, calm of the shortest waves. **CPU queries return the unfiltered surface.** The
+  drawn and the queried surface agree within 1 cm where every wave of the sum is at least four cells of the vertex's
+  level long. Validation asks for four cells of the finest level, and the sea-state table floors its wavelengths
+  there, so the finest level draws every wave whole and buoyancy sees what the viewer sees near the camera; a body
+  keeps its two-cell rule.
+- **Anchoring.** An ocean's waves are anchored to the world. The stage evaluates `dot(d, p) / λ` on the node-local rest
+  position `p`, as for a body; the CPU adds the node's absolute position `A` to `φ`: `φ += dot(g, A) / λ`, with `g`
+  the gradient of the local phase in world space, `(M⁻¹)ᵀ d` for the node's world matrix `M` (the direction itself for a
+  node with neither turn nor scale). `A` is the world translation plus `Scene.world_shift`, summed in double, and
+  only `fract` of the cycles reaches the float block, so the precision is that of the node-local phase at any
+  distance. `update` re-folds when `A` differs from the last fold: the node moved, or the world shifted without it. A
+  consistent `shift_origin` moves both and uploads nothing. A move adds the fold
+  to both the current and the previous wave set, so the velocity form, which transforms the previous point with
+  the current node matrix, shows the surface's own motion and not the node's. A move writes the material block once,
+  and an unmoved ocean writes none. A node's turn about Y turns its waves and is not re-folded.
+  The CPU queries read the same offsets and the same node matrix, so the twin holds across a move.
+  `set_desc` keeps the offsets of waves whose direction and wavelength it leaves, and anchors a changed wave from phase
+  zero. The ripple scroll takes the local image of the move as well, so the ripples stay put in the world.
+- **Blend and drift.** A sea-state blend integrates each wave's phase in double ([Sea state](#sea-state)); a move
+  during a blend subtracts `dot(g, A_new − A_old) / λ(t)` from that phase with the frame's blended direction and
+  wavelength, so the pattern is continuous across the move. A changing wavelength stretches the pattern about `A`, the
+  node: a wave of amplitude `a` at distance `r` from `A` adds up to `2π · a · r · |dλ/dt| / λ²` metres per second to the
+  height's rate of change, and `r · |1/λ_from − 1/λ_to|` crests pass over the blend. A node that follows the view keeps
+  `r` within the distance from the camera plus one snap step, so the drift near the view is that of a lake of the
+  same size.
+  **Two oceans with different anchors drift apart during a blend and keep the difference afterwards;** they agree again
+  only if they blend identically. One ocean per scene is the expected use.
+- **Following the view.** The body is finite, so the application moves the node with the camera. Move it by multiples
+  of `ocean_snap_step(&desc)`, which is `cell_size` times the chunks per side, the cell size of the root level and a
+  multiple of every finer one: each level's vertices keep their world positions, so the surface does not swim. A move by
+  any other amount is correct and makes the vertex lattice slide under the waves.
+- **Rebasing.** `Scene.shift_origin` moves the node and `world_shift` together, so `A` is unchanged: heights at a
+  fixed absolute point stay put and nothing uploads. The renderer's shift needs nothing more
+  ([large worlds](large_world.md)).
+- **No tracing.** An ocean is not traced: the quadtree forbids `trace` and a posed 40 km grid every frame would cost
+  more than it shows. `check_desc` faults `INVALID_ARGUMENT` for `trace` on an ocean. Mirrors reflect across the rest
+  plane as for a body.
+- **Removal.** Remove `Water`, or the node; `update` removes the `InstancedMesh` as it removes a body's `Mesh`.
 
 ## Shading
 
@@ -438,11 +540,11 @@ renderer.finish_view(view)!;
 
 ## Scene traces
 
-`WaterDesc.trace` puts the displaced grid in [scene traces](scene_trace.md): ray-traced reflections and ambient
-occlusion, path-traced views, probe updates and global illumination then see the water surface, not the bed under
-it. `add_water` and `set_desc` write it to `Mesh.trace`. The mesh is the drawn one, not a
-[trace proxy](scene_trace.md#trace-proxies): `Mesh.trace_only` stays false, so the proxy skip height does not
-apply and the row carries `TRACE_MASK_ALL`.
+`WaterDesc.trace` puts the displaced grid of a `BODY` in [scene traces](scene_trace.md); an [ocean](#ocean) is not
+traced. Ray-traced reflections and ambient occlusion, path-traced views, probe updates and global illumination then
+see the water surface, not the bed under it. `add_water` and `set_desc` write it to `Mesh.trace`. The mesh is the
+drawn one, not a [trace proxy](scene_trace.md#trace-proxies): `Mesh.trace_only` stays false, so the proxy skip height
+does not apply and the row carries `TRACE_MASK_ALL`.
 
 - **The stage.** The water shader carries a `trace_pose.single` form, `water_trace_pose.comp.glsl`
   ([trace pose](custom_shaders.md#trace-pose)). It runs the vertex stage's `water_surface_point` over each rest
@@ -491,16 +593,17 @@ does not fault.
 ## Removal
 
 Remove `Water`, or the node. The runtime's remove hook removes the owned material; the next `update` removes
-the node's `Mesh` and `WaterRuntime` and every mirror camera node whose water body is gone. Removing
-`WaterRuntime` or a mirror node directly is unsupported (`release_mirror` frees one slot's camera); call `update`
-between removing and adding a water body on the same node. Destroy the scene before the store.
+the node's `Mesh` (`InstancedMesh` for an ocean) and `WaterRuntime` and every mirror camera node whose water body is
+gone. Removing `WaterRuntime` or a mirror node directly is unsupported (`release_mirror` frees one slot's camera);
+call `update` between removing and adding a water body on the same node. Destroy the scene before the store.
 
 ## Faults
 
 | Where | Fault | When |
 | --- | --- | --- |
 | `register_water` | `c3d::CAPACITY_EXCEEDED` | No component type slot left |
-| `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included, `max_mirrors` outside [1, `MAX_MIRRORS`], `reflection_view_slot` at `MAX_VIEW_TEXTURES` or above); application geometry off y = 0; a reference that is not `STANDARD`; a shared key naming another asset kind |
+| `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included, `max_mirrors` outside [1, `MAX_MIRRORS`], `reflection_view_slot` at `MAX_VIEW_TEXTURES` or above, a `depth` that is not positive and finite); application geometry off y = 0; an ocean with geometry, with `trace`, wider than `MAX_OCEAN_CHUNKS` chunks, or with a wave under four finest cells; a reference that is not `STANDARD`; a shared key naming another asset kind |
+| `set_desc` | `c3d::INVALID_ARGUMENT` | A `mode`, and for an ocean an `extent` or `cell_size`, that differs from the prepared body's |
 | `add_water`, `set_desc` | `c3d::INVALID_ID` | A dead geometry or reference |
 | `add_water`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool full, or no scene node left for the mirrors |
 | `update_mirror` | `c3d::INVALID_ID` | A dead body, a node without prepared water or a dead viewing camera |
@@ -535,14 +638,18 @@ between removing and adding a water body on the same node. Destroy the scene bef
   exact vectors ([Sea state](#sea-state)).
 - **Sea-state stretch**: a blend that changes wavelengths stretches the pattern about the node origin, so the
   per-frame height step grows with the distance from it; a longer transition spreads it
-  ([Phase continuity](#sea-state)).
+  ([Phase continuity](#sea-state)). An ocean stretches about its node instead ([Blend and drift](#ocean)).
+- **Ocean**: finite, 20 km at most at the default cell size, and the application moves it with the view; far levels
+  draw a filtered surface that queries do not; no tracing, no depth read yet; two oceans drift apart during a blend
+  ([Ocean](#ocean)).
 - **Long sessions**: core's float time limit; wrap the clock and call `render::reset_view_history`. The wave phase
   is `t · c / λ` in float ([Time](#time)); a sea state's offsets carry the same limit.
 - **Query accuracy**: the inversion stops at 0.1 mm or after 8 steps; `residual` reports where it stopped, and
   the drawn surface agrees within 1 cm.
 - **Transforms**: drawing takes any node transform (waves scale and rotate with the node; the mirror reflects
   across the image of the local XZ plane); queries require translation plus rotation about Y.
-- **One body per lake**: waves are node-local, so two water nodes do not match at a shared edge.
+- **One body per lake**: the waves of a `BODY` are node-local, so two bodies do not match at a shared edge. Two
+  oceans match in phase at a shared edge outside a blend.
 - **Grids** are shared per shape and live for the store's lifetime; application geometry rests at y = 0 and
   follows the aliasing rule by itself.
 - **References**: the ripple material contributes its normal map only; foam shows only with a foam reference;
@@ -585,6 +692,13 @@ lake limits the sea to centimetres at any wind in that range, so the ripples car
 `--shot FILE.png` renders eight frames offscreen with the still camera of the benchmark and writes the last as a PNG
 at `--width` by `--height`; it needs no window.
 
+`--ocean` replaces the lake with an [ocean](#ocean): the ground sinks until its highest point lies 12 m under the sea,
+and the sea is a 20 km body (256 chunks of 80 m, 87,381 nodes) at the default cell size and a depth of 200 m, on its
+own layer bit like the lake. Each frame its node follows the camera in steps of `ocean_snap_step`. It implies
+`--sea-state`, so the waves are the JONSWAP sea of `--wind` (the 20 km body has a fully developed sea; try `--wind
+12`) and the wind controls blend them in four seconds. There is no basin, grass, tree or crate, and no `--split` or
+`--traced`. `--shot FILE.png --size 1025` renders it headless, and `--benchmark` runs the segments over the sea.
+
 `--split` draws two viewing cameras side by side in the same output, each with its own viewport, terrain levels,
 mirror views and targets, and adds a second water body: a 60 m pool on the flattest ground whose water lies at
 least 3 m under the lake's and 110 m or more from it, carved a 27 m bowl like the lake. The lake takes view
@@ -616,7 +730,7 @@ last frame's shadow sets), `buoyancy_us` (the physics step time per fixed step i
 - `gate steady_uploads`: the still segment uploads nothing after its first frame (water, foliage and crates
   included);
 - `gate crates_at_density_line`: every crate's submerged fraction over the settle segment's last 60 frames lies
-  within 0.02 of 0.6.
+  within 0.02 of 0.6. With no crates (`--ocean`) it prints `skipped: no crates` and does not fail the run.
 
 Switches: `--split`, `--gpu-timings` (build with `python3 scripts/build.py --target water --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--validation`, `--shading
@@ -625,7 +739,7 @@ and the march off), `--mirror-scale 0.5|1`, `--crates 16|256`, `--ssgi` (SSGI on
 `--traced` (the main view path-traced, with the water traced: a grey surface that follows the waves; without
 `trace` it is absent), `--capture` (a second view on a 384² target whose
 camera leaves out the water's layer and has no mirror), `--ripples on|off`, `--sea-state`, `--wind SPEED`,
-`--shot FILE.png`, `--width W --height H` (2560 × 1440 by default in benchmark and shot modes) and `--sky`
+`--ocean`, `--shot FILE.png`, `--width W --height H` (2560 × 1440 by default in benchmark and shot modes) and `--sky`
 (an [atmosphere](sky.md) on the sun, which replaces the generated sky, and a haze
 pooling in the valleys, off by default; with `--gpu-timings` the main and mirror views print `SKY_VIEW`,
 `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a [froxel volume](sky.md#volumetric-fog)
