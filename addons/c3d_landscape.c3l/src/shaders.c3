@@ -17,6 +17,7 @@ const char[*] TERRAIN_TRACE_POSE_SPIRV @private = $embed("../shaders/spv/terrain
 const char[*] WATER_VERTEX_SPIRV @private = $embed("../shaders/spv/water_vertex.spv");
 const char[*] WATER_VERTEX_DEPTH_ONLY_SPIRV @private = $embed("../shaders/spv/water_vertex_depth_only.spv");
 const char[*] WATER_VERTEX_VELOCITY_SPIRV @private = $embed("../shaders/spv/water_vertex_velocity.spv");
+const char[*] WATER_TRACE_POSE_SPIRV @private = $embed("../shaders/spv/water_trace_pose.spv");
 const char[*] WATER_FRAGMENT_SPIRV @private = $embed("../shaders/spv/water_fragment.spv");
 const char[*] WATER_FRAGMENT_RT_SHADOWS_SPIRV @private = $embed("../shaders/spv/water_fragment_rt_shadows.spv");
 const char[*] WATER_FRAGMENT_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../shaders/spv/water_fragment_rt_shadows_scene_trace_bvh.spv");

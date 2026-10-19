@@ -386,6 +386,30 @@ fn void test_grid_is_shared_per_shape_and_kept() @test {
     assert(fixture.assets.geometries.is_live(coarse_grid));
 }
 
+fn void test_trace_follows_the_desc_and_the_stage_poses_every_frame() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    WaterDesc desc = calm_desc();
+    desc.extent = 20;
+    desc.trace = true;
+    Node* node = add_water_node(&fixture, desc);
+
+    Mesh* mesh = fixture.scene.get(node, Mesh);
+    assert(mesh.trace && !mesh.trace_only && !mesh.cast_shadow);
+    assert(fixture.assets.geometry(mesh.geometry).data.normals.len == 21 * 21);
+    ShaderId shader = fixture.assets.material(mesh.material).data.custom.shader;
+    CustomTracePose* pose = &fixture.assets.shader(shader).desc.trace_pose;
+    assert(pose.single.len > 0 && pose.reads_time);
+
+    desc.trace = false;
+    try_set_desc(&fixture, node, desc)!!;
+    assert(!fixture.scene.get(node, Mesh).trace);
+    desc.trace = true;
+    try_set_desc(&fixture, node, desc)!!;
+    assert(fixture.scene.get(node, Mesh).trace);
+}
+
 fn void test_failed_set_desc_keeps_everything() @test {
     Fixture fixture;
     setup(&fixture);
