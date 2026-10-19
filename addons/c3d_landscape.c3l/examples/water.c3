@@ -61,6 +61,12 @@ const uint LAKE_SEARCH_SAMPLES @local = 9; // height samples per side of a candi
 const uint SHORE_SAMPLES @local = 64; // height samples along each edge of the lake square
 const float SHORE_MARGIN @local = 0.5f; // metres the lowest edge ground stands above the water
 const float BASIN_RADIUS @local = 55; // metres; inside the square, so its edges stay dry
+const uint MAX_VIEWERS @local = 2; // --split puts two cameras side by side
+const uint MAX_BODIES @local = 2; // the lake and, with --split, a pool
+const float POOL_EXTENT @local = 60; // metres along each side; 49 x 49 vertices at the default cell size
+const float POOL_BASIN_RADIUS @local = 27; // metres; inside the pool's square
+const float POOL_SEARCH_DISTANCE @local = 110; // metres between the pool's and the lake's centres at least
+const float POOL_LEVEL_GAP @local = 3; // metres under the lake's water at least; the lake's grass line clears the pool
 const float BASIN_DEPTH @local = 6; // metres of water over the bed at the centre
 const float SHORE_CLEARANCE @local = 0.3f; // metres above the water under which no grass or tree grows
 
@@ -123,6 +129,11 @@ const Vec2 VIEW_STATS_POSITION @local = { 472, 16 };
 const Vec2 VIEW_STATS_SIZE @local = { 420, 260 };
 const Vec2 TARGETS_PANEL_POSITION @local = { 908, 16 };
 const Vec2 TARGETS_PANEL_SIZE @local = { 420, 520 };
+const ZString[MAX_VIEWERS] VIEWER_LABELS @local = { "main", "second" };
+const ZString[MAX_BODIES][MAX_VIEWERS] MIRROR_LABELS @local = { // by viewer, then body
+    { "mirror", "pool mirror" },
+    { "second mirror", "second pool mirror" },
+};
 const String[Segment::len] SEGMENT_NAMES @local = { "still", "orbit", "waves", "settle" };
 
 const Pass[9] REPORTED_PASSES @local = {
@@ -176,6 +187,7 @@ struct TileTerm @local {
 
 struct Options @local {
     bool        benchmark;
+    bool        split;
     uint        segment_frames;
     bool        gpu_timings;
     bool        validation;
@@ -208,23 +220,43 @@ struct Capture @local {
     ViewId         view;
 }
 
+// One camera and the view it draws; its index is the mirror slot of every body.
+struct Viewer @local {
+    Node*  camera_node;
+    ViewId view;
+}
+
+struct Body @local {
+    Node*               node;
+    Vec3                centre;  // at the water level
+    WaterDesc           desc;    // the application's desc; set_desc hands every edit to the library
+    Mirror[MAX_VIEWERS] mirrors; // by viewer
+}
+
+struct Exclusion @local {
+    Vec2  centre;
+    float distance; // metres around the centre where no site lies; zero excludes nothing
+    float ceiling;  // highest water level a site may have
+}
+
 struct Demo @local {
-    Options       options;
-    AssetStore*   assets;
-    Scene*        scene;
-    PhysicsWorld* physics;
-    Ground        ground;
-    Node*         camera_node;
-    Node*         lake;
-    Vec3          lake_centre; // at the water level
-    WaterDesc     water_desc;  // the application's desc; set_desc hands every edit to the library
-    MaterialId    ripples;
-    Reflection    reflection;
-    float         mirror_scale;
-    Mirror        mirror;
-    Capture       capture;
-    Node*[]       crates;
-    WaterFluid    fluid; // view and time are the physics update's first step
+    Options             options;
+    AssetStore*         assets;
+    Scene*              scene;
+    PhysicsWorld*       physics;
+    Ground              ground;
+    Viewer[MAX_VIEWERS] viewers;
+    uint                viewer_count;
+    Body[MAX_BODIES]    bodies; // the lake, then with --split a pool; the body index is its view texture slot
+    uint                body_count;
+    uint[<2>]           output_size; // the window or target the viewers split
+    MaterialId          ripples;
+    MaterialId          foam;
+    Reflection          reflection;
+    float               mirror_scale;
+    Capture             capture;
+    Node*[]             crates;
+    WaterFluid          fluid; // view and time are the physics update's first step
 }
 
 struct Controls @local {
@@ -404,22 +436,31 @@ fn EnvironmentId? add_sky(AssetStore* assets) @local {
 
 // ----------------------------------------------------------------------------- ground
 
-// The candidate square whose ground varies least: the lake sits on the flattest ground of the search grid.
-fn Vec2 find_lake_site(HeightView* view, float extent) @local {
+// The candidate square whose ground varies least: the water sits on the flattest ground of the search grid.
+fn Vec2? find_site(
+    HeightView* view,
+    float ground_extent,
+    float extent,
+    Exclusion exclusion,
+) @local {
     Vec2 best;
     float best_range = float::max;
     float step = (LAKE_SEARCH_HIGH - LAKE_SEARCH_LOW) / (float)(LAKE_SEARCH_STEPS - 1);
-    float sample_step = LAKE_EXTENT / (float)(LAKE_SEARCH_SAMPLES - 1);
+    float sample_step = extent / (float)(LAKE_SEARCH_SAMPLES - 1);
     for (uint row = 0; row < LAKE_SEARCH_STEPS; row++) {
         for (uint column = 0; column < LAKE_SEARCH_STEPS; column++) {
             Vec2 centre = { LAKE_SEARCH_LOW + step * (float)column, LAKE_SEARCH_LOW + step * (float)row };
-            centre *= extent;
+            centre *= ground_extent;
+            if (exclusion.distance > 0) {
+                if ((centre - exclusion.centre).length() < exclusion.distance) continue;
+                if (water_level(view, centre, extent) > exclusion.ceiling) continue;
+            }
             float low = float::max;
             float high = -float::max;
             for (uint z = 0; z < LAKE_SEARCH_SAMPLES; z++) {
                 for (uint x = 0; x < LAKE_SEARCH_SAMPLES; x++) {
-                    float sample_x = centre.x - LAKE_EXTENT / 2 + sample_step * (float)x;
-                    float sample_z = centre.y - LAKE_EXTENT / 2 + sample_step * (float)z;
+                    float sample_x = centre.x - extent / 2 + sample_step * (float)x;
+                    float sample_z = centre.y - extent / 2 + sample_step * (float)z;
                     float height = terrain::sample_height(view, sample_x, sample_z) ?? low;
                     low = math::min(low, height);
                     high = math::max(high, height);
@@ -431,15 +472,16 @@ fn Vec2 find_lake_site(HeightView* view, float extent) @local {
             }
         }
     }
+    if (best_range == float::max) return NOT_FOUND~;
     return best;
 }
 
 // The lowest ground along the square's edges, less a margin: every edge meets dry ground.
-fn float lake_level(HeightView* view, Vec2 centre) @local {
+fn float water_level(HeightView* view, Vec2 centre, float extent) @local {
     float lowest = float::max;
-    float half = LAKE_EXTENT / 2;
+    float half = extent / 2;
     for (uint sample = 0; sample <= SHORE_SAMPLES; sample++) {
-        float along = -half + LAKE_EXTENT * (float)sample / (float)SHORE_SAMPLES;
+        float along = -half + extent * (float)sample / (float)SHORE_SAMPLES;
         Vec2[4] edge_points = {
             { centre.x + along, centre.y - half },
             { centre.x + along, centre.y + half },
@@ -453,13 +495,14 @@ fn float lake_level(HeightView* view, Vec2 centre) @local {
     return lowest - SHORE_MARGIN;
 }
 
-// A cosine bowl BASIN_DEPTH under the level at the centre, reaching the level at BASIN_RADIUS; nothing is raised.
+// A cosine bowl BASIN_DEPTH under the level at the centre, reaching the level at the radius; nothing is raised.
 fn void carve_basin(
     Scene* scene,
     AssetStore* assets,
     Ground* ground,
     Vec2 centre,
     float level,
+    float radius,
 ) @local {
     TextureAsset* record = assets.texture(ground.desc.height_map);
     uint side = record.desc.width;
@@ -467,7 +510,7 @@ fn void carve_basin(
     float units_per_metre = (float)ushort::max / ground.desc.height_scale;
     Vec3 local = maths::transform_point(maths::inverse_affine(ground.node.world), { centre.x, level, centre.y });
     float cell_size = ground.desc.cell_size;
-    float radius_texels = BASIN_RADIUS / cell_size;
+    float radius_texels = radius / cell_size;
     uint first_x = (uint)math::max(math::floor(local.x / cell_size - radius_texels), 0.0f);
     uint first_z = (uint)math::max(math::floor(local.z / cell_size - radius_texels), 0.0f);
     uint last_x = min((uint)math::ceil(local.x / cell_size + radius_texels), side - 1);
@@ -475,8 +518,8 @@ fn void carve_basin(
     for (uint z = first_z; z <= last_z; z++) {
         for (uint x = first_x; x <= last_x; x++) {
             float distance = (Vec2){ (float)x * cell_size - local.x, (float)z * cell_size - local.z }.length();
-            if (distance >= BASIN_RADIUS) continue;
-            float depth = BASIN_DEPTH * 0.5f * (1 + math::cos((float)math::PI * distance / BASIN_RADIUS));
+            if (distance >= radius) continue;
+            float depth = BASIN_DEPTH * 0.5f * (1 + math::cos((float)math::PI * distance / radius));
             float bed = math::max((local.y - depth) * units_per_metre, 0.0f);
             usz index = (usz)z * side + x;
             texels[index] = (ushort)math::min((float)texels[index], bed);
@@ -521,29 +564,34 @@ fn void? add_foliage_layer(
 
 // ----------------------------------------------------------------------------- water
 
-fn void? add_lake(Demo* demo, Vec2 site, float level) @local {
+fn void? add_body(
+    Demo* demo,
+    Vec2 site,
+    float level,
+    float extent,
+) @local {
     Scene* scene = demo.scene;
-    AssetStore* assets = demo.assets;
-    demo.ripples = add_ripples(assets)!;
+    uint index = demo.body_count;
     WaterDesc desc = water::default_water_desc();
-    desc.extent = LAKE_EXTENT;
+    desc.extent = extent;
     desc.ripples = demo.options.ripples ? demo.ripples : (MaterialId){};
-    desc.foam = add_foam(assets)!;
+    desc.foam = demo.foam;
     desc.march_reflections = demo.options.reflection != Reflection.ENV;
+    desc.max_mirrors = demo.viewer_count;
+    desc.reflection_view_slot = index;
 
-    Node* lake = scene.add_node(name: "lake")!;
-    lake.local.position = { site.x, level, site.y };
-    lake.layers = WATER_LAYER;
+    Node* node = scene.add_node(name: index == 0 ? "lake" : "pool")!;
+    node.local.position = { site.x, level, site.y };
+    node.layers = WATER_LAYER;
     scene.update_world();
     water::add_water(
         scene:  scene,
-        assets: assets,
-        node:   lake,
+        assets: demo.assets,
+        node:   node,
         desc:   desc,
     )!;
-    demo.lake = lake;
-    demo.lake_centre = { site.x, level, site.y };
-    demo.water_desc = desc;
+    demo.bodies[index] = { .node = node, .centre = { site.x, level, site.y }, .desc = desc };
+    demo.body_count = index + 1;
 }
 
 fn void? add_crates(Demo* demo) @local {
@@ -564,7 +612,7 @@ fn void? add_crates(Demo* demo) @local {
         Vec2 share = { ((float)(index % side) + 0.5f) / side - 0.5f, ((float)(index / side) + 0.5f) / side - 0.5f };
         Node* node = demo.scene.add_mesh(box, wood, name: "crate")!;
         Vec3 offset = { share.x * CRATE_FIELD, CRATE_DROP_HEIGHT, share.y * CRATE_FIELD };
-        node.local.position = demo.lake_centre + offset;
+        node.local.position = demo.bodies[0].centre + offset;
         demo.scene.update_world();
         ColliderDesc collider = physics::default_collider_desc(BOX);
         collider.half_extents = { CRATE_SIZE * 0.5f, CRATE_SIZE * 0.5f, CRATE_SIZE * 0.5f };
@@ -585,49 +633,76 @@ fn float mean_submerged_fraction(Demo* demo) @local {
     return sum / (float)demo.crates.len;
 }
 
-// docs/water.md's mirror, once after add_water and a first water::update.
+// docs/water.md's mirror view: its own target and the body's clip plane, once after the first update_mirror.
 fn Mirror? create_mirror(
     Renderer* renderer,
     Scene* scene,
-    AssetStore* assets,
-    Node* lake,
-    uint[<2>] output_size,
+    Node* body,
+    uint[<2>] size,
     float render_scale,
     bool volumetric_fog,
 ) @local {
-    RenderTargetId mirror_target = render::create_render_target(
+    RenderTargetId target = render::create_render_target(
         renderer,
-        render::render_target_desc(output_size.x, output_size.y),
+        render::render_target_desc(size.x, size.y),
     )!;
-    ViewDesc mirror_desc = render::texture_view_desc(mirror_target);
-    mirror_desc.render_scale = render_scale;
-    mirror_desc.post.anti_aliasing = AntiAliasing.NONE;
-    mirror_desc.volumetric_fog = volumetric_fog;
-    mirror_desc.clip_plane = scene.get(lake, WaterRuntime).clip_plane;
-    ViewId mirror_view = render::create_view(renderer, mirror_desc)!;
-    water::set_reflection_target(
-        scene:  scene,
-        assets: assets,
-        node:   lake,
-        target: mirror_target,
-    );
-    return { .target = mirror_target, .view = mirror_view, .width = output_size.x, .height = output_size.y };
+    ViewDesc desc = render::texture_view_desc(target);
+    desc.render_scale = render_scale;
+    desc.post.anti_aliasing = AntiAliasing.NONE;
+    desc.volumetric_fog = volumetric_fog;
+    desc.clip_plane = scene.get(body, WaterRuntime).clip_plane;
+    ViewId view = render::create_view(renderer, desc)!;
+    return { .target = target, .view = view, .width = size.x, .height = size.y };
 }
 
-// The lens carries the output aspect, so the mirror's projection at its scaled extent equals the main view's.
-fn void set_view_aspect(Demo* demo, uint[<2>] output_size) @local {
-    demo.scene.get(demo.camera_node, Camera).aspect = (float)output_size.x / (float)output_size.y;
+// Zero extent covers the whole output; a split halves it, the right half taking the odd column.
+fn PixelRect viewer_viewport(Demo* demo, uint index, uint[<2>] output_size) @local {
+    if (!demo.options.split) return {};
+    uint left = output_size.x / 2;
+    if (index == 0) return { .width = left, .height = output_size.y };
+    return { .x = left, .width = output_size.x - left, .height = output_size.y };
 }
 
-// docs/water.md's per-frame lines, after water::update and before begin_frame: set_desc and a moved lake move
+fn bool same_viewport(PixelRect first, PixelRect second) @local {
+    return first.x == second.x && first.y == second.y && first.width == second.width && first.height == second.height;
+}
+
+// The lens carries the viewer's aspect, so the mirror's projection at its scaled extent equals the viewer's.
+// Viewports, aspects and mirror targets follow the output; a view is configured only when its viewport changes.
+fn void? follow_viewports(Demo* demo, Renderer* renderer, uint[<2>] output_size) @local {
+    foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
+        PixelRect viewport = viewer_viewport(demo, (uint)viewer_index, output_size);
+        uint[<2>] size = viewport.width ? (uint[<2>]){ viewport.width, viewport.height } : output_size;
+        ViewDesc current = renderer.views.get(viewer.view).desc;
+        if (!same_viewport(current.viewport, viewport)) {
+            current.viewport = viewport;
+            render::configure_view(renderer, viewer.view, current)!;
+        }
+        demo.scene.get(viewer.camera_node, Camera).aspect = (float)size.x / (float)size.y;
+        foreach (&body : demo.bodies[:demo.body_count]) {
+            Mirror* mirror = &body.mirrors[viewer_index];
+            if (!mirror.target.generation || (mirror.width == size.x && mirror.height == size.y)) continue;
+            render::resize_render_target(
+                renderer: renderer,
+                target:   mirror.target,
+                width:    size.x,
+                height:   size.y,
+            )!;
+            mirror.width = size.x;
+            mirror.height = size.y;
+        }
+    }
+}
+
+// docs/water.md's per-frame lines, after update_mirror and before begin_frame: set_desc and a moved body move
 // the plane.
 fn void? follow_clip_plane(
     Renderer* renderer,
     Scene* scene,
-    Node* lake,
+    Node* body,
     ViewId mirror_view,
 ) @local {
-    Plane clip_plane = scene.get(lake, WaterRuntime).clip_plane;
+    Plane clip_plane = scene.get(body, WaterRuntime).clip_plane;
     ViewDesc current = renderer.views.get(mirror_view).desc;
     if (clip_plane.normal != current.clip_plane.normal || clip_plane.d != current.clip_plane.d) {
         current.clip_plane = clip_plane;
@@ -639,11 +714,12 @@ fn void? follow_clip_plane(
 fn void? render_mirror(
     Renderer* renderer,
     Scene* scene,
-    Node* lake,
+    Node* body,
+    uint slot,
     ViewId mirror_view,
     Node* viewing_camera,
 ) @local {
-    Node* mirror = scene.node(scene.get(lake, WaterRuntime).mirror);
+    Node* mirror = scene.node(scene.get(body, WaterRuntime).mirrors[slot]);
     renderer.render_view(
         scene:         scene,
         camera_node:   mirror,
@@ -653,38 +729,41 @@ fn void? render_mirror(
     renderer.finish_view(mirror_view)!;
 }
 
-// Without a planar target the stage marches the snapshot; the environment source also turns the march off.
+// Without a planar mirror the stage marches the snapshot; the environment source also turns the march off.
 fn void? apply_reflection(Demo* demo, Reflection reflection) @local {
-    RenderTargetId target = reflection == Reflection.PLANAR ? demo.mirror.target : (RenderTargetId){};
-    water::set_reflection_target(
-        scene:  demo.scene,
-        assets: demo.assets,
-        node:   demo.lake,
-        target: target,
-    );
     bool march = reflection != Reflection.ENV;
-    if (march != demo.water_desc.march_reflections) {
-        demo.water_desc.march_reflections = march;
-        set_water_desc(demo, demo.water_desc)!;
+    foreach (&body : demo.bodies[:demo.body_count]) {
+        if (march == body.desc.march_reflections) continue;
+        body.desc.march_reflections = march;
+        set_water_desc(demo, body)!;
     }
     demo.reflection = reflection;
 }
 
-fn void? set_water_desc(Demo* demo, WaterDesc desc) @local {
+fn void? set_water_desc(Demo* demo, Body* body) @local {
     return water::set_desc(
         scene:  demo.scene,
         assets: demo.assets,
-        node:   demo.lake,
-        desc:   desc,
+        node:   body.node,
+        desc:   body.desc,
     );
 }
 
 fn void? set_calm(Demo* demo, bool calm) @local {
-    WaterDesc desc = water::default_water_desc();
-    for (uint index = 0; index < demo.water_desc.wave_count; index++) {
-        demo.water_desc.waves[index].amplitude = calm ? desc.waves[index].amplitude : 0;
+    WaterDesc defaults = water::default_water_desc();
+    foreach (&body : demo.bodies[:demo.body_count]) {
+        for (uint index = 0; index < body.desc.wave_count; index++) {
+            body.desc.waves[index].amplitude = calm ? defaults.waves[index].amplitude : 0;
+        }
+        set_water_desc(demo, body)!;
     }
-    return set_water_desc(demo, demo.water_desc);
+}
+
+fn void? set_ripples(Demo* demo, bool ripples) @local {
+    foreach (&body : demo.bodies[:demo.body_count]) {
+        body.desc.ripples = ripples ? demo.ripples : (MaterialId){};
+        set_water_desc(demo, body)!;
+    }
 }
 
 // A second view that sees the water would reflect the first view's mirror camera, so this one leaves it out.
@@ -693,9 +772,10 @@ fn Capture? create_capture(Renderer* renderer, Demo* demo) @local {
     lens.layers &= ~WATER_LAYER;
     Node* node = demo.scene.add_camera(lens, name: "capture")!;
     HeightView view = terrain::height_view(demo.scene, demo.assets, demo.ground.node.id)!;
-    Vec3 position = demo.lake_centre + (Vec3){ ORBIT_RADIUS, 0, 0 };
-    float ground = landscape_ground::ground_under(&view, position, demo.lake_centre.y);
-    position.y = math::max(demo.lake_centre.y + STILL_HEIGHT, ground + CAMERA_CLEARANCE);
+    Vec3 centre = demo.bodies[0].centre;
+    Vec3 position = centre + (Vec3){ ORBIT_RADIUS, 0, 0 };
+    float ground = landscape_ground::ground_under(&view, position, centre.y);
+    position.y = math::max(centre.y + STILL_HEIGHT, ground + CAMERA_CLEARANCE);
     landscape_ground::place_camera(
         camera_node: node,
         position:    position,
@@ -750,9 +830,25 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     return desc;
 }
 
+// The second viewer faces the pool from the same stand-off the interactive camera keeps from the lake.
+fn void place_second_viewer(Demo* demo) @local {
+    HeightView view = terrain::height_view(demo.scene, demo.assets, demo.ground.node.id)!!;
+    Vec3 centre = demo.bodies[1].centre;
+    Vec3 position = centre - (Vec3){ STILL_BACK * POOL_EXTENT, 0, 0 };
+    float ground = landscape_ground::ground_under(&view, position, centre.y);
+    position.y = math::max(centre.y + STILL_HEIGHT, ground + CAMERA_CLEARANCE);
+    landscape_ground::place_camera(
+        camera_node: demo.viewers[1].camera_node,
+        position:    position,
+        yaw:         (float)math::PI / 2,
+        pitch:       STILL_PITCH,
+    );
+}
+
 fn void? build_demo(Demo* demo) @local {
     Scene* scene = demo.scene;
     AssetStore* assets = demo.assets;
+    demo.viewer_count = demo.options.split ? 2 : 1;
     demo.ground = landscape_ground::add_ground(
         scene:         scene,
         assets:        assets,
@@ -761,15 +857,44 @@ fn void? build_demo(Demo* demo) @local {
         lod_threshold: terrain::DEFAULT_LOD_THRESHOLD,
     )!;
     HeightView view = terrain::height_view(scene, assets, demo.ground.node.id)!;
-    Vec2 site = find_lake_site(&view, demo.ground.extent);
-    float level = lake_level(&view, site);
+    Vec2 site = find_site(
+        view:          &view,
+        ground_extent: demo.ground.extent,
+        extent:        LAKE_EXTENT,
+        exclusion:     {},
+    )!;
+    float level = water_level(&view, site, LAKE_EXTENT);
     carve_basin(
         scene:  scene,
         assets: assets,
         ground: &demo.ground,
         centre: site,
         level:  level,
+        radius: BASIN_RADIUS,
     );
+    Vec2 pool_site;
+    float pool_level;
+    if (demo.options.split) {
+        pool_site = find_site(
+            view:          &view,
+            ground_extent: demo.ground.extent,
+            extent:        POOL_EXTENT,
+            exclusion:     {
+                .centre   = site,
+                .distance = POOL_SEARCH_DISTANCE,
+                .ceiling  = level - POOL_LEVEL_GAP,
+            },
+        )!;
+        pool_level = water_level(&view, pool_site, POOL_EXTENT);
+        carve_basin(
+            scene:  scene,
+            assets: assets,
+            ground: &demo.ground,
+            centre: pool_site,
+            level:  pool_level,
+            radius: POOL_BASIN_RADIUS,
+        );
+    }
     landscape_ground::add_sun_and_sky(scene, false, demo.options.sky)!;
     EnvironmentId sky = add_sky(assets)!;
     scene.environment = sky;
@@ -796,41 +921,74 @@ fn void? build_demo(Demo* demo) @local {
     )!;
     // Built after the carve, so the collider cooks the basin once.
     add_terrain_collider(demo.physics, demo.ground.node, demo.ground.desc)!;
-    add_lake(demo, site, level)!;
-    demo.camera_node = scene.add_camera(
-        camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR, CAMERA_FAR),
-        name: "camera",
+    demo.ripples = add_ripples(assets)!;
+    demo.foam = add_foam(assets)!;
+    add_body(
+        demo:   demo,
+        site:   site,
+        level:  level,
+        extent: LAKE_EXTENT,
     )!;
+    if (demo.options.split) {
+        add_body(
+            demo:   demo,
+            site:   pool_site,
+            level:  pool_level,
+            extent: POOL_EXTENT,
+        )!;
+    }
+    foreach (index, &viewer : demo.viewers[:demo.viewer_count]) {
+        viewer.camera_node = scene.add_camera(
+            camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR, CAMERA_FAR),
+            name: index == 0 ? "camera" : "second_camera",
+        )!;
+    }
     add_crates(demo)!;
     demo.physics.set_fluid_sampler(&water::fluid_sample, &demo.fluid);
     scene.update_world();
+    if (demo.options.split) place_second_viewer(demo);
+    scene.update_world();
 }
 
-// The mirror's first placement needs the camera where the frames will put it.
+// The mirrors' first placement needs the cameras where the frames will put them.
 fn void? prepare_views(Demo* demo, Renderer* renderer, uint[<2>] output_size) @local {
-    set_view_aspect(demo, output_size);
+    follow_viewports(demo, renderer, output_size)!;
+    demo.output_size = output_size;
     demo.scene.update_world();
-    water::update(
-        scene:          demo.scene,
-        assets:         demo.assets,
-        viewing_camera: demo.camera_node.id,
-        wind_velocity:  {},
-        time:           0,
-    )!;
-    demo.mirror = create_mirror(
-        renderer:       renderer,
-        scene:          demo.scene,
-        assets:         demo.assets,
-        lake:           demo.lake,
-        output_size:    output_size,
-        render_scale:   demo.mirror_scale,
-        volumetric_fog: demo.options.volumetric_fog,
-    )!;
+    place_mirrors(demo)!;
+    foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
+        PixelRect viewport = viewer_viewport(demo, (uint)viewer_index, output_size);
+        uint[<2>] size = viewport.width ? (uint[<2>]){ viewport.width, viewport.height } : output_size;
+        foreach (&body : demo.bodies[:demo.body_count]) {
+            body.mirrors[viewer_index] = create_mirror(
+                renderer:       renderer,
+                scene:          demo.scene,
+                body:           body.node,
+                size:           size,
+                render_scale:   demo.mirror_scale,
+                volumetric_fog: demo.options.volumetric_fog,
+            )!;
+        }
+    }
     apply_reflection(demo, demo.options.reflection)!;
     if (demo.options.capture) demo.capture = create_capture(renderer, demo)!;
 }
 
-// The frame order of docs/water.md, after the camera moved and before begin_frame.
+// Each viewer owns the mirror slot of its own index on every body.
+fn void? place_mirrors(Demo* demo) @local {
+    foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
+        foreach (&body : demo.bodies[:demo.body_count]) {
+            water::update_mirror(
+                scene:          demo.scene,
+                body:           body.node.id,
+                slot:           (uint)viewer_index,
+                viewing_camera: viewer.camera_node.id,
+            )!;
+        }
+    }
+}
+
+// The frame order of docs/water.md, after the cameras moved and before begin_frame.
 fn double? step_scene(
     Demo* demo,
     Renderer* renderer,
@@ -843,20 +1001,24 @@ fn double? step_scene(
     terrain::update(scene, demo.assets)!;
     foliage::update(scene, demo.assets, wind)!;
     water::update(
-        scene:          scene,
-        assets:         demo.assets,
-        viewing_camera: demo.camera_node.id,
-        wind_velocity:  wind,
-        time:           time,
-    )!;
-    follow_clip_plane(
-        renderer:    renderer,
-        scene:       scene,
-        lake:        demo.lake,
-        mirror_view: demo.mirror.view,
-    )!;
+        scene:         scene,
+        assets:        demo.assets,
+        wind_velocity: wind,
+        time:          time,
+    );
+    place_mirrors(demo)!;
+    foreach (&body : demo.bodies[:demo.body_count]) {
+        foreach (&mirror : body.mirrors[:demo.viewer_count]) {
+            follow_clip_plane(
+                renderer:    renderer,
+                scene:       scene,
+                body:        body.node,
+                mirror_view: mirror.view,
+            )!;
+        }
+    }
     demo.fluid = {
-        .view    = water::surface_view(scene, demo.assets, demo.lake.id)!,
+        .view    = water::surface_view(scene, demo.assets, demo.bodies[0].node.id)!,
         .time    = time,
         .current = demo.options.current,
     };
@@ -867,19 +1029,29 @@ fn double? step_scene(
     return physics_us;
 }
 
-// The capture renders last: a view with another shadow key between mirror and main would make main re-record.
-fn void? render_views(Demo* demo, Renderer* renderer, ViewId main_view) @local {
-    if (demo.reflection == Reflection.PLANAR) {
-        render_mirror(
-            renderer:       renderer,
-            scene:          demo.scene,
-            lake:           demo.lake,
-            mirror_view:    demo.mirror.view,
-            viewing_camera: demo.camera_node,
-        )!;
+// docs/water.md's render order: each viewer's mirrors, the textures it is given, then the viewer itself. The
+// capture renders last: a view with another shadow key between mirror and main would make main re-record.
+fn void? render_views(Demo* demo, Renderer* renderer) @local {
+    foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
+        foreach (&body : demo.bodies[:demo.body_count]) {
+            RenderTargetId target;
+            if (demo.reflection == Reflection.PLANAR) {
+                Mirror* mirror = &body.mirrors[viewer_index];
+                render_mirror(
+                    renderer:       renderer,
+                    scene:          demo.scene,
+                    body:           body.node,
+                    slot:           (uint)viewer_index,
+                    mirror_view:    mirror.view,
+                    viewing_camera: viewer.camera_node,
+                )!;
+                target = mirror.target;
+            }
+            renderer.set_view_texture(viewer.view, body.desc.reflection_view_slot, target)!;
+        }
+        renderer.render_view(demo.scene, viewer.camera_node, viewer.view)!;
+        renderer.finish_view(viewer.view)!;
     }
-    renderer.render_view(demo.scene, demo.camera_node, main_view)!;
-    renderer.finish_view(main_view)!;
     if (!demo.options.capture) return;
     renderer.render_view(demo.scene, demo.capture.camera_node, demo.capture.view)!;
     return renderer.finish_view(demo.capture.view);
@@ -956,6 +1128,7 @@ fn Options? parse_options(String[] args) @local {
             case "--ssgi": options.ssgi = true;
             case "--traced": options.traced = true;
             case "--capture": options.capture = true;
+            case "--split": options.split = true;
             case "--ripples":
                 switch (option_value(args, &index)!) {
                     case "on": options.ripples = true;
@@ -1026,21 +1199,34 @@ fn void? water_panel(
 
     if (controls.reflection != before.reflection) apply_reflection(demo, controls.reflection)!;
     if (controls.full_mirror != before.full_mirror) {
-        ViewDesc desc = renderer.views.get(demo.mirror.view).desc;
-        desc.render_scale = controls.full_mirror ? 1 : MIRROR_RENDER_SCALE;
-        render::configure_view(renderer, demo.mirror.view, desc)!;
+        foreach (&body : demo.bodies[:demo.body_count]) {
+            foreach (&mirror : body.mirrors[:demo.viewer_count]) {
+                ViewDesc desc = renderer.views.get(mirror.view).desc;
+                desc.render_scale = controls.full_mirror ? 1 : MIRROR_RENDER_SCALE;
+                render::configure_view(renderer, mirror.view, desc)!;
+            }
+        }
     }
     if (controls.calm != before.calm) set_calm(demo, controls.calm)!;
-    if (controls.ripples != before.ripples) {
-        demo.water_desc.ripples = controls.ripples ? demo.ripples : (MaterialId){};
-        set_water_desc(demo, demo.water_desc)!;
-    }
+    if (controls.ripples != before.ripples) set_ripples(demo, controls.ripples)!;
 }
 
 fn void view_stats_panel(Demo* demo, Renderer* renderer) @local {
-    ViewId[3] views = { renderer.default_view, demo.mirror.view, demo.capture.view };
-    ZString[3] labels = { "main", "mirror", "capture" };
-    usz count = demo.options.capture ? 3 : 2;
+    ViewId[MAX_VIEWERS * (1 + MAX_BODIES) + 1] views;
+    ZString[MAX_VIEWERS * (1 + MAX_BODIES) + 1] labels;
+    usz count;
+    foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
+        views[count] = viewer.view;
+        labels[count++] = VIEWER_LABELS[viewer_index];
+        foreach (body_index, &body : demo.bodies[:demo.body_count]) {
+            views[count] = body.mirrors[viewer_index].view;
+            labels[count++] = MIRROR_LABELS[viewer_index][body_index];
+        }
+    }
+    if (demo.options.capture) {
+        views[count] = demo.capture.view;
+        labels[count++] = "capture";
+    }
     imgui::set_next_window_pos(VIEW_STATS_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(VIEW_STATS_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("View stats", null, {})) gui::view_stats_table(renderer, views[:count], labels[:count]);
@@ -1056,7 +1242,7 @@ fn void? draw_frame(
     renderer.begin_frame(info)!;
     defer catch render::abort_frame(renderer);
     if (renderer.has_output) {
-        render_views(demo, renderer, renderer.default_view)!;
+        render_views(demo, renderer)!;
         OverlayContext overlay = renderer.begin_overlay()!;
         gui_renderer.record(&overlay)!;
         renderer.end_overlay(&overlay)!;
@@ -1065,18 +1251,10 @@ fn void? draw_frame(
 }
 
 fn void? follow_output_size(Demo* demo, Renderer* renderer) @local {
-    uint width = renderer.output_width;
-    uint height = renderer.output_height;
-    if (!width || !height || (width == demo.mirror.width && height == demo.mirror.height)) return;
-    set_view_aspect(demo, { width, height });
-    render::resize_render_target(
-        renderer: renderer,
-        target:   demo.mirror.target,
-        width:    width,
-        height:   height,
-    )!;
-    demo.mirror.width = width;
-    demo.mirror.height = height;
+    uint[<2>] size = { renderer.output_width, renderer.output_height };
+    if (!size.x || !size.y || size == demo.output_size) return;
+    follow_viewports(demo, renderer, size)!;
+    demo.output_size = size;
 }
 
 fn void? run_interactive(Options options) @local {
@@ -1116,15 +1294,22 @@ fn void? run_interactive(Options options) @local {
     };
     defer alloc::free(mem, demo.crates.ptr);
     build_demo(&demo)!;
-    Vec3 start = demo.lake_centre - (Vec3){ STILL_BACK * LAKE_EXTENT, -STILL_HEIGHT, 0 };
+    Vec3 start = demo.bodies[0].centre - (Vec3){ STILL_BACK * LAKE_EXTENT, -STILL_HEIGHT, 0 };
     FlyCamera fly_camera = { .position = start, .yaw = (float)math::PI / 2, .pitch = STILL_PITCH, .flying = true };
     landscape_ground::place_camera(
-        camera_node: demo.camera_node,
+        camera_node: demo.viewers[0].camera_node,
         position:    fly_camera.position,
         yaw:         fly_camera.yaw,
         pitch:       fly_camera.pitch,
     );
+    demo.viewers[0].view = renderer.default_view;
     render::configure_view(&renderer, renderer.default_view, main_view_desc(render::default_view_desc(), options))!;
+    if (options.split) {
+        demo.viewers[1].view = render::create_view(
+            &renderer,
+            main_view_desc(render::default_view_desc(), options),
+        )!;
+    }
     prepare_views(&demo, &renderer, { max(renderer.output_width, 1u), max(renderer.output_height, 1u) })!;
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -1182,7 +1367,7 @@ fn void? run_interactive(Options options) @local {
             delta:      delta,
         );
         landscape_ground::place_camera(
-            camera_node: demo.camera_node,
+            camera_node: demo.viewers[0].camera_node,
             position:    fly_camera.position,
             yaw:         fly_camera.yaw,
             pitch:       fly_camera.pitch,
@@ -1255,7 +1440,7 @@ fn void? pose_segment(
     uint frames,
 ) @local {
     HeightView view = terrain::height_view(demo.scene, demo.assets, demo.ground.node.id)!;
-    Vec3 centre = demo.lake_centre;
+    Vec3 centre = demo.bodies[0].centre;
     Vec3 position = centre - (Vec3){ STILL_BACK * LAKE_EXTENT, 0, 0 };
     float yaw = (float)math::PI / 2;
     float pitch = STILL_PITCH;
@@ -1270,7 +1455,7 @@ fn void? pose_segment(
     float ground = landscape_ground::ground_under(&view, position, centre.y);
     position.y = math::max(centre.y + height, ground + CAMERA_CLEARANCE);
     landscape_ground::place_camera(
-        camera_node: demo.camera_node,
+        camera_node: demo.viewers[0].camera_node,
         position:    position,
         yaw:         yaw,
         pitch:       pitch,
@@ -1280,17 +1465,16 @@ fn void? pose_segment(
 fn void? render_offscreen(
     Demo* demo,
     Renderer* renderer,
-    ViewId main_view,
     uint frame,
 ) @local {
     renderer.begin_frame({ .time = frame_time(frame), .delta = TIME_STEP })!;
     defer catch render::abort_frame(renderer);
-    render_views(demo, renderer, main_view)!;
+    render_views(demo, renderer)!;
     return renderer.end_frame();
 }
 
 fn double? time_samples(Demo* demo) @local {
-    SurfaceView view = water::surface_view(demo.scene, demo.assets, demo.lake.id)!;
+    SurfaceView view = water::surface_view(demo.scene, demo.assets, demo.bodies[0].node.id)!;
     double[SAMPLE_BATCHES] batches;
     float sum;
     float reach = LAKE_EXTENT * 0.45f;
@@ -1298,8 +1482,8 @@ fn double? time_samples(Demo* demo) @local {
         time::Clock started = clock::now();
         for (uint sample = 0; sample < SAMPLES_PER_BATCH; sample++) {
             float share = (float)sample / (float)SAMPLES_PER_BATCH;
-            float x = demo.lake_centre.x + reach * math::sin(share * 97);
-            float z = demo.lake_centre.z + reach * math::cos(share * 61);
+            float x = demo.bodies[0].centre.x + reach * math::sin(share * 97);
+            float z = demo.bodies[0].centre.z + reach * math::cos(share * 61);
             sum += water::sample_surface(
                 view:    &view,
                 world_x: x,
@@ -1327,7 +1511,6 @@ fn void track_settle(Demo* demo, BenchmarkResult* result) @local {
 fn void? run_segments(
     Demo* demo,
     Renderer* renderer,
-    ViewId main_view,
     BenchmarkResult* result,
 ) @local {
     Options options = demo.options;
@@ -1358,10 +1541,9 @@ fn void? run_segments(
             delta:    TIME_STEP,
         )!;
         render_offscreen(
-            demo:      demo,
-            renderer:  renderer,
-            main_view: main_view,
-            frame:     frame,
+            demo:     demo,
+            renderer: renderer,
+            frame:    frame,
         )!;
         double frame_ms = elapsed_ms(frame_started);
 
@@ -1382,8 +1564,8 @@ fn void? run_segments(
             if (completed < measured) {
                 FrameRecord* record = &result.records[completed];
                 record.frame_gpu_ms = renderer.stats.gpu_pass_ms;
-                record.main_gpu_ms = renderer.view_stats(main_view)!.gpu_pass_ms;
-                record.mirror_gpu_ms = renderer.view_stats(demo.mirror.view)!.gpu_pass_ms;
+                record.main_gpu_ms = renderer.view_stats(demo.viewers[0].view)!.gpu_pass_ms;
+                record.mirror_gpu_ms = renderer.view_stats(demo.bodies[0].mirrors[0].view)!.gpu_pass_ms;
             }
         }
     }
@@ -1549,7 +1731,7 @@ fn String reflection_name(Reflection reflection) @local {
 fn void print_header(Options options) @local {
     io::printfn(
         "# water size=%d shading=%s reflection=%s mirror_scale=%g crates=%d ripples=%s foliage=both ssgi=%s "
-          "extent=%dx%d frames=%d sky=%s volumetric_fog=%s",
+          "extent=%dx%d frames=%d sky=%s volumetric_fog=%s split=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         reflection_name(options.reflection),
@@ -1562,6 +1744,7 @@ fn void print_header(Options options) @local {
         options.segment_frames,
         options.sky ? "on" : "off",
         options.volumetric_fog ? "on" : "off",
+        options.split ? "on" : "off",
     );
 }
 
@@ -1578,10 +1761,13 @@ fn bool? run_benchmark(Options options) @local {
         renderer: &renderer,
         desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
     )!;
-    ViewId main_view = render::create_view(
-        renderer: &renderer,
-        desc:     main_view_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options),
-    )!;
+    ViewId[MAX_VIEWERS] main_views;
+    foreach (&main_view : main_views[:options.split ? 2 : 1]) {
+        *main_view = render::create_view(
+            renderer: &renderer,
+            desc:     main_view_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options),
+        )!;
+    }
     Scene scene = create_demo_scene(options);
     defer scene::destroy_scene(&scene);
     terrain::register_terrain(&scene, &assets)!;
@@ -1606,6 +1792,7 @@ fn bool? run_benchmark(Options options) @local {
     };
     defer alloc::free(mem, demo.crates.ptr);
     build_demo(&demo)!;
+    foreach (index, &viewer : demo.viewers[:demo.viewer_count]) viewer.view = main_views[index];
     print_header(options);
     pose_segment(
         demo:    &demo,
@@ -1628,10 +1815,9 @@ fn bool? run_benchmark(Options options) @local {
     renderer.prepare_scene(&scene)!;
 
     run_segments(
-        demo:      &demo,
-        renderer:  &renderer,
-        main_view: main_view,
-        result:    &result,
+        demo:     &demo,
+        renderer: &renderer,
+        result:   &result,
     )!;
     render::wait_frames(&renderer)!;
     return print_results(&demo, &result);
@@ -1645,8 +1831,8 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
-              "[--current X,Z] [--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H] [--sky] "
-              "[--volumetric-fog].");
+              "[--current X,Z] [--ssgi] [--traced] [--capture] [--split] [--ripples on|off] [--width W] [--height H] "
+              "[--sky] [--volumetric-fog].");
         }
         return 1;
     }
