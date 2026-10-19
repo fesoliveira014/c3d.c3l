@@ -19,14 +19,15 @@ struct WaveGpu {
     float cycles_per_metre;  // along direction
     float cycles_per_second;
     float shift;             // metres of horizontal crest shift at full phase
+    float phase_offset;      // cycles added to the phase; keeps a sea state's phase continuous
     float _pad0;
-    float _pad1;
 }
 
 $assert WaveGpu::size == 32;
 
 struct WaterParams @private {
     WaveGpu[MAX_WAVES] waves; // mirrored as WaterParams in landscape/water_waves.glsl
+    WaveGpu[MAX_WAVES] previous; // the waves of the update before; the velocity form reads them
     Vec4               absorption;
     Vec4               scatter;
     Vec4               scroll_origin;
@@ -41,7 +42,7 @@ struct WaterParams @private {
     float              _pad0;
 }
 
-$assert WaterParams::size == 224;
+$assert WaterParams::size == 352;
 
 <*
  World-space copy of one water body's waves and pose at the moment it was taken.
@@ -174,7 +175,8 @@ fn float shader_time(double time) @private => (float)time;
 
 // Twin of water_wave_angle in landscape/water_waves.glsl.
 fn float wave_angle(WaveGpu* wave, Vec2 rest, float time) @private {
-    float cycles = wave.direction.dot(rest) * wave.cycles_per_metre - time * wave.cycles_per_second;
+    float cycles = wave.direction.dot(rest) * wave.cycles_per_metre - time * wave.cycles_per_second
+        + wave.phase_offset;
     return (float)math::PI * 2 * (cycles - math::floor(cycles));
 }
 
@@ -216,17 +218,17 @@ fn WaveGpu pack_wave(Wave* wave, uint wave_count) @private {
     };
 }
 
-// The scroll segment belongs to update: a desc edit keeps it.
-fn WaterParams pack_params(WaterDesc* desc, WaterParams scroll) @private {
+// The scroll segment and the phase offsets belong to update: a desc edit keeps them.
+fn WaterParams pack_params(WaterDesc* desc, WaterParams kept) @private {
     Vec3 absorption = desc.absorption_color;
     Vec3 scatter = desc.scatter_color;
     WaterParams params = {
         .absorption            = { absorption.x, absorption.y, absorption.z, desc.absorption_distance },
         .scatter               = { scatter.x, scatter.y, scatter.z, desc.roughness },
-        .scroll_origin         = scroll.scroll_origin,
-        .scroll_velocity       = scroll.scroll_velocity,
+        .scroll_origin         = kept.scroll_origin,
+        .scroll_velocity       = kept.scroll_velocity,
         .wave_count            = desc.wave_count,
-        .scroll_time           = scroll.scroll_time,
+        .scroll_time           = kept.scroll_time,
         .refraction_strength   = desc.refraction_strength,
         .reflection_distortion = desc.reflection_distortion,
         .foam_depth            = desc.foam_depth,
@@ -235,18 +237,20 @@ fn WaterParams pack_params(WaterDesc* desc, WaterParams scroll) @private {
     };
     for (uint index = 0; index < desc.wave_count; index++) {
         params.waves[index] = pack_wave(&desc.waves[index], desc.wave_count);
+        params.waves[index].phase_offset = kept.waves[index].phase_offset;
     }
+    params.previous = params.waves;
     return params;
 }
 
-fn float total_amplitude(WaterDesc* desc) @private {
+fn float total_amplitude(Wave[] waves) @private {
     float total;
-    foreach (&wave : desc.waves[:desc.wave_count]) total += wave.amplitude;
+    foreach (&wave : waves) total += wave.amplitude;
     return total;
 }
 
-fn float largest_shift(WaterDesc* desc) @private {
+fn float largest_shift(Wave[] waves) @private {
     float total;
-    foreach (&wave : desc.waves[:desc.wave_count]) total += pack_wave(wave, desc.wave_count).shift;
+    foreach (&wave : waves) total += pack_wave(wave, (uint)waves.len).shift;
     return total;
 }

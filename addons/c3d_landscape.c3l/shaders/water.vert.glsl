@@ -20,7 +20,7 @@ void main() {
     vertex.uv1 = rest;
     vertex.color = vec4(1.0, 1.0, 1.0, point.crest);
 #ifdef VELOCITY
-    vec3 previous = water_surface_point(params, rest, frame.previous_time).position;
+    vec3 previous = water_previous_position(params, rest, frame.previous_time);
     write_mesh_outputs(vertex, previous, draw, frame, geometry);
 #else
     write_mesh_outputs(vertex, draw, frame, geometry);

@@ -104,6 +104,7 @@ struct WaterRuntime {
     Plane               clip_plane; // world; the mirror views' ViewDesc.clip_plane
     Vec2                rest_min;   // node-local XZ of the rest surface
     Vec2                rest_max;
+    SeaBlend            sea;        // the sea-state blend set_sea_state started; idle without one
 }
 
 <*
@@ -246,14 +247,14 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .receive_shadow      = true,
         .trace               = desc.trace,
         .has_bounds_override = true,
-        .local_bounds        = drawn_bounds(rest, &desc),
+        .local_bounds        = drawn_bounds(rest, desc.waves[:desc.wave_count]),
     });
     scene.add(node, (WaterRuntime){
         .desc       = desc,
         .material   = owned,
         .grid       = surface,
         .mirrors    = mirrors,
-        .clip_plane = mirror_clip_plane(node.world, total_amplitude(&desc)),
+        .clip_plane = mirror_clip_plane(node.world, total_amplitude(desc.waves[:desc.wave_count])),
         .rest_min   = { rest.min.x, rest.min.z },
         .rest_max   = { rest.max.x, rest.max.z },
     });
@@ -284,7 +285,7 @@ fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
 
 <*
  Replace a water body's desc; the grid is rebuilt only when its shape changed.
- Invalidates Camera pointers when max_mirrors shrinks.
+ Ends a running sea-state blend. Invalidates Camera pointers when max_mirrors shrinks.
  @param [&inout] scene
  @param [&inout] assets : "The store given to register_water."
  @param [&in] node : "Carries a water body."
@@ -320,7 +321,8 @@ fn void? set_desc(
     Mesh* mesh = scene.get(node, Mesh);
     mesh.geometry = surface;
     mesh.trace = desc.trace;
-    mesh.local_bounds = drawn_bounds(rest, &desc);
+    mesh.local_bounds = drawn_bounds(rest, desc.waves[:desc.wave_count]);
+    runtime.sea = {};
     runtime.grid = surface;
     runtime.rest_min = { rest.min.x, rest.min.z };
     runtime.rest_max = { rest.max.x, rest.max.z };
@@ -379,7 +381,7 @@ fn void release_mirror(Scene* scene, Entity body, uint slot) {
 }
 
 <*
- Tear down removed water bodies and scroll the ripples with the wind.
+ Tear down removed water bodies, scroll the ripples with the wind and advance sea-state blends.
  Invalidates Mesh and WaterRuntime pointers when a Water was removed.
  @param [&inout] scene : "World matrices current; pending water is skipped unchanged."
  @param [&inout] assets : "The store given to register_water."
@@ -402,6 +404,13 @@ fn void update(
             runtime:       runtime,
             wind_velocity: wind_velocity,
             time:          time,
+        );
+        advance_sea(
+            scene:   scene,
+            assets:  assets,
+            node:    scene.node(entity),
+            runtime: runtime,
+            time:    time,
         );
     };
 }

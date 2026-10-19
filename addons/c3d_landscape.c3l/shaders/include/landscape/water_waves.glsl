@@ -13,13 +13,14 @@ struct WaterWave {
     float cycles_per_metre;
     float cycles_per_second;
     float shift;
+    float phase_offset;
     float _pad0;
-    float _pad1;
 };
 
 // Mirrors WaterParams in water/waves.c3.
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer WaterParams {
     WaterWave waves[WATER_MAX_WAVES];
+    WaterWave previous[WATER_MAX_WAVES];
     vec4 absorption;
     vec4 scatter;
     vec4 scroll_origin;
@@ -44,8 +45,14 @@ struct WaterSurfacePoint {
 // sin and cos are specified only near [-pi, pi]: the phase is reduced to one cycle first, as wave_angle in
 // water/waves.c3 does.
 float water_wave_angle(WaterWave wave, vec2 rest, float time) {
-    float cycles = dot(wave.direction, rest) * wave.cycles_per_metre - time * wave.cycles_per_second;
+    float cycles = dot(wave.direction, rest) * wave.cycles_per_metre - time * wave.cycles_per_second
+        + wave.phase_offset;
     return 2.0 * PI * fract(cycles);
+}
+
+vec3 water_displacement(WaterWave wave, float angle) {
+    vec2 shift = wave.direction * (wave.shift * cos(angle));
+    return vec3(shift.x, wave.amplitude * sin(angle), shift.y);
 }
 
 WaterSurfacePoint water_surface_point(WaterParams params, vec2 rest, float time) {
@@ -58,8 +65,7 @@ WaterSurfacePoint water_surface_point(WaterParams params, vec2 rest, float time)
         float sine = sin(angle);
         float cosine = cos(angle);
         vec2 gradient = (2.0 * PI * wave.cycles_per_metre) * wave.direction;
-        vec2 shift = wave.direction * (wave.shift * cosine);
-        offset += vec3(shift.x, wave.amplitude * sine, shift.y);
+        offset += water_displacement(wave, angle);
         slope += (wave.amplitude * cosine) * gradient;
         jacobian -= (wave.shift * sine) * outerProduct(wave.direction, gradient);
     }
@@ -71,6 +77,16 @@ WaterSurfacePoint water_surface_point(WaterParams params, vec2 rest, float time)
     // The horizontal map compresses toward a crest: a shrinking Jacobian is the crest factor.
     point.crest = clamp(1.0 - determinant(jacobian), 0.0, 1.0);
     return point;
+}
+
+// Where the previous update's waves drew a rest point at the previous frame's time.
+vec3 water_previous_position(WaterParams params, vec2 rest, float time) {
+    vec3 offset = vec3(0.0);
+    for (uint index = 0u; index < params.wave_count; index++) {
+        WaterWave wave = params.previous[index];
+        offset += water_displacement(wave, water_wave_angle(wave, rest, time));
+    }
+    return vec3(rest.x, 0.0, rest.y) + offset;
 }
 
 #endif

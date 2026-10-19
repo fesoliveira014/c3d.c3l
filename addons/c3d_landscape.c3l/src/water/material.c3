@@ -158,7 +158,7 @@ fn Aabb rest_bounds(AssetStore* assets, WaterDesc* desc) @private {
 }
 
 // Displacement leaves the rest bounds by the total amplitude in y and the largest crest shift in x and z.
-fn Aabb drawn_bounds(Aabb rest, WaterDesc* desc) @private {
-    Vec3 growth = { largest_shift(desc), total_amplitude(desc), largest_shift(desc) };
+fn Aabb drawn_bounds(Aabb rest, Wave[] waves) @private {
+    Vec3 growth = { largest_shift(waves), total_amplitude(waves), largest_shift(waves) };
     return { .min = rest.min - growth, .max = rest.max + growth };
 }
