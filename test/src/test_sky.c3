@@ -18,6 +18,12 @@ const float SUN_INTENSITY @local = 3;
 const Vec3 SECOND_COLOR @local = { 0.2f, 0.4f, 0.6f };
 const float DRIFT_STEP @local = 0.09f; // degrees; five steps stay clear of the half-degree threshold, six pass it
 const Vec3 FOG_ORIGIN @local = { 0, 10, 0 };
+const MediumVolume MEDIUM_BOX @local = {
+    .scattering  = { 0.5f, 0, 0 },
+    .anisotropy  = 0.25f,
+    .half_extent = { 1, 1 },
+    .depth       = 2,
+};
 
 struct TransmittanceCase @local {
     float altitude;
@@ -374,6 +380,35 @@ fn void test_atmosphere_and_fog_validity_reject_each_arm() @test {
     HeightFog backward = fog;
     backward.anisotropy = -0.99f;
     assert(light::height_fog_valid(&backward));
+}
+
+fn void test_medium_volume_validity_rejects_each_arm() @test {
+    MediumVolume medium = MEDIUM_BOX;
+    assert(light::medium_volume_valid(&medium));
+    MediumVolume clear = medium;
+    clear.absorption = {};
+    clear.scattering = {};
+    assert(light::medium_volume_valid(&clear));
+    MediumVolume backward = medium;
+    backward.anisotropy = -0.99f;
+    assert(light::medium_volume_valid(&backward));
+    MediumVolume[11] broken;
+    foreach (&candidate : broken) *candidate = medium;
+    broken[0].absorption.y = -0.1f;
+    broken[1].scattering.z = float::nan;
+    broken[2].absorption.x = float::inf;
+    broken[3].center.x = float::inf;
+    broken[4].center.y = float::nan;
+    broken[5].half_extent.x = 0;
+    broken[6].half_extent.y = -1;
+    broken[7].depth = 0;
+    broken[8].depth = float::inf;
+    broken[9].anisotropy = 1;
+    broken[10].anisotropy = float::nan;
+    foreach (index, &candidate : broken) assert(!light::medium_volume_valid(candidate), "arm %d", index);
+    MediumVolume negative_pole = medium;
+    negative_pole.anisotropy = -1;
+    assert(!light::medium_volume_valid(&negative_pole));
 }
 
 fn void test_sky_fog_block_packs_the_atmosphere_and_the_fog() @test {

@@ -148,6 +148,7 @@ fn void add_core(Fixture* fixture) @private {
     scene.add(values, light::ATMOSPHERE_EARTH);
     scene.add(values, light::HEIGHT_FOG_DEFAULT);
     scene.add(values, light::CLOUD_LAYER_DEFAULT);
+    scene.add(values, (MediumVolume){ .scattering = { 0.1f, 0.2f, 0.3f }, .half_extent = { 4, 5 }, .depth = 6 });
     scene.add(values, light::reflection_probe({ 2, 3, 4 }, {}));
     scene.add(values, scene::default_decal_desc(fixture.material).decal);
     Transform[1] placements = { maths::TRANSFORM_IDENTITY };

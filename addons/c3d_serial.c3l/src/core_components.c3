@@ -21,6 +21,7 @@ const ulong FOG_LAYOUT @local = 0x1b730abab72fb88f;
 const ulong REFLECTION_LAYOUT @local = 0x7654f53807d7357a;
 const ulong DECAL_LAYOUT @local = 0xa4dd177052750847;
 const ulong CLOUD_LAYOUT @local = 0x5aed71b1b6ed4a13;
+const ulong MEDIUM_LAYOUT @local = 0x0f39aa907b19ac0c;
 
 struct LightV1 @private {
     LightKind kind;
@@ -89,6 +90,7 @@ fn void? register_core_codecs() {
     register_core_value(ReflectionProbe, REFLECTION_LAYOUT, &defaults_reflection)!;
     register_core_value(Decal, DECAL_LAYOUT, &defaults_decal)!;
     register_core_value(CloudLayer, CLOUD_LAYOUT, &defaults_cloud)!;
+    register_core_value(MediumVolume, MEDIUM_LAYOUT, &defaults_medium)!;
     register_described(Mesh, {
         .name = "c3d.Mesh",
         .project = &project_mesh,
@@ -117,6 +119,9 @@ fn void? register_core_codecs() {
     register_described(Decal, { .name = "c3d.Decal" })!;
     register_described(CloudLayer, {
         .name = "c3d.CloudLayer", .project = &project_cloud, .validate = &validate_cloud,
+    })!;
+    register_described(MediumVolume, {
+        .name = "c3d.MediumVolume", .project = &project_medium, .validate = &validate_medium,
     })!;
     register_core_batch_codecs()!;
     register_model_codec()!;
@@ -190,6 +195,10 @@ fn void defaults_fog(void* value) @local {
 
 fn void defaults_cloud(void* value) @local {
     *(CloudLayer*)value = light::CLOUD_LAYER_DEFAULT;
+}
+
+fn void defaults_medium(void* value) @local {
+    *(MediumVolume*)value = { .half_extent = { 1, 1 }, .depth = 1 };
 }
 
 fn void defaults_reflection(void* value) @local {
@@ -335,6 +344,15 @@ fn void? validate_cloud(void* value, ReadContext* context) @local {
 fn void? project_cloud(void* component, void* value, WriteContext* context) @local {
     if (!light::cloud_layer_valid((CloudLayer*)component)) return c3d::INVALID_ARGUMENT~;
     *(CloudLayer*)value = *(CloudLayer*)component;
+}
+
+fn void? validate_medium(void* value, ReadContext* context) @local {
+    if (!light::medium_volume_valid((MediumVolume*)value)) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? project_medium(void* component, void* value, WriteContext* context) @local {
+    if (!light::medium_volume_valid((MediumVolume*)component)) return c3d::INVALID_ARGUMENT~;
+    *(MediumVolume*)value = *(MediumVolume*)component;
 }
 
 fn void? validate_reflection(void* value, ReadContext* context) @local {

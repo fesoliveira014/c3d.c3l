@@ -22,4 +22,5 @@ fn void? register_core_components() {
     register_reflected_component(ReflectionProbe)!;
     register_reflected_component(Decal)!;
     register_reflected_component(CloudLayer)!;
+    register_reflected_component(MediumVolume)!;
 }

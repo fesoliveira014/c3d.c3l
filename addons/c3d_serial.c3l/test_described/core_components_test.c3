@@ -26,6 +26,14 @@ fn void test_core_values_round_trip_both_encodings_with_owned_mesh_weights() @te
         fixture.source.add(source, light::HEIGHT_FOG_DEFAULT);
         fixture.source.add(source, light::reflection_probe({ 2, 3, 4 }, {}));
         fixture.source.add(source, scene::default_decal_desc({}).decal);
+        fixture.source.add(source, (MediumVolume){
+            .absorption  = { 0.1f, 0.2f, 0.3f },
+            .scattering  = { 0.01f, 0.02f, 0.03f },
+            .anisotropy  = 0.4f,
+            .center      = { 2, 3 },
+            .half_extent = { 4, 5 },
+            .depth       = 6,
+        });
         char[] bytes = serial::write_subtree(
             allocator: tmem,
             scene: &fixture.source,
@@ -64,6 +72,9 @@ fn void test_core_values_round_trip_both_encodings_with_owned_mesh_weights() @te
             assert(fixture.destination.get(restored, HeightFog).falloff == light::HEIGHT_FOG_DEFAULT.falloff);
             assert(fixture.destination.get(restored, ReflectionProbe).half_extents == (Vec3){ 2, 3, 4 });
             assert(fixture.destination.get(restored, Decal).weights.normal == 1);
+            MediumVolume* medium = fixture.destination.get(restored, MediumVolume);
+            assert(medium.scattering == (Vec3){ 0.01f, 0.02f, 0.03f } && medium.center == (Vec2){ 2, 3 });
+            assert(medium.half_extent == (Vec2){ 4, 5 } && medium.depth == 6 && medium.anisotropy == 0.4f);
             assert(bytes == serial::write_subtree(
                 allocator: tmem,
                 scene: &fixture.destination,
@@ -93,9 +104,12 @@ fn void test_core_value_validity_rejects_invalid_writes_and_text_reads() @test {
         fixture.source.add(source, light::ATMOSPHERE_EARTH);
         fixture.source.add(source, light::HEIGHT_FOG_DEFAULT);
         fixture.source.add(source, light::reflection_probe({ 2, 3, 4 }, {}));
+        fixture.source.add(source, (MediumVolume){ .half_extent = { 1, 1 }, .depth = 1 });
         String valid = fixture_text(&fixture, source);
-        String[4] names = { "c3d.ProbeVolume", "c3d.Atmosphere", "c3d.HeightFog", "c3d.ReflectionProbe" };
-        String[4] fields = { "counts", "planet_radius", "falloff", "half_extents" };
+        String[5] names = {
+            "c3d.ProbeVolume", "c3d.Atmosphere", "c3d.HeightFog", "c3d.ReflectionProbe", "c3d.MediumVolume",
+        };
+        String[5] fields = { "counts", "planet_radius", "falloff", "half_extents", "depth" };
         SerialDiagnostic diagnostic = serial::create_serial_diagnostic(mem);
         defer serial::destroy_serial_diagnostic(&diagnostic);
         TextDocument document = serial::parse_text(
@@ -112,6 +126,7 @@ fn void test_core_value_validity_rejects_invalid_writes_and_text_reads() @test {
                 case 1: fixture.source.get(source, Atmosphere).planet_radius = -1;
                 case 2: fixture.source.get(source, HeightFog).falloff = -1;
                 case 3: fixture.source.get(source, ReflectionProbe).half_extents.x = -1;
+                case 4: fixture.source.get(source, MediumVolume).depth = -1;
             }
             assert(@catch(serial::write_subtree(
                 allocator: tmem,
@@ -129,6 +144,7 @@ fn void test_core_value_validity_rejects_invalid_writes_and_text_reads() @test {
             *fixture.source.get(source, Atmosphere) = light::ATMOSPHERE_EARTH;
             *fixture.source.get(source, HeightFog) = light::HEIGHT_FOG_DEFAULT;
             *fixture.source.get(source, ReflectionProbe) = light::reflection_probe({ 2, 3, 4 }, {});
+            *fixture.source.get(source, MediumVolume) = { .half_extent = { 1, 1 }, .depth = 1 };
             uint value = member(&document, member(&document, components, name), "value");
             uint token = member(&document, value, fields[index]);
             if (document.values[token].kind == ARRAY) token++;
