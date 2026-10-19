@@ -68,6 +68,7 @@ TerrainMorphedHeight terrain_morphed_height(
     vec3 fine_local = vec3(float(texel.x) * params.cell_size, fine_height, float(texel.y) * params.cell_size);
     vec3 fine_world = (draw.model * vec4(fine_local, 1.0)).xyz;
     float world_scale = quadtree_world_scale(draw.model);
+
     float morph = quadtree_morph(
         tree,
         depth,
@@ -75,6 +76,8 @@ TerrainMorphedHeight terrain_morphed_height(
         frame.selection_camera.w,
         world_scale
     );
+
+#ifdef VELOCITY
     // The node's own motion does not enter the previous morph: both cameras share the current origin.
     float previous_morph = quadtree_morph(
         tree,
@@ -83,6 +86,10 @@ TerrainMorphedHeight terrain_morphed_height(
         frame.previous_selection_camera.w,
         world_scale
     );
+#else
+    float previous_morph = 0.0;
+#endif
+
     if (morph == 0.0 && previous_morph == 0.0) return heights;
 
     int step = int(chunk.span) / int(TERRAIN_CHUNK_CELLS);
@@ -103,6 +110,7 @@ void main() {
     ivec2 texel = ivec2(chunk.origin + round(unit.xz * chunk.span));
     ivec2 grid = ivec2(round(unit.xz * float(TERRAIN_CHUNK_CELLS)));
     uint height_texture = material.slots[TERRAIN_HEIGHT_SLOT].texture_index;
+
     // The skirt ring lies at y = 0 of the unit box, under the edge vertex it hangs from.
     bool surface = unit.y > 0.5;
     float height = surface ? terrain_height(height_texture, params, texel) : chunk.skirt_height;
@@ -123,6 +131,7 @@ void main() {
         previous_height = morphed.previous;
     }
 #endif
+
     vec3 local = vec3(float(texel.x) * params.cell_size, height, float(texel.y) * params.cell_size);
     vec4 world = draw.model * vec4(local, 1.0);
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)
