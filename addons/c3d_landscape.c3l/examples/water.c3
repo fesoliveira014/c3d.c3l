@@ -148,6 +148,11 @@ const Pass[9] REPORTED_PASSES @local = {
     Pass.TEMPORAL_AA,
 };
 
+const Pass[2] TRACE_PASSES @local = {
+    Pass.TRACE_POSE,
+    Pass.ACCELERATION_BUILD,
+};
+
 const Pass[5] SKY_PASSES @local = {
     Pass.SKY_VIEW,
     Pass.AERIAL_PERSPECTIVE,
@@ -580,6 +585,7 @@ fn void? add_body(
     desc.march_reflections = demo.options.reflection != Reflection.ENV;
     desc.max_mirrors = demo.viewer_count;
     desc.reflection_view_slot = index;
+    desc.trace = demo.options.traced;
 
     Node* node = scene.add_node(name: index == 0 ? "lake" : "pool")!;
     node.local.position = { site.x, level, site.y };
@@ -1624,6 +1630,11 @@ fn double[] gather_pass(FrameRecord[] records, Pass pass, double[] scratch) @loc
     return scratch[:records.len];
 }
 
+fn double[] gather_frame_pass(FrameRecord[] records, Pass pass, double[] scratch) @local {
+    foreach (index, record : records) scratch[index] = (double)record.frame_gpu_ms[pass.ordinal];
+    return scratch[:records.len];
+}
+
 fn double[] gather_step_us(FrameRecord[] records, double[] scratch) @local {
     usz count;
     foreach (record : records) {
@@ -1681,6 +1692,12 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
             foreach (pass : REPORTED_PASSES) {
                 double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
                 io::printfn("gpu_ms view=main segment=%s pass=%s median=%.4f", name, pass, median);
+            }
+            if (options.traced) {
+                foreach (pass : TRACE_PASSES) {
+                    double median = percentile(gather_frame_pass(records, pass, result.scratch), 0.5f);
+                    io::printfn("gpu_ms view=frame segment=%s pass=%s median=%.4f", name, pass, median);
+                }
             }
             if (options.sky) {
                 print_sky_passes(
