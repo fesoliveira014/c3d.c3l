@@ -94,7 +94,8 @@ ground, the spacing and the seed are the application's. `add_foliage` checks eve
 | `rules.density_channel` | 0 to 3: red, green, blue, alpha |
 | `rules.spacing` | Metres between candidate strata; positive; at most `MAX_STRATA_PER_SIDE` (1024) strata per cell edge |
 | `rules.seed` | Any value; two layers with one seed place the same candidates |
-| `rules.max_slope` | Radians between up and the ground's face normal, in [0, π/2] |
+| `rules.max_slope` | Radians between up and the normal `slope_normal` selects, in [0, π/2] |
+| `rules.slope_normal` | `FACE` (default): the height field's face normal. `SMOOTH`: the normal the terrain shades with |
 | `rules.min_altitude`, `rules.max_altitude` | World y after the terrain node's placement; `min <= max` |
 | `rules.min_scale`, `rules.max_scale` | Uniform scale; `0 < min <= max`, finite |
 | `rules.min_tint`, `rules.max_tint` | Instance colour, multiplying the material's base colour; finite |
@@ -128,8 +129,10 @@ are layer-local cell indices, except on a [terrain tile](#tiled-worlds), where t
    and its foliage line up.
 2. **Height**: `terrain::sample_height` at its world x and z.
 3. **Altitude**: `min_altitude <= height <= max_altitude`, in world y.
-4. **Slope**: `terrain::sample_normal(...).y >= cos(max_slope)`. This is the face normal of the height field's
-   triangle, so the limit follows the faceted surface, not the smooth normals the terrain draws with.
+4. **Slope**: the selected normal's `y >= cos(max_slope)`. `FACE` reads `terrain::sample_normal`, the face normal
+   of the height field's triangle, so the limit follows the faceted surface. `SMOOTH` reads
+   `terrain::sample_smooth_normal`, the normal the terrain draws with, so the limit follows the shaded surface; on
+   a [tile](#tiled-worlds) it reads the border ring as the shader does. The default is `FACE`.
 5. **Instance**: on the ground, turned about Y, uniformly scaled, tinted, all from hash channels.
 
 Stages 2 to 4 only remove, so a cell never holds more instances than its density-stage count.
@@ -148,9 +151,9 @@ ground without `TerrainTile` keeps layer-local keys, bit for bit.
 
 **Divisibility.** `cell_size` must divide `tile_extent()`: the ratio `tile_extent() / cell_size` must lie within
 1e-4 of an integer, relative to the ratio. Otherwise `add_foliage` and `prepare` fault `INVALID_ARGUMENT`. The grid
-then has exactly `cells_per_tile` cells per side and its cell edges fall on the tile's edges. Inside the tolerance
-the grid drifts at most a tenth of a texel on a 1025-texel tile, and a candidate past the extent is rejected like
-any other outside it.
+then has exactly `cells_per_tile` cells per side and its cell edges fall on the tile's edges, and
+`MAX_CELLS_PER_SIDE` bounds that rounded count. Inside the tolerance the grid drifts at most a tenth of a texel on a
+1025-texel tile, and a candidate past the extent is rejected like any other outside it.
 
 **Edge ownership.** Cells are half-open ranges of the set's grid: tile `t` owns the cells
 `[t · cells_per_tile, (t + 1) · cells_per_tile)` on each axis, and no two tiles share a cell. A candidate comes
@@ -173,8 +176,8 @@ fade, shadow and trace flags and the layer's current sway. Its arrays hold its d
 sets a bounds override, because core grows each batch bound and each instance cull test by the sway reach.
 Cells are library-owned: do not edit, remove or reparent them.
 
-`update` compares, per layer, both nodes' world matrices, the ground's height-map revision and the density
-map's revision with those the cells were placed against:
+`update` compares, per layer, both nodes' world matrices, the ground's height-map revision, the density map's
+revision and, for a `SMOOTH` layer, the ground's border ring with those the cells were placed against:
 
 | Observed | Work |
 | --- | --- |
@@ -182,6 +185,10 @@ map's revision with those the cells were placed against:
 | A pose or the density revision changed | Whole re-scatter: count, node budget, staged arrays, commit |
 | The ground's last refresh follows the placed revision | Re-place the cells meeting its rectangle, widened by two texels |
 | Any other height-map gap (two refreshes since the last update) | Re-place every cell |
+| A `SMOOTH` layer's ground ring changed: a neighbour's edit, or a link or unlink | Re-place the cells meeting the one-texel strip along each border linked when placed or now, widened by two texels |
+
+A ring change and a height-map change in one update re-place the union of their cells once. A `FACE` layer never
+reads the ring, so a ring change re-places nothing for it.
 
 `TerrainRuntime.last_refresh` keeps the revisions around the terrain's last accepted refresh and its rectangle
 (the whole map unless the refresh took a `mark_dirty` rectangle). A re-place writes arrays in place, never
@@ -295,7 +302,6 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
 - One terrain node per layer; a [tiled world](#tiled-worlds) takes one layer per tile. Candidates outside the
   ground's extent are rejected.
 - One density channel per layer, `RGBA8_UNORM` only.
-- The slope limit reads the height field's faceted face normal, not the smooth drawn normal.
 - `VERTEX_ALPHA` layers consume vertex alpha whether or not the wind blows.
 - No level of detail: every layer draws one level and relies on its fade.
 - The desc is fixed after `add_foliage`; so are the cells' layer bits, taken from the layer node at creation.

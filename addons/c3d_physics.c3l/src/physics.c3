@@ -122,15 +122,27 @@ struct CollisionFilter {
 }
 
 <*
+ Cells of a texture height field that one collider covers; all zero covers the whole map.
+*>
+struct HeightFieldWindow {
+    uint x;
+    uint z;
+    uint count_x; // cells; the window reads count_x + 1 samples
+    uint count_z;
+}
+
+<*
  Row-major heights, x fastest; copied when cooked.
  TEXTURE reads mip 0's red channel (8-bit / 255, R16_UINT / 65535); counts come from the texture.
+ A window needs a TEXTURE source of 8-bit or R16_UINT samples and quantizes over the full range 0 to 1.
 *>
 struct HeightField {
-    HeightSource source;
-    float[]      heights;
-    uint         count_x;
-    uint         count_z;
-    TextureId    texture;
+    HeightSource      source;
+    float[]           heights;
+    uint              count_x;
+    uint              count_z;
+    TextureId         texture;
+    HeightFieldWindow window;
 }
 
 <*
@@ -489,7 +501,7 @@ fn void PhysicsWorld.set_tuning(&self, PhysicsTuning tuning) {
 }
 
 <*
- Run cloth staging and breakable graph building through parallel.
+ Run cloth staging, breakable graph building and debug collider generation through parallel.
 *>
 fn void PhysicsWorld.set_parallel(&self, ParallelFor parallel) {
     self.parallel = parallel;

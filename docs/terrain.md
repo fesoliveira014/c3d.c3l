@@ -70,8 +70,8 @@ Every view and shadow layer of the frame draws the selection of the camera given
 
 ## TerrainDesc
 
-`terrain::default_terrain_desc()` sets `lod_threshold = 512`, `lod_hysteresis = 0.25` and both shadow flags;
-the maps, scales and layers are the application's. Every value is checked by `add_terrain` and faults rather
+`terrain::default_terrain_desc()` sets `lod_threshold = 512`, `lod_hysteresis = 0.25`, `slope_projection = TOP`,
+`triplanar_sharpness = 4` and both shadow flags; the maps, scales and layers are the application's. Every value is checked by `add_terrain` and faults rather
 than asserts, since descs also come from files.
 
 | Field | Rule |
@@ -83,6 +83,8 @@ than asserts, since descs also come from files.
 | `layers` | Up to four live `STANDARD` materials, leading; zero ids after the last one |
 | `lod_threshold` | Projected chunk diameter in output pixels above which a chunk splits; zero or more |
 | `lod_hysteresis` | A split chunk merges below `lod_threshold / (1 + lod_hysteresis)`; zero or more |
+| `slope_projection` | `TOP` projects the layers from above; `TRIPLANAR` projects them along all three axes ([slope projection](#slope-projection)) |
+| `triplanar_sharpness` | Exponent of the plane weights: `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read and checked only under `TRIPLANAR` |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update` |
 
 **Height maps.** `image::load_texture_r16` loads a 16-bit PNG as `R16_UINT`; an 8-bit file widens by 257, so
@@ -98,8 +100,28 @@ format would curve the weights, so it faults `UNSUPPORTED`.
 
 **Layers.** Each layer is an ordinary `STANDARD` material, referenced through the custom material's
 `references` (see [materials](materials.md)). The stage samples every set layer on every pixel and blends the
-samples by weight; a layer without tangents takes derivative normals. Tiling comes from each layer's own
-`TextureSlot` transforms over `uv0`, which is terrain-local metres: a `scale` of 0.25 repeats a map every 4 m.
+samples by weight; a layer without tangents takes derivative normals, and a `TRIPLANAR` terrain gives it the plane's
+frame instead. Tiling comes from each layer's own `TextureSlot` transforms over `uv0`, which is terrain-local metres:
+a `scale` of 0.25 repeats a map every 4 m.
+
+## Slope projection
+
+With `TOP`, every layer samples its maps at terrain-local `x` and `z`, so a steep slope stretches the textures along the
+fall line. `TRIPLANAR` projects the layers along the terrain's three axes and blends the results by the surface normal.
+
+- The planes are X (`uv` = local `z`, `y`), Y (local `x`, `z`, the `TOP` coordinates) and Z (local `x`, `y`), all in
+  terrain-local metres. A layer's own `TextureSlot` transforms apply to each plane as they do to `uv0`. The maps'
+  UV-set selection is ignored: the projection replaces both sets.
+- The weight of a plane is the matching component of the smooth local normal, the one lighting uses, raised to
+  `triplanar_sharpness` and normalised. Higher values narrow the blends: the transition between two planes spans about
+  30 degrees of slope at 4 and 2 degrees at 64. A flat surface weighs only the Y plane, so it shades as with `TOP`.
+- Each plane has its own tangent frame, so normal maps keep their orientation: `+u` and `+v` of the map follow the
+  plane's axes projected onto the surface, as the derivative frames of `TOP` do on the Y plane. The planes' world
+  normals blend and the sum is normalised.
+- Every layer is sampled on every plane in every pixel, three times the layer samples of `TOP`, with gradients taken
+  from the projected coordinates, so the blend has no seams. `triplanar_sharpness` does not change the cost.
+- `slope_projection` and `triplanar_sharpness` are baked into the terrain's material when it is prepared. Changing
+  them afterwards needs the `Terrain` component removed and added again.
 
 ## Level of detail
 
@@ -189,8 +211,7 @@ set's grid, so placement does not depend on the order tiles are added, and its `
 
 **Authoring contract.** Neighbouring tiles duplicate their shared edge row and column, so the edge texels of two
 neighbours are equal. Cut tiles from one map with an overlap of one row or column, as the example does. Nothing
-checks the texels, and an edit does not copy them: the application keeps the shared edge texels of neighbouring
-tiles equal across an edit.
+checks the texels; [`TerrainSet.propagate_edit`](#edits) keeps them equal across an edit.
 
 **Border ring.** A tile shades its edge texels from central differences, so it needs the texel just outside its
 border. Each tile owns a `R16_UINT` texture of `texels × 4` in material slot 2, one row for each edge neighbour in the
@@ -201,6 +222,8 @@ the rows that are valid.
 - The fragment stage reads a ring row only where a central difference crosses a present edge. An edge without a
   linked neighbour stays one-sided, and every other pixel shades as before. The ring has no corners: the stage
   never samples diagonally.
+- `TerrainRuntime.ring_edges` mirrors the mask for CPU reads, and `terrain::ring_strips(texels, edges)` returns
+  the one-texel strip along each masked border: the texels whose smooth normals read the ring.
 - The ring is created with the tile at `prepare` and removed with its terrain. A terrain without `TerrainTile` has
   no ring: slot 2 is empty and the mask is zero. The 1,032 bytes at 129 texels and 8,200 bytes at 1,025 live on the
   CPU and on the GPU.
@@ -211,13 +234,13 @@ the rows that are valid.
   texels. It reaches only the neighbours across an edge whose outer two texel bands, the shared edge and the row
   inside it, the rectangle intersects. Each rebuild changes the ring's revision only when a texel or the mask
   changed.
-- After editing a set tile's height texels within its outer two texel bands, the application calls
-  `terrain::refresh_neighbour_rings` with the edited rectangle. A bare `mark_dirty` on a set tile leaves the
-  neighbours' rings stale.
+- After editing a set tile, call [`TerrainSet.propagate_edit`](#edits), which refreshes the rings.
+  `refresh_neighbour_rings` alone is for an application that keeps the neighbours' edge texels equal itself. A bare
+  `mark_dirty` on a set tile leaves the neighbours' rings stale.
 
-CPU queries (`height_view`, `sample_height`, `sample_normal`) stay within one tile; a point outside it is
-`NOT_FOUND`. Each tile keeps its own collider, height map revision and `mark_dirty` rectangle: an edit of one tile
-does not reach its neighbours' texels.
+CPU queries (`height_view`, `sample_height`, `sample_normal`, `sample_smooth_normal`) stay within one tile; a
+point outside it is `NOT_FOUND`. Each tile keeps its own collider, height map revision and `mark_dirty` rectangle:
+an edit of one tile does not reach its neighbours' texels.
 
 Serialization stores the set's `texels`, `cell_size` and `height_scale` and each tile's coordinates; the links are
 rebuilt when the tiles prepare (see [serialization](serialization.md#landscape-particle-and-audio-adapters)).
@@ -228,18 +251,25 @@ rebuilt when the tiles prepare (see [serialization](serialization.md#landscape-p
 HeightView view = terrain::height_view(&scene, &assets, ground.id)!;
 float height = terrain::sample_height(&view, x, z)!;
 Vec3 normal = terrain::sample_normal(&view, x, z)!;
+Vec3 smooth = terrain::sample_smooth_normal(&view, x, z)!;
 ```
 
-- `height_view` captures the texels, side, scales and the node's world matrix; it allocates nothing, so build
-  one per frame. It faults `c3d::INVALID_ID` for a dead node, a node without `Terrain` or a dead height map,
-  and `UNSUPPORTED` or `INVALID_ARGUMENT` for a map that no longer passes `add_terrain`'s checks (a released
-  CPU copy included).
+- `height_view` captures the texels, side, scales, the tile's [border ring](#tile-sets) and the node's world
+  matrix; it allocates nothing, so build one per frame. It faults `c3d::INVALID_ID` for a dead node, a node
+  without `Terrain` or a dead height map, and `UNSUPPORTED` or `INVALID_ARGUMENT` for a map that no longer
+  passes `add_terrain`'s checks (a released CPU copy included).
 - `sample_height` returns the world height on the height field's triangles: each cell splits along its
   diagonal from `(x + 1, z)` to `(x, z + 1)`, as box3d's height field does. `sample_normal` returns the face
-  normal of that triangle. A point outside the extent is `NOT_FOUND`, never a clamp.
+  normal of that triangle, the physics convention. A point outside the extent is `NOT_FOUND`, never a clamp.
+- `sample_smooth_normal` returns the normal the fragment stage shades with at the point: the gradients of the
+  four surrounding texels, blended bilinearly. A gradient is a central difference, taking the ring's texel
+  across an edge that has a linked neighbour and a one-sided difference at any other map edge. It reads the
+  same texels as the shader and agrees to float rounding, so the two tiles of a linked seam give the same
+  normal there.
 - The view borrows the store's texels. In-place edits keep it valid and it reads the new heights; replacing,
   releasing or removing the height map, or removing the terrain, invalidates it. It keeps the node transform
-  of the moment it was taken. Several threads may read one view while nothing edits the texels.
+  and the ring's edge mask of the moment it was taken, and reads the ring in place: take a new view after a
+  tile links or unlinks. Several threads may read one view while nothing edits the texels.
 
 ## Physics collider
 
@@ -257,13 +287,37 @@ Physics refuses a collider-local offset on a height field, which is why the node
 The landscape test builds its collider with the same code and checks that `sample_height` equals a downward
 ray cast at 1,024 points, before and after an edit.
 
+A terrain that is edited tiles the collider into windows, so a stroke re-cooks the part it touched and not the
+whole map:
+
+```c3
+physics::add_height_field_windows(
+    scene:        &scene,
+    assets:       &assets,
+    node:         terrain_node.id,
+    collider:     &collider,
+    window_cells: 256,
+)!;
+```
+
+- Each window is a static body on a child node of the terrain node, cooked from its own `window_cells`-square
+  part of the height map. Windows quantize over the full height range, `0` to `height_scale`, so they meet
+  exactly at their seams and an edit never changes the quantization of another window.
+- [Tiles](#tile-sets) of one set each get their own windows. Tiles with equal `height_scale` quantize over the same
+  range, so they meet exactly at the tile seam too.
+- Separate height fields carry no adjacency in the physics engine, so a body can catch on the edge of an internal
+  seam. A sphere of radius 0.5 m rolling at 4 m/s over a flat seam loses 1.9 % of its speed and rises 6 mm.
+  The package README lists the window contracts.
+
 ## Edits
 
 ```c3
 // write texels in place, then:
 assets.mark_texture_dirty(desc.height_map);
 terrain::mark_dirty(&scene, ground, { .x = x, .z = z, .columns = columns, .rows = rows });
-// once a stroke of edits ends:
+// once a stroke of edits ends, with the collider tiled into windows:
+physics::mark_height_field_windows_changed(&scene, ground.id, { .x = x, .z = z, .columns = columns, .rows = rows })!;
+// or, with one collider over the whole map:
 scene.get(ground, PhysicsBody).mark_changed();
 ```
 
@@ -271,13 +325,41 @@ scene.get(ground, PhysicsBody).mark_changed();
   since the last `update`. The next `update` sees the revision change and refreshes only the chunks the
   rectangle touches and their ancestors. A revision change without `mark_dirty` rebuilds the whole bounds
   tree, as does a new pixel array.
-- On a [set tile](#tile-sets), `mark_dirty` does not reach the neighbours' border rings: call
-  `terrain::refresh_neighbour_rings` with the same rectangle, and write the same value into the neighbour's
-  duplicated edge texel when an edit changes an edge texel.
+- On a [set tile](#tile-sets), `mark_dirty` reaches neither the neighbours' duplicated edge texels nor their border
+  rings. After it, call `TerrainSet.propagate_edit`:
+
+  ```c3
+  uint changed = set.propagate_edit(scene: &scene, assets: &assets, tile: tile.id, rect: rect)!;
+  foreach (direction : TerrainNeighbour::values) {
+      if (changed & ((uint)1 << direction.ordinal)) {
+          Entity neighbour = set.neighbour(tile.id, direction)!;
+          // mark the windows its copied strip touches once the stroke ends
+      }
+  }
+  ```
+
+  - It copies the rectangle's edge rows and columns, corners included, into the duplicated texels of each
+    neighbour, edges and diagonals. A corner texel reaches all three tiles that share it.
+  - A neighbour whose texels change gets `mark_texture_dirty` and a `mark_dirty` rectangle of the copied strip, so
+    its bounds refresh at the next `update`. A neighbour that already holds the values keeps its revision.
+  - It then refreshes the [border rings](#tile-sets) that read the changed texels: those of the tile's own
+    neighbours, and those beside each neighbour it changed.
+  - Only edge strips are copied, so retained state does not grow, and each tile keeps its own revision and
+    `mark_dirty` rectangle.
+  - A tile that is not linked to the set faults `INVALID_ARGUMENT`. A tile whose height map no longer passes the
+    checks faults like `height_view`; a neighbour whose map does not conform is skipped.
+  - The result is a mask: bit `n` is set when the neighbour of `TerrainNeighbour` ordinal `n` had texels change
+    (`WEST` 0, `EAST` 1, `NORTH` 2, `SOUTH` 3, then `NORTH_WEST`, `NORTH_EAST`, `SOUTH_WEST`, `SOUTH_EAST`).
+    `set.neighbour(tile, direction)` names the tile. A neighbour that was skipped or already held the values has
+    no bit, and a repeated call returns 0.
+  - A live collider is not re-cooked: mark the windows (or call `mark_changed` on the body) of the edited tile
+    and of each tile in the mask, and of no other tile. The copied strip is the neighbour's edge row or column
+    across the side, over the same texels as the rectangle along it.
 - The renderer re-uploads the whole height map on each revision (8 MiB at 2049², 32 MiB at 4097²).
 - A live physics body is not re-cooked on a texture revision. `mark_changed` rebuilds the whole field on the
-  next `PhysicsWorld.update`, so call it once when a stroke ends: collision is stale during the stroke and
-  correct after it.
+  next `PhysicsWorld.update`; `mark_height_field_windows_changed` rebuilds only the windows whose samples meet the
+  rectangle, and a rectangle on a window edge marks both windows. Mark once when a stroke ends: collision is stale
+  during the stroke and correct after it, and a body resting on an unmarked window keeps its contact.
 - A revision whose map fails the checks, or whose side differs from the accepted side, is rejected: `update`
   returns the fault, keeps the old bounds and hides the terrain (batch count 0) until a conforming revision,
   which rebuilds everything.
@@ -334,13 +416,13 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::UNSUPPORTED` | Height map not `R16_UINT`, not a `MIP_ZERO` source, or a layered, 3D or cube texture |
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
-| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or NaN tunable, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or NaN tunable, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
 | `TerrainSet.neighbour` | `NOT_FOUND` | The tile is not linked, or has no linked neighbour in the direction |
 | `update` | `c3d::INVALID_ID` | The height map was removed |
 | `update` | `c3d::INVALID_ARGUMENT` | A revision whose side differs from the accepted one |
-| `sample_height`, `sample_normal` | `NOT_FOUND` | The point is outside the extent |
+| `sample_height`, `sample_normal`, `sample_smooth_normal` | `NOT_FOUND` | The point is outside the extent |
 
 ## Limits
 
@@ -357,10 +439,12 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   chunk and, on temporal views, 64 B per chunk of previous matrices the stage ignores.
 - Normals at a map border with no linked neighbour use one-sided differences. Between linked tiles they are central
   differences through the [border ring](#tile-sets), as current as its last refresh.
-- Every set layer is sampled on every pixel, whatever its weight; four layers is the limit.
-- Layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
-  textures stretch along the fall line.
-- Edits re-upload the whole height map; with a collider, the end of a stroke re-cooks the whole field.
+- Every set layer is sampled on every pixel, whatever its weight; four layers is the limit. `TRIPLANAR` samples each
+  on three planes.
+- Under `TOP`, layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
+  textures stretch along the fall line. Use [`TRIPLANAR`](#slope-projection) for them.
+- Edits re-upload the whole height map; with a collider, the end of a stroke re-cooks the whole field, or only the
+  windows it touched when the collider is tiled into [windows](#physics-collider).
 - Updates run on the calling thread and change scene structure, so they never run inside a job range;
   `sample_height` and `sample_normal` may.
 
@@ -373,9 +457,15 @@ the frame rate and B released ends the stroke, P toggles the collider, T toggles
 cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows chunks per level, LOD switches, the height and normal under the
 camera beside the physics ray height, and the LOD threshold.
 
+The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
+`--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.
+
 `--tiles 2x2` builds the same landscape as a [tile set](#tile-sets) of four tiles cut from the map with a one-texel
-overlap, each with its own control map and collider. Painting is off and the benchmark is unavailable with it: an
-edit does not reach the neighbouring tile's duplicated edge.
+overlap, each with its own control map and collider. B paints across tile edges: the brush stamps every tile its
+square reaches, leaves a tile's shared west column and north row to the neighbour that owns them, and calls
+`propagate_edit` for each stamped tile. The end of a stroke re-cooks the windows of the stamped tiles and of the
+neighbours in the returned masks that the edited texels touch. The benchmark is unavailable with it, since it measures the one terrain node's
+batch and runtime.
 
 `--capture FILE.png` renders one frame without a window, from a fixed camera straight above a point of the tile
 seam where the default map's edge texels bend most, and writes it as a PNG. It is meant for `--tiles 2x2` at the
@@ -441,7 +531,8 @@ CPU, Windows host, median of three runs (range):
 | `selection_us` p99, sweep | 3.0 to 3.2 | 6.0 to 6.2 |
 
 The full bounds build runs at load, not per frame. The edit an application pays for is the whole-texture
-re-upload and, with a collider, the physics re-cook at the end of a stroke.
+re-upload and, with a collider, the physics re-cook at the end of a stroke: the windows it touched, or the whole
+field when the collider is not tiled.
 
 ### WSL, llvmpipe, 1920 × 1080
 
@@ -467,5 +558,20 @@ The still segment uploads nothing after its first frame and the hover segment sw
 first second. A sweep frame that re-selects uploads 128 B per chunk (up to 21 KiB at 2049, 31 KiB at 4097). A
 stamp frame's update, bounds refresh included, stays under 0.13 ms; the whole-texture re-upload and the
 physics re-cook are the costs of an edit.
+
+Collision re-cook at the end of the same stroke, WSL on the i9-14900K, `--opt O3`, a 160 × 90 viewport (these
+lines do not depend on it), 300 frames per segment. The default collider is tiled into 256-cell windows;
+`--collision-window 0` builds one collider over the whole map:
+
+| Line | 2049 | 4097 |
+| --- | ---: | ---: |
+| `physics_recook_windows` (windows the stroke touched) | 2 | 4 |
+| `physics_recook_ms` (those windows) | 7.4 to 10.3 | 17.5 to 20.6 |
+| `physics_recook_window_ms` | 3.7 to 5.2 | 4.4 to 5.2 |
+| `physics_whole_recook_ms` (one cook of the whole field) | 292 to 347 | 1,106 to 1,114 |
+| `physics_recook_ms` with `--collision-window 0` (`mark_changed`) | 321 to 454 | 1,180 to 1,224 |
+
+A window costs by its samples: on the 2049 map and one stamp, 0.9 ms at 128 cells, 3.7 to 5.2 ms at 256 and
+16 ms at 512. The ranges are three to five runs on a shared host.
 
 Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).

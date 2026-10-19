@@ -15,8 +15,14 @@ GPU_DECLARE_READONLY_ARRAY_REF(CullBounds, mat4);
 GPU_DECLARE_READONLY_ARRAY_REF(CullBillboards, BillboardGpu);
 GPU_DECLARE_WRITEONLY_ARRAY_REF(VisibleOutput, uint);
 GPU_DECLARE_READONLY_ARRAY_REF(LodMetadata, LodMetadataGpu);
+GPU_DECLARE_READONLY_ARRAY_REF(QuadtreeNodes, QuadtreeNodeGpu);
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer LodHistory {
     LodHistoryGpu values[];
+};
+
+// One word per instance: QUADTREE_SPLIT is the node's split flag, QUADTREE_DRAW the view's draw flag.
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer QuadtreeHistory {
+    uint values[];
 };
 
 // instance_count sits at offset 4 in both indirect command layouts.
@@ -67,15 +73,20 @@ uint64_t sort_key(float view_depth, uint source) {
     return (uint64_t(bits) << 32) | uint64_t(~source);
 }
 
-void select_lod(InstanceCullRoot root, uint source) {
-    mat4 model = CullInstances(root.instances).values[source].model;
+// Height of the instance's bound sphere as a share of the output height; infinite at the sphere's centre.
+float projected_size(InstanceCullRoot root, mat4 model) {
     vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
     mat3 axes = mat3(model);
     mat3 reach = mat3(abs(axes[0]), abs(axes[1]), abs(axes[2]));
     float radius = length(reach * ((root.bounds_max.xyz - root.bounds_min.xyz) * 0.5) + root.lod_reach.xyz);
-    float size = radius == 0.0 ? 0.0 : (root.lod_projection.z != 0.0
+    return radius == 0.0 ? 0.0 : (root.lod_projection.z != 0.0
         ? 2.0 * radius / root.lod_projection.y
         : radius * root.lod_projection.x / distance(center, root.lod_camera_bias.xyz));
+}
+
+void select_lod(InstanceCullRoot root, uint source) {
+    mat4 model = CullInstances(root.instances).values[source].model;
+    float size = projected_size(root, model);
     if (size > 0.0 && !isinf(size)) size = exp2(log2(size) + root.lod_camera_bias.w);
     uint generation = LodMetadata(root.lod_metadata).values[source].generation;
     bool valid = root.lod_history_valid != 0u;
@@ -94,6 +105,26 @@ void select_lod(InstanceCullRoot root, uint source) {
     }
     LodHistory(root.lod_current).values[source] = LodHistoryGpu(model, level, generation, (!valid || (previous != level && root.lod_animated == 0u)) ? 1u : 0u, 0u);
     atomicAdd(CullCounter(root.counter).lod_selected[level], 1u);
+}
+
+bool quadtree_splits(InstanceCullRoot root, uint node) {
+    if (QuadtreeNodes(root.quadtree_nodes).values[node].children == 0u) return false;
+    float size = projected_size(root, CullInstances(root.instances).values[node].model) * root.quadtree_height_pixels;
+    bool was_split = root.quadtree_history_valid != 0u
+        && (QuadtreeHistory(root.lod_previous).values[node] & QUADTREE_SPLIT) != 0u;
+    return was_split ? size >= root.quadtree_split_pixels / (1.0 + root.quadtree_hysteresis)
+        : size > root.quadtree_split_pixels;
+}
+
+void select_quadtree(InstanceCullRoot root, uint node) {
+    bool splits = quadtree_splits(root, node);
+    bool draw = !splits;
+    uint ancestor = QuadtreeNodes(root.quadtree_nodes).values[node].parent;
+    for (uint depth = 0u; draw && depth < MAX_QUADTREE_DEPTH && ancestor != QUADTREE_ROOT; depth++) {
+        draw = quadtree_splits(root, ancestor);
+        ancestor = QuadtreeNodes(root.quadtree_nodes).values[ancestor].parent;
+    }
+    QuadtreeHistory(root.lod_current).values[node] = (splits ? QUADTREE_SPLIT : 0u) | (draw ? QUADTREE_DRAW : 0u);
 }
 
 void main() {
@@ -118,6 +149,12 @@ void main() {
         select_lod(root, source);
         return;
     }
+    if (root.lod_mode == QUADTREE_SELECT) {
+        select_quadtree(root, source);
+        return;
+    }
+    if (root.lod_mode == QUADTREE_CULL
+        && (QuadtreeHistory(root.lod_current).values[source] & QUADTREE_DRAW) == 0u) return;
     if (root.lod_mode == LOD_CULL) {
         uint parity = LodMetadata(root.lod_metadata).values[source].parity;
         if (root.lod_animated != 0u) {

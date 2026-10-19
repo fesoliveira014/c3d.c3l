@@ -116,6 +116,7 @@ struct Stats {
     uint  instances;
     uint  cull_dispatches;   // this frame
     uint  cull_overflows;    // this frame: ranges drawn unculled because the arena was full
+    uint  quadtree_fallbacks; // this frame: quadtree batches drawn at their leaves because the arena had no room
     uint  sort_dispatches;   // this frame
     uint  sort_overflows;    // this frame: blended ranges drawn unsorted and unculled because they did not fit
     uint  instances_tested;  // the read-back frame, FRAMES_IN_FLIGHT frames late

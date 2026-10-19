@@ -17,6 +17,13 @@ struct StandardMaterialSample {
     vec3 view_direction;
 };
 
+// Gradients of one projected uv; each map's uv_linear applies to them as to the uv.
+struct MaterialUvGrad {
+    vec2 uv;
+    vec2 uv_dx;
+    vec2 uv_dy;
+};
+
 vec3 sample_material_normal(
     TextureMapGpu map,
     uint map_flags,
@@ -127,6 +134,62 @@ StandardMaterialSample sample_standard_material(
             uv0,
             uv1
         );
+    }
+    if ((material.flags & MATERIAL_DOUBLE_SIDED) != 0u && back_face) {
+        normal = -normal;
+        material_sample.offset_normal = -material_sample.offset_normal;
+    }
+    material_sample.normal = normal;
+    material_sample.view_direction = view_direction;
+    return material_sample;
+}
+
+// Samples every map at one projected uv, so the maps' uv-set selection is ignored, and orients normal maps by the given
+// tangent frame instead of the geometry's; the tangent must be unit and perpendicular to the normal.
+StandardMaterialSample sample_standard_material_grad(
+    StandardMaterialGpu material,
+    vec3 vertex_normal,
+    vec4 tangent,
+    MaterialUvGrad uv,
+    vec3 view_direction,
+    bool back_face
+) {
+    StandardMaterialSample material_sample;
+    material_sample.base_color = material.base_color;
+    material_sample.metallic = material.metallic;
+    material_sample.roughness = material.roughness;
+    material_sample.occlusion = 1.0;
+    material_sample.emissive = material.emissive_strength.rgb * material.emissive_strength.w;
+
+    if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
+        material_sample.base_color *= sample_map_grad(material.base_color_map, uv.uv, uv.uv_dx, uv.uv_dy);
+    }
+    if ((material.map_flags & MATERIAL_MAP_METALLIC_ROUGHNESS) != 0u) {
+        vec4 factors = sample_map_grad(material.metallic_roughness_map, uv.uv, uv.uv_dx, uv.uv_dy);
+        material_sample.metallic = clamp(material_sample.metallic * factors.b, 0.0, 1.0);
+        material_sample.roughness = clamp(material_sample.roughness * factors.g, 0.0, 1.0);
+    }
+    if ((material.map_flags & MATERIAL_MAP_OCCLUSION) != 0u) {
+        float sampled = sample_map_grad(material.occlusion_map, uv.uv, uv.uv_dx, uv.uv_dy).r;
+        material_sample.occlusion = mix(
+            1.0,
+            clamp(sampled, 0.0, 1.0),
+            material.occlusion_strength
+        );
+    }
+    if ((material.map_flags & MATERIAL_MAP_EMISSIVE) != 0u) {
+        material_sample.emissive *= sample_map_grad(material.emissive_map, uv.uv, uv.uv_dx, uv.uv_dy).rgb;
+    }
+
+    vec3 normal = normalize(vertex_normal);
+    material_sample.offset_normal = normal;
+    if ((material.map_flags & MATERIAL_MAP_NORMAL) != 0u && material.normal_scale != 0.0) {
+        vec3 mapped = decode_normal(
+            sample_map_grad(material.normal_map, uv.uv, uv.uv_dx, uv.uv_dy).rgb,
+            material.normal_scale,
+            (material.map_flags & MATERIAL_MAP_NORMAL_RG) != 0u
+        );
+        normal = tangent_normal(normal, tangent, mapped);
     }
     if ((material.flags & MATERIAL_DOUBLE_SIDED) != 0u && back_face) {
         normal = -normal;

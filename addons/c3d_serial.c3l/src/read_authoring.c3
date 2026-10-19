@@ -73,61 +73,64 @@ fn void*? read_component_authoring(
         DescribedBinding* binding = codecs[slot].described;
         if (!binding || binding.type.descriptor.identity != identity) return c3d::UNSUPPORTED~;
         if (entry.value) return entry.value;
-
+        UpgradeFn upgrade;
+        if (entry.version != binding.type.version) {
+            upgrade = find_upgrade(binding, entry.version);
+            if (!upgrade) return c3d::UNSUPPORTED~;
+        }
         ReadContext previous = *context;
         defer *context = previous;
         context.node = context.nodes[entry.record];
         context.record = entry.record;
         context.slot = slot;
         context.version = entry.version;
-        void* value;
-        if (entry.version == binding.type.version) {
-            value = decode_authoring(context, entry, binding.type, binding)!;
-        } else {
-            value = upgrade_authoring(context, entry, binding)!;
-        }
+        void* value = context.read_owned.acquire(1, binding.type.descriptor.size, binding.type.descriptor.alignment)!;
+        Reader reader = reader_over(entry.bytes);
+        if (catch excuse = read_authoring_value(
+            binding: binding,
+            upgrade: upgrade,
+            reader: &reader,
+            context: context,
+            value: value,
+        )) return component_diagnostic(
+            diagnostic: context.diagnostic,
+            record: entry.record,
+            type_name: binding.codec.name,
+            cause: excuse,
+        )~;
         entry.value = value;
         return value;
     }
     return (void*)null;
 }
 
-fn void*? decode_authoring(
-    ReadContext* context,
-    ReadAuthoring* entry,
-    DescribedType* type,
+// An older payload decodes through its owner's explicit upgrade; the current one through the described type.
+fn void? read_authoring_value(
     DescribedBinding* binding,
+    UpgradeFn upgrade,
+    Reader* reader,
+    ReadContext* context,
+    void* value,
 ) @local {
-    void* value = context.read_owned.acquire(1, type.descriptor.size, type.descriptor.alignment)!;
-    Reader reader = reader_over(entry.bytes);
-    if (catch excuse = read_described_value(
-        type: type,
-        reader: &reader,
-        context: context,
-        owned: context.read_owned,
-        value: value,
-    )) return component_diagnostic(
-        diagnostic: context.diagnostic,
-        record: entry.record,
-        type_name: binding.codec.name,
-        cause: excuse,
-    )~;
-    return value;
+    if (!upgrade) {
+        return read_described_value(
+            type: binding.type,
+            reader: reader,
+            context: context,
+            owned: context.read_owned,
+            value: value,
+        );
+    }
+
+    binding.type.defaults(value);
+    return upgrade(reader, context, value);
 }
 
-fn void*? upgrade_authoring(ReadContext* context, ReadAuthoring* entry, DescribedBinding* binding) @local {
+fn UpgradeFn find_upgrade(DescribedBinding* binding, uint version) @local {
     foreach (compatibility : binding.codec.binary_compatibility) {
-        if (compatibility.version != entry.version || !compatibility.upgrade) continue;
-
-        DescribedType* older = find_described_type(compatibility.older)!;
-        void* before = decode_authoring(context, entry, older, binding)!;
-        DescribedType* type = binding.type;
-        void* current = context.read_owned.acquire(1, type.descriptor.size, type.descriptor.alignment)!;
-        type.defaults(current);
-        compatibility.upgrade(before, current, context)!;
-        return current;
+        if (compatibility.version == version) return compatibility.upgrade;
     }
-    return c3d::UNSUPPORTED~;
+    return null;
 }
 
 fn void? initialize_binary_authoring(

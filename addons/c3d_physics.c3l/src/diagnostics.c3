@@ -38,6 +38,7 @@ struct PhysicsProfile {
 *>
 struct PhysicsCounters {
     uint bodies;
+    uint pending_bodies; // authored bodies marked for a build that has not run yet
     uint awake_bodies;
     uint shapes;
     uint contacts;
@@ -99,8 +100,13 @@ fn PhysicsProfile PhysicsWorld.profile(&self) {
 *>
 fn PhysicsCounters PhysicsWorld.counters(&self) {
     b3::Counters counters = self.world.counters();
+    uint pending;
+    self.scene.@each(PhysicsBody; entity, physics_body) {
+        if (physics_body.status == PENDING) pending++;
+    };
     return {
         .bodies             = (uint)counters.body_count,
+        .pending_bodies     = pending,
         .awake_bodies       = (uint)self.world.awake_body_count(),
         .shapes             = (uint)counters.shape_count,
         .contacts           = (uint)counters.contact_count,

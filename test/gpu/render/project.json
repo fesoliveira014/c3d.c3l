@@ -59,6 +59,7 @@
         "test_crowd_variants.c3",
         "test_instance_cull.c3",
         "test_lod.c3",
+        "test_quadtree.c3",
         "test_impostor.c3",
         "test_instance_sort.c3",
         "test_billboards.c3",
@@ -93,7 +94,8 @@
         "test_auto_exposure.c3",
         "test_posed_trace.c3",
         "test_custom_trace_pose.c3",
-        "test_texture_fidelity.c3"
+        "test_texture_fidelity.c3",
+        "test_texture_regions.c3"
       ]
     }
   }

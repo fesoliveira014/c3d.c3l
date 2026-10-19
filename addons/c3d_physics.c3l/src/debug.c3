@@ -18,6 +18,18 @@ const uint  COLLIDER_SENSOR @local = 0xFF33FFFF;
 const float CONTACT_POINT_SIZE @local = 0.05f;
 const float TRANSFORM_AXIS_LENGTH @local = 0.25f; // metres at joint_scale 1; visible beside a unit body
 const float HEX_CHANNEL_SCALE @local = 1.0f / 255;
+const uint  PARALLEL_BODY_CHUNK @local = 256; // bodies per range, about 25 us of box lines; a scene of one chunk draws serially
+const usz   BOX_LINES @local = 12; // the edges of one DebugDraw.box
+const usz   SPHERE_LINES @local = 3 * debug::DEBUG_CIRCLE_SEGMENTS; // three DebugDraw.circle calls
+const usz   CAPSULE_LINES @local = 6 * debug::DEBUG_CIRCLE_SEGMENTS + 4; // six DebugDraw.circle calls and four side lines
+
+struct ParallelDraw @local {
+    RigidBody**         bodies;
+    uint                body_count;
+    uint                chunk_count;
+    usz*                chunk_lines; // lines before each chunk of bodies, then the total
+    debug::DebugVertex* vertices;    // the sink's storage from its current end
+}
 
 <*
  Append collider wireframes, contacts, bounds and joints to the sink.
@@ -63,48 +75,141 @@ fn draw::DebugDraw box3d_draw(debug::DebugDraw* sink, PhysicsDebugOptions option
 }
 
 fn void draw_colliders(PhysicsWorld* world, debug::DebugDraw* sink) @local {
+    if (world.parallel.run && draw_colliders_parallel(world, sink)) return;
+
     world.scene.@each(RigidBody; entity, body) {
-        uint color = body_color(body);
-        Mat4 body_world = body.current.to_mat4();
-        foreach (&collider : body.colliders) {
-            switch (collider.kind) {
-                case BOX:
-                    Mat4 shape_world = body_world.mul(collider.local.to_mat4());
-                    sink.box(shape_world, { .min = -collider.half_extents, .max = collider.half_extents }, color);
-                case SPHERE:
-                    Vec3 center = maths::transform_point(body_world, collider.local.position);
-                    sink.circle(center, { 1, 0, 0 }, collider.radius, color);
-                    sink.circle(center, { 0, 1, 0 }, collider.radius, color);
-                    sink.circle(center, { 0, 0, 1 }, collider.radius, color);
-                case CAPSULE:
-                    Vec3 center = maths::transform_point(body_world, collider.local.position);
-                    Vec3 axis = maths::transform_dir(body_world, collider.local.rotation.rotate_vec3({ 0, 1, 0 })).normalize();
-                    sink.capsule(
-                        center:      center,
-                        axis:        axis,
-                        half_height: collider.half_height,
-                        radius:      collider.radius,
-                        rgba:        color,
-                    );
-                case HULL:
-                case MESH:
-                    draw_wire(
-                        sink:  sink,
-                        world: body_world.mul(collider.local.to_mat4()),
-                        wire:  collider.wire,
-                        color: color,
-                    );
-                case HEIGHT_FIELD:
-                case COMPOUND:
-                    draw_wire(
-                        sink:  sink,
-                        world: body_world,
-                        wire:  collider.wire,
-                        color: color,
-                    );
-            }
+        if (sink_is_full(sink)) {
+            foreach (&collider : body.colliders) sink.dropped += collider_line_count(collider);
+        } else {
+            draw_body(sink, body);
         }
     };
+}
+
+fn bool draw_colliders_parallel(PhysicsWorld* world, debug::DebugDraw* sink) @local {
+    uint body_count = world.scene.count(RigidBody);
+    uint chunk_count = (body_count + PARALLEL_BODY_CHUNK - 1) / PARALLEL_BODY_CHUNK;
+    if (chunk_count < 2) return false;
+
+    @pool() {
+        ParallelDraw draw = {
+            .bodies      = alloc::new_array(tmem, RigidBody*, (sz)body_count),
+            .body_count  = body_count,
+            .chunk_count = chunk_count,
+            .chunk_lines = alloc::new_array(tmem, usz, (sz)chunk_count + 1),
+        };
+        usz remaining = sink.capacity - (usz)sink.vertices.len() / 2;
+        if (!collect_bodies(world, &draw, remaining)) return false;
+
+        draw.vertices = sink.vertices.entries + sink.vertices.len();
+        world.parallel.run(
+            context: world.parallel.context,
+            range:   &draw_chunk_range,
+            data:    &draw,
+            count:   chunk_count,
+            batch:   1,
+        );
+        sink.vertices.size += (sz)draw.chunk_lines[chunk_count] * 2;
+        return true;
+    };
+}
+
+fn bool collect_bodies(PhysicsWorld* world, ParallelDraw* draw, usz remaining) @local {
+    usz total;
+    uint position;
+    bool fits = true;
+    world.scene.@each(RigidBody; entity, body) {
+        if (fits) {
+            if (position % PARALLEL_BODY_CHUNK == 0) draw.chunk_lines[position / PARALLEL_BODY_CHUNK] = total;
+            draw.bodies[position++] = body;
+            foreach (&collider : body.colliders) total += collider_line_count(collider);
+            fits = total <= remaining;
+        }
+    };
+    draw.chunk_lines[draw.chunk_count] = total;
+    return fits;
+}
+
+fn void draw_chunk_range(void* data, uint first, uint count) @local {
+    ParallelDraw* draw = data;
+    for (uint chunk = first; chunk < first + count; chunk++) {
+        uint first_body = chunk * PARALLEL_BODY_CHUNK;
+        uint chunk_bodies = math::min(PARALLEL_BODY_CHUNK, draw.body_count - first_body);
+        usz first_line = draw.chunk_lines[chunk];
+        usz lines = draw.chunk_lines[chunk + 1] - first_line;
+
+        // The exact capacity keeps push off the null allocator.
+        debug::DebugDraw slice = {
+            .capacity = lines,
+            .vertices = { .capacity = (sz)lines * 2, .entries = draw.vertices + first_line * 2 },
+        };
+        foreach (body : draw.bodies[first_body:chunk_bodies]) draw_body(&slice, body);
+    }
+}
+
+fn void draw_body(debug::DebugDraw* sink, RigidBody* body) @local {
+    uint color = body_color(body);
+    Mat4 body_world = body.current.to_mat4();
+    foreach (&collider : body.colliders) {
+        if (sink_is_full(sink)) {
+            sink.dropped += collider_line_count(collider);
+            continue;
+        }
+
+        switch (collider.kind) {
+            case BOX:
+                Mat4 shape_world = body_world.mul(collider.local.to_mat4());
+                sink.box(shape_world, { .min = -collider.half_extents, .max = collider.half_extents }, color);
+            case SPHERE:
+                Vec3 center = maths::transform_point(body_world, collider.local.position);
+                sink.circle(center, { 1, 0, 0 }, collider.radius, color);
+                sink.circle(center, { 0, 1, 0 }, collider.radius, color);
+                sink.circle(center, { 0, 0, 1 }, collider.radius, color);
+            case CAPSULE:
+                Vec3 center = maths::transform_point(body_world, collider.local.position);
+                Vec3 axis = maths::transform_dir(body_world, collider.local.rotation.rotate_vec3({ 0, 1, 0 })).normalize();
+                sink.capsule(
+                    center:      center,
+                    axis:        axis,
+                    half_height: collider.half_height,
+                    radius:      collider.radius,
+                    rgba:        color,
+                );
+            case HULL:
+            case MESH:
+                draw_wire(
+                    sink:  sink,
+                    world: body_world.mul(collider.local.to_mat4()),
+                    wire:  collider.wire,
+                    color: color,
+                );
+            case HEIGHT_FIELD:
+            case COMPOUND:
+                draw_wire(
+                    sink:  sink,
+                    world: body_world,
+                    wire:  collider.wire,
+                    color: color,
+                );
+        }
+    }
+}
+
+fn bool sink_is_full(debug::DebugDraw* sink) @local {
+    return (usz)sink.vertices.len() / 2 >= sink.capacity;
+}
+
+fn usz collider_line_count(Collider* collider) @local {
+    switch (collider.kind) {
+        case BOX:     return BOX_LINES;
+        case SPHERE:  return SPHERE_LINES;
+        case CAPSULE: return CAPSULE_LINES;
+        case HULL:
+        case MESH:
+        case HEIGHT_FIELD:
+        case COMPOUND:
+            return collider.wire.len / 2;
+    }
 }
 
 fn void draw_wire(

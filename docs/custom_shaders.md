@@ -193,6 +193,33 @@ void main() {
 
 Traced hit shading (probe updates, reflections, the path tracer) reads a custom material as before, with slot 0's alpha as coverage, and ignores its references. `begin_prepare_model` uploads a referenced material's textures inside the custom material's unit, not as units of their own.
 
+### Explicit gradients and tangents
+
+`sample_standard_material` takes its texture derivatives from the stage's own coordinates and derives a normal-map frame from
+the geometry. A stage that projects its own coordinates, such as a planar or triplanar mapping, calls
+`sample_standard_material_grad` instead:
+
+```glsl
+StandardMaterialSample sample_standard_material_grad(
+    StandardMaterialGpu material,
+    vec3 vertex_normal,
+    vec4 tangent,
+    MaterialUvGrad uv,
+    vec3 view_direction,
+    bool back_face
+);
+```
+
+- `MaterialUvGrad` holds one projected `uv` with its screen-space derivatives `uv_dx` and `uv_dy`, normally
+  `dFdx` and `dFdy` of `uv`, taken in uniform control flow. Every map is sampled with `textureGrad` at them, so the call
+  takes no implicit derivatives of its own and a stage calls it once for each projection. Each map's `uv_linear`
+  applies to the gradients as it does to `uv`, and `material_mip_bias` scales them, so the bias matches
+  `sample_standard_material`.
+- One `uv` feeds every map: each map's UV-set selection is ignored, and its transform still applies.
+- Normal maps are oriented by `tangent`, a unit vector perpendicular to the normalised `vertex_normal`, with the bitangent
+  `cross(normal, tangent.xyz) * tangent.w`. The call never derives a frame. A zero tangent keeps the geometry normal.
+- The rest of the sample is `sample_standard_material`'s: factors, maps and the double-sided flip.
+
 ### Public includes
 
 A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (gpu.c3l) and `c3d_abi.glsl`, then includes what it uses. The includes below are the contract for custom and package stages: each compiles after the prelude alone, which the build checks on every run by compiling one probe per row of `public_includes` in `shaders/variants.json` (a probe that fails stops the shaders step with `public include <name> is not self-contained` and glslang's output). The other files of the embedded set resolve too but may change without notice.
@@ -219,7 +246,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
 | `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) ([sky](sky.md#custom-stages)) |
 | `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](#scene-reads)) |
-| `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material` |
+| `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material`, `MaterialUvGrad`, `sample_standard_material_grad` ([explicit gradients](#explicit-gradients-and-tangents)) |
 | `decals.glsl` | `apply_decals` ([decals](materials.md#decals)) |
 | `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
 | `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |

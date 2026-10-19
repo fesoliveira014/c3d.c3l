@@ -28,13 +28,13 @@ struct PhysicsBody {
 }
 
 <*
- Air flow on body shapes and cloth each fixed step; cloth ignores lift.
+ Air flow on body shapes and cloth each fixed step.
 *>
 struct Wind {
     Vec3  velocity;
-    float drag;
-    float lift;
-    float max_speed;
+    float drag;      // rigid bodies only; cloth uses ClothDesc.drag_coefficient
+    float lift;      // rigid bodies only; cloth uses ClothDesc.lift_coefficient
+    float max_speed; // m/s; cloth caps the relative speed to it when positive
 }
 
 <*
@@ -101,7 +101,7 @@ fn uint Scene.add_static_mesh_bodies(&self, Node* root, CollisionFilter filter =
 <*
  Register physics components and their resource removal hooks.
  Call before create_physics_world; a later call replaces the world's PhysicsBody hook.
- @param [&inout] scene : "Gains body, joint, force, ragdoll, fracture and cloth stores."
+ @param [&inout] scene : "Gains body, joint, force, ragdoll, fracture, cloth and height-field window stores."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_physics(Scene* scene) {
@@ -120,6 +120,9 @@ fn void? register_physics(Scene* scene) {
     scene.register(ClothOutput)!;
     scene.register(CrowdCloth)!;
     scene.set_remove_hook(CrowdCloth, &cloth::free_crowd_cloth, scene.hook_allocator);
+    scene.register(HeightFieldWindows)!;
+    scene.set_remove_hook(HeightFieldWindows, &free_height_field_windows, scene.hook_allocator);
+    scene.register(HeightFieldWindowOwner)!;
 }
 
 fn PhysicsBody? try_copy_physics_body(Allocator allocator, BodyDesc body, ColliderDesc[] colliders) @private {
@@ -174,7 +177,7 @@ macro carve(BlockCursor* cursor, $Type, usz count) @private {
     return slice;
 }
 
-macro carve_copy(BlockCursor* cursor, source) @local {
+macro carve_copy(BlockCursor* cursor, source) @private {
     var copy = carve(cursor, $Typeof(source[0]), source.len);
     if (cursor.base) copy[..] = source[..];
     return copy;

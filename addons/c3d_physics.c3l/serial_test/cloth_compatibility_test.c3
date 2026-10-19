@@ -5,7 +5,7 @@ import c3d::physics @public;
 import c3d::scene;
 import c3d::serial @public;
 
-// Emitted by the Mesh version-1 and Cloth version-8 codecs at 9b7843c6: a cloth over a mesh that predates trace_only.
+// Emitted by the Mesh version-1 and Cloth version-9 codecs at f055af03: a cloth over a mesh that predates trace_only.
 const char[*] CLOTH_MESH_V1_BINARY @private = $embed("fixtures/cloth_mesh_v1.bin");
 
 fn void test_cloth_on_a_version_one_mesh_reads_and_validates() @test {

@@ -27,12 +27,12 @@ import c3d::serial @public;
 import std::io::path;
 import std::math;
 
-const uint AUTHORED_TYPES @private = 43;
-const uint TRANSIENT_TYPES @private = 15;
+const uint AUTHORED_TYPES @private = 44;
+const uint TRANSIENT_TYPES @private = 16;
 
 fn uint[] policy_slots() @private {
     uint[] slots = alloc::new_array(tmem, uint, AUTHORED_TYPES + TRANSIENT_TYPES);
-    slots[..] = ((uint[58]){
+    slots[..] = ((uint[60]){
         ecs::assigned_slot(Mesh)!!, ecs::assigned_slot(Camera)!!, ecs::assigned_slot(Light)!!,
         ecs::assigned_slot(ProbeVolume)!!, ecs::assigned_slot(Atmosphere)!!, ecs::assigned_slot(HeightFog)!!,
         ecs::assigned_slot(ReflectionProbe)!!, ecs::assigned_slot(Decal)!!, ecs::assigned_slot(CloudLayer)!!,
@@ -43,14 +43,15 @@ fn uint[] policy_slots() @private {
         ecs::assigned_slot(PhysicsBody)!!, ecs::assigned_slot(PhysicsJoint)!!, ecs::assigned_slot(Wind)!!,
         ecs::assigned_slot(Force)!!, ecs::assigned_slot(Buoyancy)!!, ecs::assigned_slot(Cloth)!!,
         ecs::assigned_slot(CrowdCloth)!!,
-        ecs::assigned_slot(Ragdoll)!!, ecs::assigned_slot(Breakable)!!, ecs::assigned_slot(NavSource)!!,
+        ecs::assigned_slot(Ragdoll)!!, ecs::assigned_slot(Breakable)!!, ecs::assigned_slot(HeightFieldWindows)!!,
+        ecs::assigned_slot(NavSource)!!,
         ecs::assigned_slot(NavVolume)!!, ecs::assigned_slot(NavLink)!!, ecs::assigned_slot(NavObstacle)!!,
         ecs::assigned_slot(NavAgent)!!, ecs::assigned_slot(Character)!!, ecs::assigned_slot(NavDriven)!!,
         ecs::assigned_slot(Terrain)!!, ecs::assigned_slot(TerrainSet)!!, ecs::assigned_slot(TerrainTile)!!,
         ecs::assigned_slot(Foliage)!!, ecs::assigned_slot(Water)!!,
         ecs::assigned_slot(ParticleSystem)!!, ecs::assigned_slot(AudioEmitter)!!, ecs::assigned_slot(AudioListener)!!,
         ecs::assigned_slot(RigidBody)!!, ecs::assigned_slot(Joint)!!, ecs::assigned_slot(ClothOutput)!!,
-        ecs::assigned_slot(NavSourceRuntime)!!,
+        ecs::assigned_slot(HeightFieldWindowOwner)!!, ecs::assigned_slot(NavSourceRuntime)!!,
         ecs::assigned_slot(NavVolumeRuntime)!!, ecs::assigned_slot(NavLinkRuntime)!!,
         ecs::assigned_slot(NavObstacleRuntime)!!, ecs::assigned_slot(CrowdAgentRuntime)!!,
         ecs::assigned_slot(TerrainRuntime)!!, ecs::assigned_slot(FoliageRuntime)!!,
@@ -67,9 +68,12 @@ fn void assert_presence(Scene* scene, bool prepared) @private {
         if (scene.world.is_alive(node.id)) observed |= scene.world.mask(node.id);
     }
     ComponentMask expected;
+    uint window_owner_slot = ecs::assigned_slot(HeightFieldWindowOwner)!!;
     foreach (index, slot : policy_slots()) {
         expected |= ecs::slot_bit(slot);
-        assert(((observed & ecs::slot_bit(slot)) != 0) == (index < AUTHORED_TYPES || prepared));
+        // Window nodes are regenerated when the owner attaches, so their marker never waits for preparation.
+        bool present = index < AUTHORED_TYPES || prepared || slot == window_owner_slot;
+        assert(((observed & ecs::slot_bit(slot)) != 0) == present);
     }
     foreach (slot, store : scene.world.stores) {
         if (store) assert(expected & ecs::slot_bit((uint)slot));

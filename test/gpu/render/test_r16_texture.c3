@@ -65,6 +65,42 @@ fn void test_r16_texture_keeps_sixteen_bits_on_the_device() @test {
     check_validation(&fixture.renderer);
 }
 
+fn void test_r16_region_upload_changes_only_the_marked_texels() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ComputeShaderId shader = add_compute_shader(&fixture, (String)FETCH_R16_SOURCE[..])!!;
+
+    ushort[16] texels;
+    foreach (index, &texel : texels) *texel = (ushort)(0x1000 + index);
+    material::TextureDesc desc = material::texture_2d_desc(
+        width:      4,
+        height:     4,
+        format:     R16_UINT,
+        debug_name: "acceptance_r16_region",
+    );
+    desc.generate_mips = false;
+    TextureId texture = fixture.assets.add_texture(desc, ((char*)&texels)[:texels.len * ushort::size])!!;
+    assert(fetch_r16_texel(&fixture, shader, texture, { 0, 0 })!! == 0x1000);
+
+    ushort* source = (ushort*)fixture.assets.texture(texture).pixels.ptr;
+    source[5] = 0xAAAA;
+    source[6] = 0xBBBB;
+    source[9] = 0xCCCC;
+    source[10] = 0xDDDD;
+    fixture.assets.mark_texture_region_dirty(texture, 0, { .x = 1, .y = 1, .width = 2, .height = 2, .depth = 1 })!!;
+
+    assert(fetch_r16_texel(&fixture, shader, texture, { 1, 1 })!! == 0xAAAA);
+    assert(fixture.renderer.stats.upload_bytes == 4 * ushort::size);
+
+    assert(fetch_r16_texel(&fixture, shader, texture, { 2, 1 })!! == 0xBBBB);
+    assert(fetch_r16_texel(&fixture, shader, texture, { 1, 2 })!! == 0xCCCC);
+    assert(fetch_r16_texel(&fixture, shader, texture, { 2, 2 })!! == 0xDDDD);
+    assert(fetch_r16_texel(&fixture, shader, texture, { 0, 0 })!! == 0x1000);
+    assert(fetch_r16_texel(&fixture, shader, texture, { 3, 3 })!! == 0x100F);
+    check_validation(&fixture.renderer);
+}
+
 fn void test_r16_texture_is_unsupported_where_built_in_stages_sample_it() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;

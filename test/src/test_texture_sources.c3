@@ -410,3 +410,76 @@ fn void test_invalid_supplied_shape_and_generation_faults() @test {
         assert(false, "Compressed cube accepted");
     }
 }
+
+fn bool same_region(TextureRegion actual, TextureRegion expected) @local {
+    return actual.x == expected.x && actual.y == expected.y && actual.z == expected.z
+        && actual.width == expected.width && actual.height == expected.height && actual.depth == expected.depth;
+}
+
+fn void test_texture_region_log_merges_and_reaches_back() @test {
+    AssetStore assets = create_texture_source_store(mem);
+    defer asset::destroy_asset_store(&assets);
+
+    char[256] pixels;
+    TextureId generated = assets.add_texture(material::texture_2d_desc(8, 8, RGBA8_UNORM), pixels[..])!!;
+    TextureAsset* record = assets.texture(generated);
+    TextureRegion[1] regions;
+
+    assert(record.regions_since(1, regions[..]) == TextureChange.NONE);
+
+    assets.mark_texture_region_dirty(generated, 0, { .x = 1, .y = 1, .width = 2, .height = 2, .depth = 1 })!!;
+    assets.mark_texture_region_dirty(generated, 0, { .x = 5, .y = 4, .width = 1, .height = 3, .depth = 1 })!!;
+    assert(record.header.revision == 3 && record.regions.count == 2);
+    assert(record.regions_since(3, regions[..]) == TextureChange.NONE);
+    assert(record.regions_since(2, regions[..]) == TextureChange.REGIONS);
+    assert(same_region(regions[0], { .x = 5, .y = 4, .width = 1, .height = 3, .depth = 1 }));
+    assert(record.regions_since(1, regions[..]) == TextureChange.REGIONS);
+    assert(same_region(regions[0], { .x = 1, .y = 1, .width = 5, .height = 6, .depth = 1 }));
+
+    assets.mark_texture_region_dirty(generated, 0, { .x = 0, .y = 0, .width = 1, .height = 1, .depth = 1 })!!;
+    assets.mark_texture_region_dirty(generated, 0, { .x = 7, .y = 7, .width = 1, .height = 1, .depth = 1 })!!;
+    assert(record.regions.count == asset::TEXTURE_REGION_MARKS);
+
+    assets.mark_texture_region_dirty(generated, 0, { .x = 3, .y = 3, .width = 1, .height = 1, .depth = 1 })!!;
+    assert(record.regions.count == asset::TEXTURE_REGION_MARKS && record.regions.base_revision == 1);
+    assert(record.regions_since(1, regions[..]) == TextureChange.REGIONS);
+    assert(same_region(regions[0], { .x = 0, .y = 0, .width = 8, .height = 8, .depth = 1 }));
+    assert(record.regions_since(2, regions[..]) == TextureChange.REGIONS);
+    assert(same_region(regions[0], { .x = 0, .y = 0, .width = 8, .height = 8, .depth = 1 }));
+    assert(record.regions_since(5, regions[..]) == TextureChange.REGIONS);
+    assert(same_region(regions[0], { .x = 3, .y = 3, .width = 1, .height = 1, .depth = 1 }));
+
+    assets.mark_texture_dirty(generated);
+    assert(record.regions.count == 0 && record.header.revision == 7);
+    assert(record.regions_since(6, regions[..]) == TextureChange.WHOLE);
+    assert(record.regions_since(7, regions[..]) == TextureChange.NONE);
+
+    char[64] base;
+    char[16] tail;
+    TextureMipData[2] levels = {
+        { .mip = 0, .bytes = base[..] },
+        { .mip = 1, .bytes = tail[..] },
+    };
+    material::TextureDesc supplied_desc = material::texture_2d_desc(4, 4, RGBA8_UNORM);
+    supplied_desc.generate_mips = false;
+    supplied_desc.mip_levels = 2;
+    TextureId supplied = assets.add_texture_mips(supplied_desc, levels[..])!!;
+    TextureAsset* supplied_record = assets.texture(supplied);
+    TextureRegion[2] per_mip;
+
+    foreach (mip : (uint[5]){ 0, 1, 0, 1, 0 }) {
+        assets.mark_texture_region_dirty(supplied, mip, { .x = mip, .y = mip, .width = 1, .height = 1, .depth = 1 })!!;
+    }
+
+    assert(supplied_record.regions.base_revision == 2 && supplied_record.regions.count == asset::TEXTURE_REGION_MARKS);
+    assert(supplied_record.regions_since(1, per_mip[..]) == TextureChange.WHOLE);
+    assert(supplied_record.regions_since(2, per_mip[..]) == TextureChange.REGIONS);
+    assert(same_region(per_mip[0], { .width = 1, .height = 1, .depth = 1 }));
+    assert(same_region(per_mip[1], { .x = 1, .y = 1, .width = 1, .height = 1, .depth = 1 }));
+
+    TextureRegion unit = { .width = 1, .height = 1, .depth = 1 };
+    TextureRegion past_edge = { .x = 7, .width = 2, .height = 1, .depth = 1 };
+
+    assert(@catch(assets.mark_texture_region_dirty(generated, 1, unit)) == c3d::INVALID_ARGUMENT);
+    assert(@catch(assets.mark_texture_region_dirty(generated, 0, past_edge)) == c3d::INVALID_ARGUMENT);
+}

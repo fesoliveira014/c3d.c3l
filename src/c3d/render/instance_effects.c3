@@ -22,6 +22,7 @@ struct InstanceEffectsView @private {
     ViewHistory*         history; // null on a view that keeps no history
     Vec3                 fade_origin;
     LodSelection[]       lod;
+    QuadtreeSelection[]  quadtrees;
 }
 
 <*

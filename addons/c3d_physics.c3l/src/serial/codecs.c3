@@ -31,6 +31,7 @@ struct JointAuthoring @private {
     ParallelJoint[] parallel;
 }
 
+const ulong BODY_LAYOUT @private = 0xc7083025384ef72b;
 const ulong BUOYANCY_V1_LAYOUT @local = 0xf4af0c421ff3e4fa;
 const ulong BUOYANCY_LAYOUT @local = 0x496968a7efc736b9;
 
@@ -57,11 +58,17 @@ uint[1] buoyancy_text_default_versions @local = { 1 };
 *>
 fn void? register_serial_codecs() {
     register_serial_value_types()!;
+    register_body_v1_values()!;
     describe::register_reflected(BodyAuthoring)!;
     describe::register_reflected(JointAuthoring)!;
     describe::register_reflected(BuoyancyAuthoringV1)!;
     describe::register_reflected(BuoyancyAuthoring)!;
-    register_physics_value(BodyAuthoring, 0xed9972ba2248fa8b, &defaults_body_authoring)!;
+    serial::register_described_type(
+        $Type: BodyAuthoring,
+        version: 2,
+        layout: BODY_LAYOUT,
+        defaults: &defaults_body_authoring,
+    )!;
     register_physics_value(JointAuthoring, 0x448b33882e32ee3e, &defaults_joint_authoring)!;
     register_physics_value(BuoyancyAuthoringV1, BUOYANCY_V1_LAYOUT, &defaults_buoyancy_authoring_v1)!;
     serial::register_described_type(
@@ -76,6 +83,8 @@ fn void? register_serial_codecs() {
         .project = &project_body,
         .validate = &validate_body,
         .attach = &attach_body,
+        .binary_compatibility = body_binary_compatibility[..],
+        .text_default_versions = body_text_default_versions[..],
     })!;
     serial::register_described_owner(PhysicsJoint, JointAuthoring, {
         .name = "physics_joint",
@@ -100,6 +109,7 @@ fn void? register_serial_codecs() {
     register_crowd_cloth_codec()!;
     register_ragdoll_codec()!;
     register_breakable_codec()!;
+    register_height_field_windows_codec()!;
 }
 
 fn void defaults_body_authoring(void* value) @private {

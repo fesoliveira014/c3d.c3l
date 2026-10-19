@@ -55,6 +55,12 @@ const uint LOD_SELECT = 1u;
 const uint LOD_CULL = 2u;
 const uint LOD_FINALIZE = 3u;
 const uint LOD_LEVEL_COUNT = 6u;
+const uint QUADTREE_SELECT = 4u;
+const uint QUADTREE_CULL = 5u;
+const uint QUADTREE_SPLIT = 1u;
+const uint QUADTREE_DRAW = 2u;
+const uint QUADTREE_ROOT = 4294967295u;
+const uint MAX_QUADTREE_DEPTH = 8u;
 const uint BILLBOARD_CAMERA = 0u;
 const uint BILLBOARD_DIRECTIONAL = 1u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
@@ -494,6 +500,11 @@ struct LodMetadataGpu {
     uint _pad1;
 };
 
+struct QuadtreeNodeGpu {
+    uint parent;
+    uint children;
+};
+
 struct LodHistoryGpu {
     mat4 model;
     uint level;
@@ -545,6 +556,13 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     uint lod_level_count;
     uint lod_count_visible;
     uint64_t lod_source_args;
+    uint64_t quadtree_nodes;
+    uint quadtree_history_valid;
+    float quadtree_split_pixels;
+    float quadtree_hysteresis;
+    float quadtree_height_pixels;
+    uint _pad9;
+    uint _pad10;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer InstanceSortRoot {

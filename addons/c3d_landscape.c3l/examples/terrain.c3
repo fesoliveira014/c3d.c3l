@@ -23,7 +23,9 @@ import imgui;
 import landscape_ground;
 
 const uint CRATE_CAPACITY @local = 256; // one node and one body each; the scene capacity lever
-const uint SCENE_NODE_CAPACITY @local = CRATE_CAPACITY + 16;
+const uint SCENE_NODE_CAPACITY @local = CRATE_CAPACITY + 16; // the collision windows' nodes come on top
+const uint COLLISION_WINDOW_CELLS @local = 256; // 65 k samples per window: one stroke re-cooks a few of them, not the map
+const uint SNAPSHOT_HEADROOM @local = 16; // slots beside two generations of every window's cooked field
 const float CRATE_SIZE @local = 1;
 const float CRATE_DROP_HEIGHT @local = 8; // metres above the ground a crate starts from
 const float CRATE_DROP_DISTANCE @local = 6; // metres in front of the camera
@@ -125,6 +127,7 @@ struct Options @local {
     uint        height;
     bool        hide_terrain;
     bool        tiles;
+    uint        collision_window;
     String      capture;
 }
 
@@ -139,6 +142,7 @@ struct Demo @local {
     MaterialId    crate_material;
     uint          crate_count;
     Node*         decal_node;
+    TexelRect[landscape_ground::TILE_COUNT] edited_texels; // per Ground.terrain_nodes entry: what a stroke changed
 }
 
 struct HoverPose @local {
@@ -162,31 +166,72 @@ struct BenchmarkResult @local {
     double[]      scratch;
     double        bounds_build_ms;
     double        physics_recook_ms;
+    double        physics_whole_recook_ms;
+    uint          physics_recook_windows;
     uint          level_count;
     bool          timestamps;
     uint[terrain::MAX_TERRAIN_LEVELS][Segment::len] chunks_per_level;
 }
 
 // The collider as docs/terrain.md builds it: the node's transform places both.
-fn void? add_terrain_collider(PhysicsWorld* physics, Node* node, TerrainDesc desc) @local {
+fn void? add_terrain_collider(Demo* demo, Node* node, TerrainDesc desc) @local {
     ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
     collider.height_field = { .source = TEXTURE, .texture = desc.height_map };
     collider.local.scale = { desc.cell_size, desc.height_scale, desc.cell_size };
-    return physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1]);
+    if (!demo.options.collision_window) {
+        return demo.physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1]);
+    }
+
+    return physics::add_height_field_windows(
+        scene:        demo.scene,
+        assets:       demo.assets,
+        node:         node.id,
+        collider:     &collider,
+        window_cells: demo.options.collision_window,
+    );
 }
 
 fn void? add_terrain_colliders(Demo* demo) @local {
     foreach (node : demo.ground.terrain_nodes()) {
-        add_terrain_collider(demo.physics, node, demo.scene.get(node, Terrain).desc)!;
+        add_terrain_collider(demo, node, demo.scene.get(node, Terrain).desc)!;
     }
 }
 
 fn void remove_terrain_colliders(Demo* demo) @local {
-    foreach (node : demo.ground.terrain_nodes()) demo.physics.remove_body(node);
+    foreach (node : demo.ground.terrain_nodes()) {
+        if (demo.options.collision_window) {
+            physics::remove_height_field_windows(demo.scene, node.id);
+        } else {
+            demo.physics.remove_body(node);
+        }
+    }
 }
 
 fn bool has_terrain_colliders(Demo* demo) @local {
-    return demo.scene.has(demo.ground.terrain_nodes()[0], PhysicsBody);
+    Node* node = demo.ground.terrain_nodes()[0];
+    if (demo.options.collision_window) return demo.scene.has(node, HeightFieldWindows);
+
+    return demo.scene.has(node, PhysicsBody);
+}
+
+// One node per window of every terrain.
+fn uint collision_window_count(Options options) @local {
+    if (!options.collision_window) return 0;
+
+    uint texels = options.tiles ? (options.size - 1) / landscape_ground::TILES_PER_SIDE + 1 : options.size;
+    uint terrains = options.tiles ? landscape_ground::TILE_COUNT : 1;
+    uint per_side = (texels - 1 + options.collision_window - 1) / options.collision_window;
+    return terrains * per_side * per_side;
+}
+
+fn Scene create_demo_scene(Options options) @local {
+    return scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY + collision_window_count(options) });
+}
+
+fn PhysicsDesc physics_desc(Options options) @local {
+    PhysicsDesc desc = physics::default_physics_desc();
+    desc.snapshot_capacity = max(desc.snapshot_capacity, 2 * collision_window_count(options) + SNAPSHOT_HEADROOM);
+    return desc;
 }
 
 fn HeightView? ground_view(Demo* demo, Vec3 position) @local {
@@ -281,9 +326,22 @@ fn Vec3 extent_point(Demo* demo, Vec2 fraction) @local {
     return { fraction.x * demo.ground.extent, 0, fraction.y * demo.ground.extent };
 }
 
-// A re-cook rebuilds the whole field, so collision follows a stroke once it ends, not while it is painted.
-fn void end_stroke(Scene* scene, Node* terrain_node) @local {
-    if (scene.has(terrain_node, PhysicsBody)) scene.get(terrain_node, PhysicsBody).mark_changed();
+// Collision follows a stroke once it ends: the next update re-cooks the windows it touched, or the whole field.
+fn void? end_stroke(Demo* demo) @local {
+    foreach (index, node : demo.ground.terrain_nodes()) {
+        TexelRect edited = demo.edited_texels[index];
+        if (!edited.columns) continue;
+
+        demo.edited_texels[index] = {};
+        if (demo.options.collision_window) {
+            if (!demo.scene.has(node, HeightFieldWindows)) continue;
+
+            SampleRect samples = { .x = edited.x, .z = edited.z, .columns = edited.columns, .rows = edited.rows };
+            (void)physics::mark_height_field_windows_changed(demo.scene, node.id, samples)!;
+        } else if (demo.scene.has(node, PhysicsBody)) {
+            demo.scene.get(node, PhysicsBody).mark_changed();
+        }
+    }
 }
 
 fn ViewDesc configure_desc(ViewDesc desc, Options options) @local {
@@ -327,11 +385,12 @@ fn String? option_value(String[] args, usz* index) @local {
 
 fn Options? parse_options(String[] args) @local {
     Options options = {
-        .segment_frames = DEFAULT_SEGMENT_FRAMES,
-        .shading        = ShadingPath.FORWARD,
-        .size           = landscape_ground::DEFAULT_MAP_SIZE,
-        .layers         = landscape_ground::LAYER_COUNT,
-        .lod_threshold  = terrain::DEFAULT_LOD_THRESHOLD,
+        .segment_frames   = DEFAULT_SEGMENT_FRAMES,
+        .shading          = ShadingPath.FORWARD,
+        .size             = landscape_ground::DEFAULT_MAP_SIZE,
+        .layers           = landscape_ground::LAYER_COUNT,
+        .lod_threshold    = terrain::DEFAULT_LOD_THRESHOLD,
+        .collision_window = COLLISION_WINDOW_CELLS,
     };
     for (usz index = 1; index < args.len; index++) {
         switch (args[index]) {
@@ -382,6 +441,7 @@ fn Options? parse_options(String[] args) @local {
             case "--lod-threshold":
                 options.lod_threshold = option_value(args, &index)!.to_float()!;
                 if (!(options.lod_threshold >= 0)) return c3d::INVALID_ARGUMENT~;
+            case "--collision-window": options.collision_window = option_value(args, &index)!.to_uint()!;
             case "--sky": options.sky = true;
             case "--volumetric-fog": options.volumetric_fog = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
@@ -428,11 +488,7 @@ fn void? terrain_panel(Demo* demo, FlyCamera* fly_camera, float delta) @local {
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Terrain", null, {})) {
         imgui::text("Right drag looks, WASD move, Shift fast; F flies, Q and E sink and rise");
-        if (demo.options.tiles) {
-            imgui::text("G drops a crate, P toggles the collider, click pushes a crate; painting is off");
-        } else {
-            imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
-        }
+        imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
         imgui::text("T toggles the ground decal");
         uint chunks;
         uint lod_switches;
@@ -524,7 +580,7 @@ fn void? run_interactive(Options options) @local {
         },
     )!;
     defer render::destroy_renderer(&renderer);
-    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    Scene scene = create_demo_scene(options);
     defer scene::destroy_scene(&scene);
     physics::register_physics(&scene)!;
     terrain::register_terrain(&scene, &assets)!;
@@ -532,7 +588,7 @@ fn void? run_interactive(Options options) @local {
         allocator: mem,
         assets:    &assets,
         scene:     &scene,
-        desc:      physics::default_physics_desc(),
+        desc:      physics_desc(options),
     )!;
     defer physics::destroy_physics_world(&physics);
 
@@ -583,20 +639,21 @@ fn void? run_interactive(Options options) @local {
                     add_terrain_colliders(&demo)!;
                 }
             }
-            bool brush_held = input.key_down(platform::Scancode.B) && !options.tiles;
+            bool brush_held = input.key_down(platform::Scancode.B);
             float rise = brush.rise(brush_held, delta);
             if (rise > 0) {
-                bool stamped = landscape_ground::stamp_under(
-                    scene:        &scene,
-                    assets:       &assets,
-                    terrain_node: demo.ground.node,
-                    position:     fly_camera.position,
-                    rise:         rise,
+                bool stamped = landscape_ground::stamp_ground(
+                    scene:    &scene,
+                    assets:   &assets,
+                    ground:   &demo.ground,
+                    position: fly_camera.position,
+                    rise:     rise,
+                    edited:   demo.edited_texels[..],
                 )!;
                 if (stamped) painting = true;
             }
             if (!brush_held && painting) {
-                end_stroke(&scene, demo.ground.node);
+                end_stroke(&demo)!;
                 painting = false;
             }
         }
@@ -754,6 +811,23 @@ fn double? time_bounds_build(Demo* demo, BenchmarkResult* result, float output_h
     return percentile(runs, 0.5f);
 }
 
+// What a stroke would repeat with one collider over the whole map: a cook of every sample.
+fn double? time_whole_field_cook(Demo* demo) @local {
+    Node* probe = demo.scene.add_node(name: "whole_field_probe")!;
+    ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
+    TerrainDesc desc = demo.scene.get(demo.ground.node, Terrain).desc;
+    collider.height_field = { .source = TEXTURE, .texture = desc.height_map };
+    collider.local.scale = { desc.cell_size, desc.height_scale, desc.cell_size };
+
+    time::Clock started = clock::now();
+    demo.physics.add_body(probe, physics::default_body_desc(STATIC), (&collider)[:1])!;
+    double elapsed = elapsed_ms(started);
+
+    demo.physics.remove_body(probe);
+    demo.scene.remove(probe);
+    return elapsed;
+}
+
 fn void? run_segments(
     Demo* demo,
     Renderer* renderer,
@@ -785,12 +859,13 @@ fn void? run_segments(
         )!;
         bool stamped = timed && segment == Segment.EDIT && segment_step % STAMP_PERIOD == 0;
         if (stamped) {
-            landscape_ground::stamp_under(
-                scene:        demo.scene,
-                assets:       demo.assets,
-                terrain_node: demo.ground.node,
-                position:     demo.camera_node.local.position,
-                rise:         landscape_ground::BRUSH_RISE,
+            landscape_ground::stamp_ground(
+                scene:    demo.scene,
+                assets:   demo.assets,
+                ground:   &demo.ground,
+                position: demo.camera_node.local.position,
+                rise:     landscape_ground::BRUSH_RISE,
+                edited:   demo.edited_texels[..],
             )!;
         }
 
@@ -834,10 +909,13 @@ fn void? run_segments(
     }
     result.level_count = runtime.level_count;
 
-    end_stroke(demo.scene, demo.ground.node);
+    end_stroke(demo)!;
+    result.physics_recook_windows = demo.physics.counters().pending_bodies;
     time::Clock recook_started = clock::now();
     demo.physics.update(TIME_STEP);
     result.physics_recook_ms = elapsed_ms(recook_started);
+    result.physics_whole_recook_ms = result.physics_recook_ms;
+    if (options.collision_window) result.physics_whole_recook_ms = time_whole_field_cook(demo)!;
 }
 
 fn void print_edit_results(BenchmarkResult* result, FrameRecord[] edit) @local {
@@ -863,6 +941,11 @@ fn bool print_results(Options options, BenchmarkResult* result) @local {
     io::printfn("bounds_build_ms %.4f", result.bounds_build_ms);
     print_edit_results(result, result.records[Segment.EDIT.ordinal * frames:frames]);
     io::printfn("physics_recook_ms %.4f", result.physics_recook_ms);
+    if (options.collision_window) {
+        io::printfn("physics_recook_windows %d", result.physics_recook_windows);
+        io::printfn("physics_recook_window_ms %.4f", result.physics_recook_ms / result.physics_recook_windows);
+    }
+    io::printfn("physics_whole_recook_ms %.4f", result.physics_whole_recook_ms);
 
     bool still_gate = true;
     uint hover_switches;
@@ -963,7 +1046,7 @@ fn bool? run_benchmark(Options options) @local {
         renderer: &renderer,
         desc:     configure_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options),
     )!;
-    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    Scene scene = create_demo_scene(options);
     defer scene::destroy_scene(&scene);
     physics::register_physics(&scene)!;
     terrain::register_terrain(&scene, &assets)!;
@@ -971,7 +1054,7 @@ fn bool? run_benchmark(Options options) @local {
         allocator: mem,
         assets:    &assets,
         scene:     &scene,
-        desc:      physics::default_physics_desc(),
+        desc:      physics_desc(options),
     )!;
     defer physics::destroy_physics_world(&physics);
 
@@ -1004,7 +1087,7 @@ fn bool? run_benchmark(Options options) @local {
 
     io::printfn(
         "# terrain size=%d layers=%d shading=%s shadows=%s lod_threshold=%g hysteresis=%g extent=%dx%d frames=%d "
-          "terrain=%s sky=%s volumetric_fog=%s",
+          "terrain=%s sky=%s volumetric_fog=%s collision_window=%d",
         options.size,
         options.layers,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
@@ -1017,6 +1100,7 @@ fn bool? run_benchmark(Options options) @local {
         options.hide_terrain ? "hidden" : "visible",
         options.sky ? "on" : "off",
         options.volumetric_fog ? "on" : "off",
+        options.collision_window,
     );
     run_segments(
         demo:     &demo,
@@ -1058,7 +1142,7 @@ fn void? run_capture(Options options) @local {
     ViewDesc view_desc = configure_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options);
     view_desc.post.anti_aliasing = AntiAliasing.NONE;
     ViewId view = render::create_view(&renderer, view_desc)!;
-    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    Scene scene = create_demo_scene(options);
     defer scene::destroy_scene(&scene);
     physics::register_physics(&scene)!;
     terrain::register_terrain(&scene, &assets)!;
@@ -1066,7 +1150,7 @@ fn void? run_capture(Options options) @local {
         allocator: mem,
         assets:    &assets,
         scene:     &scene,
-        desc:      physics::default_physics_desc(),
+        desc:      physics_desc(options),
     )!;
     defer physics::destroy_physics_world(&physics);
 
@@ -1116,7 +1200,7 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
               "[--width W] [--height H] [--hide-terrain] [--tiles 2x2] [--capture FILE.png] [--sky] "
-              "[--volumetric-fog].");
+              "[--volumetric-fog] [--collision-window CELLS].");
         }
         return 1;
     }

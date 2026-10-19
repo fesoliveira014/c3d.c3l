@@ -1,0 +1,280 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "landscape",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    },
+    {
+      "id": 1,
+      "parent": 0,
+      "name": "ground",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "terrain": {
+          "version": 1,
+          "value": {
+            "height_map": "height",
+            "control_map": "density",
+            "cell_size": 1,
+            "height_scale": 4,
+            "layers": [
+              "layer",
+              null,
+              null,
+              null
+            ],
+            "lod_threshold": 123,
+            "lod_hysteresis": 0.400000006,
+            "cast_shadow": false,
+            "receive_shadow": false
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "name": "authored-child",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    },
+    {
+      "id": 3,
+      "parent": 0,
+      "name": "plants",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "foliage": {
+          "version": 1,
+          "value": {
+            "geometry": "plant",
+            "material": "layer",
+            "lod": [],
+            "ground": 1,
+            "cell_size": 128,
+            "rules": {
+              "density_map": "density",
+              "density_channel": 2,
+              "spacing": 32,
+              "seed": 53,
+              "max_slope": 1,
+              "min_altitude": -7,
+              "max_altitude": 20,
+              "min_scale": 0.5,
+              "max_scale": 1.5,
+              "min_tint": [
+                0.100000001,
+                0.200000003,
+                0.300000012
+              ],
+              "max_tint": [
+                0.699999988,
+                0.800000012,
+                0.899999976
+              ]
+            },
+            "sway": {
+              "amplitude": 0.300000012,
+              "full_bend_speed": 7,
+              "frequency": 0.400000006,
+              "lean": 0.200000003,
+              "wavelength": 5,
+              "variation": 0.699999988,
+              "weight": "VERTEX_ALPHA"
+            },
+            "fade": {
+              "start": 12,
+              "end": 22
+            },
+            "cast_shadow": true,
+            "receive_shadow": false,
+            "trace": true
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "parent": 0,
+      "name": "water",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "water": {
+          "version": 1,
+          "value": {
+            "waves": [
+              {
+                "amplitude": 0.119999997,
+                "wavelength": 6,
+                "speed": 1.20000005,
+                "direction": [
+                  1,
+                  0
+                ],
+                "steepness": 0.5
+              },
+              {
+                "amplitude": 0.0700000003,
+                "wavelength": 3.5,
+                "speed": 0.899999976,
+                "direction": [
+                  0.600000024,
+                  0.800000012
+                ],
+                "steepness": 0.5
+              },
+              {
+                "amplitude": 0.0399999991,
+                "wavelength": 2,
+                "speed": -0.100000001,
+                "direction": [
+                  0,
+                  1
+                ],
+                "steepness": 0.100000001
+              },
+              {
+                "amplitude": 0,
+                "wavelength": 0,
+                "speed": 0,
+                "direction": [
+                  0,
+                  0
+                ],
+                "steepness": 0
+              }
+            ],
+            "wave_count": 3,
+            "geometry": "water-source",
+            "extent": 4,
+            "cell_size": 0.5,
+            "absorption_color": [
+              0.200000003,
+              0.400000006,
+              0.600000024
+            ],
+            "absorption_distance": 3,
+            "scatter_color": [
+              0.100000001,
+              0.200000003,
+              0.300000012
+            ],
+            "roughness": 0.200000003,
+            "refraction_strength": 0.0299999993,
+            "reflection_distortion": 0.0700000003,
+            "foam_depth": 0.800000012,
+            "foam_crest": 0.600000024,
+            "ripple_drift": 0.0399999991,
+            "ripples": "layer",
+            "foam": "layer",
+            "march_reflections": false
+          }
+        }
+      }
+    }
+  ]
+}
