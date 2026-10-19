@@ -532,6 +532,7 @@ fn Mirrored add_mirrored(
 ) @local {
     fixture.scene.update_world();
     water::update_mirror(&fixture.scene, body.id, mirror_slot, viewing.id)!!;
+
     RenderTargetId target = render::create_render_target(
         &fixture.renderer,
         render::render_target_desc(MIRROR_SIZE, MIRROR_SIZE),
@@ -539,6 +540,7 @@ fn Mirrored add_mirrored(
     ViewDesc desc = render::texture_view_desc(target);
     desc.post.anti_aliasing = AntiAliasing.NONE;
     desc.clip_plane = fixture.scene.get(body, WaterRuntime).clip_plane;
+
     return {
         .body        = body,
         .mirror_slot = mirror_slot,
@@ -562,6 +564,7 @@ fn Vec4[]? render_viewers(
             water::update_mirror(&fixture.scene, mirrored.body.id, mirrored.mirror_slot, viewer.camera.id)!;
         }
     }
+
     renderer.begin_frame({ .delta = (float)VELOCITY_STEP })!;
     defer catch render::abort_frame(renderer);
     foreach (index, viewer : viewers) {
@@ -571,10 +574,12 @@ fn Vec4[]? render_viewers(
             renderer.finish_view(mirrored.mirror_view)!;
             renderer.set_view_texture(viewer.view, mirrored.view_slot, mirrored.target)!;
         }
+
         renderer.render_view(&fixture.scene, viewer.camera, viewer.view)!;
         if (index == reader) record_readback(fixture, render::read_view_color(viewer.view), pixels)!;
         renderer.finish_view(viewer.view)!;
     }
+
     renderer.end_frame()!;
     return read_texels(fixture, pixels.len);
 }
@@ -588,6 +593,7 @@ fn void test_each_viewing_view_reflects_the_mirror_it_is_given() @test {
     Node* water_node = add_water_node(&fixture, desc);
     add_emissive_box(&fixture, LEFT_BOX_POSITION, { 1, 1, 1 });
     add_emissive_box(&fixture, RIGHT_BOX_POSITION, { 1, 1, 1 });
+
     Vec3[2] positions = { LEFT_VIEW_POSITION, RIGHT_VIEW_POSITION };
     Vec3[2] boxes = { LEFT_BOX_POSITION, RIGHT_BOX_POSITION };
 
@@ -621,6 +627,7 @@ fn void test_each_viewing_view_reflects_the_mirror_it_is_given() @test {
         Vec4[] colors = render_viewers(&fixture, viewers[..], reader, pixels[reader:1])!!;
         assert(luminance(colors[0]) >= minimum, "view %d shows %f of its own box", reader, luminance(colors[0]));
     }
+
     // Given each other's targets, neither view finds its box image where its own mirror put it.
     RenderTargetId first_target = viewers[0].mirrors[0].target;
     viewers[0].mirrors[0].target = viewers[1].mirrors[0].target;
@@ -630,6 +637,7 @@ fn void test_each_viewing_view_reflects_the_mirror_it_is_given() @test {
         float found = luminance(colors[0]);
         assert(found <= DARK_LIMIT, "view %d shows %f of the other mirror", reader, found);
     }
+
     check_validation(&fixture.renderer);
 }
 
@@ -644,6 +652,7 @@ fn void test_two_bodies_in_one_view_each_reflect_their_own_mirror() @test {
     Node* upper_node = add_water_node(&fixture, upper, { 10, UPPER_LEVEL, 0 });
     add_emissive_box(&fixture, LOWER_BOX_POSITION, { 2, 2, 2 });
     add_emissive_box(&fixture, UPPER_BOX_POSITION, { 2, 2, 2 });
+
     Node* camera = add_camera_node(
         fixture:     &fixture,
         fov_degrees: STEP_FOV_DEGREES,
@@ -667,6 +676,7 @@ fn void test_two_bodies_in_one_view_each_reflect_their_own_mirror() @test {
             viewing:     camera,
         ),
     };
+
     Viewer[1] viewers = { { .camera = camera, .view = add_view(&fixture, MIRROR_SIZE), .mirrors = mirrored[..] } };
     CameraMatrices matrices = matrices_of(&fixture, camera, MIRROR_SIZE);
     Vec3 lower_image = image_of(LOWER_BOX_POSITION);
@@ -681,6 +691,7 @@ fn void test_two_bodies_in_one_view_each_reflect_their_own_mirror() @test {
     Vec4[] colors = render_viewers(&fixture, viewers[..], 0, pixels[..])!!;
     assert(luminance(colors[0]) >= lower_minimum, "lower body shows %f", luminance(colors[0]));
     assert(luminance(colors[1]) >= upper_minimum, "upper body shows %f", luminance(colors[1]));
+
     // Slots swapped, each body samples the other's target, which holds its box ten pixels away.
     RenderTargetId lower_target = viewers[0].mirrors[0].target;
     viewers[0].mirrors[0].target = viewers[0].mirrors[1].target;
@@ -688,6 +699,7 @@ fn void test_two_bodies_in_one_view_each_reflect_their_own_mirror() @test {
     colors = render_viewers(&fixture, viewers[..], 0, pixels[..])!!;
     assert(luminance(colors[0]) <= DARK_LIMIT, "lower body shows %f of the upper mirror", luminance(colors[0]));
     assert(luminance(colors[1]) <= DARK_LIMIT, "upper body shows %f of the lower mirror", luminance(colors[1]));
+
     check_validation(&fixture.renderer);
 }
 

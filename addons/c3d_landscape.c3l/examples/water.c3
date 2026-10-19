@@ -590,6 +590,7 @@ fn void? add_body(
         node:   node,
         desc:   desc,
     )!;
+
     demo.bodies[index] = { .node = node, .centre = { site.x, level, site.y }, .desc = desc };
     demo.body_count = index + 1;
 }
@@ -679,6 +680,7 @@ fn void? follow_viewports(Demo* demo, Renderer* renderer, uint[<2>] output_size)
             render::configure_view(renderer, viewer.view, current)!;
         }
         demo.scene.get(viewer.camera_node, Camera).aspect = (float)size.x / (float)size.y;
+
         foreach (&body : demo.bodies[:demo.body_count]) {
             Mirror* mirror = &body.mirrors[viewer_index];
             if (!mirror.target.generation || (mirror.width == size.x && mirror.height == size.y)) continue;
@@ -766,7 +768,7 @@ fn void? set_ripples(Demo* demo, bool ripples) @local {
     }
 }
 
-// A second view that sees the water would reflect the first view's mirror camera, so this one leaves it out.
+// The capture has no mirror of its own, so it leaves the water out.
 fn Capture? create_capture(Renderer* renderer, Demo* demo) @local {
     Camera lens = camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR, CAMERA_FAR);
     lens.layers &= ~WATER_LAYER;
@@ -831,8 +833,8 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
 }
 
 // The second viewer faces the pool from the same stand-off the interactive camera keeps from the lake.
-fn void place_second_viewer(Demo* demo) @local {
-    HeightView view = terrain::height_view(demo.scene, demo.assets, demo.ground.node.id)!!;
+fn void? place_second_viewer(Demo* demo) @local {
+    HeightView view = terrain::height_view(demo.scene, demo.assets, demo.ground.node.id)!;
     Vec3 centre = demo.bodies[1].centre;
     Vec3 position = centre - (Vec3){ STILL_BACK * POOL_EXTENT, 0, 0 };
     float ground = landscape_ground::ground_under(&view, position, centre.y);
@@ -872,6 +874,7 @@ fn void? build_demo(Demo* demo) @local {
         level:  level,
         radius: BASIN_RADIUS,
     );
+
     Vec2 pool_site;
     float pool_level;
     if (demo.options.split) {
@@ -895,6 +898,7 @@ fn void? build_demo(Demo* demo) @local {
             radius: POOL_BASIN_RADIUS,
         );
     }
+
     landscape_ground::add_sun_and_sky(scene, false, demo.options.sky)!;
     EnvironmentId sky = add_sky(assets)!;
     scene.environment = sky;
@@ -921,6 +925,7 @@ fn void? build_demo(Demo* demo) @local {
     )!;
     // Built after the carve, so the collider cooks the basin once.
     add_terrain_collider(demo.physics, demo.ground.node, demo.ground.desc)!;
+
     demo.ripples = add_ripples(assets)!;
     demo.foam = add_foam(assets)!;
     add_body(
@@ -937,17 +942,21 @@ fn void? build_demo(Demo* demo) @local {
             extent: POOL_EXTENT,
         )!;
     }
+
     foreach (index, &viewer : demo.viewers[:demo.viewer_count]) {
         viewer.camera_node = scene.add_camera(
             camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR, CAMERA_FAR),
             name: index == 0 ? "camera" : "second_camera",
         )!;
     }
+
     add_crates(demo)!;
     demo.physics.set_fluid_sampler(&water::fluid_sample, &demo.fluid);
     scene.update_world();
-    if (demo.options.split) place_second_viewer(demo);
-    scene.update_world();
+    if (demo.options.split) {
+        place_second_viewer(demo)!;
+        scene.update_world();
+    }
 }
 
 // The mirrors' first placement needs the cameras where the frames will put them.
@@ -956,6 +965,7 @@ fn void? prepare_views(Demo* demo, Renderer* renderer, uint[<2>] output_size) @l
     demo.output_size = output_size;
     demo.scene.update_world();
     place_mirrors(demo)!;
+
     foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
         PixelRect viewport = viewer_viewport(demo, (uint)viewer_index, output_size);
         uint[<2>] size = viewport.width ? (uint[<2>]){ viewport.width, viewport.height } : output_size;
@@ -970,6 +980,7 @@ fn void? prepare_views(Demo* demo, Renderer* renderer, uint[<2>] output_size) @l
             )!;
         }
     }
+
     apply_reflection(demo, demo.options.reflection)!;
     if (demo.options.capture) demo.capture = create_capture(renderer, demo)!;
 }
@@ -1006,6 +1017,7 @@ fn double? step_scene(
         wind_velocity: wind,
         time:          time,
     );
+
     place_mirrors(demo)!;
     foreach (&body : demo.bodies[:demo.body_count]) {
         foreach (&mirror : body.mirrors[:demo.viewer_count]) {
@@ -1017,11 +1029,13 @@ fn double? step_scene(
             )!;
         }
     }
+
     demo.fluid = {
         .view    = water::surface_view(scene, demo.assets, demo.bodies[0].node.id)!,
         .time    = time,
         .current = demo.options.current,
     };
+
     time::Clock started = clock::now();
     demo.physics.update(delta);
     double physics_us = (double)(long)started.to_now() / NANOSECONDS_PER_MICROSECOND;
@@ -1049,9 +1063,11 @@ fn void? render_views(Demo* demo, Renderer* renderer) @local {
             }
             renderer.set_view_texture(viewer.view, body.desc.reflection_view_slot, target)!;
         }
+
         renderer.render_view(demo.scene, viewer.camera_node, viewer.view)!;
         renderer.finish_view(viewer.view)!;
     }
+
     if (!demo.options.capture) return;
     renderer.render_view(demo.scene, demo.capture.camera_node, demo.capture.view)!;
     return renderer.finish_view(demo.capture.view);
@@ -1227,6 +1243,7 @@ fn void view_stats_panel(Demo* demo, Renderer* renderer) @local {
         views[count] = demo.capture.view;
         labels[count++] = "capture";
     }
+
     imgui::set_next_window_pos(VIEW_STATS_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(VIEW_STATS_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("View stats", null, {})) gui::view_stats_table(renderer, views[:count], labels[:count]);

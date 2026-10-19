@@ -277,6 +277,7 @@ fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
 
 <*
  Replace a water body's desc; the grid is rebuilt only when its shape changed.
+ Invalidates Camera pointers when max_mirrors shrinks.
  @param [&inout] scene
  @param [&inout] assets : "The store given to register_water."
  @param [&in] node : "Carries a water body."
@@ -338,10 +339,12 @@ fn void? update_mirror(
 ) {
     if (!scene.world.is_alive(body) || !scene.world.has(body, WaterRuntime)) return c3d::INVALID_ID~;
     if (!scene.world.is_alive(viewing_camera)) return c3d::INVALID_ID~;
+
     if (!scene.world.get(body, WaterRuntime).mirrors[slot].generation) {
         Entity mirror = add_mirror(scene, body, slot)!;
         scene.world.get(body, WaterRuntime).mirrors[slot] = mirror;
     }
+
     return place_mirror(
         scene:   scene,
         node:    scene.node(body),
@@ -353,6 +356,7 @@ fn void? update_mirror(
 
 <*
  Free one mirror slot's camera.
+ Invalidates Camera pointers.
  @param [&inout] scene
  @require slot < MAX_MIRRORS
 *>
@@ -361,6 +365,7 @@ fn void release_mirror(Scene* scene, Entity body, uint slot) {
     WaterRuntime* runtime = scene.world.get(body, WaterRuntime);
     Entity mirror = runtime.mirrors[slot];
     if (!mirror.generation) return;
+
     runtime.mirrors[slot] = {};
     scene.remove(scene.node(mirror));
 }

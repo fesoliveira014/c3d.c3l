@@ -615,6 +615,7 @@ fn void test_each_mirror_slot_reflects_its_viewing_camera() @test {
         assert(mirrored.fov_y == lens.fov_y && mirrored.near == lens.near && mirrored.aspect == lens.aspect);
     }
     assert(fixture.scene.count(WaterMirror) == 2);
+
     float amplitude = 0.12f + 0.07f;
     assert(runtime.clip_plane.normal == (Vec3){ 0, 1, 0 });
     assert(math::abs(runtime.clip_plane.d - (-2 + amplitude)) <= QUERY_TOLERANCE);

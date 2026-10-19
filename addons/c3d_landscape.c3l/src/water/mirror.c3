@@ -8,7 +8,7 @@ import c3d::material;
 import c3d::scene;
 import std::math;
 
-// A valid lens on no layer: the mirror draws nothing until update copies the viewing camera.
+// A valid lens on no layer: the mirror draws nothing until update_mirror copies the viewing camera.
 const Camera MIRROR_PLACEHOLDER @private = { .projection = PERSPECTIVE, .fov_y = 1, .near = 1, .layers = 0 };
 
 // The image of the node's local XZ plane: the plane the waves rest on and the mirror reflects across.
