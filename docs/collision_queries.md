@@ -190,7 +190,9 @@ A `TEXTURE` field may carry a `window`, `{ x, z, count_x, count_z }` in cells, t
 `count_x + 1` by `count_z + 1` samples of the map; all zero covers the whole map. A window quantizes over the
 fixed range 0 to 1, where a whole field quantizes over its own samples, so windows of one map meet exactly. It
 faults `INVALID_ARGUMENT` on a `HEIGHTS` source, with a zero count or past the map, and `UNSUPPORTED` on an
-`RGBA32_FLOAT` map. The window is part of the entry key.
+`RGBA32_FLOAT` map. A window with map beyond any side also reads one sample past that side, and its
+`material_indices` then hold its cells plus one ring of map cells, `(count_x + 2) * (count_z + 2)` in all. The
+window is part of the entry key.
 
 The scale is baked at cook time and is positive. A zero or nonfinite component returns
 `INVALID_ARGUMENT`, a negative component returns `UNSUPPORTED`, and a spacing whose reciprocal is not
