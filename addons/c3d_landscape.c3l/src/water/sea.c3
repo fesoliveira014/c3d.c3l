@@ -8,13 +8,15 @@ import c3d::scene;
 import std::math;
 
 const float SEA_GRAVITY @private = 9.81f; // m/s^2
-const float SEA_PEAK_FREQUENCY @private = 0.877f; // Pierson-Moskowitz: peak angular frequency times speed over gravity
-const float SEA_HEIGHT_COEFFICIENT @private = 0.21f; // Pierson-Moskowitz: significant height times gravity over speed^2
-const float SEA_WIND_LIMIT @private = 25; // m/s: the table's last row; a harder wind draws the same sea
+const float SEA_FETCH_HEIGHT @private = 1.6e-3f; // JONSWAP: g Hs / U^2 per square root of g F / U^2
+const float SEA_FETCH_PERIOD @private = 0.286f; // JONSWAP: g Tp / U per cube root of g F / U^2
+const float SEA_FULL_HEIGHT @private = 0.21f; // fully developed Pierson-Moskowitz: g Hs / U^2
+const float SEA_PEAK_FREQUENCY @private = 0.877f; // fully developed Pierson-Moskowitz: peak frequency times U / g
+const float SEA_FULL_PERIOD @private = 2 * (float)math::PI / SEA_PEAK_FREQUENCY; // g Tp / U at that peak frequency
+const float SEA_WIND_LIMIT @private = 25; // m/s: the strongest wind the table draws; a harder one draws the same sea
 const float SEA_CHOP @private = 2; // crest shift over amplitude, as the default calm waves have
+const float SEA_STEEPNESS_LIMIT @private = 0.9f; // below the cusp at 1, so the mean stays valid at any fetch
 const float SEA_SHORTEST_WAVELENGTH @private = 1; // metres: application geometry carries no cell size to bound it
-const float SEA_PEAK_WAVELENGTH @private = 2 * (float)math::PI
-  / (SEA_PEAK_FREQUENCY * SEA_PEAK_FREQUENCY * SEA_GRAVITY); // metres per squared m/s of wind
 
 <*
  Where a sea-state blend stands between set_sea_state and its last upload.
@@ -75,13 +77,30 @@ fn void? set_sea_state(
     Mat4 world = scene.node(node).world;
     Water* water = scene.world.get(node, Water);
     if (!scene.world.has(node, WaterRuntime)) {
-        water.desc.waves = sea_waves(&water.desc, world, wind_velocity);
+        Vec2 half = water.desc.geometry.generation ? (Vec2){} : (Vec2){ water.desc.extent / 2, water.desc.extent / 2 };
+        water.desc.waves = sea_waves(&water.desc, -half, half, world, wind_velocity);
         water.desc.wave_count = MAX_WAVES;
         return;
     }
 
     WaterRuntime* runtime = scene.world.get(node, WaterRuntime);
-    Wave[MAX_WAVES] target = sea_waves(&runtime.desc, world, wind_velocity);
+    Wave[MAX_WAVES] target = sea_waves(&runtime.desc, runtime.rest_min, runtime.rest_max, world, wind_velocity);
+    blend_to(
+        scene:              scene,
+        node:               node,
+        target:             target,
+        transition_seconds: transition_seconds,
+    );
+}
+
+fn void blend_to(
+    Scene* scene,
+    Entity node,
+    Wave[MAX_WAVES] target,
+    float transition_seconds,
+) @private {
+    Water* water = scene.world.get(node, Water);
+    WaterRuntime* runtime = scene.world.get(node, WaterRuntime);
     begin_blend(
         blend:              &runtime.sea,
         leaving:            runtime.desc.waves[:runtime.desc.wave_count],
@@ -95,26 +114,53 @@ fn void? set_sea_state(
     place_bounds(scene.get(scene.node(node), Mesh), runtime);
 }
 
-fn Wave[MAX_WAVES] sea_waves(WaterDesc* desc, Mat4 world, Vec2 wind_velocity) @private {
+fn Wave[MAX_WAVES] sea_waves(
+    WaterDesc* desc,
+    Vec2 rest_min,
+    Vec2 rest_max,
+    Mat4 world,
+    Vec2 wind_velocity,
+) @private {
     Vec3 local_wind = maths::transform_dir(maths::inverse_affine(world), { wind_velocity.x, 0, wind_velocity.y });
     float heading = math::atan2(local_wind.z, local_wind.x);
+    Vec2 direction = { math::cos(heading), math::sin(heading) };
+    float horizontal_scale = maths::transform_dir(world, { direction.x, 0, direction.y }).length();
+    float vertical_scale = maths::transform_dir(world, { 0, 1, 0 }).length();
     float speed = min(wind_velocity.length(), SEA_WIND_LIMIT);
     float shortest = SEA_SHORTEST_WAVELENGTH;
     if (!desc.geometry.generation) shortest = max(shortest, NYQUIST_CELLS * desc.cell_size);
 
-    float significant_height = SEA_HEIGHT_COEFFICIENT * speed * speed / SEA_GRAVITY;
-    float peak_wavelength = SEA_PEAK_WAVELENGTH * speed * speed;
+    float significant_height;
+    float peak_wavelength;
+    if (speed > 0) {
+        float fetch = fetch_length(rest_min, rest_max, direction) * horizontal_scale;
+        float fetch_ratio = SEA_GRAVITY * fetch / (speed * speed);
+        float height_ratio = min(SEA_FETCH_HEIGHT * math::sqrt(fetch_ratio), SEA_FULL_HEIGHT);
+        float period_ratio = min(SEA_FETCH_PERIOD * math::pow(fetch_ratio, 1.0f / 3), SEA_FULL_PERIOD);
+        float peak_period = period_ratio * speed / SEA_GRAVITY;
+        significant_height = height_ratio * speed * speed / SEA_GRAVITY;
+        peak_wavelength = SEA_GRAVITY * peak_period * peak_period / (2 * (float)math::PI);
+    }
+
     Wave[MAX_WAVES] waves;
     foreach (index, &wave : waves) {
         SeaBand band = SEA_BANDS[index];
         float angle = heading + math::deg_to_rad(band.spread_degrees);
-        wave.amplitude = band.amplitude_share * significant_height;
-        wave.wavelength = max(band.wavelength_share * peak_wavelength, shortest);
-        wave.speed = math::sqrt(SEA_GRAVITY * wave.wavelength / (2 * (float)math::PI));
+        wave.amplitude = band.amplitude_share * significant_height / vertical_scale;
+        wave.wavelength = max(band.wavelength_share * peak_wavelength / horizontal_scale, shortest);
+        wave.speed = math::sqrt(SEA_GRAVITY * wave.wavelength / (2 * (float)math::PI * horizontal_scale));
         wave.direction = { math::cos(angle), math::sin(angle) };
         wave.steepness = SEA_CHOP * 2 * (float)math::PI * MAX_WAVES * wave.amplitude / wave.wavelength;
+        wave.steepness = min(wave.steepness, SEA_STEEPNESS_LIMIT);
     }
     return waves;
+}
+
+// The chord of the rest rectangle through its centre along a node-local unit direction; unbounded without an area.
+fn float fetch_length(Vec2 rest_min, Vec2 rest_max, Vec2 direction) @private {
+    Vec2 half = (rest_max - rest_min) / 2;
+    if (!(half.x > 0 && half.y > 0)) return float::inf;
+    return 2 * min(half.x / math::abs(direction.x), half.y / math::abs(direction.y));
 }
 
 // A wave count change must not change the shift the leaving waves carry: it is baked in as 1 / count.

@@ -4,7 +4,7 @@ import c3d;
 import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
-import c3d::landscape::water;
+import c3d::landscape::water @public;
 import c3d::material;
 import c3d::maths;
 import c3d::physics;
@@ -59,10 +59,11 @@ const uint VELOCITY_ROW_SAMPLES @local = 9;
 const float VELOCITY_TOLERANCE @local = 0.01f; // encoded units, about two and a half 8-bit steps
 const float MIN_VELOCITY_ENCODED @local = 0.03f; // every sample moves well above the tolerance
 const uint BISECTION_STEPS @local = 60;
-const Vec2 SEA_WIND @local = { 10, 4 }; // metres per second: a heavy sea; its crest shift moves pixels each frame
-const float SEA_BLEND_SECONDS @local = 1;
+const float SEA_BLEND_SECONDS @local = 0.3f;
+const float SEA_VELOCITY_TOLERANCE @local = 0.02f; // encoded units: twice the steady case's; measures 0.0096
+const double SEA_START_TIME @local = 1000; // seconds: large, so the offsets and the phase products are not near zero
 const uint SEA_STEADY_FRAMES @local = 3; // frames before the blend: the view's history is valid when it starts
-const uint SEA_BLEND_FRAMES @local = 4; // frames into the blend when the velocities are read: a third of it done
+const uint SEA_BLEND_FRAMES @local = 3; // frames into the blend when the velocities are read: two thirds done
 const uint FIXED_POINT_STEPS @local = 24;
 const char[*] TRACE_PROBE_SOURCE @local = $embed("trace_probe.comp.glsl");
 const uint TRACE_GROUP_SIZE @local = 8; // mirrored as local_size_x and _y in trace_probe.comp.glsl
@@ -87,6 +88,12 @@ const Wave[4] CHOPPY_WAVES @local = {
     { .amplitude = 0.2f, .wavelength = 7, .speed = 1.9f, .direction = { 0.8f, 0.6f }, .steepness = 0.8f },
     { .amplitude = 0.12f, .wavelength = 4, .speed = 1.4f, .direction = { 0.28f, 0.96f }, .steepness = 0.8f },
     { .amplitude = 0.06f, .wavelength = 2, .speed = 1.0f, .direction = { -0.6f, 0.8f }, .steepness = 0.8f },
+};
+const Wave[4] SWIFT_WAVES @local = { // fast enough that each frame moves the crest shift by several pixels
+    { .amplitude = 0.3f, .wavelength = 8, .speed = 10, .direction = { 1, 0 }, .steepness = 0.5f },
+    { .amplitude = 0.2f, .wavelength = 6, .speed = 8, .direction = { 0.8f, 0.6f }, .steepness = 0.5f },
+    { .amplitude = 0.12f, .wavelength = 5, .speed = 7, .direction = { 0.28f, 0.96f }, .steepness = 0.5f },
+    { .amplitude = 0.06f, .wavelength = 4, .speed = 6, .direction = { -0.6f, 0.8f }, .steepness = 0.5f },
 };
 const Wave RUNNING_WAVE @local = {
     .amplitude  = 0.3f,
@@ -414,12 +421,12 @@ fn void check_twin(Fixture* fixture, Wave[] waves, bool sea_state = false) @loca
     ViewId view = add_view(fixture, TWIN_SIZE);
     CameraMatrices matrices = matrices_of(fixture, camera_node, TWIN_SIZE);
     if (sea_state) {
-        water::set_sea_state(
+        water::blend_to(
             scene:              &fixture.scene,
             node:               water_node.id,
-            wind_velocity:      SEA_WIND,
+            target:             CHOPPY_WAVES,
             transition_seconds: 0,
-        )!!;
+        );
         update_water(fixture, TWIN_TIMES[0]); // the switch, then the update that settles it
         update_water(fixture, TWIN_TIMES[0]);
     }
@@ -1004,7 +1011,10 @@ fn void test_sea_state_velocity_matches_the_surface_motion() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
-    Node* water_node = add_water_node(&fixture, surface_desc(EXAMPLE_WAVES[..], TWIN_EXTENT, TWIN_CELL_SIZE));
+    Wave[2] flat = EXAMPLE_WAVES; // the blend grows the sea from nothing, so every frame moves it
+    flat[0].amplitude = 0;
+    flat[1].amplitude = 0;
+    Node* water_node = add_water_node(&fixture, surface_desc(flat[..], TWIN_EXTENT, TWIN_CELL_SIZE));
     Node* camera_node = add_camera_node(
         fixture:     &fixture,
         fov_degrees: TWIN_FOV_DEGREES,
@@ -1027,14 +1037,14 @@ fn void test_sea_state_velocity_matches_the_surface_motion() @test {
     Vec4[] velocities;
     for (uint frame = 0; frame < SEA_STEADY_FRAMES + SEA_BLEND_FRAMES; frame++) {
         if (frame == SEA_STEADY_FRAMES) {
-            water::set_sea_state(
+            water::blend_to(
                 scene:              &fixture.scene,
                 node:               water_node.id,
-                wind_velocity:      SEA_WIND,
+                target:             SWIFT_WAVES,
                 transition_seconds: SEA_BLEND_SECONDS,
-            )!!;
+            );
         }
-        time = (double)frame * VELOCITY_STEP;
+        time = SEA_START_TIME + (double)frame * VELOCITY_STEP;
         velocities = render_and_read(
             fixture: &fixture,
             viewing: camera_node,
@@ -1063,8 +1073,10 @@ fn void test_sea_state_velocity_matches_the_surface_motion() @test {
         Vec2 expected = { 0.5f + motion.x * scale, 0.5f + motion.y * scale };
         if (math::abs(expected.x - 0.5f) >= MIN_VELOCITY_ENCODED) moving++;
         Vec4 velocity = velocities[index];
-        assert(math::abs(velocity.x - expected.x) <= VELOCITY_TOLERANCE, "x %f against %f", velocity.x, expected.x);
-        assert(math::abs(velocity.y - expected.y) <= VELOCITY_TOLERANCE, "y %f against %f", velocity.y, expected.y);
+        float error_x = math::abs(velocity.x - expected.x);
+        float error_y = math::abs(velocity.y - expected.y);
+        assert(error_x <= SEA_VELOCITY_TOLERANCE, "x %f against %f", velocity.x, expected.x);
+        assert(error_y <= SEA_VELOCITY_TOLERANCE, "y %f against %f", velocity.y, expected.y);
     }
     assert(moving >= VELOCITY_ROW_SAMPLES / 2, "only %d samples move", moving);
     check_validation(&fixture.renderer);
