@@ -26,7 +26,7 @@ python3 scripts/build.py --example terrain
 ## Select the package
 
 List `c3d_landscape` before `c3d` in the application's `project.json`, with c3d's own dependencies. The
-example and the collider below also select `c3d_physics` and `b3`:
+example and the collider below also select `c3d_physics` and `b3`, and a navigation grid selects `c3d_nav`:
 
 ```json
 {
@@ -313,6 +313,7 @@ HeightView view = terrain::height_view(&scene, &assets, ground.id)!;
 float height = terrain::sample_height(&view, x, z)!;
 Vec3 normal = terrain::sample_normal(&view, x, z)!;
 Vec3 smooth = terrain::sample_smooth_normal(&view, x, z)!;
+TerrainHeightRange range = terrain::height_range(&scene, ground.id)!;
 ```
 
 - `height_view` captures the texels, side, scales, the tile's [border ring](#tile-sets) and the node's world
@@ -327,6 +328,10 @@ Vec3 smooth = terrain::sample_smooth_normal(&view, x, z)!;
   across an edge that has a linked neighbour and a one-sided difference at any other map edge. It reads the
   same texels as the shader and agrees to float rounding, so the two tiles of a linked seam give the same
   normal there.
+- `height_range` returns the lowest and highest height of a prepared terrain in world metres, the node's world Y
+  included, from the texel bounds of the quadtree's root. It reflects the last accepted refresh, so it is current
+  after `update`. It faults `c3d::INVALID_ID` for a dead node and a node without `Terrain`, and `NOT_PREPARED` for a
+  pending terrain. It takes the same node transforms as `height_view`.
 - The view borrows the store's texels. In-place edits keep it valid and it reads the new heights; replacing,
   releasing or removing the height map, or removing the terrain, invalidates it. It keeps the node transform
   and the ring's edge mask of the moment it was taken, and reads the ring in place: take a new view after a
@@ -335,17 +340,19 @@ Vec3 smooth = terrain::sample_smooth_normal(&view, x, z)!;
 ## Physics collider
 
 The terrain follows the physics height field's conventions: the same origin corner, row order, spacing, split
-and `texel / 65535` scaling. Build the collider on the terrain node as a static body:
+and `texel / 65535` scaling. Build the collider on the terrain node as a static body, from the values
+`collision_input` returns ([setup](#physics-and-navigation-setup)):
 
 ```c3
+TerrainCollisionInput input = terrain::collision_input(&scene, terrain_node.id)!;
 ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
-collider.height_field = { .source = TEXTURE, .texture = desc.height_map };
-collider.local.scale = { desc.cell_size, desc.height_scale, desc.cell_size };
+collider.height_field = { .source = TEXTURE, .texture = input.height_map };
+collider.local.scale = input.scale;
 physics.add_body(terrain_node, physics::default_body_desc(STATIC), (&collider)[:1])!;
 ```
 
 Physics refuses a collider-local offset on a height field, which is why the node's translation is the offset.
-The landscape test builds its collider with the same code and checks that `sample_height` equals a downward
+The landscape test builds its collider from `collision_input` and checks that `sample_height` equals a downward
 ray cast at 1,024 points, before and after an edit.
 
 A terrain that is edited tiles the collider into windows, so a stroke re-cooks the part it touched and not the
@@ -376,11 +383,10 @@ physics::add_height_field_windows(
 // write texels in place, then:
 assets.mark_texture_dirty(desc.height_map);
 terrain::mark_dirty(&scene, ground, { .x = x, .z = z, .columns = columns, .rows = rows });
-// once a stroke of edits ends, with the collider tiled into windows:
-physics::mark_height_field_windows_changed(&scene, ground.id, { .x = x, .z = z, .columns = columns, .rows = rows })!;
-// or, with one collider over the whole map:
-scene.get(ground, PhysicsBody).mark_changed();
 ```
+
+The collider and a navigation grid follow in the order given under [Physics and navigation
+setup](#physics-and-navigation-setup).
 
 - `mark_dirty` unions the rectangle into the terrain's pending one; the union must cover every texel written
   since the last `update`. The next `update` sees the revision change and refreshes only the chunks the
@@ -429,6 +435,161 @@ scene.get(ground, PhysicsBody).mark_changed();
 - `TerrainRuntime.last_refresh` keeps the last accepted refresh until the next one: the height-map revisions
   before and after it and the rectangle it covered, the whole map unless it took a `mark_dirty` rectangle. A
   rejected revision leaves it. Consumers that follow the ground, such as [vegetation](vegetation.md), read it.
+
+## Physics and navigation setup
+
+The package imports neither `c3d::physics` nor `c3d::nav`. It supplies two neutral values, `collision_input` and
+`height_range`, and the application writes the few lines that put them into the other package's types.
+
+### Collider
+
+`terrain::collision_input(&scene, node.id)` returns a `TerrainCollisionInput { height_map, scale }`: the terrain's own
+map and `{ cell_size, height_scale, cell_size }`. The application copies them into `ColliderDesc.height_field.texture`
+and `ColliderDesc.local.scale`, as under [Physics collider](#physics-collider), for one body or for
+`add_height_field_windows`.
+
+- A scaled terrain node draws a different surface from its collider: physics builds the body from the node's world
+  position and rotation and drops its scale, and rendering keeps it. `collision_input` therefore faults `UNSUPPORTED`
+  when a world axis length of the node differs from 1 by more than 1e-4, the rounding that composing transforms
+  leaves, so a rebase does not fault. Rotation is not checked: physics honours it.
+- It reads the node's world matrix: call it after `update_world`.
+- It faults `INVALID_ID` for a dead node and a node without `Terrain`. It does not read the asset store: physics checks
+  the map's format and pixels when the body builds. It works on a pending terrain.
+
+### Navigation
+
+A navigation grid reads heights through `grid_sampled_source` and a `GridHeightSampler` callback. The callback over
+`sample_height` is the whole adapter; a point outside the map is `NOT_FOUND`, which the grid reads as absent:
+
+```c3
+fn GridHeightSample? terrain_height(void* context, float world_x, float world_z) {
+    HeightView* view = context;
+    float? height = terrain::sample_height(view, world_x, world_z);
+    if (catch height) return {};
+
+    return { .height = height, .present = true };
+}
+```
+
+```c3
+HeightView view = terrain::height_view(&scene, &assets, ground.id)!;
+TerrainHeightRange range = terrain::height_range(&scene, ground.id)!;
+GridHeightSampler sampler = {
+    .origin    = origin,
+    .cell_size = cell_size,
+    .sample    = &terrain_height,
+    .context   = &view,
+    .diagonal  = MAX_MIN_TO_MIN_MAX,
+    .area      = nav::WALKABLE_AREA,
+};
+GridSourceDesc source = nav::grid_sampled_source(
+    sampler:    &sampler,
+    min_height: range.minimum - padding,
+    max_height: range.maximum + padding,
+)!;
+```
+
+The landscape tests build their navigation grid from this code.
+
+- **Lattice.** The grid is axis-aligned in world XZ, whatever the terrain's yaw. `origin` is the world XZ of the
+  lattice vertex (0, 0), a corner of the walkable area, and `cell_size` is `NavBuildConfig.cell_size`; neither has to
+  match the terrain's. `view` and `sampler` must outlive the cache and stay at their addresses.
+- **Surface.** At a lattice vertex the grid's height is `sample_height`. Between vertices it interpolates the sampled
+  heights over its own triangles, so it differs from the terrain by the terrain's curvature over one grid cell. With
+  an unrotated terrain, the same cell size, an origin on a texel corner and `MAX_MIN_TO_MIN_MAX`, the terrain's split,
+  the two surfaces coincide. At twice the terrain's cell size, along a grid edge that lies on a texel row, the error is
+  at most half the largest second difference of the row's texel heights. `DetailMode.BOUNDED` keeps the sampled
+  surface inside each polygon, within `detail_max_error` metres vertically.
+- **Live texels.** The callback reads the map in place, so a texel write must not overlap a call of the sampler.
+  `GridCache.update` and `GridCache.capture_next`, like `GridTileBuilder.build`, call it on the thread that calls them,
+  while they copy a tile's cells and their halo into a build slot. A worker running `build_grid_cache_job` reads only
+  that copy and never calls the sampler. Edits and cache updates from one thread cannot overlap.
+- **Height range.** `grid_sampled_source` takes the range every sampled height lies in, and a cache refuses a source
+  whose `1 + round((max_height - min_height) / cell_height)` reaches 8191, with `INVALID_ARGUMENT`. That is about
+  409 m at the grid default `cell_height` of 0.05. A terrain whose `height_scale` fits can use
+  `[world_y, world_y + height_scale]` with `world_y` the node's world Y, which no edit can leave. Otherwise pad
+  `height_range` by the headroom the edits need, and keep the padded span under the same limit.
+- **Retaking the range.** A floor outside the declared range fails its tile build with `INVALID_ARGUMENT`.
+  `set_source` refuses a change of range, and the mesh's origin Y is the range's minimum. When `height_range`, read
+  after `update`, leaves the range of the source, create a new `GridCache` and a new `NavMesh` from its `mesh_desc()`
+  with the new range, at the cost of a full rebuild.
+
+**Tile sets.** Keep one `HeightView` per tile, the set's world origin and its tile extent, and pick the tile of a point
+with `floor((world - set_origin) / tile_extent)`:
+
+```c3
+fn GridHeightSample? tile_height(void* context, float world_x, float world_z) {
+    TileHeights* tiles = context;
+    int column = (int)math::floor((world_x - tiles.origin.x) / tiles.tile_extent);
+    int row = (int)math::floor((world_z - tiles.origin.z) / tiles.tile_extent);
+    column = math::clamp(column, 0, (int)tiles.columns - 1);
+    row = math::clamp(row, 0, (int)tiles.rows - 1);
+
+    HeightView* view = &tiles.views[(uint)row * tiles.columns + (uint)column];
+    float? height = terrain::sample_height(view, world_x, world_z);
+    if (catch height) return {};
+
+    return { .height = height, .present = true };
+}
+```
+
+`TileHeights` holds `HeightView[] views` in row-major order, `Vec3 origin`, `float tile_extent` and the `uint`
+`columns` and `rows`.
+
+- Neighbouring tiles duplicate their shared edge, so both give the same height on the seam, and one source covers the
+  set.
+- The pick assumes a set node without rotation or scale. The clamp keeps a point on the set's outer edge on the last
+  tile; it is present only while float rounding keeps it inside that tile's map, and an absent vertex drops the cells
+  that touch it.
+- The source takes the union of the tiles' `height_range` values, padded once.
+
+### Ordered recipes
+
+**Height edit.**
+
+1. Write the texels in place.
+2. `assets.mark_texture_dirty(height_map)`.
+3. `terrain::mark_dirty(&scene, node, rect)`.
+4. Physics, once the stroke ends: with windows,
+
+   ```c3
+   SampleRect samples = { .x = rect.x, .z = rect.z, .columns = rect.columns, .rows = rect.rows };
+   physics::mark_height_field_windows_changed(&scene, node.id, samples)!;
+   ```
+
+   or, with one collider, `scene.get(node, PhysicsBody).mark_changed()`.
+5. Navigation: `grid.mark_dirty(cells, revision)`, where `revision` is a `ulong` the application advances with every
+   edit. `cells` is a `GridRange` of every grid cell the change reaches. When the grid lattice is the texel lattice
+   shifted by `(first_x, first_z)` texels, it is `nav::grid_vertex_cells` of the rectangle's vertex range minus that
+   shift. Otherwise it is `nav::grid_world_cells` of the world bounds of the rectangle grown by one texel.
+6. On a tile set, repeat 4 and 5 for the neighbour strips that `propagate_edit` reports. Navigation needs one world
+   rectangle that covers both tiles.
+
+After `terrain::update`, compare `height_range` with the range of the navigation source (see Retaking the range).
+
+**Replacement.** A new pixel array behind the height map, a replaced or restored map:
+
+1. Retake the views.
+2. `PhysicsBody.mark_changed()`, or remove and add the windows again.
+3. Navigation: `grid.set_source(source, identity, revision)` with a new revision, over the retaken views.
+
+**Removal.** The navigation cache first, because its sampler borrows the views and the views borrow the texels, then
+the collider, then the terrain.
+
+**Pending preparation.** `collision_input` and the sampler work on a pending terrain. `terrain::mark_dirty` and
+`height_range` need it prepared.
+
+**Origin rebasing.**
+
+1. `scene.shift_origin(offset)`.
+2. `scene.update_world()`.
+3. `physics.shift_origin(&scene, offset)`.
+4. Retake the views: their world matrices predate the shift.
+5. Navigation: owners built outside a grid cache take `NavMesh.shift_origin`, `NavQuery.shift_origin` and
+   `Crowd.shift_origin`. A `GridCache` cannot shift yet: create it again with the new origin and the retaken views, with
+   a new `NavMesh` from its `mesh_desc()`, at the cost of a full rebuild.
+
+See [large worlds](large_world.md#origin-rebasing) for the rest of the rebase protocol.
 
 ## Removal
 
@@ -488,6 +649,10 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `update` | `c3d::INVALID_ID` | The height map was removed |
 | `update` | `c3d::INVALID_ARGUMENT` | A revision whose side differs from the accepted one; an edited `lod_threshold` or `lod_hysteresis` that is negative or not finite, or an edited `morph_band` outside the limits above |
 | `sample_height`, `sample_normal`, `sample_smooth_normal` | `NOT_FOUND` | The point is outside the extent |
+| `collision_input` | `c3d::INVALID_ID` | A dead node or a node without `Terrain` |
+| `collision_input` | `c3d::UNSUPPORTED` | A world axis length of the node differs from 1 by more than 1e-4 |
+| `height_range` | `c3d::INVALID_ID` | A dead node or a node without `Terrain` |
+| `height_range` | `NOT_PREPARED` | A pending terrain |
 
 ## Limits
 
