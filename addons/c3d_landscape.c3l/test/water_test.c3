@@ -31,6 +31,20 @@ const Vec3 ORIGIN_SHIFT @local = { 40, 0, -24 }; // metres; moves the 20 m body 
 const Vec3 WATER_POSITION @local = { 3, -2, 5 };
 const float WATER_YAW_DEGREES @local = 30;
 const uint WATER_LAYER @local = 1 << 3;
+const double SEA_START_TIME @local = 1000; // seconds: an absolute-time phase would jump by tens of cycles
+const double SEA_FRAME_STEP @local = 0.015625; // 1/64 s: exact in float
+const float SEA_TRANSITION @local = 2; // seconds
+const uint SEA_SETTLE_FRAMES @local = 32; // frames past the blend: the steady sea must stay continuous too
+const Vec2 STORM_WIND @local = { 12, 5 }; // metres per second along world x and z
+const Vec2[3] SEA_POINTS @local = { { 0, 0 }, { 2.5f, -1.5f }, { -3, 4 } }; // near the origin, where the bound holds
+const float CREST_COUPLING @local = 2.5f; // 1 / (1 - k) rounded up, k = 0.5 the larger mean steepness of the two sets
+const float BODY_EXTENT @local = 2000; // metres: a fetch long enough for waves a few metres long
+const float SMALL_BODY_EXTENT @local = 120;
+const uint BODY_CELLS @local = 256; // cells along a body's side: its shortest wavelength is two of them
+const Vec2 FETCH_WIND @local = { 14, 0 }; // metres per second along world x
+const Vec2 LIGHT_WIND @local = { 1, 0 }; // metres per second: a fully developed sea at 2 km
+const float FULLY_DEVELOPED_HEIGHT @local = 0.21f; // g Hs / U^2 of a sea that has stopped growing
+const float GRAVITY @local = 9.81f;
 
 struct Fixture @local {
     AssetStore assets;
@@ -60,6 +74,15 @@ fn WaterDesc calm_desc() @local {
     WaterDesc desc = water::default_water_desc();
     desc.extent = 200;
     desc.cell_size = 1;
+    return desc;
+}
+
+fn WaterDesc sea_desc(float extent) @local {
+    WaterDesc desc = calm_desc();
+    desc.extent = extent;
+    desc.cell_size = extent / BODY_CELLS;
+    desc.waves[0].wavelength = 4 * desc.cell_size;
+    desc.waves[1].wavelength = 5 * desc.cell_size;
     return desc;
 }
 
@@ -944,4 +967,222 @@ fn void test_water_eager_failure_and_pending_removal_leave_no_owned_resources() 
     assert(!fixture.scene.has(node, Mesh) && tracking.allocated() == bytes);
     teardown(&fixture);
     assert(!tracking.has_leaks());
+}
+
+fn float amplitude_sum(WaterDesc* desc) @local {
+    float total;
+    foreach (&wave : desc.waves[:desc.wave_count]) total += wave.amplitude;
+    return total;
+}
+
+fn float fastest_cycles_per_second(WaterDesc* desc) @local {
+    float fastest;
+    foreach (&wave : desc.waves[:desc.wave_count]) fastest = max(fastest, wave.speed / wave.wavelength);
+    return fastest;
+}
+
+fn float[SEA_POINTS.len] surface_heights(Fixture* fixture, Node* node, double time) @local {
+    SurfaceView view = water::surface_view(&fixture.scene, &fixture.assets, node.id)!!;
+    float[SEA_POINTS.len] heights;
+    foreach (index, point : SEA_POINTS) heights[index] = height_over(&view, { point.x, 0, point.y }, time);
+    return heights;
+}
+
+fn void? try_set_sea_state(
+    Fixture* fixture,
+    Entity node,
+    Vec2 wind = STORM_WIND,
+    float transition_seconds = SEA_TRANSITION,
+) @local {
+    return water::set_sea_state(
+        scene:              &fixture.scene,
+        assets:             &fixture.assets,
+        node:               node,
+        wind_velocity:      wind,
+        transition_seconds: transition_seconds,
+    );
+}
+
+fn void test_sea_state_transition_keeps_phase_continuous() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_water_node(&fixture, sea_desc(BODY_EXTENT));
+    WaterDesc calm = fixture.scene.get(node, Water).desc;
+    update_water(&fixture, {}, SEA_START_TIME);
+    try_set_sea_state(&fixture, node.id)!!;
+    WaterDesc storm = fixture.scene.get(node, Water).desc;
+
+    uint blend_frames = (uint)(SEA_TRANSITION / (float)SEA_FRAME_STEP);
+    float swell = max(amplitude_sum(&calm), amplitude_sum(&storm)) * 2 * (float)math::PI * (float)SEA_FRAME_STEP
+        * max(fastest_cycles_per_second(&calm), fastest_cycles_per_second(&storm));
+    float growth = math::abs(amplitude_sum(&storm) - amplitude_sum(&calm)) / (float)blend_frames;
+    float largest_step = (swell + growth) * CREST_COUPLING;
+
+    float[SEA_POINTS.len] heights = surface_heights(&fixture, node, SEA_START_TIME);
+    for (uint frame = 1; frame <= blend_frames + SEA_SETTLE_FRAMES; frame++) {
+        double time = SEA_START_TIME + (double)frame * SEA_FRAME_STEP;
+        update_water(&fixture, {}, time);
+        float[SEA_POINTS.len] next = surface_heights(&fixture, node, time);
+        foreach (index, height : next) {
+            float step = math::abs(height - heights[index]);
+            assert(step <= largest_step, "frame %d point %d moved %f, at most %f", frame, index, step, largest_step);
+        }
+        heights = next;
+    }
+}
+
+fn void test_sea_state_faults_on_a_bad_node_wind_or_transition() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_water_node(&fixture, calm_desc());
+    Node* plain = fixture.scene.add_node()!!;
+    Wave before = fixture.scene.get(node, Water).desc.waves[0];
+
+    assert_fault(@catch(try_set_sea_state(&fixture, plain.id)), c3d::INVALID_ID, "A node without water");
+    Entity dead = fixture.scene.add_node()!!.id;
+    fixture.scene.remove(fixture.scene.node(dead));
+    assert_fault(@catch(try_set_sea_state(&fixture, dead)), c3d::INVALID_ID, "A removed node");
+    assert_fault(
+        @catch(try_set_sea_state(&fixture, node.id, { float::nan, 1 })),
+        c3d::INVALID_ARGUMENT,
+        "A NaN wind",
+    );
+    assert_fault(
+        @catch(try_set_sea_state(&fixture, node.id, { 1, float::inf })),
+        c3d::INVALID_ARGUMENT,
+        "An infinite wind",
+    );
+    assert_fault(
+        @catch(try_set_sea_state(&fixture, node.id, transition_seconds: -1)),
+        c3d::INVALID_ARGUMENT,
+        "A negative transition",
+    );
+    assert_fault(
+        @catch(try_set_sea_state(&fixture, node.id, transition_seconds: float::nan)),
+        c3d::INVALID_ARGUMENT,
+        "A NaN transition",
+    );
+    assert(fixture.scene.get(node, Water).desc.waves[0].amplitude == before.amplitude);
+    assert(fixture.scene.get(node, WaterRuntime).desc.wave_count == 2);
+
+    GeometryId plane;
+    @pool() {
+        Geometry flat = geometry::plane(tmem, 30, 10, 6, 2);
+        plane = fixture.assets.add_geometry(&flat)!!;
+    };
+    WaterDesc application = calm_desc();
+    application.geometry = plane;
+    application.extent = 0;
+    Node* pending = fixture.scene.add_node()!!;
+    fixture.scene.update_world();
+    water::attach_water(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   pending,
+        desc:   application,
+    )!!;
+    fixture.assets.remove_geometry(plane);
+    assert_fault(
+        @catch(try_set_sea_state(&fixture, pending.id)),
+        c3d::INVALID_ID,
+        "Pending water whose geometry was removed",
+    );
+}
+
+fn void test_sea_state_uploads_only_while_blending_and_once_after() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_water_node(&fixture, calm_desc());
+    MaterialId owned = fixture.scene.get(node, WaterRuntime).material;
+    uint revision = fixture.assets.material(owned).header.revision;
+    update_water(&fixture, {}, SEA_START_TIME);
+    assert(fixture.assets.material(owned).header.revision == revision);
+
+    try_set_sea_state(&fixture, node.id)!!;
+    assert(fixture.assets.material(owned).header.revision == revision);
+    uint blend_frames = (uint)(SEA_TRANSITION / (float)SEA_FRAME_STEP);
+    for (uint frame = 1; frame <= blend_frames + 1; frame++) {
+        update_water(&fixture, {}, SEA_START_TIME + (double)frame * SEA_FRAME_STEP);
+        assert(fixture.assets.material(owned).header.revision == revision + frame);
+    }
+    uint settled = revision + blend_frames + 2; // the frame after fraction 1 uploads once more: previous catches up
+    for (uint frame = blend_frames + 2; frame <= blend_frames + SEA_SETTLE_FRAMES; frame++) {
+        update_water(&fixture, {}, SEA_START_TIME + (double)frame * SEA_FRAME_STEP);
+        assert(fixture.assets.material(owned).header.revision == settled);
+    }
+}
+
+fn bool same_waves(WaterDesc* first, WaterDesc* second) @local {
+    if (first.wave_count != second.wave_count) return false;
+    for (uint index = 0; index < first.wave_count; index++) {
+        Wave* left = &first.waves[index];
+        Wave* right = &second.waves[index];
+        if (left.amplitude != right.amplitude || left.wavelength != right.wavelength) return false;
+        if (left.speed != right.speed || left.direction != right.direction || left.steepness != right.steepness) {
+            return false;
+        }
+    }
+    return true;
+}
+
+fn void test_sea_state_target_is_a_valid_desc_whatever_the_grid_and_wind() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    GeometryId plane;
+    @pool() {
+        Geometry flat = geometry::plane(tmem, BODY_EXTENT, BODY_EXTENT, 4, 4);
+        plane = fixture.assets.add_geometry(&flat)!!;
+    };
+    WaterDesc application = calm_desc();
+    application.geometry = plane;
+    application.extent = 0;
+
+    WaterDesc[3] bodies = { sea_desc(SMALL_BODY_EXTENT), sea_desc(BODY_EXTENT), application };
+    Vec2[4] winds = { {}, { 0.5f, 0 }, { 14, 0 }, { 40, 30 } };
+    foreach (&body : bodies) {
+        Node* node = add_water_node(&fixture, *body);
+        foreach (wind : winds) {
+            try_set_sea_state(&fixture, node.id, wind, transition_seconds: 0)!!;
+            try_set_desc(&fixture, node, fixture.scene.get(node, Water).desc)!!;
+        }
+    }
+
+    Node* pending = fixture.scene.add_node()!!;
+    fixture.scene.update_world();
+    water::attach_water(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   pending,
+        desc:   application,
+    )!!;
+    try_set_sea_state(&fixture, pending.id, FETCH_WIND, transition_seconds: 0)!!;
+    WaterDesc pending_sea = fixture.scene.get(pending, Water).desc;
+    water::prepare(&fixture.scene, &fixture.assets, pending)!!;
+    try_set_sea_state(&fixture, pending.id, FETCH_WIND, transition_seconds: 0)!!;
+    assert(same_waves(&pending_sea, &fixture.scene.get(pending, Water).desc), "A pending body drew another sea");
+}
+
+fn float sea_amplitude(Fixture* fixture, float extent, Vec2 wind) @local {
+    Node* node = add_water_node(fixture, sea_desc(extent));
+    try_set_sea_state(fixture, node.id, wind)!!;
+    return amplitude_sum(&fixture.scene.get(node, Water).desc);
+}
+
+fn void test_sea_state_grows_with_the_fetch_and_stops_at_the_fully_developed_sea() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    float small = sea_amplitude(&fixture, SMALL_BODY_EXTENT, FETCH_WIND);
+    float large = sea_amplitude(&fixture, BODY_EXTENT, FETCH_WIND);
+    assert(small * 3 < large, "%f m of waves on a small body, %f m on a large one", small, large);
+
+    float developed = sea_amplitude(&fixture, BODY_EXTENT, LIGHT_WIND);
+    float wider = sea_amplitude(&fixture, 2 * BODY_EXTENT, LIGHT_WIND);
+    assert(wider == developed, "%f m past the fully developed fetch, %f m at it", wider, developed);
+    assert(developed <= FULLY_DEVELOPED_HEIGHT * LIGHT_WIND.x * LIGHT_WIND.x / GRAVITY);
 }

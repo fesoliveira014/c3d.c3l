@@ -14,9 +14,9 @@ the fragment stage reads the scene's colour and depth snapshots after opaque (a 
 [custom shaders](custom_shaders.md)), refracts and absorbs what lies behind the surface, reflects from a
 planar mirror target, else a screen-space march over the snapshot, else the environment or the frame's
 ambient, adds lit foam, and shades sun glints through the public Standard parts. Ripple normals and foam colour
-come from referenced Standard materials; the application's wind scrolls the ripples. A CPU twin of the stage
-answers world-space height queries, and `update_mirror` places a mirror camera per water body and viewing view
-for the reflection the application renders.
+come from referenced Standard materials; the application's wind scrolls the ripples, and `set_sea_state` turns a
+wind into the waves ([Sea state](#sea-state)). A CPU twin of the stage answers world-space height queries, and
+`update_mirror` places a mirror camera per water body and viewing view for the reflection the application renders.
 
 The module imports the standard library, core (`c3d`), `c3d::landscape` (its SPIR-V) and
 `c3d::landscape::terrain` (a query predicate); it never imports `gpu`, `c3d::render` or `c3d::physics`.
@@ -61,6 +61,14 @@ water::add_water(
     desc:   desc,
 )!;
 physics.set_fluid_sampler(&water::fluid_sample, &lake_fluid);
+// when the weather changes: the waves follow the wind over four seconds
+water::set_sea_state(
+    scene:              &scene,
+    assets:             &assets,
+    node:               lake.id,
+    wind_velocity:      { wind.x, wind.z },
+    transition_seconds: 4,
+)!;
 
 // every frame, after moving the cameras
 scene.update_world();
@@ -94,10 +102,13 @@ scene.update_world();
 - `set_desc` is the only way to change a water body. It checks the new desc before it writes anything: a fault
   keeps the old desc, the payload, the material revision, the mesh and the grid. `WaterRuntime.desc` holds the
   checked copy; `update`, the mirror and the queries read it, so an edit of `Water.desc` itself has no effect
-  until it goes through `set_desc`.
+  until it goes through `set_desc`. It ends a running sea-state blend and applies the desc's waves at once.
+- `set_sea_state(scene, assets, node, wind_velocity, transition_seconds)` sets the waves from a wind
+  ([Sea state](#sea-state)). It writes the target into `Water.desc` and `WaterRuntime.desc` and returns; the
+  next `update` starts the blend.
 - `update` runs every frame with the `FrameInfo.time` the frame renders with. It tears down removed water
-  bodies, with their mirror cameras, and scrolls the ripples. It places no mirror and takes no camera; the
-  material reads its reflection from a view texture, so no target is set on the body.
+  bodies, with their mirror cameras, scrolls the ripples and advances sea-state blends. It places no mirror and
+  takes no camera; the material reads its reflection from a view texture, so no target is set on the body.
 - `update_mirror(scene, body, slot, viewing_camera)` places the mirror camera of one slot of one body for one
   viewing camera ([The mirror](#the-mirror)). It reads the camera's `local`, which must be a root node, so it
   may run before or after `update_world`; the body's world matrix is read as the last `update_world` left it.
@@ -154,8 +165,9 @@ traces only with `WaterDesc.trace` ([Scene traces](#scene-traces)).
 For a rest point `p` in the node's local XZ and shader time `t`, per wave `i` with unit direction `d`,
 wavelength `λ`, speed `c`, amplitude `a` and steepness `s` over `N` waves:
 
-- `θ = 2π · fract(dot(d, p) / λ − t · c / λ)`: the phase is reduced to one cycle before `sin` and `cos`, whose
-  precision GLSL specifies only near [−π, π];
+- `θ = 2π · fract(dot(d, p) / λ − t · c / λ + φ)`: the phase is reduced to one cycle before `sin` and `cos`, whose
+  precision GLSL specifies only near [−π, π]; `φ` is the wave's phase offset in cycles, zero until a
+  [sea state](#sea-state) sets one;
 - height `y = Σ a · sin θ`; horizontal shift `D = Σ s · λ / (2π · N) · d · cos θ`;
 - drawn point `(p.x + D.x, y, p.y + D.y)`; the normal from the Jacobian of that map; the crest factor
   `clamp(1 − det J, 0, 1)` feeds wave foam.
@@ -209,7 +221,8 @@ it, and the velocity is `∂P/∂t` at fixed `p`, the orbital velocity of the wa
 phase rate `ω = 2π · c / λ`, the point moves by `(s · λ / (2π · N) · d · sin θ · ω, −a · cos θ · ω)` per second.
 
 The kinematic condition `velocity.y − velocity.xz · ∇h = ∂h/∂t` holds against central differences of
-`sample_surface`, and the normal is parallel to `(−∂h/∂x, 1, −∂h/∂z)`.
+`sample_surface`, and the normal is parallel to `(−∂h/∂x, 1, −∂h/∂z)`. During a sea-state blend the velocity is
+that of the blended waves at the frame, not the rate at which the blend itself reshapes the surface.
 
 ## Time
 
@@ -217,7 +230,10 @@ The stage reads `FrameInfo.time` as a float (`frame.jitter_time.z`, and `frame.p
 form). `sample_surface` and `update` take the same `double` time and narrow it exactly as the frame root does,
 so queries see the time the surface is drawn at. From 65,536 s (about 18 h) a float time rounds to within
 1/256 s and consecutive times differ by up to 1/128 s; an application that runs that long wraps its clock and
-calls `render::reset_view_history` at the wrap. The phase reduction keeps the waves exact at any time.
+calls `render::reset_view_history` at the wrap. The phase reduction keeps the waves exact at any time. The phase
+itself is `t · c / λ` in float, so the waves' motion at large times has the float spacing of that product: at 1,000 s
+and 0.1 cycles per second the phase is good to about 8 × 10⁻⁶ cycles. A core frame time split would lift this limit;
+the stage, the queries and the offsets of a [sea state](#sea-state) all carry it.
 
 ## Ripples and wind
 
@@ -228,7 +244,83 @@ into two node-local scroll velocities: the wind in the node's frame times `rippl
 by `RIPPLE_CROSS_ANGLE`. The stage computes `offset = scroll_origin + scroll_velocity · (time − scroll_time)`;
 when the velocities change, `update` starts a new segment at the frame time whose origin is the old segment's
 offset there, wrapped to whole texture periods, so the ripples never jump. A steady wind and a still node write
-nothing: a steady frame uploads nothing for water. Wind never touches the waves or buoyancy.
+nothing: a steady frame uploads nothing for water. `update`'s wind scrolls the ripples only; the waves follow
+`set_sea_state`, and buoyancy follows the waves.
+
+## Sea state
+
+`set_sea_state(scene, assets, node, wind_velocity, transition_seconds)` sets a water body's four waves to the sea a
+wind raises. `wind_velocity` is world metres per second along x and z, and the waves travel along it. It faults
+`INVALID_ID` for a dead node, a node without `Water`, or pending water whose application geometry was removed, and
+`INVALID_ARGUMENT` for a non-finite wind or a negative or non-finite transition. A zero transition switches at the
+next `update`. The call needs no time: it writes the target into `Water.desc.waves` and `WaterRuntime.desc.waves`
+(`wave_count` becomes `MAX_WAVES`) and marks the blend as starting. The store resolves the rest rectangle of pending
+water, so a pending body gets the same sea as its prepared twin. Water that is still pending only receives the target
+in `Water.desc`. A saved scene keeps the target; the blend is not saved, so a loaded body starts at its target.
+
+**The table.** The sea is fetch-limited. The fetch `F` is the length of the rest rectangle through its centre along
+the wind, in world metres with the node's scale included; the rectangle is the built grid's or the application
+geometry's. With `U` the wind speed (clamped to 25 m/s) and `g` = 9.81 m/s², the standard
+JONSWAP relations give the significant height `Hs` and the peak period `Tp`, each capped at its fully developed
+Pierson-Moskowitz value:
+
+- `g · Hs / U² = min(1.6 × 10⁻³ · (g · F / U²)^½, 0.21)`;
+- `g · Tp / U = min(0.286 · (g · F / U²)^⅓, 2π / 0.877)`;
+- the peak wavelength is the deep-water `λp = g · Tp² / 2π`.
+
+The caps are reached at `g · F / U²` of about 17,000 and 16,000: at 14 m/s a fetch of about 340 km. A 120 m lake at
+14 m/s has `Hs` 0.08 m and `λp` 0.9 m, and a 2 km body `Hs` 0.32 m and `λp` 5.6 m. Four bands sit relative to
+`Hs` and `λp`:
+
+| Band | Wavelength | Amplitude | Direction off the wind |
+| ---: | ---: | ---: | ---: |
+| 0 | 1 × peak | 0.25 × height | 0° |
+| 1 | 0.5 × peak | 0.18 × height | +20° |
+| 2 | 0.25 × peak | 0.12 × height | −30° |
+| 3 | 0.125 × peak | 0.08 × height | +45° |
+
+The squares of the amplitude shares sum to 0.116, near the 1/8 four sine waves carry of a sea of that height. Each wave
+runs at the deep-water speed `√(g λ / 2π)` and has the steepness that makes its crest shift twice its amplitude, the
+ratio of the default calm waves, at most 0.9 so the mean steepness stays below 1 at any fetch. Wavelengths floor at two
+cells of a built grid, else at 1 m, so the written target is always a valid desc. A band whose wavelength falls below
+the floor is drawn at the floor and keeps its amplitude, so a small body gets waves of the grid's shortest length and a
+few centimetres of height. The sea is sized in world metres: the node's scale is
+divided out of the written lengths and amplitudes, so a scaled node draws the same sea. The heading is the wind in the
+node's frame.
+
+**The blend.** `update` advances it. Amplitude, wavelength, speed and steepness blend linearly from the set drawn
+when `set_sea_state` ran, with each direction turned along the shorter arc. The mean steepness of the blend stays
+below 1 because it is a convex combination of two valid sets. A body with fewer than four waves blends to four:
+the waves it did not have start at amplitude 0, and the leaving waves' steepness is rescaled by `4 / wave_count` so
+the crest shift they carry, which `1 / wave_count` bakes in, does not jump. A second call during a blend starts a
+new one from the set drawn then. `Mesh.local_bounds` and the mirror clip plane follow the largest of the leaving and
+target values per wave while a blend runs, and the target's own when it ends.
+
+**Phase continuity.** The stage evaluates each wave's phase as `dot(d, p) / λ − t · c / λ + φ`, with `φ` the wave's
+`phase_offset`. Outside a blend `φ` is constant, nothing uploads, and the precision is that of a body without a sea
+state. During a blend a changing speed and wavelength would jump a phase that is an absolute `t · c / λ`, so `update`
+integrates each wave's phase in double, `phase += dt · (c / λ)` averaged over the step, and uploads the blended
+waves with the `φ` that makes the stage's phase at the frame time equal the integrated one. When the blend ends the
+last `φ` stays: it continues the integrated phase at the target speed, so the time phase never jumps. The integration
+starts from the phase the stage draws at the first `update` of the blend. Queries read the same `φ` and time, so a
+sample at `time + step_offset` extrapolates linearly from the frame's waves, as the stage would draw it. The traced
+surface runs the stage's code and agrees in and out of a blend.
+
+The stretch limit: a changing wavelength stretches the pattern about the node origin, because `dot(d, p) / λ` scales
+with the distance. A point at distance `r` sees `r · |1/λ_from − 1/λ_to|` extra crests pass during the blend, so the
+per-frame height step grows with the distance from the node origin, and a longer `transition_seconds` spreads it over
+more frames. Near the origin the step is the motion of the waves themselves. The wavelength blends linearly: blending
+`1/λ` linearly steps further.
+
+**Motion vectors.** `WaterParams` also holds the waves of the update before, and the velocity form draws a rest
+point at the previous frame's time with them: during a blend the vectors are the reprojection of the surface that
+was drawn, not of the new waves at the old time. Outside a blend the two sets are equal. A view that is not
+rendered every frame reads a previous set newer than its previous time, for the frames of a blend only.
+
+**Uploads.** An `update` uploads the block while a blend runs, including its first, and once more after the frame
+that reaches the target, so the previous waves catch up with the current ones. After that a steady frame uploads
+nothing for water ([Ripples and wind](#ripples-and-wind)). `set_desc` ends a blend: it applies the desc's waves at
+once, keeps each wave's `φ`, and copies the waves into the previous set.
 
 ## Shading
 
@@ -414,6 +506,8 @@ between removing and adding a water body on the same node. Destroy the scene bef
 | `update_mirror` | `c3d::INVALID_ID` | A dead body, a node without prepared water or a dead viewing camera |
 | `update_mirror` | `c3d::INVALID_ARGUMENT` | The viewing camera's local transform is not finite |
 | `update_mirror` | `c3d::CAPACITY_EXCEEDED` | No scene node left to add the camera of a slot freed by `release_mirror` |
+| `set_sea_state` | `c3d::INVALID_ID` | A dead entity, no `Water`, or pending water whose geometry was removed |
+| `set_sea_state` | `c3d::INVALID_ARGUMENT` | A non-finite wind, a negative or non-finite transition |
 | `surface_view` | `c3d::INVALID_ID` | Dead entity, no water body, the owned material removed |
 | `sample_surface`, `sample_surface_detail`, `fluid_sample` | `NOT_FOUND` | The point's rest position lies outside the rest rectangle |
 
@@ -436,9 +530,14 @@ between removing and adding a water body on the same node. Destroy the scene bef
 - **SSGI and temporal AO views**: readers keep camera-only velocity ([screen-space GI](screen_space_gi.md),
   [temporal AO](ambient_occlusion.md#temporal)), so moving waves smear under TAA there; readers get no AO and
   no SSGI terms.
-- **Wave edits** give one rendering of wrong wave motion vectors: the velocity form evaluates the new waves at
-  the previous time. Queries follow once `surface_view` is retaken.
-- **Long sessions**: core's float time limit; wrap the clock and call `render::reset_view_history`.
+- **Wave edits** through `set_desc` give one rendering of wrong wave motion vectors: the velocity form evaluates
+  the new waves at the previous time. Queries follow once `surface_view` is retaken. A `set_sea_state` blend has
+  exact vectors ([Sea state](#sea-state)).
+- **Sea-state stretch**: a blend that changes wavelengths stretches the pattern about the node origin, so the
+  per-frame height step grows with the distance from it; a longer transition spreads it
+  ([Phase continuity](#sea-state)).
+- **Long sessions**: core's float time limit; wrap the clock and call `render::reset_view_history`. The wave phase
+  is `t · c / λ` in float ([Time](#time)); a sea state's offsets carry the same limit.
 - **Query accuracy**: the inversion stops at 0.1 mm or after 8 steps; `residual` reports where it stopped, and
   the drawn surface agrees within 1 cm.
 - **Transforms**: drawing takes any node transform (waves scale and rotate with the node; the mirror reflects
@@ -476,6 +575,15 @@ the key lifts). The panel switches the reflection source, the mirror's resolutio
 the ripples, the wind heading and speed, and shows the crates' mean submerged fraction, the physics step time,
 scene snapshots and upload bytes; the view stats table shows each view's passes with `--gpu-timings`, and the
 targets panel previews the mirror and capture targets.
+
+`--sea-state` makes the wind controls drive the waves: the sea state of the initial wind is set at once, and a
+change of the heading or speed calls `set_sea_state` with a four-second blend for every body. The calm-waves switch
+is not shown then, and the benchmark and `--shot` apply the sea state of `--wind` before their first frame, so the
+benchmark's still segment checks that a sea state leaves no uploads behind. `--wind SPEED` sets the initial wind
+speed in m/s (6 by default, at most 20), for the ripples, the foliage and, with `--sea-state`, the waves. The 120 m
+lake limits the sea to centimetres at any wind in that range, so the ripples carry the look of the wind there.
+`--shot FILE.png` renders eight frames offscreen with the still camera of the benchmark and writes the last as a PNG
+at `--width` by `--height`; it needs no window.
 
 `--split` draws two viewing cameras side by side in the same output, each with its own viewport, terrain levels,
 mirror views and targets, and adds a second water body: a 60 m pool on the flattest ground whose water lies at
@@ -516,8 +624,9 @@ forward|deferred`, `--size 1025|2049|4097`, `--reflection planar|march|env` (mar
 and the march off), `--mirror-scale 0.5|1`, `--crates 16|256`, `--ssgi` (SSGI on the main view),
 `--traced` (the main view path-traced, with the water traced: a grey surface that follows the waves; without
 `trace` it is absent), `--capture` (a second view on a 384² target whose
-camera leaves out the water's layer and has no mirror), `--ripples on|off`, `--width W --height H` (2560 × 1440 by default in
-benchmark mode) and `--sky` (an [atmosphere](sky.md) on the sun, which replaces the generated sky, and a haze
+camera leaves out the water's layer and has no mirror), `--ripples on|off`, `--sea-state`, `--wind SPEED`,
+`--shot FILE.png`, `--width W --height H` (2560 × 1440 by default in benchmark and shot modes) and `--sky`
+(an [atmosphere](sky.md) on the sun, which replaces the generated sky, and a haze
 pooling in the valleys, off by default; with `--gpu-timings` the main and mirror views print `SKY_VIEW`,
 `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a [froxel volume](sky.md#volumetric-fog)
 for the main and mirror views; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`). Interactive runs always validate. Under `--sky` the water needs no fog code:

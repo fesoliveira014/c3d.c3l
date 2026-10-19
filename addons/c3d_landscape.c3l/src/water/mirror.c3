@@ -59,7 +59,7 @@ fn void? place_mirror(
     Camera camera = *scene.get(viewing, Camera);
     camera.layers &= ~node.layers;
     *scene.get(mirror, Camera) = camera;
-    runtime.clip_plane = mirror_clip_plane(node.world, total_amplitude(&runtime.desc));
+    runtime.clip_plane = mirror_clip_plane(node.world, total_amplitude(bounding_waves(runtime)));
 }
 
 // Repacks only when the node-local scroll velocities change; the offset stays continuous across the change.

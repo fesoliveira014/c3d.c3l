@@ -4,7 +4,7 @@ import c3d;
 import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
-import c3d::landscape::water;
+import c3d::landscape::water @public;
 import c3d::material;
 import c3d::maths;
 import c3d::physics;
@@ -59,6 +59,12 @@ const uint VELOCITY_ROW_SAMPLES @local = 9;
 const float VELOCITY_TOLERANCE @local = 0.01f; // encoded units, about two and a half 8-bit steps
 const float MIN_VELOCITY_ENCODED @local = 0.03f; // every sample moves well above the tolerance
 const uint BISECTION_STEPS @local = 60;
+const float SEA_BLEND_SECONDS @local = 0.3f;
+const float SEA_VELOCITY_TOLERANCE @local = 0.02f; // encoded units: twice the steady case's; measures 0.0096
+const double SEA_START_TIME @local = 1000; // seconds: large, so the offsets and the phase products are not near zero
+const uint SEA_STEADY_FRAMES @local = 3; // frames before the blend: the view's history is valid when it starts
+const uint SEA_BLEND_FRAMES @local = 3; // frames into the blend when the velocities are read: two thirds done
+const uint FIXED_POINT_STEPS @local = 24;
 const char[*] TRACE_PROBE_SOURCE @local = $embed("trace_probe.comp.glsl");
 const uint TRACE_GROUP_SIZE @local = 8; // mirrored as local_size_x and _y in trace_probe.comp.glsl
 const uint RASTER_HIT @local = 1; // mirrored as RASTER_HIT in trace_probe.comp.glsl
@@ -82,6 +88,12 @@ const Wave[4] CHOPPY_WAVES @local = {
     { .amplitude = 0.2f, .wavelength = 7, .speed = 1.9f, .direction = { 0.8f, 0.6f }, .steepness = 0.8f },
     { .amplitude = 0.12f, .wavelength = 4, .speed = 1.4f, .direction = { 0.28f, 0.96f }, .steepness = 0.8f },
     { .amplitude = 0.06f, .wavelength = 2, .speed = 1.0f, .direction = { -0.6f, 0.8f }, .steepness = 0.8f },
+};
+const Wave[4] SWIFT_WAVES @local = { // fast enough that each frame moves the crest shift by several pixels
+    { .amplitude = 0.3f, .wavelength = 8, .speed = 10, .direction = { 1, 0 }, .steepness = 0.5f },
+    { .amplitude = 0.2f, .wavelength = 6, .speed = 8, .direction = { 0.8f, 0.6f }, .steepness = 0.5f },
+    { .amplitude = 0.12f, .wavelength = 5, .speed = 7, .direction = { 0.28f, 0.96f }, .steepness = 0.5f },
+    { .amplitude = 0.06f, .wavelength = 4, .speed = 6, .direction = { -0.6f, 0.8f }, .steepness = 0.5f },
 };
 const Wave RUNNING_WAVE @local = {
     .amplitude  = 0.3f,
@@ -395,7 +407,7 @@ fn Node* add_post(Fixture* fixture, float bottom) @local {
     return post;
 }
 
-fn void check_twin(Fixture* fixture, Wave[] waves) @local {
+fn void check_twin(Fixture* fixture, Wave[] waves, bool sea_state = false) @local {
     Node* water_node = add_water_node(fixture, surface_desc(waves, TWIN_EXTENT, TWIN_CELL_SIZE));
     defer fixture.scene.remove(water_node);
     Node* camera_node = add_camera_node(
@@ -408,6 +420,16 @@ fn void check_twin(Fixture* fixture, Wave[] waves) @local {
     defer fixture.scene.remove(camera_node);
     ViewId view = add_view(fixture, TWIN_SIZE);
     CameraMatrices matrices = matrices_of(fixture, camera_node, TWIN_SIZE);
+    if (sea_state) {
+        water::blend_to(
+            scene:              &fixture.scene,
+            node:               water_node.id,
+            target:             CHOPPY_WAVES,
+            transition_seconds: 0,
+        );
+        update_water(fixture, TWIN_TIMES[0]); // the switch, then the update that settles it
+        update_water(fixture, TWIN_TIMES[0]);
+    }
     SurfaceView surface = water::surface_view(&fixture.scene, &fixture.assets, water_node.id)!!;
 
     int[<2>][TWIN_GRID * TWIN_GRID + 1] pixels;
@@ -473,6 +495,7 @@ fn void test_drawn_surface_matches_the_cpu_twin() @test {
     defer destroy_fixture(&fixture);
     check_twin(&fixture, EXAMPLE_WAVES[..]);
     check_twin(&fixture, CHOPPY_WAVES[..]);
+    check_twin(&fixture, EXAMPLE_WAVES[..], sea_state: true);
 }
 
 fn void test_mirror_view_reflects_what_is_above_the_water() @test {
@@ -950,6 +973,110 @@ fn void test_velocity_form_follows_the_wave_motion() @test {
         Vec4 velocity = velocities[index];
         assert(math::abs(velocity.x - expected.x) <= VELOCITY_TOLERANCE, "x %f against %f", velocity.x, expected.x);
         assert(math::abs(velocity.y - expected.y) <= VELOCITY_TOLERANCE, "y %f against %f", velocity.y, expected.y);
+    }
+    assert(moving >= VELOCITY_ROW_SAMPLES / 2, "only %d samples move", moving);
+    check_validation(&fixture.renderer);
+}
+
+// Where the packed waves of one frame draw a rest point at a time, in double.
+fn Vec3 drawn_point(SurfaceView* view, Vec2 rest, double time) @local {
+    double drawn_time = (double)(float)time;
+    double x = rest.x;
+    double y = 0;
+    double z = rest.y;
+    foreach (&wave : view.waves[:view.wave_count]) {
+        double along = (double)wave.direction.x * rest.x + (double)wave.direction.y * rest.y;
+        double cycles = along * wave.cycles_per_metre - drawn_time * wave.cycles_per_second + wave.phase_offset;
+        double angle = 2 * math::PI * (cycles - math::floor(cycles));
+        x += (double)wave.shift * wave.direction.x * math::cos(angle);
+        y += (double)wave.amplitude * math::sin(angle);
+        z += (double)wave.shift * wave.direction.y * math::cos(angle);
+    }
+    return { (float)x, (float)y, (float)z };
+}
+
+// The rest point whose drawn position lies on the pixel's ray; the horizontal map contracts below steepness 1.
+fn Vec2 rest_under_ray(SurfaceView* view, Vec3 origin, Vec3 direction, double time) @local {
+    Vec2 rest = { origin.x - direction.x * origin.y / direction.y, origin.z - direction.z * origin.y / direction.y };
+    for (uint step = 0; step < FIXED_POINT_STEPS; step++) {
+        Vec3 drawn = drawn_point(view, rest, time);
+        float along = (drawn.y - origin.y) / direction.y;
+        Vec2 on_ray = { origin.x + direction.x * along, origin.z + direction.z * along };
+        rest += on_ray - (Vec2){ drawn.x, drawn.z };
+    }
+    return rest;
+}
+
+fn void test_sea_state_velocity_matches_the_surface_motion() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Wave[2] flat = EXAMPLE_WAVES; // the blend grows the sea from nothing, so every frame moves it
+    flat[0].amplitude = 0;
+    flat[1].amplitude = 0;
+    Node* water_node = add_water_node(&fixture, surface_desc(flat[..], TWIN_EXTENT, TWIN_CELL_SIZE));
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: TWIN_FOV_DEGREES,
+        position:    VELOCITY_CAMERA_POSITION,
+        forward:     { 0, -1, 0 },
+        up:          { 0, 0, -1 },
+    );
+    ViewId view = add_view(&fixture, VELOCITY_SIZE, AntiAliasing.TAA);
+    ViewDesc desc = fixture.renderer.views.get(view).desc;
+    desc.post.taa_params.debug = TaaDebug.VELOCITY;
+    render::configure_view(&fixture.renderer, view, desc)!!;
+    CameraMatrices matrices = matrices_of(&fixture, camera_node, VELOCITY_SIZE);
+
+    int[<2>][VELOCITY_ROW_SAMPLES] pixels;
+    int row = (int)VELOCITY_SIZE / 2;
+    foreach (index, &pixel : pixels) *pixel = { 8 + 6 * (int)index, row };
+    SurfaceView previous;
+    SurfaceView current;
+    double time;
+    Vec4[] velocities;
+    for (uint frame = 0; frame < SEA_STEADY_FRAMES + SEA_BLEND_FRAMES; frame++) {
+        if (frame == SEA_STEADY_FRAMES) {
+            water::blend_to(
+                scene:              &fixture.scene,
+                node:               water_node.id,
+                target:             SWIFT_WAVES,
+                transition_seconds: SEA_BLEND_SECONDS,
+            );
+        }
+        time = SEA_START_TIME + (double)frame * VELOCITY_STEP;
+        velocities = render_and_read(
+            fixture: &fixture,
+            viewing: camera_node,
+            view:    view,
+            time:    time,
+            pixels:  pixels[..],
+            depth:   false,
+        )!!;
+        previous = current;
+        current = water::surface_view(&fixture.scene, &fixture.assets, water_node.id)!!;
+    }
+
+    float scale = (float)VELOCITY_SIZE / (2 * (float)shader::TAA_DEBUG_VELOCITY_RANGE);
+    uint moving;
+    foreach (index, pixel : pixels) {
+        Vec3 far_point = unproject(
+            matrices: &matrices,
+            pixel:    pixel,
+            size:     VELOCITY_SIZE,
+            depth:    0.5f,
+        );
+        Vec3 direction = far_point - VELOCITY_CAMERA_POSITION;
+        Vec2 rest = rest_under_ray(&current, VELOCITY_CAMERA_POSITION, direction, (double)(float)time);
+        Vec2 motion = uv_of(&matrices, drawn_point(&current, rest, time))
+            - uv_of(&matrices, drawn_point(&previous, rest, time - VELOCITY_STEP));
+        Vec2 expected = { 0.5f + motion.x * scale, 0.5f + motion.y * scale };
+        if (math::abs(expected.x - 0.5f) >= MIN_VELOCITY_ENCODED) moving++;
+        Vec4 velocity = velocities[index];
+        float error_x = math::abs(velocity.x - expected.x);
+        float error_y = math::abs(velocity.y - expected.y);
+        assert(error_x <= SEA_VELOCITY_TOLERANCE, "x %f against %f", velocity.x, expected.x);
+        assert(error_y <= SEA_VELOCITY_TOLERANCE, "y %f against %f", velocity.y, expected.y);
     }
     assert(moving >= VELOCITY_ROW_SAMPLES / 2, "only %d samples move", moving);
     check_validation(&fixture.renderer);
