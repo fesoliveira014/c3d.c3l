@@ -86,8 +86,7 @@ vec3 water_from_below(FrameRoot frame, WaterParams params, vec3 position, vec3 n
     vec3 window = vec3(0.0);
     float window_depth = 0.0;
     if (!total_reflection) {
-        float cosine = dot(transmitted, -into_water);
-        fresnel = WATER_REFLECTANCE + (vec3(1.0) - WATER_REFLECTANCE) * pow(1.0 - cosine, 5.0);
+        fresnel = fresnel_schlick(WATER_REFLECTANCE, vec3(1.0), dot(transmitted, -into_water));
         window = water_window(frame, transmitted, window_depth);
     }
 
