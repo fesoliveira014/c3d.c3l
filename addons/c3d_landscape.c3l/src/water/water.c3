@@ -25,6 +25,11 @@ const uint WAVE_INVERSION_ITERATIONS = 3; // 1.0 mm calm, 6.7 mm choppy; about 1
 const uint MAX_GRID_CELLS = 512; // 263,169 vertices: 3.2 MB of positions, 6.3 MB of 32-bit indices past 254 cells
 
 <*
+ Mirror slots one water body holds, at most.
+*>
+const uint MAX_MIRRORS = 8; // one camera node and 8 B of runtime each; a renderer holds 8 views by default
+
+<*
  Metres between built grid vertices at the default.
 *>
 const float DEFAULT_CELL_SIZE = 1.25f; // 96 cells over a 120 m lake; waves down to 2.5 m stay unaliased
@@ -71,6 +76,8 @@ struct WaterDesc {
     MaterialId      ripples;               // STANDARD, normal map only; zero draws the waves' normal alone
     MaterialId      foam;                  // STANDARD foam colour and roughness; zero shows no foam
     bool            march_reflections;     // screen-space march where the planar sample is missing
+    uint            max_mirrors;           // mirror slots, one per viewing view, in [1, MAX_MIRRORS]
+    uint            reflection_view_slot;  // view texture the material samples, below material::MAX_VIEW_TEXTURES
 }
 
 <*
@@ -81,24 +88,24 @@ struct Water {
 }
 
 <*
- Checked desc, material, grid, mirror camera and clip plane of a water body, written by the library.
+ Checked desc, material, grid, mirror cameras and clip plane of a water body, written by the library.
 *>
 struct WaterRuntime {
-    WaterDesc      desc;              // checked preparation or set_desc snapshot; later Water edits never reach it
-    MaterialId     material;          // owned; removed with the runtime
-    GeometryId     grid;              // the built grid, shared per store key, or the desc's geometry
-    Entity         mirror;            // root camera node; removed by update once the water is gone
-    RenderTargetId reflection_target; // sampled by the material; zero is none
-    Plane          clip_plane;        // world; the mirror view's ViewDesc.clip_plane
-    Vec2           rest_min;          // node-local XZ of the rest surface
-    Vec2           rest_max;
+    WaterDesc           desc;       // checked preparation or set_desc snapshot; later Water edits never reach it
+    MaterialId          material;   // owned; removed with the runtime
+    GeometryId          grid;       // the built grid, shared per store key, or the desc's geometry
+    Entity[MAX_MIRRORS] mirrors;    // root camera nodes by slot; zero where none stands
+    Plane               clip_plane; // world; the mirror views' ViewDesc.clip_plane
+    Vec2                rest_min;   // node-local XZ of the rest surface
+    Vec2                rest_max;
 }
 
 <*
- Marks a mirror camera node the library owns and names its water node.
+ Marks a mirror camera node the library owns and names its water node and slot.
 *>
 struct WaterMirror {
     Entity water;
+    uint   slot;
 }
 
 <*
@@ -119,6 +126,7 @@ fn WaterDesc default_water_desc() {
         .foam_crest            = 0.5f,
         .ripple_drift          = 0.03f,
         .march_reflections     = true,
+        .max_mirrors           = 1,
     };
 }
 
@@ -213,14 +221,17 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     }
     defer catch if (grid_created) assets.remove_geometry(surface);
     WaterParams params = pack_params(&desc, {});
+    TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
+    slots[REFLECTION_SLOT] = reflection_slot(desc.reflection_view_slot);
     MaterialId owned = assets.add_material(material::custom(
         shader:      shader,
         param_block: material::@as_bytes(params),
+        slots:       slots,
         references:  { [RIPPLE_REFERENCE] = desc.ripples, [FOAM_REFERENCE] = desc.foam },
     ))!;
     defer catch assets.remove_material(owned);
-    Node* mirror = scene.add_camera(MIRROR_PLACEHOLDER, name: "water_mirror")!;
-    scene.add(mirror, (WaterMirror){ .water = node.id });
+    Entity[MAX_MIRRORS] mirrors;
+    add_mirrors(scene, node.id, mirrors[:desc.max_mirrors])!;
 
     Aabb rest = rest_bounds(assets, &desc);
     scene.add(node, (Mesh){
@@ -234,7 +245,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .desc       = desc,
         .material   = owned,
         .grid       = surface,
-        .mirror     = mirror.id,
+        .mirrors    = mirrors,
         .clip_plane = mirror_clip_plane(node.world, total_amplitude(&desc)),
         .rest_min   = { rest.min.x, rest.min.z },
         .rest_max   = { rest.max.x, rest.max.z },
@@ -285,11 +296,16 @@ fn void? set_desc(
         surface = desc.geometry.generation ? desc.geometry : water_grid(assets, desc.extent, desc.cell_size)!;
     }
 
+    for (uint slot = desc.max_mirrors; slot < runtime.desc.max_mirrors; slot++) {
+        release_mirror(scene, node.id, slot);
+    }
+
     MaterialAsset* record = assets.material(runtime.material);
     WaterParams* params = assets.@custom_params(runtime.material, WaterParams);
     *params = pack_params(&desc, *params);
     record.data.custom.references[RIPPLE_REFERENCE] = desc.ripples;
     record.data.custom.references[FOAM_REFERENCE] = desc.foam;
+    record.data.custom.slots[REFLECTION_SLOT] = reflection_slot(desc.reflection_view_slot);
     assets.mark_material_dirty(runtime.material);
 
     Aabb rest = rest_bounds(assets, &desc);
@@ -304,72 +320,77 @@ fn void? set_desc(
 }
 
 <*
- Point the material's planar reflection at a render target; zero removes it.
- @param [&inout] scene
- @param [&inout] assets : "The store given to register_water."
- @param [&in] node : "Carries a water body."
- @require scene.has(node, WaterRuntime)
+ Place one mirror slot's camera to reflect the viewing camera across the water's rest plane.
+ Writes WaterRuntime.clip_plane; creates the slot's camera after release_mirror.
+ @param [&inout] scene : "World matrices current."
+ @param body : "Node carrying prepared water."
+ @param slot : "Mirror slot of the viewing view, below the body's max_mirrors."
+ @param viewing_camera : "Root node carrying the Camera the mirror reflects."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require !scene.world.is_alive(body) || !scene.world.has(body, WaterRuntime) || slot < scene.world.get(body, WaterRuntime).desc.max_mirrors
+ @require !scene.world.is_alive(viewing_camera) || (scene.world.has(viewing_camera, Camera) && scene.node(viewing_camera).parent == scene.root)
 *>
-fn void set_reflection_target(
+fn void? update_mirror(
     Scene* scene,
-    AssetStore* assets,
-    Node* node,
-    RenderTargetId target,
+    Entity body,
+    uint slot,
+    Entity viewing_camera,
 ) {
-    WaterRuntime* runtime = scene.get(node, WaterRuntime);
-    TextureSlot* slot = &assets.material(runtime.material).data.custom.slots[REFLECTION_SLOT];
-    slot.texture = target.generation ? { .kind = RENDER_TARGET, .target = target } : { .kind = ASSET };
-    slot.sampler = asset::SAMPLER_LINEAR_CLAMP;
-    assets.mark_material_dirty(runtime.material);
-    runtime.reflection_target = target;
+    if (!scene.world.is_alive(body) || !scene.world.has(body, WaterRuntime)) return c3d::INVALID_ID~;
+    if (!scene.world.is_alive(viewing_camera)) return c3d::INVALID_ID~;
+    if (!scene.world.get(body, WaterRuntime).mirrors[slot].generation) {
+        Entity mirror = add_mirror(scene, body, slot)!;
+        scene.world.get(body, WaterRuntime).mirrors[slot] = mirror;
+    }
+    return place_mirror(
+        scene:   scene,
+        node:    scene.node(body),
+        runtime: scene.world.get(body, WaterRuntime),
+        slot:    slot,
+        viewing: scene.node(viewing_camera),
+    );
 }
 
 <*
- Place every mirror camera for the viewing camera and scroll the ripples with the wind.
+ Free one mirror slot's camera.
+ @param [&inout] scene
+ @require slot < MAX_MIRRORS
+*>
+fn void release_mirror(Scene* scene, Entity body, uint slot) {
+    if (!scene.world.is_alive(body) || !scene.world.has(body, WaterRuntime)) return;
+    WaterRuntime* runtime = scene.world.get(body, WaterRuntime);
+    Entity mirror = runtime.mirrors[slot];
+    if (!mirror.generation) return;
+    runtime.mirrors[slot] = {};
+    scene.remove(scene.node(mirror));
+}
+
+<*
+ Tear down removed water bodies and scroll the ripples with the wind.
  Invalidates Mesh and WaterRuntime pointers when a Water was removed.
  @param [&inout] scene : "World matrices current; pending water is skipped unchanged."
  @param [&inout] assets : "The store given to register_water."
- @param viewing_camera : "Root node carrying the Camera the mirrors reflect."
  @param wind_velocity : "World metres per second; zero is calm."
  @param time : "Seconds; the FrameInfo.time the frame renders with."
- @return? c3d::INVALID_ARGUMENT
- @require scene.world.is_alive(viewing_camera) && scene.world.has(viewing_camera, Camera)
- @require scene.node(viewing_camera).parent == scene.root : "Mirrors read the camera's local transform."
  @require math::is_finite(wind_velocity.x) && math::is_finite(wind_velocity.y) && math::is_finite(wind_velocity.z)
 *>
-fn void? update(
+fn void update(
     Scene* scene,
     AssetStore* assets,
-    Entity viewing_camera,
     Vec3 wind_velocity,
     double time,
 ) {
     remove_orphans(scene);
-    Node* viewing = scene.node(viewing_camera);
-    Camera camera = *scene.get(viewing, Camera);
-    fault failure;
     scene.@each(WaterRuntime; entity, runtime) {
-        Node* node = scene.node(entity);
-        WaterDesc* desc = &runtime.desc;
         follow_wind(
             assets:        assets,
-            node:          node,
-            desc:          desc,
+            node:          scene.node(entity),
+            desc:          &runtime.desc,
             runtime:       runtime,
             wind_velocity: wind_velocity,
             time:          time,
         );
-        fault excuse = @catch(place_mirror(
-            scene:   scene,
-            node:    node,
-            desc:    desc,
-            runtime: runtime,
-            viewing: viewing,
-            camera:  camera,
-        ));
-        if (excuse && !failure) failure = excuse;
     };
-    if (failure) return failure~;
 }
 
 // A hook runs inside the entity's removal: the node's other components may already be gone.
@@ -394,14 +415,14 @@ fn void remove_orphans(Scene* scene) @private {
     while (true) {
         Entity stray;
         scene.@each(WaterMirror; entity, mirror) {
-            if (!mirror_owned(scene, entity, mirror.water)) stray = entity;
+            if (!mirror_owned(scene, entity, mirror)) stray = entity;
         };
         if (!stray.generation) return;
         scene.remove(scene.node(stray));
     }
 }
 
-fn bool mirror_owned(Scene* scene, Entity mirror, Entity water) @private {
-    if (!scene.world.is_alive(water) || !scene.world.has(water, WaterRuntime)) return false;
-    return c3d::same_id(scene.world.get(water, WaterRuntime).mirror, mirror);
+fn bool mirror_owned(Scene* scene, Entity mirror, WaterMirror* owner) @private {
+    if (!scene.world.is_alive(owner.water) || !scene.world.has(owner.water, WaterRuntime)) return false;
+    return c3d::same_id(scene.world.get(owner.water, WaterRuntime).mirrors[owner.slot], mirror);
 }

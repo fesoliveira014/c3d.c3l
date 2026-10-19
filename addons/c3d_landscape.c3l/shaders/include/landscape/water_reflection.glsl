@@ -47,7 +47,8 @@ bool water_planar(
     vec2 uv = screen_uv + offset;
     if (!water_inside_frame(uv)) return false;
     TextureMapGpu map = material.slots[WATER_REFLECTION_SLOT];
-    radiance = pre_exposed(frame, sample_texture_2d_lod(map.texture_index, map.sampler_index, uv, 0.0).rgb);
+    uint texture_index = custom_slot_texture(frame, material, WATER_REFLECTION_SLOT);
+    radiance = pre_exposed(frame, sample_texture_2d_lod(texture_index, map.sampler_index, uv, 0.0).rgb);
     return true;
 }
 
@@ -74,8 +75,8 @@ bool water_march(FrameRoot frame, vec3 origin, vec3 direction, out vec3 radiance
     return false;
 }
 
-// Planar where the slot is present (uniform per draw) and the sample stays in frame (per pixel); else the march
-// where the material enables it (uniform) and it hits (per pixel); else the environment or ambient.
+// Planar where the view provides the slot (uniform per draw) and the sample stays in frame (per pixel); else the
+// march where the material enables it (uniform) and it hits (per pixel); else the environment or ambient.
 vec3 water_reflection(
     FrameRoot frame,
     CustomMaterialGpu material,
@@ -86,7 +87,7 @@ vec3 water_reflection(
     vec2 screen_tilt
 ) {
     vec3 radiance;
-    if (custom_slot_present(material, WATER_REFLECTION_SLOT)
+    if (custom_slot_present(frame, material, WATER_REFLECTION_SLOT)
         && water_planar(frame, material, screen_uv, screen_tilt, params.reflection_distortion, radiance)) {
         return radiance;
     }

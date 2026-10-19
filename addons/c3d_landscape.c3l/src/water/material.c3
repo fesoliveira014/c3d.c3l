@@ -20,6 +20,8 @@ const String GRID_KEY_PREFIX @private = "c3d_landscape/water_grid";
 // Descs come from files as well as code, so every value check is a fault; negated so NaN faults too.
 fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
     if (desc.wave_count > MAX_WAVES) return c3d::INVALID_ARGUMENT~;
+    if (desc.max_mirrors == 0 || desc.max_mirrors > MAX_MIRRORS) return c3d::INVALID_ARGUMENT~;
+    if (desc.reflection_view_slot >= material::MAX_VIEW_TEXTURES) return c3d::INVALID_ARGUMENT~;
     float steepness_sum;
     float shortest = float::max;
     foreach (&wave : desc.waves[:desc.wave_count]) {
@@ -66,6 +68,10 @@ fn void? check_reference(AssetStore* assets, MaterialId reference) @private {
     if (!reference.generation) return;
     if (!assets.materials.is_live(reference)) return c3d::INVALID_ID~;
     if (assets.materials.get(reference).data.kind != MaterialKind.STANDARD) return c3d::INVALID_ARGUMENT~;
+}
+
+fn TextureSlot reflection_slot(uint view_slot) @private {
+    return material::view_texture_slot(view_slot, asset::SAMPLER_LINEAR_CLAMP);
 }
 
 fn bool same_shape(WaterDesc* first, WaterDesc* second) @private {
