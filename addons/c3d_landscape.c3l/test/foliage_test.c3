@@ -975,6 +975,57 @@ fn void assert_cells_trace(Fixture* fixture, Node* layer, bool trace) @local {
     }
 }
 
+fn void assert_cells_trace_sway(Fixture* fixture, Node* layer, bool trace_sway) @local {
+    FoliageRuntime* runtime = runtime_of(fixture, layer);
+    assert(runtime.cell_nodes > 0);
+    foreach (cell : runtime.cells) {
+        if (!cell.generation) continue;
+
+        if (runtime.desc.lod) {
+            assert(fixture.scene.world.get(cell, LodGroup).state.effects.trace_sway == trace_sway);
+        } else {
+            assert(fixture.scene.world.get(cell, InstancedMesh).trace_sway == trace_sway);
+        }
+    }
+}
+
+fn void test_trace_sway_reaches_every_cell_of_a_batch_and_a_lod_layer() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* ground = add_ground(&fixture, FLAT);
+    char[16] half = { 255, 0, 0, 0, 0, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0 };
+    TextureId density = add_density_map(&fixture, 2, half[..]);
+    FoliageDesc desc = layer_desc(&fixture, ground, density);
+    desc.sway = TEST_SWAY;
+    desc.trace = true;
+    Node* at_rest = add_layer(&fixture, desc);
+    desc.trace_sway = true;
+    Node* swayed = add_layer(&fixture, desc);
+    LodLevel[1] levels = {{ .part_count = 1 }};
+    LodPart[1] parts = {{
+        .geometry = fixture.geometry,
+        .material = fixture.material,
+        .local    = maths::TRANSFORM_IDENTITY.to_mat4(),
+    }};
+    LodDesc lod = { .levels = levels[..], .parts = parts[..] };
+    desc.lod = &lod;
+    Node* grouped = add_layer(&fixture, desc);
+    uint cells_before = runtime_of(&fixture, swayed).cell_nodes;
+    assert_cells_trace_sway(&fixture, at_rest, false);
+    assert_cells_trace_sway(&fixture, swayed, true);
+    assert_cells_trace_sway(&fixture, grouped, true);
+
+    // New and grown cells and the wind's sway rewrite all keep the flag.
+    char[16] everywhere = { 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0 };
+    write_density(&fixture, density, everywhere[..]);
+    update_landscape(&fixture, GALE_WIND);
+    assert(runtime_of(&fixture, swayed).cell_nodes > cells_before);
+    assert_cells_trace_sway(&fixture, at_rest, false);
+    assert_cells_trace_sway(&fixture, swayed, true);
+    assert_cells_trace_sway(&fixture, grouped, true);
+}
+
 fn void test_removed_foliage_releases_its_cells() @test {
     Fixture fixture;
     setup(&fixture);

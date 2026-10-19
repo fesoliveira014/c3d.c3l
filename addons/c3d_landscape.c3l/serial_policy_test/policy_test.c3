@@ -38,7 +38,7 @@ fn void test_every_landscape_component_has_one_expected_serialization_policy() @
         { .slot = ecs::assigned_slot(TerrainTile)!!, .name = "terrain_tile",
             .identity = TerrainTile::typeid, .phase = VALUE, .version = 1 },
         { .slot = ecs::assigned_slot(Foliage)!!, .name = "foliage",
-            .identity = FoliageAuthoring::typeid, .phase = OWNER, .version = 2 },
+            .identity = FoliageAuthoring::typeid, .phase = OWNER, .version = 3 },
         { .slot = ecs::assigned_slot(Water)!!, .name = "water", .identity = WaterDesc::typeid,
             .phase = VALUE, .version = 2 },
     };

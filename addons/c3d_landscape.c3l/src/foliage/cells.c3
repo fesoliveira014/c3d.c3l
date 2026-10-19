@@ -316,6 +316,7 @@ fn void commit_cells(
                 .cast_shadow = desc.cast_shadow,
                 .receive_shadow = desc.receive_shadow,
                 .trace = desc.trace,
+                .trace_sway = desc.trace_sway,
                 .sway = runtime.sway,
                 .fade = desc.fade,
             });
@@ -330,6 +331,7 @@ fn void commit_cells(
                 .cast_shadow    = desc.cast_shadow,
                 .receive_shadow = desc.receive_shadow,
                 .trace          = desc.trace,
+                .trace_sway     = desc.trace_sway,
                 .sway           = runtime.sway,
                 .fade           = desc.fade,
                 .revision       = 1,
