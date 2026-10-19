@@ -7,7 +7,7 @@
 layout(local_size_x = 1) in;
 
 const uint PROBE_COUNT = 8u; // mirrored as PROBE_COUNT in terrain_acceptance.c3
-const uint PARAMS_WORDS = 8u; // a TerrainParams block is 32 bytes
+const uint PARAMS_WORDS = 16u; // a TerrainParams block is 64 bytes
 
 layout(push_constant) uniform Push {
     uint64_t root_gpu;

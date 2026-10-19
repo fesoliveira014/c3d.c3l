@@ -13,6 +13,7 @@ import c3d::scene;
 
 const uint SMALL_TEXELS @local = 129; // one chunk, one level
 const uint TWO_LEVEL_TEXELS @local = 257; // 2 x 2 finest chunks under one root
+const uint THREE_LEVEL_TEXELS @local = 513; // 4 x 4 finest chunks, three levels
 const uint FOUR_LEVEL_TEXELS @local = 1025; // 8 x 8 finest chunks, four levels
 const uint LARGE_TEXELS @local = 2049; // a level-0 trace grid of 4,198,401 vertices, past MAX_TRACE_VERTICES
 const float CELL_SIZE @local = 0.5f;
@@ -34,6 +35,8 @@ const uint RING_SOUTH @local = 1;
 const uint RING_WEST @local = 2;
 const uint RING_EAST @local = 3;
 const usz BORDER_EDGES_OFFSET @local = 16; // in the material block, after texels, cell_size, height_scale and layer_count
+const usz TRACE_ERROR_OFFSET @local = 28; // in the material block, after the border edges, projection and sharpness
+const usz DRAWN_DEVIATION_OFFSET @local = 32; // the per-level gaps follow the trace error
 const uint BORDER_SLOT @local = 2; // the material slot of the border ring
 const uint BAND_ROW @local = 1; // the row inside a tile's edge that its neighbour's ring holds
 const uint INTERIOR_ROW @local = 60; // clear of both outer bands of a 129-texel tile
@@ -46,6 +49,8 @@ const uint CELL_CENTER_X @local = 101; // odd x and z: the middle of a two-texel
 const uint CELL_CENTER_Z @local = 77;
 const uint GRID_CORNER_X @local = 100; // even x and z: a vertex of the two-texel grid
 const uint GRID_CORNER_Z @local = 76;
+const uint LEVEL_TWO_CENTER_X @local = 102; // a vertex of the two-texel grid and the middle of a four-texel cell
+const uint LEVEL_TWO_CENTER_Z @local = 78;
 const float TRACE_ERROR_TOLERANCE @local = 1e-6f; // float rounding of the same product of texels and scale
 
 struct Fixture @local {
@@ -196,6 +201,8 @@ fn void assert_same_bounds(TerrainRuntime* edited, TerrainRuntime* fresh) @local
     assert(mem::equals(edited.minimum, fresh.minimum));
     assert(mem::equals(edited.maximum, fresh.maximum));
     assert(mem::equals(edited.trace_deviation, fresh.trace_deviation) && edited.trace_error == fresh.trace_error);
+    assert(mem::equals(edited.drawn_node_deviation, fresh.drawn_node_deviation));
+    assert(edited.drawn_deviation == fresh.drawn_deviation);
 }
 
 fn void write_random_texels(
@@ -425,6 +432,45 @@ fn void test_terrain_trace_error_bound() @test {
     assert(math::abs(fixture.scene.get(edited, TerrainRuntime).trace_error - expected) <= TRACE_ERROR_TOLERANCE);
     Node* fresh = add_terrain_node(&fixture, traced_desc(&fixture, copy_height_map(&fixture, edited_map)));
     assert_same_bounds(fixture.scene.get(edited, TerrainRuntime), fixture.scene.get(fresh, TerrainRuntime));
+}
+
+fn void test_terrain_drawn_deviation_per_level() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    // Texel (102, 78) is a vertex of the level-1 chunk grid, so its neighbours' midpoints miss it by half the raise at
+    // level 1; it is the middle of a level-2 cell, on its diagonal, so that grid misses it by the whole raise.
+    TextureId map = add_plane_map(&fixture, THREE_LEVEL_TEXELS);
+    raise_texel(&fixture, map, LEVEL_TWO_CENTER_X, LEVEL_TWO_CENTER_Z);
+    Node* raised = add_terrain_node(&fixture, traced_desc(&fixture, map));
+    TerrainRuntime* runtime = fixture.scene.get(raised, TerrainRuntime);
+    float whole = texel_metres(BUMP_TEXELS);
+    assert(runtime.drawn_deviation[0] == 0);
+    assert(math::abs(runtime.drawn_deviation[1] - whole / 2) <= TRACE_ERROR_TOLERANCE);
+    assert(math::abs(runtime.drawn_deviation[2] - whole) <= TRACE_ERROR_TOLERANCE);
+    foreach (deviation : runtime.drawn_deviation[runtime.level_count..]) assert(deviation == 0);
+
+    // The block the fragment stage reads follows the runtime, and an untraced terrain leaves it zero.
+    char[] block = fixture.assets.material(runtime.material).data.custom.param_block;
+    assert(*(float*)(block.ptr + TRACE_ERROR_OFFSET) == runtime.trace_error);
+    float[] published = ((float*)(block.ptr + DRAWN_DEVIATION_OFFSET))[:terrain::MAX_TERRAIN_LEVELS];
+    assert(mem::equals(published, runtime.drawn_deviation[..]));
+    Node* untraced = add_terrain_node(&fixture, terrain_desc(&fixture, copy_height_map(&fixture, map)));
+    foreach (deviation : fixture.scene.get(untraced, TerrainRuntime).drawn_deviation) assert(deviation == 0);
+
+    // An edit refreshes the nodes its rectangle meets and agrees with a build from the edited texels.
+    TextureId edited_map = copy_height_map(&fixture, add_plane_map(&fixture, THREE_LEVEL_TEXELS));
+    Node* edited = add_terrain_node(&fixture, traced_desc(&fixture, edited_map));
+    update_terrain(&fixture);
+    raise_texel(&fixture, edited_map, LEVEL_TWO_CENTER_X, LEVEL_TWO_CENTER_Z);
+    TexelRect rect = { .x = LEVEL_TWO_CENTER_X, .z = LEVEL_TWO_CENTER_Z, .columns = 1, .rows = 1 };
+    terrain::mark_dirty(&fixture.scene, edited, rect);
+    update_terrain(&fixture);
+    Node* fresh = add_terrain_node(&fixture, traced_desc(&fixture, copy_height_map(&fixture, edited_map)));
+    TerrainRuntime* after = fixture.scene.get(edited, TerrainRuntime);
+    assert_same_bounds(after, fixture.scene.get(fresh, TerrainRuntime));
+    assert(math::abs(after.drawn_deviation[2] - whole) <= TRACE_ERROR_TOLERANCE);
 }
 
 fn void test_trace_grids_past_a_limit_are_invalid_argument() @test {

@@ -78,6 +78,11 @@ fn TerrainRuntime? create_runtime(Allocator allocator, uint texels, TerrainDesc*
         float[]? deviation = alloc::new_array_try(allocator, float, (sz)leaves * leaves);
         if (catch deviation) return c3d::CAPACITY_EXCEEDED~;
         runtime.trace_deviation = deviation;
+        defer catch alloc::free(allocator, runtime.trace_deviation.ptr);
+
+        float[]? drawn = alloc::new_array_try(allocator, float, (sz)nodes);
+        if (catch drawn) return c3d::CAPACITY_EXCEEDED~;
+        runtime.drawn_node_deviation = drawn;
     }
 
     return runtime;
@@ -87,6 +92,7 @@ fn void free_runtime(TerrainRuntime* runtime) @private {
     alloc::free(runtime.allocator, runtime.minimum.ptr);
     alloc::free(runtime.allocator, runtime.maximum.ptr);
     alloc::free(runtime.allocator, runtime.trace_deviation.ptr);
+    alloc::free(runtime.allocator, runtime.drawn_node_deviation.ptr);
     *runtime = {};
 }
 
@@ -125,7 +131,25 @@ fn void refresh_bounds(
         last_x >>= 1;
         last_z >>= 1;
         for (uint z = first_z; z <= last_z; z++) {
-            for (uint x = first_x; x <= last_x; x++) build_parent(runtime, { .level = level, .x = x, .z = z });
+            for (uint x = first_x; x <= last_x; x++) {
+                QuadNode parent = { .level = level, .x = x, .z = z };
+                build_parent(runtime, parent);
+                if (runtime.drawn_node_deviation.len) {
+                    uint index = node_index(runtime, parent);
+                    runtime.drawn_node_deviation[index] = node_drawn_deviation(runtime, texels, parent);
+                }
+            }
+        }
+    }
+
+    if (runtime.drawn_node_deviation.len) {
+        for (uint level = 1; level < runtime.level_count; level++) {
+            float widest;
+            uint side = level_side(runtime, level);
+            foreach (deviation : runtime.drawn_node_deviation[runtime.level_offset[level] : side * side]) {
+                widest = max(widest, deviation);
+            }
+            runtime.drawn_deviation[level] = widest * height_scale / TEXEL_MAX;
         }
     }
 }
@@ -159,17 +183,45 @@ fn void build_parent(TerrainRuntime* runtime, QuadNode parent) @private {
     runtime.maximum[index] = highest;
 }
 
+fn float chunk_trace_deviation(TerrainRuntime* runtime, ushort[] texels, QuadNode leaf) @private {
+    return grid_deviation(
+        runtime: runtime,
+        texels:  texels,
+        first_x: leaf.x * CHUNK_CELLS,
+        first_z: leaf.z * CHUNK_CELLS,
+        extent:  CHUNK_CELLS,
+        span:    1 << runtime.trace_level,
+    );
+}
+
+// A node draws the same grid of chunk cells over a larger footprint: its cells span 2^level texels.
+fn float node_drawn_deviation(TerrainRuntime* runtime, ushort[] texels, QuadNode node) @private {
+    uint extent = CHUNK_CELLS << node.level;
+    return grid_deviation(
+        runtime: runtime,
+        texels:  texels,
+        first_x: node.x * extent,
+        first_z: node.z * extent,
+        extent:  extent,
+        span:    1 << node.level,
+    );
+}
+
 // The grid's triangles split each cell along its (x + 1, z) to (x, z + 1) diagonal, so they refine to the texels' own
 // triangles and both surfaces are linear on each of those: the gap peaks at a texel.
-fn float chunk_trace_deviation(TerrainRuntime* runtime, ushort[] texels, QuadNode leaf) @private {
-    if (!runtime.trace_level) return 0;
+fn float grid_deviation(
+    TerrainRuntime* runtime,
+    ushort[] texels,
+    uint first_x,
+    uint first_z,
+    uint extent,
+    uint span,
+) @private {
+    if (span == 1) return 0;
 
-    uint span = 1 << runtime.trace_level;
-    uint first_x = leaf.x * CHUNK_CELLS;
-    uint first_z = leaf.z * CHUNK_CELLS;
     float widest;
-    for (uint cell_z = first_z; cell_z < first_z + CHUNK_CELLS; cell_z += span) {
-        for (uint cell_x = first_x; cell_x < first_x + CHUNK_CELLS; cell_x += span) {
+    for (uint cell_z = first_z; cell_z < first_z + extent; cell_z += span) {
+        for (uint cell_x = first_x; cell_x < first_x + extent; cell_x += span) {
             float near_near = (float)texels[(usz)cell_z * runtime.texels + cell_x];
             float far_near = (float)texels[(usz)cell_z * runtime.texels + cell_x + span];
             float near_far = (float)texels[(usz)(cell_z + span) * runtime.texels + cell_x];

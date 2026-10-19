@@ -8,6 +8,7 @@
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
+layout(location = 5) in vec4 v_chunk; // x: the chunk's level, y: its morph toward the parent level
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -22,6 +23,7 @@ void main() {
     float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;
     material_mip_bias = frame.mip_bias;
     CustomMaterialGpu material = CustomMaterialGpu(draw.material);
+    trace_proxy_skip_height = terrain_proxy_skip_height(TerrainParams(material.parameters), v_chunk.x, v_chunk.y);
     StandardMaterialSample surface_sample = terrain_surface(material, draw, frame, v_world_pos, v_uv0, v_uv1);
     apply_decals(
         frame,

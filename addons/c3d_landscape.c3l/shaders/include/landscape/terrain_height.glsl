@@ -12,6 +12,7 @@ const uint TERRAIN_BORDER_SOUTH = 1u;
 const uint TERRAIN_BORDER_WEST = 2u;
 const uint TERRAIN_BORDER_EAST = 3u;
 const uint TERRAIN_CHUNK_CELLS = 128u; // mirrored as CHUNK_CELLS in terrain/terrain.c3
+const uint TERRAIN_MAX_LEVELS = 6u; // mirrored as MAX_TERRAIN_LEVELS in terrain/terrain.c3
 const float TERRAIN_TEXEL_MAX = 65535.0; // height = height_scale * texel / 65535, the physics height-field rule
 const uint TERRAIN_PROJECTION_TRIPLANAR = 1u; // mirrored as SlopeProjection.TRIPLANAR in terrain/terrain.c3
 
@@ -24,7 +25,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Te
     uint border_edges;
     uint slope_projection;
     float triplanar_sharpness;
-    uint padding;
+    float trace_error;
+    float drawn_deviation[TERRAIN_MAX_LEVELS];
+    uint padding[2];
 };
 
 // R16_UINT heights: only the integer view of the heap may read them.
@@ -42,6 +45,15 @@ float terrain_border_height(uint border_texture, TerrainParams params, uint edge
 
 bool terrain_has_border(TerrainParams params, uint edge) {
     return (params.border_edges & (1u << edge)) != 0u;
+}
+
+// How far above the drawn surface the trace grid may sit: its own gap from the full-resolution surface or the drawn
+// level's, whichever is larger. A chunk that morphs toward its parent lies between the two levels.
+float terrain_proxy_skip_height(TerrainParams params, float level, float morph) {
+    uint depth = min(uint(level + 0.5), TERRAIN_MAX_LEVELS - 1u);
+    float gap = max(params.trace_error, params.drawn_deviation[depth]);
+    if (morph > 0.0 && depth + 1u < TERRAIN_MAX_LEVELS) gap = max(gap, params.drawn_deviation[depth + 1u]);
+    return gap;
 }
 
 #endif

@@ -110,6 +110,16 @@ fn Entity? add_trace_grid(
     return child.id;
 }
 
+// The fragment stage reads the gaps to raise its proxy skip height; an unchanged block uploads nothing.
+fn void publish_trace_params(AssetStore* assets, TerrainRuntime* runtime) @private {
+    TerrainParams* params = assets.@custom_params(runtime.material, TerrainParams);
+    if (params.trace_error == runtime.trace_error && params.drawn_deviation == runtime.drawn_deviation) return;
+
+    params.trace_error = runtime.trace_error;
+    params.drawn_deviation = runtime.drawn_deviation;
+    assets.mark_material_dirty(runtime.material);
+}
+
 fn void sync_trace_grid(Scene* scene, Node* node, TerrainRuntime* runtime, TerrainDesc* desc) @private {
     Node* child = scene.node(runtime.trace_grid);
     Mesh* mesh = scene.get(child, Mesh);

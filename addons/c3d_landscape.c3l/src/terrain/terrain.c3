@@ -125,6 +125,8 @@ struct TerrainRuntime {
     uint                     trace_level;      // the desc's level, set with trace
     float                    trace_error;      // metres: largest gap between the trace grid and the full surface
     float[]                  trace_deviation;  // per finest chunk: largest gap in height texels; empty without trace
+    float[MAX_TERRAIN_LEVELS] drawn_deviation; // metres per level: largest gap between its drawn chunks and the surface
+    float[]                  drawn_node_deviation; // per node: that gap in height texels; empty without trace
 }
 
 <*
@@ -265,6 +267,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         rect:         whole_map(texels),
         height_scale: desc.height_scale,
     );
+    publish_trace_params(assets, &runtime);
     link_tile(scene, assets, node)!;
     defer catch unlink_tile(scene, node.id);
     InstancedMesh batch = create_batch(
@@ -422,6 +425,7 @@ fn void? refresh_changed_bounds(AssetStore* assets, TerrainDesc* desc, TerrainRu
         rect:         refreshed,
         height_scale: desc.height_scale,
     );
+    publish_trace_params(assets, runtime);
     runtime.last_refresh = {
         .revision_before = runtime.revision,
         .revision_after  = texture.header.revision,

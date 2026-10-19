@@ -25,10 +25,13 @@ struct TerrainParams @private {
     uint    border_edges;     // bit per BorderEdge that has a linked neighbour and a valid ring row
     uint    slope_projection; // SlopeProjection ordinal; TERRAIN_PROJECTION_TRIPLANAR mirrors TRIPLANAR
     float   triplanar_sharpness;
-    uint    padding;          // a whole number of the block's 16-byte alignment
+    float   trace_error;      // metres: the trace grid's largest gap from the full-resolution surface; 0 untraced
+    float[MAX_TERRAIN_LEVELS] drawn_deviation; // metres per level: the gap of that level's drawn chunks; 0 untraced
+    uint[2] padding;          // a whole number of the block's 16-byte alignment
 }
 
-$assert TerrainParams::size == 32;
+$assert TerrainParams::size == 64;
+$assert MAX_TERRAIN_LEVELS == 6; // mirrored as TERRAIN_MAX_LEVELS in landscape/terrain_height.glsl
 $assert (uint)SlopeProjection.TRIPLANAR.ordinal == 1;
 
 // Negated so NaN faults too; core requires the same of a quadtree's thresholds.
