@@ -16,19 +16,6 @@ import gpu;
 import std::math;
 
 const char[*] READBACK_SOURCE @local = $embed("water_readback.comp.glsl");
-const char[*] TRACE_PROBE_SOURCE @local = $embed("trace_probe.comp.glsl");
-const uint TRACE_GROUP_SIZE @local = 8; // mirrored as local_size_x and _y in trace_probe.comp.glsl
-const uint RASTER_HIT @local = 1; // mirrored as RASTER_HIT in trace_probe.comp.glsl
-const uint TRACE_HIT @local = 2; // mirrored as TRACE_HIT in trace_probe.comp.glsl
-const uint PROBE_SIZE @local = 64;
-const usz PROBE_PIXELS @local = PROBE_SIZE * PROBE_SIZE;
-const usz PROBE_RESULT_BYTES @local = PROBE_PIXELS * TraceProbeResult::size;
-const usz COVERAGE_MINIMUM @local = PROBE_PIXELS * 9 / 10; // the whole view looks at water
-const float PROBE_CELL_SIZE @local = 0.2f; // ten cells to the shortest choppy wavelength
-const double[3] PROBE_TIMES @local = { 0.5, 1.0, 1.5 }; // seconds; half a second moves wave 0 by a tenth of a cycle
-const double SHADOW_PROBE_TIME @local = 2;
-const float MOVE_MINIMUM @local = 0.05f; // metres: wave 0 moves the surface by up to 0.22 m in half a second
-const bool[2] TRACE_KINDS @local = { false, true }; // ray_queries: software walk, then ray queries
 const uint READBACK_POINTS @local = 64; // mirrored as WATER_READBACK_POINTS in water_readback.comp.glsl
 const uint TWIN_SIZE @local = 129; // odd: the centre pixel's ray is the optical axis
 const uint TWIN_GRID @local = 7; // 49 surface samples across the central 80 % of the view
@@ -72,6 +59,19 @@ const uint VELOCITY_ROW_SAMPLES @local = 9;
 const float VELOCITY_TOLERANCE @local = 0.01f; // encoded units, about two and a half 8-bit steps
 const float MIN_VELOCITY_ENCODED @local = 0.03f; // every sample moves well above the tolerance
 const uint BISECTION_STEPS @local = 60;
+const char[*] TRACE_PROBE_SOURCE @local = $embed("trace_probe.comp.glsl");
+const uint TRACE_GROUP_SIZE @local = 8; // mirrored as local_size_x and _y in trace_probe.comp.glsl
+const uint RASTER_HIT @local = 1; // mirrored as RASTER_HIT in trace_probe.comp.glsl
+const uint TRACE_HIT @local = 2; // mirrored as TRACE_HIT in trace_probe.comp.glsl
+const uint PROBE_SIZE @local = 64;
+const usz PROBE_PIXELS @local = PROBE_SIZE * PROBE_SIZE;
+const usz PROBE_RESULT_BYTES @local = PROBE_PIXELS * TraceProbeResult::size;
+const usz COVERAGE_MINIMUM @local = PROBE_PIXELS * 9 / 10; // the whole view looks at water
+const float PROBE_CELL_SIZE @local = 0.2f; // ten cells to the shortest choppy wavelength
+const double[3] PROBE_TIMES @local = { 0.5, 1.0, 1.5 }; // seconds; half a second moves wave 0 by a tenth of a cycle
+const double SHADOW_PROBE_TIME @local = 2;
+const float MOVE_MINIMUM @local = 0.05f; // metres: wave 0 moves the surface by up to 0.22 m in half a second
+const bool[2] TRACE_KINDS @local = { false, true }; // ray_queries: software walk, then ray queries
 
 const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with default_water_desc, the example's waves
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
