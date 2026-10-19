@@ -168,6 +168,7 @@ const uint SKY_VIEW_HEIGHT = 108;
 const uint AERIAL_PERSPECTIVE_SIZE = 32;
 const uint SKY_TABLE_GROUP_SIZE = 8;
 const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4;
+const uint MAX_VIEW_MEDIA = 4;
 const uint FOG_VOLUME_MAX_SLICES = 128;
 const uint FOG_VOLUME_HISTORY = 1;
 const float FOG_HISTORY_WEIGHT = 0.9;
@@ -2224,6 +2225,32 @@ $assert $reflect(BrdfLutRoot.size).offset == 4;
 $assert $reflect(BrdfLutRoot._pad0).offset == 8;
 $assert $reflect(BrdfLutRoot._pad1).offset == 12;
 
+struct MediumGpu {
+    Vec4f world_to_local_0;
+    Vec4f world_to_local_1;
+    Vec4f world_to_local_2;
+    Vec4f extent_anisotropy;
+    Vec4f absorption;
+    Vec4f scattering;
+}
+$assert MediumGpu::size == 96;
+$assert $reflect(MediumGpu.world_to_local_0).offset == 0;
+$assert $reflect(MediumGpu.world_to_local_1).offset == 16;
+$assert $reflect(MediumGpu.world_to_local_2).offset == 32;
+$assert $reflect(MediumGpu.extent_anisotropy).offset == 48;
+$assert $reflect(MediumGpu.absorption).offset == 64;
+$assert $reflect(MediumGpu.scattering).offset == 80;
+
+struct MediumSetGpu {
+    Vec4f        to_sun;
+    Vec4f        sun_illuminance;
+    MediumGpu[4] media;
+}
+$assert MediumSetGpu::size == 416;
+$assert $reflect(MediumSetGpu.to_sun).offset == 0;
+$assert $reflect(MediumSetGpu.sun_illuminance).offset == 16;
+$assert $reflect(MediumSetGpu.media).offset == 32;
+
 struct SkyFogGpu {
     Vec4f        sun_direction_cos_radius;
     Vec4f        sun_illuminance;
@@ -2249,9 +2276,8 @@ struct SkyFogGpu {
     float        fog_anisotropy;
     uint         fog_slices;
     float        sky_table_scale;
-    uint         _pad0;
-    uint         _pad1;
-    uint         _pad2;
+    uint         media_count;
+    GpuAddress   media;
 }
 $assert SkyFogGpu::size == 192;
 $assert $reflect(SkyFogGpu.sun_direction_cos_radius).offset == 0;
@@ -2278,9 +2304,8 @@ $assert $reflect(SkyFogGpu.fog_volume).offset == 164;
 $assert $reflect(SkyFogGpu.fog_anisotropy).offset == 168;
 $assert $reflect(SkyFogGpu.fog_slices).offset == 172;
 $assert $reflect(SkyFogGpu.sky_table_scale).offset == 176;
-$assert $reflect(SkyFogGpu._pad0).offset == 180;
-$assert $reflect(SkyFogGpu._pad1).offset == 184;
-$assert $reflect(SkyFogGpu._pad2).offset == 188;
+$assert $reflect(SkyFogGpu.media_count).offset == 180;
+$assert $reflect(SkyFogGpu.media).offset == 184;
 
 struct SkyTableRoot {
     GpuAddress   sky_fog;

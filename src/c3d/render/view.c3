@@ -92,7 +92,7 @@ struct ViewCamera @private {
     Camera camera;
     Mat4   world;          // absolute; rebased on the frame origin when the view records
     Entity excluded_probe; // the reflection probe being captured; never selected
-    bool   height_fog;     // captures render without height fog
+    bool   height_fog;     // captures render without height fog or media
     bool   clouds;         // captures render without the cloud layer
     bool   world_overlay;  // captures draw no world overlay
 }
@@ -622,6 +622,7 @@ fn void? record_raster_view(
         ReflectionCandidate[shader::REFLECTION_PROBE_CAPACITY] reflection_picks;
         usz reflection_count;
         FogSelection fog;
+        MediaSelection media;
         bool fog_pass;
         bool fog_volume;
         CloudPass cloud_pass;
@@ -637,7 +638,11 @@ fn void? record_raster_view(
             )!;
             fog = view_camera.height_fog ? select_height_fog(scene, camera.layers) : (FogSelection){};
             renderer.stats.fogs_ignored += fog.ignored;
-            fog_pass = environments.atmosphere || fog.fog;
+            if (view_camera.height_fog) {
+                media = select_media(scene, camera.layers, matrices.position, renderer.frame_origin);
+                renderer.stats.media_dropped += media.dropped;
+            }
+            fog_pass = environments.atmosphere || fog.fog || media.count > 0;
             fog_volume = fog.fog && record.desc.volumetric_fog;
             CloudSelection clouds = view_camera.clouds && shading != ShadingPath.PATH_TRACED
               ? select_cloud_layer(scene, camera.layers) : (CloudSelection){};
@@ -708,6 +713,11 @@ fn void? record_raster_view(
                 pre_exposure: pre_exposure,
             );
             fog_sun = fog_sun_light(&extraction, environments.atmosphere != null);
+            if (fog_sun) {
+                LightGpu* sun = &extraction.lights[fog_sun - 1];
+                media.to_sun = -sun.direction_cos_outer.xyz;
+                media.sun_illuminance = sun.color_intensity.xyz * sun.color_intensity.w;
+            }
             if (cloud_pass.layer) {
                 cloud_pass.sun = cloud_sun(
                     extraction:   &extraction,
@@ -784,6 +794,7 @@ fn void? record_raster_view(
                 atmosphere:      environments.atmosphere,
                 selection:       &environments.atmosphere_selection,
                 fog:             &fog,
+                media:           &media,
                 camera_position: matrices.position,
                 fog_volume:      fog_volume ? fog_integrated_volume(record).view.index : (gpu::TextureIndex)0,
                 pre_exposure:    pre_exposure,

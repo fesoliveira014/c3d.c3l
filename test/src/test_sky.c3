@@ -18,6 +18,8 @@ const float SUN_INTENSITY @local = 3;
 const Vec3 SECOND_COLOR @local = { 0.2f, 0.4f, 0.6f };
 const float DRIFT_STEP @local = 0.09f; // degrees; five steps stay clear of the half-degree threshold, six pass it
 const Vec3 FOG_ORIGIN @local = { 0, 10, 0 };
+const Vec3 MEDIUM_ORIGIN @local = { 1000, 0, 0 };
+const Vec3 MEDIUM_CAMERA @local = { 0, 5, 0 }; // relative to MEDIUM_ORIGIN
 const MediumVolume MEDIUM_BOX @local = {
     .scattering  = { 0.5f, 0, 0 },
     .anisotropy  = 0.25f,
@@ -380,6 +382,50 @@ fn void test_atmosphere_and_fog_validity_reject_each_arm() @test {
     HeightFog backward = fog;
     backward.anisotropy = -0.99f;
     assert(light::height_fog_valid(&backward));
+}
+
+const float MEDIUM_MARKER_SCALE @local = 0.01f; // a volume at distance d absorbs d / 100, naming it in a packed row
+
+fn Node* add_medium_at(Scene* scene, float distance, MediumVolume medium = MEDIUM_BOX) @local {
+    Node* node = scene.add_node(name: "medium")!!;
+    node.local.position = { MEDIUM_ORIGIN.x + distance, 0, 0 };
+    medium.absorption = { distance * MEDIUM_MARKER_SCALE, 0, 0 };
+    scene.add(node, medium);
+    return node;
+}
+
+fn void test_medium_selection_keeps_the_nearest_visible_valid_volumes() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 16 });
+    defer scene::destroy_scene(&scene);
+    float[6] distances = { 10, 6, 30, 3, 20, 15 };
+    foreach (distance : distances) {
+        Node* node = add_medium_at(&scene, distance);
+        if (distance == 3) scene.get(node, MediumVolume).center = { 0.5f, 0 };
+    }
+    Node* hidden = add_medium_at(&scene, 1.5f);
+    hidden.visible = false;
+    Node* other_layer = add_medium_at(&scene, 1.5f);
+    other_layer.layers = 2;
+    MediumVolume invalid = MEDIUM_BOX;
+    invalid.depth = -1;
+    add_medium_at(&scene, 1.5f, invalid);
+    Node* flat = add_medium_at(&scene, 1.5f);
+    flat.local.scale = { 0, 1, 1 };
+    scene.update_world();
+
+    MediaSelection selection = render::select_media(&scene, 1, MEDIUM_CAMERA, MEDIUM_ORIGIN);
+    float[4] expected = { 3, 6, 10, 15 };
+    assert(selection.count == 4 && selection.dropped == 2);
+    foreach (index, distance : expected) {
+        assert(selection.media[index].absorption.x == distance * MEDIUM_MARKER_SCALE, "slot %d", index);
+    }
+    MediumGpu* nearest = &selection.media[0];
+    assert(nearest.world_to_local_0 == (Vec4f){ 1, 0, 0, -3.5f }, "the centre is folded into the row");
+    assert(nearest.world_to_local_1 == (Vec4f){ 0, 1, 0, 0 } && nearest.world_to_local_2 == (Vec4f){ 0, 0, 1, 0 });
+    assert(nearest.extent_anisotropy == (Vec4f){ 1, 2, 1, 0.25f } && nearest.scattering.x == 0.5f);
+
+    MediaSelection none = render::select_media(&scene, 4, MEDIUM_CAMERA, MEDIUM_ORIGIN);
+    assert(none.count == 0 && none.dropped == 0);
 }
 
 fn void test_medium_volume_validity_rejects_each_arm() @test {

@@ -10,6 +10,7 @@ import std::math;
 
 $assert SkyFogGpu::size == 192;
 $assert SkyTableRoot::size == 32;
+$assert MediumSetGpu::size == 32 + MediumGpu::size * shader::MAX_VIEW_MEDIA;
 
 <*
  Atmospheres of rendered scenes whose tables and lighting the renderer keeps at once.
@@ -59,6 +60,17 @@ struct FogSelection {
     HeightFog* fog;
     float      base_height; // world y of its node
     uint       ignored;     // extras and invalid ones visible to the view
+}
+
+<*
+ The medium volumes one view draws, nearest first, packed relative to the frame origin.
+*>
+struct MediaSelection {
+    uint                              count;
+    uint                              dropped;         // visible volumes past MAX_VIEW_MEDIA
+    Vec3                              to_sun;          // the sun the media scatter, set once the view's lights exist
+    Vec3                              sun_illuminance; // zero is no sun
+    MediumGpu[shader::MAX_VIEW_MEDIA] media;
 }
 
 <*
@@ -162,6 +174,77 @@ fn FogSelection select_height_fog(Scene* scene, uint view_layers) {
         }
     };
     return selection;
+}
+
+<*
+ The nearest visible, valid medium volumes whose node the view's layers see.
+ @param [&in] scene : "Current world transforms."
+ @param view_layers : "Camera visibility mask."
+ @param camera_position : "Relative to the frame origin."
+ @param origin : "Absolute frame origin the packed rows are relative to."
+*>
+fn MediaSelection select_media(Scene* scene, uint view_layers, Vec3 camera_position, Vec3 origin) {
+    MediaSelection selection;
+    float[shader::MAX_VIEW_MEDIA] distances;
+    scene.@each(MediumVolume; Entity entity, MediumVolume* medium) {
+        Node* node = scene.node(entity);
+        Mat4 world = maths::rebase(node.world, origin);
+        if (node.visible_effective && (node.layers & view_layers) && light::medium_volume_valid(medium)
+            && decal_world_valid(world)) {
+            Mat4 inverse = maths::inverse_affine(world);
+            keep_nearest_medium(
+                selection: &selection,
+                distances: distances[..],
+                record:    medium_record(medium, inverse),
+                distance:  medium_distance(medium, world, inverse, camera_position),
+            );
+        }
+    };
+    return selection;
+}
+
+fn void keep_nearest_medium(
+    MediaSelection* selection,
+    float[] distances,
+    MediumGpu record,
+    float distance,
+) @local {
+    uint position = selection.count;
+    while (position > 0 && distance < distances[position - 1]) position--;
+    if (position == shader::MAX_VIEW_MEDIA) {
+        selection.dropped++;
+        return;
+    }
+    if (selection.count == shader::MAX_VIEW_MEDIA) {
+        selection.dropped++;
+        selection.count--;
+    }
+    for (uint index = selection.count; index > position; index--) {
+        selection.media[index] = selection.media[index - 1];
+        distances[index] = distances[index - 1];
+    }
+    selection.media[position] = record;
+    distances[position] = distance;
+    selection.count++;
+}
+
+fn MediumGpu medium_record(MediumVolume* medium, Mat4 inverse) @local {
+    return {
+        .world_to_local_0  = { inverse.m00, inverse.m01, inverse.m02, inverse.m03 - medium.center.x },
+        .world_to_local_1  = { inverse.m10, inverse.m11, inverse.m12, inverse.m13 },
+        .world_to_local_2  = { inverse.m20, inverse.m21, inverse.m22, inverse.m23 - medium.center.y },
+        .extent_anisotropy = { medium.half_extent.x, medium.depth, medium.half_extent.y, medium.anisotropy },
+        .absorption        = { medium.absorption.x, medium.absorption.y, medium.absorption.z, 0 },
+        .scattering        = { medium.scattering.x, medium.scattering.y, medium.scattering.z, 0 },
+    };
+}
+
+fn float medium_distance(MediumVolume* medium, Mat4 world, Mat4 inverse, Vec3 camera_position) @local {
+    Vec3 local_camera = maths::transform_point(inverse, camera_position);
+    Vec3 lower = { medium.center.x - medium.half_extent.x, -medium.depth, medium.center.y - medium.half_extent.y };
+    Vec3 upper = { medium.center.x + medium.half_extent.x, 0, medium.center.y + medium.half_extent.y };
+    Vec3 nearest = math::clamp(local_camera, lower, upper);
+    return (camera_position - maths::transform_point(world, nearest)).length();
 }
 
 fn Vec3 sun_direction(Node* node) @private {
@@ -738,11 +821,12 @@ fn gpu::GpuAddress? pack_view_sky_fog(
     AtmosphereRes* atmosphere,
     AtmosphereSelection* selection,
     FogSelection* fog,
+    MediaSelection* media,
     Vec3 camera_position,
     gpu::TextureIndex fog_volume,
     float pre_exposure,
 ) @private {
-    if (!atmosphere && !fog.fog) return (gpu::GpuAddress)0;
+    if (!atmosphere && !fog.fog && !media.count) return (gpu::GpuAddress)0;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, SkyFogGpu::size, STREAM_ALIGNMENT)!;
     SkyFogTables tables = { .sampler = renderer.linear_clamp_sampler };
@@ -769,7 +853,19 @@ fn gpu::GpuAddress? pack_view_sky_fog(
         fog:             fog,
         tables:          tables,
     );
-    if (fog.fog) ((SkyFogGpu*)span.bytes.ptr).fog_base_height -= renderer.frame_origin.y;
+    SkyFogGpu* root = (SkyFogGpu*)span.bytes.ptr;
+    if (fog.fog) root.fog_base_height -= renderer.frame_origin.y;
+    if (media.count) {
+        gpu::MappedGpuSpan media_span = slot.upload.take(&renderer.device, MediumSetGpu::size, STREAM_ALIGNMENT)!;
+        MediumSetGpu* set = (MediumSetGpu*)media_span.bytes.ptr;
+        *set = {
+            .to_sun          = { media.to_sun.x, media.to_sun.y, media.to_sun.z, 0 },
+            .sun_illuminance = { media.sun_illuminance.x, media.sun_illuminance.y, media.sun_illuminance.z, 0 },
+        };
+        foreach (index, &volume : media.media[:media.count]) set.media[index] = *volume;
+        root.media_count = media.count;
+        root.media = media_span.address;
+    }
     return span.address;
 }
 
