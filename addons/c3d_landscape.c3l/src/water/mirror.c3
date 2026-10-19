@@ -44,15 +44,21 @@ fn void? add_mirrors(Scene* scene, Entity water, Entity[] mirrors) @private {
     }
 }
 
-fn void? place_mirror(
+fn MirrorState? place_mirror(
     Scene* scene,
     Node* node,
     WaterRuntime* runtime,
     uint slot,
     Node* viewing,
 ) @private {
-    Mat4 mirrored = maths::reflection_matrix(rest_plane(node.world)).mul(viewing.local.to_mat4());
+    Plane plane = rest_plane(node.world);
     Node* mirror = scene.node(runtime.mirrors[slot]);
+    if (plane.normal.dot(viewing.local.position) + plane.d < 0) {
+        scene.get(mirror, Camera).layers = 0;
+        return MirrorState.BELOW;
+    }
+
+    Mat4 mirrored = maths::reflection_matrix(plane).mul(viewing.local.to_mat4());
     mirror.local = maths::transform_from_affine(mirrored)!;
     // The value update_world writes for a root node, so the mirror is current whichever runs first.
     mirror.world = mirror.local.to_mat4();
@@ -60,6 +66,7 @@ fn void? place_mirror(
     camera.layers &= ~node.layers;
     *scene.get(mirror, Camera) = camera;
     runtime.clip_plane = mirror_clip_plane(node.world, total_amplitude(bounding_waves(runtime)));
+    return MirrorState.PLACED;
 }
 
 // Repacks only when the node-local scroll velocities change; the offset stays continuous across the change.

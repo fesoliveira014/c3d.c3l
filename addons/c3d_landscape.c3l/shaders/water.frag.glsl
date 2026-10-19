@@ -5,10 +5,12 @@
 #include "standard_shading.glsl"
 #include "scene_snapshot.glsl"
 #include "texture_fetch.glsl"
+#include "fog.glsl"
 #include "landscape/water_waves.glsl"
 #include "landscape/water_reflection.glsl"
 
 const vec3 WATER_REFLECTANCE = vec3(0.02); // ior 1.33 at normal incidence
+const float WATER_IOR = 1.33; // air is 1; a ray leaving the water takes its inverse
 const uint WATER_RIPPLES = 0u; // mirrored as RIPPLE_REFERENCE in water/material.c3
 const uint WATER_FOAM = 1u; // mirrored as FOAM_REFERENCE in water/material.c3
 const float WATER_REFRACTION_DEPTH = 1.0; // metres of water behind the surface at which refraction bends fully
@@ -46,6 +48,53 @@ StandardMaterialSample water_layer(
     );
 }
 
+// What a ray leaving the water through the surface sees, from the snapshot where the direction lies in the frame and
+// from the environment where it does not. The depth is that of the snapshot sample; 0 is the background.
+vec3 water_window(FrameRoot frame, vec3 direction, out float depth) {
+    depth = 0.0;
+    vec4 clip = frame.view_proj * vec4(direction, 0.0);
+    if (frame.proj[3][3] == 0.0 && clip.w > 0.0) {
+        vec2 uv = vec2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5);
+        if (water_inside_frame(uv)) {
+            depth = scene_depth_at(frame, uv);
+            return sample_texture_2d_lod(frame.scene_color, frame.scene_sampler, uv, 0.0).rgb;
+        }
+    }
+    return water_miss_radiance(frame, direction);
+}
+
+// The underwater scene a ray reflected back down sees, fogged by the water's medium from the surface to where it hits.
+vec3 water_underwater_reflection(FrameRoot frame, WaterParams params, vec3 position, vec3 direction) {
+    vec3 radiance;
+    float hit_distance;
+    if ((params.flags & WATER_MARCH) != 0u && water_march(frame, position, direction, radiance, hit_distance)) {
+        return apply_fog_segment(frame, position, position + direction * hit_distance, radiance);
+    }
+    return apply_fog_to_infinity(frame, position, direction, water_miss_radiance(frame, direction));
+}
+
+// The surface seen from under it: the scene above through the window inside the critical angle, the underwater scene
+// outside it. The view's fog pass fogs the path from the camera to the surface.
+vec3 water_from_below(FrameRoot frame, WaterParams params, vec3 position, vec3 normal, vec3 view_direction) {
+    vec3 incident = -view_direction;
+    vec3 into_water = faceforward(-normal, incident, -normal);
+    vec3 transmitted = refract(incident, into_water, WATER_IOR);
+    bool total_reflection = dot(transmitted, transmitted) == 0.0;
+
+    // Schlick's fit takes the angle in the rarer medium on this side; it reaches 1 at the critical angle.
+    vec3 fresnel = vec3(1.0);
+    vec3 window = vec3(0.0);
+    float window_depth = 0.0;
+    if (!total_reflection) {
+        float cosine = dot(transmitted, -into_water);
+        fresnel = WATER_REFLECTANCE + (vec3(1.0) - WATER_REFLECTANCE) * pow(1.0 - cosine, 5.0);
+        window = water_window(frame, transmitted, window_depth);
+    }
+
+    vec3 reflection = water_underwater_reflection(frame, params, position, reflect(incident, into_water));
+    return apply_fog_refracted(frame, position, vec3(1.0) - fresnel, window, window_depth, fresnel * reflection);
+}
+
 void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     FrameRoot frame = FrameRoot(draw.frame);
@@ -69,7 +118,7 @@ void main() {
     }
     float foam = 0.0;
     vec3 foam_color = vec3(0.0);
-    float foam_roughness = params.scatter.w;
+    float foam_roughness = params.roughness;
     if (material.references[WATER_FOAM] != 0ul) {
         StandardMaterialSample foam_sample = water_layer(material, WATER_FOAM, geometry, normal, v_uv0, view_direction);
         foam_color = foam_sample.base_color.rgb;
@@ -89,29 +138,34 @@ void main() {
     vec2 refracted_uv = screen_uv + screen_tilt * (params.refraction_strength * bend);
     // Reverse-Z: a larger depth is nearer, so the offset sample landed on something in front of the water.
     if (scene_depth_at(frame, refracted_uv) > gl_FragCoord.z) refracted_uv = screen_uv;
-    // A background texel has no bed: the path is endless and absorbs everything.
-    vec3 transmittance = vec3(0.0);
-    if (scene_depth_at(frame, refracted_uv) > 0.0) {
-        float path = distance(v_world_pos, scene_position_at(frame, refracted_uv));
-        transmittance = pow(params.absorption.rgb, vec3(path / params.absorption.w));
-    }
-    vec3 behind = sample_texture_2d_lod(frame.scene_color, frame.scene_sampler, refracted_uv, 0.0).rgb;
 
     vec3 irradiance = indirect_diffuse_irradiance(frame, v_world_pos, normal, view_direction);
-    vec3 scatter = standard_ambient_fill(frame, params.scatter.rgb, 0.0, 1.0, 1.0, vec4(0.0))
-        + irradiance * params.scatter.rgb / PI;
-    vec3 refraction = behind * transmittance + scatter * (1.0 - transmittance);
-
     vec3 foam_albedo = foam_color * foam;
     StandardSurface surface = prepare_surface(
         foam_albedo,
         0.0,
-        mix(params.scatter.w, foam_roughness, foam),
+        mix(params.roughness, foam_roughness, foam),
         normal,
         view_direction,
         WATER_REFLECTANCE,
         vec3(1.0)
     );
+    vec3 color = evaluate_standard_lights(
+        frame,
+        surface,
+        v_world_pos,
+        wave_normal,
+        draw.layers,
+        (draw.flags & DRAW_RECEIVE_SHADOW) != 0u
+    );
+
+    // The branch holds explicit-lod reads only, so the derivatives above stay in uniform control flow.
+    if (!gl_FrontFacing) {
+        color = water_from_below(frame, params, v_world_pos, normal, view_direction);
+        out_color = material_output(color, 1.0, material.flags);
+        return;
+    }
+
     vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, surface.normal_view);
     vec3 reflection = water_reflection(
         frame,
@@ -124,14 +178,15 @@ void main() {
     );
     vec3 foam_ambient = standard_ambient_fill(frame, foam_albedo, 0.0, 1.0, 1.0, vec4(0.0))
         + irradiance * surface.diffuse_color;
-    vec3 color = evaluate_standard_lights(
+    color += fresnel * reflection + (1.0 - fresnel) * foam_ambient;
+    vec3 behind = sample_texture_2d_lod(frame.scene_color, frame.scene_sampler, refracted_uv, 0.0).rgb;
+    color = apply_fog_refracted(
         frame,
-        surface,
         v_world_pos,
-        wave_normal,
-        draw.layers,
-        (draw.flags & DRAW_RECEIVE_SHADOW) != 0u
+        (1.0 - fresnel) * (1.0 - foam),
+        behind,
+        scene_depth_at(frame, refracted_uv),
+        color
     );
-    color += fresnel * reflection + (1.0 - fresnel) * ((1.0 - foam) * refraction + foam_ambient);
     out_color = material_output(color, 1.0, material.flags);
 }

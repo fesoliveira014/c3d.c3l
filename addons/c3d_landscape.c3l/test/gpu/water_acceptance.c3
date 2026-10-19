@@ -70,6 +70,24 @@ const Vec3 STRIPE_POSITION @local = { 0, 1.5f, -10 };
 const Vec3 STRIPE_SIZE @local = { 0.4f, 3, 0.4f };
 const Vec3 MARCH_CAMERA_POSITION @local = { 0, 1, 4 };
 const Vec3 AMBIENT @local = { 0.2f, 0.1f, 0.05f };
+const float MURKY_EXTENT @local = 40; // metres along the murky body's side, and along its plates
+const Vec3 MEDIUM_TRANSMITTANCE @local = { 0.5f, 0.25f, 0.125f }; // after MEDIUM_DISTANCE metres; tells paths apart
+const float MEDIUM_DISTANCE @local = 4;
+const Vec3 BED_POSITION @local = { 0, -6.5f, 0 }; // a plate with its top face 6 m under the rest plane
+const Vec3 CEILING_POSITION @local = { 0, 3.5f, 0 }; // a plate with its bottom face 3 m over it
+const Vec3 PLATE_SIZE @local = { MURKY_EXTENT, 1, MURKY_EXTENT };
+const Vec3 SURFACE_CAMERA_POSITION @local = { 0, 2, 0 }; // over the water, under the ceiling
+const Vec3 DIVER_POSITION @local = { 0, -2, 0 };
+const float OVERHEAD_FOV_DEGREES @local = 90; // wide: the window samples the frame where the refracted direction lies
+const float SLANT_PITCH @local = 0.364f; // tangent of 20 degrees: the diver looks up and sideways
+const float TIR_ELEVATION_DEGREES @local = 30; // 60 from the vertical, past the critical angle of 48.75
+const float TIR_REACH @local = 10; // metres along the ray to the world point that locates its pixel
+const float TIR_FOG_RATIO @local = 0.5f; // the reflected path is many absorption distances: far under half remains
+const Vec3 MIRROR_BACKGROUND_POINT @local = { -4, 4, -8 }; // above the plane, off every box
+const uint MIRROR_SAMPLES @local = 2;
+const int[<2>][3] CENTRE_PIXELS @local = { { 32, 32 }, { 26, 30 }, { 36, 38 } }; // near the axis of the view
+const float SHIFT_TOLERANCE @local = 0.002f; // absolute, near zero
+const float SHIFT_RELATIVE_TOLERANCE @local = 0.005f; // opaque water's medium over a depth rebuild's noise
 const float MISS_TOLERANCE @local = 0.03f; // relative; half-float storage and the Schlick fit
 const float HALF_FLOAT_STEP @local = 0.0005f; // absolute floor of the comparison, near zero
 const uint VELOCITY_SIZE @local = 65;
@@ -1041,7 +1059,8 @@ fn void test_mirror_view_reflects_what_is_above_the_water() @test {
         Vec4[] translated = read_texels(&fixture, pixels.len);
         foreach (index, expected : reference) {
             for (uint channel = 0; channel < 3; channel++) {
-                assert(math::abs(translated[index][channel] - expected[channel]) < 0.002f);
+                float slack = SHIFT_TOLERANCE + SHIFT_RELATIVE_TOLERANCE * expected[channel];
+                assert(math::abs(translated[index][channel] - expected[channel]) <= slack);
             }
         }
     }
@@ -1356,7 +1375,8 @@ fn void test_march_reflects_the_snapshot_and_misses_to_ambient() @test {
         )!!;
         foreach (index, value : reference) {
             for (uint channel = 0; channel < 3; channel++) {
-                assert(math::abs(translated[index][channel] - value[channel]) < 0.002f);
+                float slack = SHIFT_TOLERANCE + SHIFT_RELATIVE_TOLERANCE * value[channel];
+                assert(math::abs(translated[index][channel] - value[channel]) <= slack);
             }
         }
     }
@@ -1728,4 +1748,261 @@ fn void test_traced_water_agrees_with_the_drawn_surface_and_follows_the_waves() 
         assert(shadowed.covered == 0 && shadowed.mismatch >= COVERAGE_MINIMUM, "the water cast a traced shadow");
         check_validation(renderer);
     }
+}
+
+fn WaterDesc murky_desc() @local {
+    WaterDesc desc = surface_desc({}, MURKY_EXTENT, 1);
+    desc.absorption_color = MEDIUM_TRANSMITTANCE;
+    desc.absorption_distance = MEDIUM_DISTANCE;
+    desc.march_reflections = true;
+    return desc;
+}
+
+fn Vec4 shoot_pixel(
+    Fixture* fixture,
+    Node* camera_node,
+    ViewId view,
+    int[<2>] pixel,
+) @local {
+    int[<2>][1] pixels = { pixel };
+    Vec4[] colors = render_and_read(
+        fixture: fixture,
+        viewing: camera_node,
+        view:    view,
+        time:    0,
+        pixels:  pixels[..],
+        depth:   false,
+    )!!;
+    return colors[0];
+}
+
+fn Vec4[CENTRE_PIXELS.len] shoot_centre(Fixture* fixture, Node* camera_node, ViewId view) @local {
+    Vec4[] colors = render_and_read(
+        fixture: fixture,
+        viewing: camera_node,
+        view:    view,
+        time:    0,
+        pixels:  CENTRE_PIXELS[..],
+        depth:   false,
+    )!!;
+    Vec4[CENTRE_PIXELS.len] copy;
+    copy[..] = colors[:CENTRE_PIXELS.len];
+    return copy;
+}
+
+// The medium murky_desc describes, stated from its transmittance rather than read from the body.
+fn MediumVolume murky_medium() @local {
+    return {
+        .absorption  = {
+            -math::ln(MEDIUM_TRANSMITTANCE.x) / MEDIUM_DISTANCE,
+            -math::ln(MEDIUM_TRANSMITTANCE.y) / MEDIUM_DISTANCE,
+            -math::ln(MEDIUM_TRANSMITTANCE.z) / MEDIUM_DISTANCE,
+        },
+        .half_extent = { MURKY_EXTENT / 2, MURKY_EXTENT / 2 },
+        .depth       = water::DEFAULT_WATER_DEPTH,
+    };
+}
+
+// The body goes and a plain node carries the medium, so the same box fogs with no surface in it.
+fn void replace_water_with_medium(Fixture* fixture, Node* water_node) @local {
+    fixture.scene.remove(water_node);
+    update_water(fixture, 0);
+    Node* standalone = fixture.scene.add_node(name: "medium")!!;
+    fixture.scene.add(standalone, murky_medium());
+    fixture.scene.update_world();
+}
+
+// The surface passes (1 - F) of what lies behind it, F being Schlick's at normal incidence; the render of the same
+// scene with only the medium has no surface. Half-float storage and the fit bound the rest.
+fn void assert_passes_the_medium_once(Vec4[] through_water, Vec4[] through_medium) @local {
+    float passed = 1 - schlick(1);
+    foreach (index, medium_color : through_medium) {
+        for (uint channel = 0; channel < 3; channel++) {
+            float expected = passed * medium_color[channel];
+            float tolerance = MISS_TOLERANCE * expected + HALF_FLOAT_STEP;
+            float found = through_water[index][channel];
+            float miss = math::abs(found - expected);
+            assert(miss <= tolerance, "pixel %d, channel %d: %f, not %f", index, channel, found, expected);
+        }
+    }
+}
+
+fn Vec4[MIRROR_SAMPLES] read_mirror(
+    Fixture* fixture,
+    Node* mirror_node,
+    ViewId mirror_view,
+    int[<2>][] pixels,
+) @local {
+    Renderer* renderer = &fixture.renderer;
+    update_water(fixture, 0);
+    renderer.begin_frame({ .time = 0, .delta = (float)VELOCITY_STEP })!!;
+    renderer.render_view(&fixture.scene, mirror_node, mirror_view)!!;
+    record_readback(fixture, render::read_view_color(mirror_view), pixels)!!;
+    renderer.finish_view(mirror_view)!!;
+    renderer.end_frame()!!;
+    Vec4[] colors = read_texels(fixture, pixels.len);
+    Vec4[MIRROR_SAMPLES] copy;
+    copy[..] = colors[:MIRROR_SAMPLES];
+    return copy;
+}
+
+fn void test_water_bed_is_absorbed_once() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Node* water_node = add_water_node(&fixture, murky_desc());
+    add_emissive_box(&fixture, BED_POSITION, PLATE_SIZE);
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: 60,
+        position:    SURFACE_CAMERA_POSITION,
+        forward:     { 0, -1, 0 },
+        up:          { 0, 0, -1 },
+    );
+    ViewId view = add_view(&fixture, MIRROR_SIZE);
+
+    Vec4[CENTRE_PIXELS.len] through_water = shoot_centre(&fixture, camera_node, view);
+    assert(luminance(through_water[0]) > DARK_LIMIT, "the bed is not seen: %f", luminance(through_water[0]));
+    replace_water_with_medium(&fixture, water_node);
+    Vec4[CENTRE_PIXELS.len] through_medium = shoot_centre(&fixture, camera_node, view);
+    assert_passes_the_medium_once(through_water[..], through_medium[..]);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_underwater_view_fogs_the_surface_once() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Node* water_node = add_water_node(&fixture, murky_desc());
+    add_emissive_box(&fixture, CEILING_POSITION, PLATE_SIZE);
+    Node* diver = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: OVERHEAD_FOV_DEGREES,
+        position:    DIVER_POSITION,
+        forward:     { 0, 1, 0 },
+        up:          { 0, 0, -1 },
+    );
+    ViewId view = add_view(&fixture, MIRROR_SIZE);
+
+    // Looking up, the plate over the water shows through Snell's window.
+    Vec4[CENTRE_PIXELS.len] through_water = shoot_centre(&fixture, diver, view);
+    assert(luminance(through_water[0]) > DARK_LIMIT, "the window is dark: %f", luminance(through_water[0]));
+    replace_water_with_medium(&fixture, water_node);
+    Vec4[CENTRE_PIXELS.len] through_medium = shoot_centre(&fixture, diver, view);
+    assert_passes_the_medium_once(through_water[..], through_medium[..]);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_underwater_surface_reflects_the_fogged_bed_past_the_window() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Node* water_node = add_water_node(&fixture, murky_desc());
+    add_emissive_box(&fixture, BED_POSITION, PLATE_SIZE);
+    Node* diver = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: OVERHEAD_FOV_DEGREES,
+        position:    DIVER_POSITION,
+        forward:     { 0, SLANT_PITCH, -1 },
+        up:          { 0, 1, 0 },
+    );
+    ViewId view = add_view(&fixture, MIRROR_SIZE);
+    CameraMatrices matrices = matrices_of(&fixture, diver, MIRROR_SIZE);
+    float elevation = (float)math::deg_to_rad(TIR_ELEVATION_DEGREES);
+    Vec3 along_ray = DIVER_POSITION + (Vec3){ 0, math::sin(elevation), -math::cos(elevation) } * TIR_REACH;
+    int[<2>] reflecting = pixel_of(&matrices, along_ray, MIRROR_SIZE);
+
+    Vec4 fogged = shoot_pixel(
+        fixture:     &fixture,
+        camera_node: diver,
+        view:        view,
+        pixel:       reflecting,
+    );
+    WaterDesc clear = murky_desc();
+    clear.absorption_color = { 1, 1, 1 };
+    water::set_desc(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   water_node,
+        desc:   clear,
+    )!!;
+    Vec4 unfogged = shoot_pixel(
+        fixture:     &fixture,
+        camera_node: diver,
+        view:        view,
+        pixel:       reflecting,
+    );
+    assert(unfogged.x > DARK_LIMIT, "the reflection of the bed is missing: %f", unfogged.x);
+    assert(fogged.x > DARK_LIMIT, "the fogged reflection is lost: %f", fogged.x);
+    assert(fogged.x < TIR_FOG_RATIO * unfogged.x, "fogged %f, unfogged %f", fogged.x, unfogged.x);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_water_mirror_is_not_darkened_by_its_own_medium() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Node* water_node = add_water_node(&fixture, murky_desc());
+    add_emissive_box(&fixture, FLOATING_BOX_POSITION, { 1, 1, 1 });
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: 60,
+        position:    MIRROR_CAMERA_POSITION,
+        forward:     { 0, -0.25f, -1 },
+        up:          { 0, 1, 0 },
+    );
+    fixture.scene.update_world();
+    water::update_mirror(
+        scene:          &fixture.scene,
+        body:           water_node.id,
+        slot:           0,
+        viewing_camera: camera_node.id,
+    )!!;
+
+    // The mirror camera leaves out the body's own layer, which keeps the medium out of its view. Giving the layer
+    // back, and hiding the surface from the raster, puts the medium in the view with the camera inside its box.
+    WaterRuntime* runtime = fixture.scene.get(water_node, WaterRuntime);
+    Node* mirror_node = fixture.scene.node(runtime.mirrors[0]);
+    fixture.scene.get(mirror_node, Camera).layers |= WATER_LAYER;
+    fixture.scene.get(water_node, Mesh).trace_only = true;
+    RenderTargetId target = render::create_render_target(
+        &fixture.renderer,
+        render::render_target_desc(MIRROR_SIZE, MIRROR_SIZE),
+    )!!;
+    ViewDesc mirror_desc = render::texture_view_desc(target);
+    mirror_desc.post.anti_aliasing = AntiAliasing.NONE;
+    mirror_desc.clip_plane = runtime.clip_plane;
+    ViewId mirror_view = render::create_view(&fixture.renderer, mirror_desc)!!;
+    CameraMatrices matrices = matrices_of(&fixture, mirror_node, MIRROR_SIZE);
+    int[<2>][MIRROR_SAMPLES] pixels = {
+        pixel_of(&matrices, FLOATING_BOX_POSITION, MIRROR_SIZE),
+        pixel_of(&matrices, MIRROR_BACKGROUND_POINT, MIRROR_SIZE),
+    };
+
+    Vec4[MIRROR_SAMPLES] with_medium = read_mirror(
+        fixture:     &fixture,
+        mirror_node: mirror_node,
+        mirror_view: mirror_view,
+        pixels:      pixels[..],
+    );
+    fixture.scene.remove_component(water_node, MediumVolume);
+    Vec4[MIRROR_SAMPLES] without_medium = read_mirror(
+        fixture:     &fixture,
+        mirror_node: mirror_node,
+        mirror_view: mirror_view,
+        pixels:      pixels[..],
+    );
+    float seen = luminance(without_medium[0]);
+    assert(seen > EMISSIVE_STRENGTH / 2, "the box is not seen: %f", seen);
+
+    // The frames differ by the medium alone, so only the half-float storage of two renders can tell them apart.
+    foreach (index, expected : without_medium) {
+        for (uint channel = 0; channel < 3; channel++) {
+            float tolerance = HALF_FLOAT_STEP + MISS_TOLERANCE * expected[channel];
+            float found = with_medium[index][channel];
+            float miss = math::abs(found - expected[channel]);
+            assert(miss <= tolerance, "pixel %d, channel %d: %f, not %f", index, channel, found, expected[channel]);
+        }
+    }
+    check_validation(&fixture.renderer);
 }

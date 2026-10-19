@@ -58,6 +58,13 @@ const uint OCEAN_MOVE_FRAME @local = 40; // blend frame on which the node moves
 const float OCEAN_REACH @local = 33; // metres from the moved anchor to the farthest test point: snap plus 4 m
 const uint LARGEST_OCEAN_NODES @local = 87381; // nodes of the largest ocean: levels of 256², 128², ... 1 chunks
 const uint OCEAN_LEVELS @local = 9;
+const float MEDIUM_TOLERANCE @local = 0.0001f; // relative; float rounding of the logarithm and the albedo quotient
+const Vec3 MEDIUM_TRANSMITTANCE @local = { 0.5f, 0.25f, 0.125f }; // after MEDIUM_DISTANCE metres: ln 2, ln 4, ln 8
+const float MEDIUM_DISTANCE @local = 2;
+const Vec3 MEDIUM_ALBEDO @local = { 0.5f, 0.25f, 0.99f }; // the last channel passes MAX_SCATTER_ALBEDO
+const float MEDIUM_DEPTH @local = 12;
+const Vec2 OFF_CENTRE_SHIFT @local = { 40, -5 }; // metres the custom surface sits from its node
+const Vec3 BELOW_CAMERA @local = { 1, -3, 8 }; // under the rest plane of a body at y = 2
 
 struct Fixture @local {
     AssetStore assets;
@@ -143,7 +150,7 @@ fn void update_water(Fixture* fixture, Vec3 wind = {}, double time = 0) @local {
     );
 }
 
-fn void? try_update_mirror(
+fn MirrorState? try_update_mirror(
     Fixture* fixture,
     Entity body,
     uint slot = 0,
@@ -1443,4 +1450,122 @@ fn void test_ocean_batch_is_freed_on_failure_and_on_removal() @test {
     assert(!fixture.scene.has(node, InstancedMesh) && !fixture.scene.has(node, WaterRuntime));
     teardown(&fixture);
     assert(!tracking.has_leaks());
+}
+
+fn void assert_medium_value(float value, float expected, String what) @local {
+    float slack = MEDIUM_TOLERANCE * math::max(1.0f, math::abs(expected));
+    assert(math::abs(value - expected) <= slack, "%s is %f, expected %f", what, value, expected);
+}
+
+fn void test_water_medium_maps_the_desc() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    WaterDesc desc = calm_desc();
+    desc.absorption_color = MEDIUM_TRANSMITTANCE;
+    desc.absorption_distance = MEDIUM_DISTANCE;
+    desc.scatter_color = MEDIUM_ALBEDO;
+    desc.depth = MEDIUM_DEPTH;
+    Node* node = add_water_node(&fixture, desc);
+
+    MediumVolume* medium = fixture.scene.get(node, MediumVolume);
+    assert(medium && light::medium_volume_valid(medium));
+    float[3] transmittance = { MEDIUM_TRANSMITTANCE.x, MEDIUM_TRANSMITTANCE.y, MEDIUM_TRANSMITTANCE.z };
+    float[3] albedo = { MEDIUM_ALBEDO.x, MEDIUM_ALBEDO.y, water::MAX_SCATTER_ALBEDO };
+    foreach (channel, color : transmittance) {
+        float absorption = -math::ln(color) / MEDIUM_DISTANCE;
+        float scattering = absorption * albedo[channel] / (1 - albedo[channel]);
+        assert_medium_value(medium.absorption[channel], absorption, "absorption");
+        assert_medium_value(medium.scattering[channel], scattering, "scattering");
+    }
+    assert(medium.anisotropy == water::MEDIUM_ANISOTROPY);
+    assert(medium.depth == MEDIUM_DEPTH);
+    assert(medium.center == (Vec2){ 0, 0 } && medium.half_extent == (Vec2){ 100, 100 });
+
+    WaterDesc clear = desc;
+    clear.absorption_color = { 1, 1, 1 };
+    Node* clear_node = add_water_node(&fixture, clear);
+    assert(!fixture.scene.has(clear_node, MediumVolume));
+
+    GeometryId shifted;
+    @pool() {
+        Geometry plane = geometry::plane(tmem, 30, 10, 6, 2);
+        foreach (&position : plane.positions) {
+            position.x += OFF_CENTRE_SHIFT.x;
+            position.z += OFF_CENTRE_SHIFT.y;
+        }
+        plane.finalize();
+        shifted = fixture.assets.add_geometry(&plane)!!;
+    };
+    WaterDesc custom = desc;
+    custom.geometry = shifted;
+    custom.extent = 0;
+    Node* custom_node = add_water_node(&fixture, custom);
+    MediumVolume* custom_medium = fixture.scene.get(custom_node, MediumVolume);
+    assert(custom_medium.center == OFF_CENTRE_SHIFT && custom_medium.half_extent == (Vec2){ 15, 5 });
+
+    WaterDesc ocean = ocean_desc();
+    ocean.depth = MEDIUM_DEPTH;
+    Node* ocean_node = add_water_node(&fixture, ocean);
+    WaterRuntime* ocean_runtime = fixture.scene.get(ocean_node, WaterRuntime);
+    MediumVolume* ocean_medium = fixture.scene.get(ocean_node, MediumVolume);
+    assert(ocean_medium.half_extent.x >= OCEAN_EXTENT / 2 && ocean_medium.half_extent.y >= OCEAN_EXTENT / 2);
+    assert(ocean_medium.center + ocean_medium.half_extent == ocean_runtime.rest_max);
+    assert(ocean_medium.center - ocean_medium.half_extent == ocean_runtime.rest_min);
+}
+
+fn void test_water_medium_follows_the_desc_and_the_body() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    WaterDesc desc = calm_desc();
+    Node* node = add_water_node(&fixture, desc);
+    assert(fixture.scene.has(node, MediumVolume));
+
+    WaterDesc clear = desc;
+    clear.absorption_color = { 1, 1, 1 };
+    try_set_desc(&fixture, node, clear)!!;
+    assert(!fixture.scene.has(node, MediumVolume));
+
+    WaterDesc murky = desc;
+    murky.absorption_distance = MEDIUM_DISTANCE;
+    murky.depth = MEDIUM_DEPTH;
+    try_set_desc(&fixture, node, murky)!!;
+    MediumVolume* medium = fixture.scene.get(node, MediumVolume);
+    assert_medium_value(medium.absorption.x, -math::ln(desc.absorption_color.x) / MEDIUM_DISTANCE, "absorption");
+    assert(medium.depth == MEDIUM_DEPTH);
+
+    fixture.scene.remove_component(node, Water);
+    update_water(&fixture);
+    assert(!fixture.scene.has(node, MediumVolume) && !fixture.scene.has(node, WaterRuntime));
+
+    Node* owned = fixture.scene.add_node()!!;
+    fixture.scene.add(owned, (MediumVolume){ .absorption = { 1, 1, 1 }, .half_extent = { 1, 1 }, .depth = 1 });
+    assert_fault(@catch(try_add(&fixture, owned, desc)), c3d::INVALID_ARGUMENT, "Water on a node with a medium");
+    assert(!fixture.scene.has(owned, Water) && fixture.scene.has(owned, MediumVolume));
+}
+
+fn void test_mirror_below_the_rest_plane_is_disabled() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_water_node(&fixture, calm_desc(), { 0, 2, 0 });
+    WaterRuntime* runtime = fixture.scene.get(node, WaterRuntime);
+    place_camera(&fixture, fixture.camera, { 1, 5, 8 }, -20);
+    assert(try_update_mirror(&fixture, node.id)!! == MirrorState.PLACED);
+    Plane placed = runtime.clip_plane;
+    Mat4 mirror_pose = fixture.scene.node(runtime.mirrors[0]).world;
+    Camera* mirror = fixture.scene.get(fixture.scene.node(runtime.mirrors[0]), Camera);
+    assert(mirror.layers != 0);
+
+    fixture.camera.local.position = BELOW_CAMERA;
+    assert(try_update_mirror(&fixture, node.id)!! == MirrorState.BELOW);
+    assert(mirror.layers == 0);
+    assert(runtime.clip_plane.normal == placed.normal && runtime.clip_plane.d == placed.d);
+    Mat4 kept_pose = fixture.scene.node(runtime.mirrors[0]).world;
+    for (uint index = 0; index < 16; index++) assert(kept_pose.m[index] == mirror_pose.m[index]);
+
+    place_camera(&fixture, fixture.camera, { 1, 5, 8 }, -20);
+    assert(try_update_mirror(&fixture, node.id)!! == MirrorState.PLACED);
+    assert(mirror.layers != 0);
 }

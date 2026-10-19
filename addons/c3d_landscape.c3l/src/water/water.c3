@@ -73,6 +73,14 @@ enum WaterMode {
 }
 
 <*
+ What update_mirror did to a mirror slot.
+*>
+enum MirrorState {
+    PLACED, // the slot's camera reflects the viewing camera; render its view
+    BELOW,  // the viewing camera is under the rest plane; the slot's camera draws nothing and its view is not needed
+}
+
+<*
  One directional Gerstner wave in the node's local XZ.
 *>
 struct Wave {
@@ -233,6 +241,7 @@ fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, WaterRuntime);
 
 <*
  Prepare pending water atomically; prepared water is unchanged.
+ The body owns its node's MediumVolume from here on; a node that already has one is refused.
  @param [&inout] scene : "Registered; node world matrix current."
  @param [&inout] assets : "The store given to register_water."
  @param [&in] node : "Carries Water."
@@ -243,6 +252,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     if (is_prepared(scene, node)) return;
     WaterDesc desc = scene.get(node, Water).desc;
     check_desc(assets, &desc)!;
+    if (scene.has(node, MediumVolume)) return c3d::INVALID_ARGUMENT~;
     bool shader_created, grid_created;
     ShaderId shader = water_shader(assets, &shader_created)!;
     defer catch if (shader_created) assets.remove_shader(shader);
@@ -272,11 +282,14 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     }
     TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
     slots[REFLECTION_SLOT] = reflection_slot(desc.reflection_view_slot);
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.double_sided = true;
     MaterialId owned = assets.add_material(material::custom(
         shader:      shader,
         param_block: material::@as_bytes(params),
         slots:       slots,
         references:  { [RIPPLE_REFERENCE] = desc.ripples, [FOAM_REFERENCE] = desc.foam },
+        common:      common,
     ))!;
     defer catch assets.remove_material(owned);
     if (ocean) {
@@ -314,6 +327,13 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .rest_max   = { rest.max.x, rest.max.z },
         .ocean      = layout,
     });
+    write_medium(
+        scene:    scene,
+        node:     node,
+        desc:     &desc,
+        rest_min: { rest.min.x, rest.min.z },
+        rest_max: { rest.max.x, rest.max.z },
+    );
 }
 
 <*
@@ -341,7 +361,8 @@ fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
 
 <*
  Replace a water body's desc; the grid is rebuilt only when its shape changed.
- Ends a running sea-state blend. Invalidates Camera pointers when max_mirrors shrinks.
+ Ends a running sea-state blend and writes the body's MediumVolume again.
+ Invalidates Camera pointers when max_mirrors shrinks.
  An ocean keeps its mode, extent and cell size; remove and add the body to change them.
  @param [&inout] scene
  @param [&inout] assets : "The store given to register_water."
@@ -406,6 +427,13 @@ fn void? set_desc(
     runtime.rest_max = { rest.max.x, rest.max.z };
     runtime.desc = desc;
     scene.get(node, Water).desc = desc;
+    write_medium(
+        scene:    scene,
+        node:     node,
+        desc:     &desc,
+        rest_min: runtime.rest_min,
+        rest_max: runtime.rest_max,
+    );
     if (ocean) {
         place_ocean_bounds(
             scene: scene,
@@ -425,16 +453,18 @@ fn void? set_desc(
 
 <*
  Place one mirror slot's camera to reflect the viewing camera across the water's rest plane.
- Writes WaterRuntime.clip_plane; creates the slot's camera after release_mirror.
+ Writes WaterRuntime.clip_plane; creates the slot's camera after release_mirror. A viewing camera under the rest
+ plane leaves the clip plane and the camera's pose as they were and puts the camera on no layer.
  @param [&inout] scene : "World matrices current."
  @param body : "Node carrying prepared water."
  @param slot : "Mirror slot of the viewing view, below the body's max_mirrors."
  @param viewing_camera : "Root node carrying the Camera the mirror reflects."
+ @return "BELOW when the viewing camera is under the rest plane."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require !scene.world.is_alive(body) || !scene.world.has(body, WaterRuntime) || slot < scene.world.get(body, WaterRuntime).desc.max_mirrors
  @require !scene.world.is_alive(viewing_camera) || (scene.world.has(viewing_camera, Camera) && scene.node(viewing_camera).parent == scene.root)
 *>
-fn void? update_mirror(
+fn MirrorState? update_mirror(
     Scene* scene,
     Entity body,
     uint slot,
@@ -532,6 +562,7 @@ fn void remove_orphans(Scene* scene) @private {
         } else {
             scene.remove_component(node, Mesh);
         }
+        if (scene.has(node, MediumVolume)) scene.remove_component(node, MediumVolume);
         scene.remove_component(node, WaterRuntime);
     }
     while (true) {
