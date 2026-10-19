@@ -52,9 +52,14 @@ struct GpuInstances {
     gpu::GpuAllocation quadtree_allocation;
     gpu::GpuAddress    quadtree_nodes;
     gpu::GpuAddress    quadtree_leaves;
+    gpu::GpuAddress    quadtree_depths;
+    gpu::GpuAddress    quadtree_params;
     uint               quadtree_capacity;
     uint               quadtree_revision; // 0 forces an upload: a quadtree revision is never 0
     uint               quadtree_count;
+    uint               quadtree_parameter_revision; // 0 forces an upload: a parameter revision is never 0
+    float              quadtree_split_pixels; // the thresholds the block holds, which in-place edits change
+    float              quadtree_hysteresis;
 }
 
 <*
@@ -422,7 +427,7 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
         origin: renderer.frame_origin,
     );
     bool quadtree = candidate.batch.quadtree.parents.len != 0;
-    if (quadtree && (stale || quadtree_nodes_stale(slot, candidate.batch))) candidate.batch.validate_quadtree();
+    if (quadtree && (stale || quadtree_stale(slot, candidate.batch))) candidate.batch.validate_quadtree();
 
     if (stale) {
         upload_instance_records(
@@ -434,7 +439,12 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
             part:     candidate.crowd_part,
         )!;
     }
-    if (quadtree && quadtree_nodes_stale(slot, candidate.batch)) resolve_quadtree_nodes(renderer, index, candidate.batch)!;
+    if (quadtree && quadtree_nodes_stale(slot, candidate.batch)) {
+        resolve_quadtree_nodes(renderer, index, candidate.batch)!;
+    } else if (quadtree && quadtree_parameters_stale(slot, candidate.batch)) {
+        upload_quadtree_parameters(renderer, index, candidate.batch)!;
+        renderer.stats.uploads++;
+    }
     return slot.records;
 }
 

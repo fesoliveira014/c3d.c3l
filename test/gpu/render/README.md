@@ -14,6 +14,17 @@ far keeps its split nodes through hysteresis; an ordinary `configure_view` and a
 `set_instance_quadtree` drops it. A `LodGroup` added to the node after the quadtree makes `render_view` fault `UNSUPPORTED`. With
 a culling arena too small for the batch's lists, the batch draws its leaves in every pass and `Stats.quadtree_fallbacks` counts it.
 
+The box-range cases in `test_quadtree.c3` use a 1,365-node batch (six depths) over a flat plane with the camera beside one corner.
+`test_box_ranges_bound_the_level_difference` reads the drawn nodes back and asserts that nodes sharing an edge differ by at most
+one depth, in a 512-pixel view where the natural ranges already hold and in a 128-pixel view where only the clamp holds (the
+pixels per extent drop to about one half by editing `split_pixels` in place); each pass must draw depths at least two apart.
+`selection_probe.vert.glsl` stores `FrameRoot.selection_camera` and `previous_selection_camera` from its shaded and its depth
+forms: `test_selection_camera_follows_the_owning_view` checks that a shadow layer holds its view's camera, not the light's, and
+`test_vertex_stage_reads_the_quadtree_block` that an instanced stage reaches the batch's `QuadtreeGpu` and per-node depth through
+the instance-effects block and gets the expected range and morph from `quadtree_morph.glsl`; a smaller batch placed on a
+node whose larger slot survived reads its own depths. The probe stores from the vertex stage through a device address, without
+`vertexPipelineStoresAndAtomics` enabled by the library; library shaders must not use that pattern.
+
 The vertex-motion cases in `test_vertex_motion.c3` move a stationary quad's base
 positions and compare the centre velocity with the CPU projection (2e-3 UV) on
 forward and deferred views, without TAA, across two views with different

@@ -71,16 +71,38 @@ struct InstanceSpan {
 }
 
 <*
+ Rule by which a quadtree batch decides which nodes split.
+*>
+enum QuadtreeMetric {
+    SPHERE_PIXELS, // a node splits when its bounding sphere is taller than split_pixels
+    BOX_RANGES,    // a node splits when the camera is nearer to its box than the range of its depth
+}
+
+<*
+ Extent and box diagonal of the nodes of one quadtree depth, in batch-local units.
+*>
+struct QuadtreeLevel {
+    float extent;   // horizontal extent of a node
+    float diagonal; // upper bound of the box diagonal of any node
+}
+
+<*
  Per-view level-of-detail selection over a batch whose instances form a quadtree.
- revision, leaves and leaf_count are kept by the library; applications call Scene.set_instance_quadtree.
+ revision, leaves, leaf_count, depth_count and parameter_revision are kept by the library; applications call
+ Scene.set_instance_quadtree and Scene.set_quadtree_ranges.
 *>
 struct InstanceQuadtree {
-    uint[] parents;      // parent instance per instance; QUADTREE_ROOT for a root; empty disables the mode
-    float  split_pixels; // a node splits when its projected height exceeds this many pixels of the view's working extent
-    float  hysteresis;   // a split node merges below split_pixels / (1 + hysteresis)
-    uint   revision;     // topology revision: advanced when parents change, never by record edits; never 0 once set
-    bool[] leaves;       // per instance: no other instance names it as parent
-    uint   leaf_count;
+    uint[]         parents;      // parent instance per instance; QUADTREE_ROOT for a root; empty disables the mode
+    float          split_pixels; // a node splits when its projected height exceeds this many pixels of the view's working extent
+    float          hysteresis;   // a split node merges below split_pixels / (1 + hysteresis)
+    uint           revision;     // topology revision: advanced when parents change, never by record edits; never 0 once set
+    bool[]         leaves;       // per instance: no other instance names it as parent
+    uint           leaf_count;
+    uint           depth_count;  // longest chain of ancestors plus one; 0 without parents
+    QuadtreeMetric metric;       // reset to SPHERE_PIXELS by Scene.set_instance_quadtree
+    float          morph_band;   // BOX_RANGES: share of a range over which vertices morph
+    uint           parameter_revision; // advanced when the metric, band or levels change; never 0 once set
+    QuadtreeLevel[MAX_QUADTREE_DEPTH + 1] levels; // BOX_RANGES: indexed by depth, depth_count entries
 }
 
 <*
@@ -229,6 +251,17 @@ fn uint InstancedMesh.leaf_instances(&self) {
 }
 
 <*
+ Number of ancestors of the instance.
+ @require self.parents.len > instance
+*>
+fn uint InstanceQuadtree.depth_of(&self, uint instance) {
+    uint depth;
+    for (uint ancestor = self.parents[instance]; ancestor != QUADTREE_ROOT; ancestor = self.parents[ancestor]) depth++;
+
+    return depth;
+}
+
+<*
  World-space distance the sway can move a vertex along each axis.
  @require self.amplitude == 0 || self.direction.length() > 0
 *>
@@ -279,12 +312,30 @@ fn bool instance_effects_valid(InstanceSway sway, InstanceFade fade) {
       && math::is_finite(fade.end);
 }
 
+fn void? check_quadtree_ranges(InstanceQuadtree* quadtree) @private {
+    if (quadtree.metric == QuadtreeMetric.SPHERE_PIXELS) return;
+
+    // Negated so NaN faults too.
+    if (!(quadtree.split_pixels > 0) || !(quadtree.hysteresis < 1)) return c3d::INVALID_ARGUMENT~;
+    if (!(quadtree.morph_band >= 0 && quadtree.morph_band <= (1 - quadtree.hysteresis) * 0.5f)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    if (quadtree.depth_count == 0) return c3d::INVALID_ARGUMENT~;
+
+    foreach (level : quadtree.levels[:quadtree.depth_count]) {
+        if (!(level.extent > 0) || !math::is_finite(level.extent)) return c3d::INVALID_ARGUMENT~;
+        if (!(level.diagonal > 0) || !math::is_finite(level.diagonal)) return c3d::INVALID_ARGUMENT~;
+    }
+}
+
 <*
  Whether the quadtree is well formed and the batch can draw it.
  Instance records pack unmirrored instances first, so a mirrored instance would move the records off their parents.
 *>
 fn bool instance_quadtree_valid(InstancedMesh* batch) {
-    return @ok(check_instance_quadtree(&batch.quadtree, batch.count)) && !batch.trace && batch.mirrored_count() == 0;
+    return @ok(check_instance_quadtree(&batch.quadtree, batch.count)) && @ok(check_quadtree_ranges(&batch.quadtree))
+      && !batch.trace && batch.mirrored_count() == 0;
 }
 
 fn void free_instanced_mesh(Entity entity, void* component, void* user) @private {

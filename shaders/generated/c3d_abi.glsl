@@ -62,6 +62,8 @@ const uint QUADTREE_SPLIT = 1u;
 const uint QUADTREE_DRAW = 2u;
 const uint QUADTREE_ROOT = 4294967295u;
 const uint MAX_QUADTREE_DEPTH = 8u;
+const uint QUADTREE_METRIC_SPHERE_PIXELS = 0u;
+const uint QUADTREE_METRIC_BOX_RANGES = 1u;
 const uint BILLBOARD_CAMERA = 0u;
 const uint BILLBOARD_DIRECTIONAL = 1u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
@@ -73,6 +75,7 @@ const uint DRAW_DISTANCE_FADE = 16u;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32u;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64u;
 const uint DRAW_TRACED_REFLECTION = 128u;
+const uint DRAW_QUADTREE = 256u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint FRAME_AO_BENT_NORMALS = 1024u;
 const uint AO_BLUR_FLAG_VECTOR_INPUT = 1u;
@@ -441,6 +444,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint view_textures[4];
     uint _pad0;
     uint _pad1;
+    vec4 selection_camera;
+    vec4 previous_selection_camera;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -508,6 +513,23 @@ struct QuadtreeNodeGpu {
     uint children;
 };
 
+struct QuadtreeLevelGpu {
+    float extent;
+    float diagonal;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer QuadtreeGpu {
+    uint metric;
+    float split_pixels;
+    float hysteresis;
+    float morph_band;
+    uint depth_count;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    QuadtreeLevelGpu levels[9];
+};
+
 struct LodHistoryGpu {
     mat4 model;
     uint level;
@@ -564,8 +586,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     float quadtree_split_pixels;
     float quadtree_hysteresis;
     float quadtree_height_pixels;
-    uint _pad9;
-    uint _pad10;
+    float quadtree_pixel_scale;
+    float quadtree_world_scale;
+    uint64_t quadtree_params;
+    uint64_t quadtree_depths;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer InstanceSortRoot {
@@ -613,6 +637,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceEff
     float fade_end;
     float fade_transition;
     uint _pad0;
+    uint64_t instance_quadtree;
+    uint64_t instance_depths;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer TraceSwayPoseRoot {

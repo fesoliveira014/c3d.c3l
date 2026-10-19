@@ -281,10 +281,38 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `view_clip.glsl` | `gl_ClipDistance[1]` (redeclared) and `view_clip_distance` ([clip plane](views.md#clip-plane)); vertex stages only |
 | `instance_effects.glsl` | `instance_anchor`, `instance_fade_scale`, `sway_height_weight`, `sway_offset` ([sway and fade](instancing.md#sway-and-distance-fade); the blocks are `c3d_abi.glsl`'s `InstanceEffectsGpu` and `SwayGpu`) |
 | `mesh_vertex.glsl` | the push block, outputs 0 to 6, `gl_ClipDistance[1]` and `view_clip_distance` (through `view_clip.glsl`), `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`; starts from the view's retained base positions of a [`vertex_motion`](post.md#edited-vertices) mesh), `instance_source`, `instance_bend_weight` and `apply_instance_effects` (`INSTANCED`), `apply_previous_instance_effects` (`VELOCITY` with `INSTANCED`) |
+| `quadtree_morph.glsl` | `quadtree_range`, `quadtree_morph` and `quadtree_world_scale` ([quadtree morph](#quadtree-morph); the blocks are `c3d_abi.glsl`'s `QuadtreeGpu` and `QuadtreeLevelGpu`); vertex and compute stages |
 | `trace_pose.glsl` | the compute push block and group size, `TracePoseVertex`, `trace_pose_vertex`, `trace_pose_write`, `trace_pose_instance` ([trace pose](#trace-pose)); compute stages only |
 | `scene_trace.glsl` | as in [Scene tracing](scene_trace.md) |
 
-`blend_output.glsl` is probed plain and with `WEIGHTED_BLEND`; `shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, with `RT_SHADOWS` and `SCENE_TRACE_BVH`, and each of those two with `RT_SHADOWS_HARD`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `instance_effects.glsl` in vertex and compute stages; `trace_pose.glsl` in compute stages; `scene_trace.glsl` in compute with each trace kind.
+`blend_output.glsl` is probed plain and with `WEIGHTED_BLEND`; `shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, with `RT_SHADOWS` and `SCENE_TRACE_BVH`, and each of those two with `RT_SHADOWS_HARD`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `instance_effects.glsl` and `quadtree_morph.glsl` in vertex and compute stages; `trace_pose.glsl` in compute stages; `scene_trace.glsl` in compute with each trace kind.
+
+### Quadtree morph
+
+A custom vertex stage that draws a [quadtree batch](instancing.md#quadtree-selection) under `BOX_RANGES` morphs its vertices toward the parent level with the numbers that selected the node. `quadtree_morph.glsl` declares
+
+```glsl
+float quadtree_range(QuadtreeGpu tree, uint depth, float pixel_scale, float world_scale);
+float quadtree_morph(QuadtreeGpu tree, uint depth, float vertex_distance, float pixel_scale, float world_scale);
+float quadtree_world_scale(mat4 node_world);
+```
+
+`quadtree_range` is the selection range of a depth in a perspective view, in world units; the selection pass calls the same function. `quadtree_morph` is 0 at `R_{d-1} (1 - b)` from the selection camera, 1 at `R_{d-1}`, and 0 for a root and under the sphere metric. The arguments come from the draw:
+
+```glsl
+InstanceEffectsGpu effects = InstanceEffectsGpu(draw.instance_effects); // set under DRAW_QUADTREE
+QuadtreeGpu tree = QuadtreeGpu(effects.instance_quadtree);
+uint depth = DepthArray(effects.instance_depths).values[instance_source(draw)];
+float morph = quadtree_morph(
+    tree,
+    depth,
+    distance(world_position, frame.selection_camera.xyz),
+    frame.selection_camera.w,
+    quadtree_world_scale(draw.model)
+);
+```
+
+`DepthArray` is a `uint` array reference the stage declares. The batch's `QuadtreeGpu` is never zero for a quadtree batch, so a stage that reads it under `DRAW_QUADTREE` needs no further check. The include states the two conditions the ranges keep: no pop at a merge, and at most one depth between neighbours. An orthographic view (`frame.proj[3][3] == 1.0`) has no distance term and takes the size rule, so a stage skips `quadtree_morph` there; the morph is 0. Draws in shadow layers and the depth prepass read the owning view's camera from `FrameRoot.selection_camera`, so their surface matches the shaded one ([selection camera](views.md#selection-camera)).
 
 ### Traced shadows
 

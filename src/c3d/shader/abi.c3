@@ -59,6 +59,8 @@ const uint QUADTREE_SPLIT = 1;
 const uint QUADTREE_DRAW = 2;
 const uint QUADTREE_ROOT = 4294967295;
 const uint MAX_QUADTREE_DEPTH = 8;
+const uint QUADTREE_METRIC_SPHERE_PIXELS = 0;
+const uint QUADTREE_METRIC_BOX_RANGES = 1;
 const uint BILLBOARD_CAMERA = 0;
 const uint BILLBOARD_DIRECTIONAL = 1;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
@@ -70,6 +72,7 @@ const uint DRAW_DISTANCE_FADE = 16;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64;
 const uint DRAW_TRACED_REFLECTION = 128;
+const uint DRAW_QUADTREE = 256;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint FRAME_AO_BENT_NORMALS = 1024;
 const uint AO_BLUR_FLAG_VECTOR_INPUT = 1;
@@ -571,8 +574,10 @@ struct FrameRoot {
     TextureIndex[4] view_textures;
     uint            _pad0;
     uint            _pad1;
+    Vec4f           selection_camera;
+    Vec4f           previous_selection_camera;
 }
-$assert FrameRoot::size == 608;
+$assert FrameRoot::size == 640;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -618,6 +623,8 @@ $assert $reflect(FrameRoot.light_spatial).offset == 576;
 $assert $reflect(FrameRoot.view_textures).offset == 584;
 $assert $reflect(FrameRoot._pad0).offset == 600;
 $assert $reflect(FrameRoot._pad1).offset == 604;
+$assert $reflect(FrameRoot.selection_camera).offset == 608;
+$assert $reflect(FrameRoot.previous_selection_camera).offset == 624;
 
 struct DrawRoot {
     Mat4f        model;
@@ -739,6 +746,36 @@ $assert QuadtreeNodeGpu::size == 8;
 $assert $reflect(QuadtreeNodeGpu.parent).offset == 0;
 $assert $reflect(QuadtreeNodeGpu.children).offset == 4;
 
+struct QuadtreeLevelGpu {
+    float extent;
+    float diagonal;
+}
+$assert QuadtreeLevelGpu::size == 8;
+$assert $reflect(QuadtreeLevelGpu.extent).offset == 0;
+$assert $reflect(QuadtreeLevelGpu.diagonal).offset == 4;
+
+struct QuadtreeGpu {
+    uint                metric;
+    float               split_pixels;
+    float               hysteresis;
+    float               morph_band;
+    uint                depth_count;
+    uint                _pad0;
+    uint                _pad1;
+    uint                _pad2;
+    QuadtreeLevelGpu[9] levels;
+}
+$assert QuadtreeGpu::size == 104;
+$assert $reflect(QuadtreeGpu.metric).offset == 0;
+$assert $reflect(QuadtreeGpu.split_pixels).offset == 4;
+$assert $reflect(QuadtreeGpu.hysteresis).offset == 8;
+$assert $reflect(QuadtreeGpu.morph_band).offset == 12;
+$assert $reflect(QuadtreeGpu.depth_count).offset == 16;
+$assert $reflect(QuadtreeGpu._pad0).offset == 20;
+$assert $reflect(QuadtreeGpu._pad1).offset == 24;
+$assert $reflect(QuadtreeGpu._pad2).offset == 28;
+$assert $reflect(QuadtreeGpu.levels).offset == 32;
+
 struct LodHistoryGpu {
     Mat4f model;
     uint  level;
@@ -808,10 +845,12 @@ struct InstanceCullRoot {
     float      quadtree_split_pixels;
     float      quadtree_hysteresis;
     float      quadtree_height_pixels;
-    uint       _pad9;
-    uint       _pad10;
+    float      quadtree_pixel_scale;
+    float      quadtree_world_scale;
+    GpuAddress quadtree_params;
+    GpuAddress quadtree_depths;
 }
-$assert InstanceCullRoot::size == 400;
+$assert InstanceCullRoot::size == 416;
 $assert $reflect(InstanceCullRoot.instances).offset == 0;
 $assert $reflect(InstanceCullRoot.bounds_instances).offset == 8;
 $assert $reflect(InstanceCullRoot.visible).offset == 16;
@@ -850,8 +889,10 @@ $assert $reflect(InstanceCullRoot.quadtree_history_valid).offset == 376;
 $assert $reflect(InstanceCullRoot.quadtree_split_pixels).offset == 380;
 $assert $reflect(InstanceCullRoot.quadtree_hysteresis).offset == 384;
 $assert $reflect(InstanceCullRoot.quadtree_height_pixels).offset == 388;
-$assert $reflect(InstanceCullRoot._pad9).offset == 392;
-$assert $reflect(InstanceCullRoot._pad10).offset == 396;
+$assert $reflect(InstanceCullRoot.quadtree_pixel_scale).offset == 392;
+$assert $reflect(InstanceCullRoot.quadtree_world_scale).offset == 396;
+$assert $reflect(InstanceCullRoot.quadtree_params).offset == 400;
+$assert $reflect(InstanceCullRoot.quadtree_depths).offset == 408;
 
 struct InstanceSortRoot {
     GpuAddress keys;
@@ -918,16 +959,18 @@ $assert $reflect(SwayGpu.waves_per_unit).offset == 24;
 $assert $reflect(SwayGpu.variation).offset == 28;
 
 struct InstanceEffectsGpu {
-    SwayGpu sway;
-    SwayGpu previous_sway;
-    Vec4f   anchor;
-    Vec4f   fade_origin;
-    float   fade_start;
-    float   fade_end;
-    float   fade_transition;
-    uint    _pad0;
+    SwayGpu    sway;
+    SwayGpu    previous_sway;
+    Vec4f      anchor;
+    Vec4f      fade_origin;
+    float      fade_start;
+    float      fade_end;
+    float      fade_transition;
+    uint       _pad0;
+    GpuAddress instance_quadtree;
+    GpuAddress instance_depths;
 }
-$assert InstanceEffectsGpu::size == 112;
+$assert InstanceEffectsGpu::size == 128;
 $assert $reflect(InstanceEffectsGpu.sway).offset == 0;
 $assert $reflect(InstanceEffectsGpu.previous_sway).offset == 32;
 $assert $reflect(InstanceEffectsGpu.anchor).offset == 64;
@@ -936,6 +979,8 @@ $assert $reflect(InstanceEffectsGpu.fade_start).offset == 96;
 $assert $reflect(InstanceEffectsGpu.fade_end).offset == 100;
 $assert $reflect(InstanceEffectsGpu.fade_transition).offset == 104;
 $assert $reflect(InstanceEffectsGpu._pad0).offset == 108;
+$assert $reflect(InstanceEffectsGpu.instance_quadtree).offset == 112;
+$assert $reflect(InstanceEffectsGpu.instance_depths).offset == 120;
 
 struct TraceSwayPoseRoot {
     GpuAddress  source;
