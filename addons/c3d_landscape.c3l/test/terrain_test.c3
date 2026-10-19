@@ -146,11 +146,11 @@ fn Node* add_terrain_node(
     return node;
 }
 
-// The collider as docs/terrain.md builds it; kept identical by hand.
-fn void add_terrain_collider(Fixture* fixture, Node* node, TerrainDesc desc) @local {
+fn void add_terrain_collider(Fixture* fixture, Node* node) @local {
+    TerrainCollisionInput input = terrain::collision_input(&fixture.scene, node.id)!!;
     ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
-    collider.height_field = { .source = TEXTURE, .texture = desc.height_map };
-    collider.local.scale = { desc.cell_size, desc.height_scale, desc.cell_size };
+    collider.height_field = { .source = TEXTURE, .texture = input.height_map };
+    collider.local.scale = input.scale;
     fixture.physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
 }
 
@@ -248,7 +248,7 @@ fn void test_heights_match_physics_ray_casts() @test {
         position:    TERRAIN_POSITION,
         yaw_degrees: TERRAIN_YAW_DEGREES,
     );
-    add_terrain_collider(&fixture, node, desc);
+    add_terrain_collider(&fixture, node);
 
     @pool() {
         assert_heights_match(&fixture, node, probe_points(tmem, SMALL_TEXELS, SEED));

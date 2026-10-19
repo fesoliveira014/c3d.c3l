@@ -199,7 +199,8 @@ owns is private to the cloth: do not replace or edit it.
 
 A `TEXTURE` height field cooks the whole map into one native object, so an edit re-cooks every sample. A window
 cooks part of it: `HeightField.window` is `{ x, z, count_x, count_z }` in cells, and a window reads
-`count_x + 1` by `count_z + 1` samples starting at `x, z`. All zero covers the whole map. A window needs a
+`count_x + 1` by `count_z + 1` samples starting at `x, z`, plus one sample past each side that has map beyond
+it. All zero covers the whole map. A window needs a
 `TEXTURE` source of 8-bit or `R16_UINT` samples, since only those convert into a fixed range; a window on a
 `HEIGHTS` source, one with a zero count or one past the map faults `INVALID_ARGUMENT`, and an `RGBA32_FLOAT`
 map faults `UNSUPPORTED`. A window's collider is placed by its node, like any height field: its origin is the
@@ -234,17 +235,20 @@ world.update(dt); // re-cooks the marked windows only
   collider over a `TEXTURE` source whose `window` is ignored; per-cell `material_indices` cover the whole map and
   are cut per window. Edge windows take the remaining cells. The node's world matrix is current when the call
   is made. The bodies build on the next update.
-- Windows share the samples on their common edge, so `mark_height_field_windows_changed` marks every window
-  whose sample range `[x, x + count]` meets the rectangle, given in samples of the map, which are its texels. An
-  edit on a shared edge marks two windows and one on a shared corner marks four. It returns how many it marked.
+- Windows share the samples on their common edge and read one sample past it, so
+  `mark_height_field_windows_changed` marks every window whose sample range `[x - 1, x + count + 1]` meets the
+  rectangle, given in samples of the map, which are its texels. An edit on or beside a shared edge marks two
+  windows and one on or beside a shared corner marks four. It returns how many it marked.
 - A marked window is rebuilt synchronously by the next `PhysicsWorld.update`; an unmarked one is never rebuilt, so
   a body resting on it keeps its contact and its sleep. The rebuilt window has the one-step contact gap of any
   `mark_changed`. `PhysicsCounters.pending_bodies` counts the bodies marked and not yet built.
 - To change `window_cells`, call `remove_height_field_windows` and `add_height_field_windows` again. Removing the
   node removes its window nodes with it, and the component's remove hook frees its list.
-- Separate height fields carry no adjacency, so a body can catch on the edge of an internal seam. A sphere of
-  radius 0.5 m rolling at 4 m/s over a flat seam loses 1.9 % of its speed and rises 6 mm; at 1 m/s it is
-  unaffected, and at 8 m/s it loses 3.5 %. A whole field does not disturb it.
+- A window reads the samples of its neighbours past each side that has map beyond it, so a body crosses a window
+  seam as it crosses the interior of a whole field. A window with a neighbour takes its per-cell `material_indices`
+  as its own cells plus one ring of map cells around them, repeated at the map border: `(count_x + 2) *
+  (count_z + 2)` entries, against `count_x * count_z` for a window that covers the whole map.
+  `add_height_field_windows` cuts both from the map-wide data. The edge of a map reads no neighbour.
 
 With `C3D_PHYSICS_SERIAL`, `HeightFieldWindows` is a described owner whose payload is `{ window_cells, collider }`.
 Export omits the window bodies and nodes, validating each node's `HeightFieldWindowOwner` marker, and loading

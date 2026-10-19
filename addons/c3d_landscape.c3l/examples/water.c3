@@ -534,11 +534,12 @@ fn void carve_basin(
     });
 }
 
-// The collider as docs/terrain.md builds it: the node's transform places both.
-fn void? add_terrain_collider(PhysicsWorld* physics, Node* node, TerrainDesc desc) @local {
+// The node's transform places the collider and the drawn surface alike.
+fn void? add_terrain_collider(Scene* scene, PhysicsWorld* physics, Node* node) @local {
+    TerrainCollisionInput input = terrain::collision_input(scene, node.id)!;
     ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
-    collider.height_field = { .source = TEXTURE, .texture = desc.height_map };
-    collider.local.scale = { desc.cell_size, desc.height_scale, desc.cell_size };
+    collider.height_field = { .source = TEXTURE, .texture = input.height_map };
+    collider.local.scale = input.scale;
     return physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1]);
 }
 
@@ -924,7 +925,7 @@ fn void? build_demo(Demo* demo) @local {
         level:  level,
     )!;
     // Built after the carve, so the collider cooks the basin once.
-    add_terrain_collider(demo.physics, demo.ground.node, demo.ground.desc)!;
+    add_terrain_collider(scene, demo.physics, demo.ground.node)!;
 
     demo.ripples = add_ripples(assets)!;
     demo.foam = add_foam(assets)!;
