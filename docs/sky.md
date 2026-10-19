@@ -4,7 +4,8 @@ Three components in `c3d::light` describe the outdoors. An `Atmosphere` on the n
 `Light` turns that light into a sun seen through air: the renderer draws a physically based sky with
 the sun's disc, attenuates the sun's light by the air it crosses, lights the scene from the sky and
 adds aerial perspective to distant surfaces. A `HeightFog` on any node adds exponential height fog. A `CloudLayer` on any node adds a raymarched
-layer of [clouds](#clouds). Each works without the others.
+layer of [clouds](#clouds). Each works without the others. A `MediumVolume` on any node adds a box of
+[participating medium](#medium-volumes), such as water, that the view ray crosses.
 
 [Frame origins](large_world.md) change packed coordinates, not physical altitude.
 Height fog's base and view camera move together. Atmosphere lighting cache keys
@@ -22,7 +23,7 @@ scene.add(haze, light::HEIGHT_FOG_DEFAULT);
 scene.update_world();
 ```
 
-`create_scene` registers all three components. Nothing else is needed: the renderer resolves them every
+`create_scene` registers every component of the page. Nothing else is needed: the renderer resolves them every
 frame, allocates what they need once and draws them in every raster view.
 
 ## Components
@@ -51,6 +52,8 @@ rotation and scale are ignored:
 | `max_distance` | 200 | metres of view the [volumetric fog](#volumetric-fog) covers; the analytic fog continues past it |
 | `anisotropy` | 0.3 | Henyey-Greenstein `g` of the volumetric fog's sun light, in (-1, 1) |
 
+`MediumVolume` holds one box of medium; see [medium volumes](#medium-volumes) for its fields.
+
 `light::atmosphere_valid` and `light::height_fog_valid` state what the renderer accepts. An
 atmosphere needs finite positive radii, heights, scale heights, ozone width and sun radius (below
 π/2), finite nonnegative coefficients, an albedo in [0, 1], `|mie_anisotropy| < 1` and an observer in
@@ -73,6 +76,10 @@ and callable from any thread.
   view's camera wins; later and invalid ones the view sees count in `Stats.fogs_ignored`. A fog
   outside the camera's layers is skipped without counting, so a minimap camera can leave the fog out
   or see its own.
+- **Up to `shader::MAX_VIEW_MEDIA` (4) media per view.** Every valid `MediumVolume` whose node is visible,
+  shares a layer with the view's camera and has an invertible world matrix is a candidate. The four nearest to the
+  camera by distance to the box are kept; the rest count in `Stats.media_dropped`. Invalid ones are skipped without
+  counting. A camera with `height_fog` off (a reflection capture) takes none.
 - **One cloud layer per view.** The first valid `CloudLayer` whose node is visible and shares a layer with
   the view's camera wins; later and invalid ones the view sees count in `Stats.clouds_ignored`.
 - Invalid components are data, not programming errors: they are ignored, never faulted.
@@ -169,7 +176,8 @@ and `environment.sky`, followed by `environment.prefilter`, `environment.irradia
 
 ## Where fog applies
 
-A view is fogged when its scene has an atmosphere or it sees a valid `HeightFog`. A fogged view runs
+A view is fogged when its scene has an atmosphere, it sees a valid `HeightFog` or it keeps a
+[medium volume](#medium-volumes). A fogged view runs
 one compute pass, `Pass.FOG`, after the scene readers and before the blended draws: it fogs every
 pixel from the camera to the depth it holds, so opaque, masked and custom opaque surfaces, the sky,
 terrain, foliage and depth-writing readers such as water need no fog code. Blended draws, which write
@@ -178,7 +186,8 @@ Basic materials do. A view with neither fog nor atmosphere records no fog pass a
 costs what it did before.
 
 - The fog is composed as aerial perspective behind the height fog:
-  `(x·T_ap + S_ap)·T_h + S_h`.
+  `(x·T_ap + S_ap)·T_h + S_h`. Where a medium covers the ray, the medium replaces both: see [medium
+  volumes](#medium-volumes).
 - Background pixels take height fog to infinity and no aerial perspective: the sky already holds the
   atmosphere. Looking up through the fog the background keeps a share `T∞ = e^(−ρ / (falloff · v.y))`;
   at and below the horizon it takes the fog's colour, and uniform fog (falloff 0) covers it.
@@ -191,9 +200,10 @@ costs what it did before.
   are not in it.
 - A view with a clip plane (a planar mirror) fogs only the part of each ray inside the kept
   half-space: the path from the plane to the surface. The main view fogs the path to the reflecting
-  surface, so the reflection counts the reflected path's fog once.
+  surface, so the reflection counts the reflected path's fog once. The medium follows the same cut: it applies only
+  to the part of the ray on the kept side, so a mirror camera inside the box of its own body is not darkened by it.
 - TAA history holds the fogged image.
-- Traced hits take the air of their own segment. A traced reflection takes the view's height fog and the scene's
+- Traced hits take the air and the media of their own segment. A traced reflection takes the view's height fog and the scene's
   atmosphere from the reflecting surface to the hit, and a probe ray takes the scene's from the probe to the hit. The
   two compose as the fog pass composes a camera ray, the atmosphere behind the height fog:
   `(x·T_air + S_air)·T_h + S_h`, which `apply_fog_segment` applies. The atmosphere is marched in
@@ -347,6 +357,49 @@ the slice's depth and over time. Optical depth is analytic and carries no histor
   slice count is a multiple of the chunk. The lamps' falloff is evaluated twice per froxel in one loop over the
   lights. The CPU hashes the volumetric lights once per frame. `FOG_INTEGRATION` is unchanged but for writing the
   other volume. A view without the switch runs the plain inject, a separate shader variant with none of this.
+
+## Medium volumes
+
+A `MediumVolume` is a box of participating medium that the view ray crosses: water, murk, smoke. It hangs below its
+node. In the node's local frame it covers `[center.x ± half_extent.x] × [−depth, 0] × [center.y ± half_extent.y]`, so
+the local XZ plane at y = 0 is its top face. The node's world matrix may be any affine transform without shear; the
+box moves, turns and scales with it.
+
+| Field | Meaning |
+| --- | --- |
+| `absorption`, `scattering` | per metre, per channel |
+| `anisotropy` | Henyey-Greenstein `g` of the sun term, in (-1, 1) |
+| `center`, `half_extent` | local x and z of the box centre and of its half sizes, metres |
+| `depth` | local metres below the top face |
+
+`light::medium_volume_valid` states what the renderer accepts: finite nonnegative coefficients, a finite centre, finite
+positive extents and depth, and `|anisotropy| < 1`. A scene registers the component with `create_scene`, and
+`describe::register_core_components` and `serial::register_core_codecs` describe and serialize it.
+
+**Which views take media.** Main, split and mirror views take the media they keep ([resolution](#resolution)).
+Probe updates, reflection captures and the path tracer take none.
+
+**Integration.** The view ray of every fogged pixel is split at each box's entry and exit, at most eight boundaries
+sorted along the ray. On each sub-interval the coefficients of the boxes covering it add, so overlapping media sum.
+The air (height fog and aerial perspective) applies only on the sub-intervals outside every box, through the same
+sub-range helpers the fog pass uses, so each point of the ray is integrated once. The froxel volume keeps its air; the
+box ranges are never read from it. Inside the boxes:
+
+- The transmittance of a sub-interval of length `d` is `exp(−(σa + σs) · d)` per channel.
+- The ambient scatters in every direction: `σs` times the environment's mean radiance (the first coefficient of its SH),
+  or the scene's ambient without an environment.
+- The sun scatters through the box's phase: `σs · HG(g, v · s) · E · exp(−σt · column)`. `s` is the direction to the
+  view's fog sun, the atmosphere's sun or else the first directional light, `E` its `color × intensity`, `v` the view
+  direction and the column the optical depth from the point to the box's top face along `s`, `h / (n · s)` metres for a
+  point `h` metres below the face with normal `n`. The term is zero when `n · s ≤ 0`. Both terms integrate in closed
+  form along a straight ray.
+
+**Clip planes.** In a view with a clip plane the box spans start at the plane's crossing, so the medium applies only on
+the kept side and the segment before the plane gets neither medium nor air, as for the fog.
+
+**Cost.** Each fogged pixel does one box test per kept volume and up to nine sub-intervals, five of them air.
+`MAX_VIEW_MEDIA` is the lever. A traced hit marches the atmosphere on each air sub-interval, twice for those that do
+not start at the origin.
 
 ## Clouds
 
@@ -548,9 +601,12 @@ with none of what follows.
 | `fog_behind(frame, surface_position, behind, behind_depth)` | the fog between a surface and a depth sample behind it; depth 0 is the background |
 | `apply_fog_refracted(frame, surface_position, transmittance, refracted, refracted_depth, surface_radiance)` | a depth-writing refracting surface's output |
 | `apply_fog_segment(frame, origin, hit_position, radiance)` | the height fog and, behind it, the marched atmosphere over the segment from a ray's origin to its hit, for a ray cast from elsewhere than the camera; returns `radiance` when `frame.sky_fog` is zero |
-| `apply_fog_to_infinity(frame, origin, direction, radiance)` | the height fog from a point to infinity, for a ray that leaves the scene; no atmosphere |
+| `apply_fog_to_infinity(frame, origin, direction, radiance)` | the height fog from a point to infinity, for a ray that leaves the scene; no atmosphere, except the marched atmosphere in front of a [medium volume](#medium-volumes) |
+| `fog_phase(cos_angle, anisotropy)` | the Henyey-Greenstein phase, per steradian |
 | `atmosphere_segment(sky, altitude, direction, distance)` | the `FogTerms` of the marched atmosphere over `distance` of a unit ray from a world altitude; none without an atmosphere |
 
+- Every helper above that fogs a ray includes the view's [medium volumes](#medium-volumes), with the same signature: a
+  segment through a box takes the medium's absorption and in-scatter in place of the air.
 - An opaque custom stage needs nothing: the pass fogs it at its depth. It cannot opt out.
 - A blended custom stage calls `apply_fog` on its output, unconditionally.
 - A depth-writing reader that refracts returns
@@ -643,11 +699,19 @@ sky example does under `--path-traced`.
   probe update's sun do not follow a camera above the atmosphere or far from the observer.
 - Above the atmosphere the limb is as sharp as the 192 × 108 sky-view table: its edge blurs over about one texel.
 - One fog medium per view, the first the view's layers see.
+- At most four medium volumes per view; the nearest are kept and the rest count in `Stats.media_dropped`.
+- No underwater light shafts: media are analytic with no froxel scattering, and the air composed behind a dense medium
+  is approximate, because the froxel sub-range divides by a transmittance floored at 1e-4.
+- The medium's sun term has no occluder shadowing, and the column ignores rays that leave through a side face near the
+  box edges. Each box's column counts that box's extinction only, so an overlap does not attenuate the other box's sun.
+- Surfaces inside a medium are lit as in air; the medium attenuates the view path only.
+- Probe updates, reflection captures and the path tracer take no media.
 - Readers that write no depth take the fog of what is behind them; blended Physical transmission is
   one.
 - Mirror views fog only behind their clip plane.
 - Traced reflection and probe hits take the analytic height fog and a marched atmosphere over their segment, with no
-  froxel volume and no aerial perspective table; a miss takes the height fog alone.
+  froxel volume and no aerial perspective table; a miss takes the height fog alone, and the marched atmosphere in
+  front of a medium volume.
 - Opaque stages cannot opt out of the fog pass.
 - Path-traced views are unfogged; a sky change does not restart their accumulation.
 - Twilight precision is bounded by `RGBA16F`: the tables keep a half float's 11-bit significand, and the

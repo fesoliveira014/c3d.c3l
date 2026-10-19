@@ -1305,6 +1305,24 @@ const uint AERIAL_PERSPECTIVE_SIZE = 32;
 const uint SKY_TABLE_GROUP_SIZE = 8;
 const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4;
 
+// Up to 8 sorted boundaries per fogged pixel; the medium cost lever.
+const uint MAX_VIEW_MEDIA = 4;
+
+struct MediumGpu {
+    vec4 world_to_local_0; // rows of the world to box map, the box centre folded in
+    vec4 world_to_local_1;
+    vec4 world_to_local_2;
+    vec4 extent_anisotropy; // half extent x, depth, half extent z, Henyey-Greenstein g
+    vec4 absorption;        // 1/m, xyz
+    vec4 scattering;        // 1/m, xyz
+}
+
+root MediumSetGpu {
+    vec4         to_sun;           // xyz toward the sun the media scatter
+    vec4         sun_illuminance;  // rgb; zero is no sun
+    MediumGpu[4] media;
+}
+
 root SkyFogGpu {
     vec4         sun_direction_cos_radius;
     vec4         sun_illuminance;
@@ -1330,9 +1348,8 @@ root SkyFogGpu {
     float        fog_anisotropy;
     uint         fog_slices;
     float        sky_table_scale;
-    uint         _pad0;
-    uint         _pad1;
-    uint         _pad2;
+    uint         media_count;
+    GpuAddress   media;
 }
 
 root SkyTableRoot {

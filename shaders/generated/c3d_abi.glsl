@@ -171,6 +171,7 @@ const uint SKY_VIEW_HEIGHT = 108u;
 const uint AERIAL_PERSPECTIVE_SIZE = 32u;
 const uint SKY_TABLE_GROUP_SIZE = 8u;
 const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4u;
+const uint MAX_VIEW_MEDIA = 4u;
 const uint FOG_VOLUME_MAX_SLICES = 128u;
 const uint FOG_VOLUME_HISTORY = 1u;
 const float FOG_HISTORY_WEIGHT = 0.9;
@@ -1321,6 +1322,21 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer BrdfLutRoot 
     uint _pad1;
 };
 
+struct MediumGpu {
+    vec4 world_to_local_0;
+    vec4 world_to_local_1;
+    vec4 world_to_local_2;
+    vec4 extent_anisotropy;
+    vec4 absorption;
+    vec4 scattering;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer MediumSetGpu {
+    vec4 to_sun;
+    vec4 sun_illuminance;
+    MediumGpu media[4];
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer SkyFogGpu {
     vec4 sun_direction_cos_radius;
     vec4 sun_illuminance;
@@ -1346,9 +1362,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer SkyFogGpu {
     float fog_anisotropy;
     uint fog_slices;
     float sky_table_scale;
-    uint _pad0;
-    uint _pad1;
-    uint _pad2;
+    uint media_count;
+    uint64_t media;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer SkyTableRoot {

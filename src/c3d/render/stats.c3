@@ -144,6 +144,7 @@ struct Stats {
     uint  atmospheres_ignored;   // per resolution: extra, invalid or sunless atmospheres of a scene
     uint  atmospheres_dropped;   // per resolution: atmospheres drawn as absent for want of a mirror slot
     uint  fogs_ignored;          // per view: extra or invalid height fogs the view's layers see
+    uint  media_dropped;         // per view: visible medium volumes past the nearest MAX_VIEW_MEDIA
     uint  clouds_ignored;        // per view: extra or invalid cloud layers the view's layers see
     uint  sky_regenerations;     // this frame: atmosphere lighting marked for regeneration
     ViewId cluster_view;

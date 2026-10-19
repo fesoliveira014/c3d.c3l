@@ -9,13 +9,13 @@ Binary and JSONC forms preserve ordinary nodes, built-in authoring and applicati
 Node transform values pass through unchanged, matching direct `node.local` assignment. The container does not reject non-finite position/rotation/scale values or a zero quaternion; those values can propagate into the derived world matrix. Component codecs define and validate their own numeric constraints before invoking owner APIs. `ASSET_FORMAT_ERROR` covers invalid wire representations. Component codecs report invalid authored values through their declared owner faults; the container adds no universal float-validity rule.
 
 `register_core_codecs()` installs described policies for Mesh, Camera,
-Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe, Decal and CloudLayer, all in the
+Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe, Decal, CloudLayer and MediumVolume, all in the
 VALUE phase. Light is version 3, with `source_radius` and `source_angle`; version-1 and
 version-2 binary and JSONC payloads, which lack them, read them as zero, and
 version-1 payloads read `volumetric` as true. A negative or non-finite extent, or an angle of `PI / 2` or more,
 faults `INVALID_ARGUMENT` on read and on write. Mesh is version 2, with `trace_only`; version-1 binary and JSONC payloads read it as false. Mesh copies its morph-weight array into ordinary Scene ownership.
 The other value components use fixed-size copying attachment. ProbeVolume,
-Atmosphere, HeightFog, ReflectionProbe and CloudLayer use their existing owner validity
+Atmosphere, HeightFog, ReflectionProbe, CloudLayer and MediumVolume use their existing owner validity
 predicates on both export and decoded authoring before attachment. CloudLayer's
 `coverage` is an asset reference like Decal's material.
 
@@ -69,7 +69,7 @@ for any adapter below; core has no reverse dependency on an add-on.
 
 | Owner | Serialization feature | Registration | Authored / transient |
 | --- | --- | --- | --- |
-| Core | None | `serial::register_core_codecs()` | 19 / 0 |
+| Core | None | `serial::register_core_codecs()` | 20 / 0 |
 | Physics | `C3D_PHYSICS_SERIAL` | `physics::register_serial_codecs()` | 10 / 4 |
 | Navigation | `C3D_NAV_SERIAL` | `nav::register_serial_codecs()` | 5 / 5 |
 | Character | `C3D_CHARACTER_SERIAL`, `C3D_PHYSICS_SERIAL` | `character::register_serial_codecs()` | 1 / 0 |
@@ -260,7 +260,7 @@ with `destroy_serial_diagnostic` after use.
 ## Built-in policy inventory
 
 `serial_core_policy_test` runs separately from application fixture tests and is
-included in `scripts/build.py --test`. It registers all 19 core policies without
+included in `scripts/build.py --test`. It registers all 20 core policies without
 constructing a Scene and verifies automatic prerequisites and repeated registration.
 It then creates a Scene and walks every assigned ECS slot. Every slot must have
 exactly one described, custom-codec or transient policy matching the expected table.

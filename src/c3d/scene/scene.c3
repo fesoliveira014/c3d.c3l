@@ -551,6 +551,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(ReflectionProbe)!!;
     scene.world.register(Decal)!!;
     scene.world.register(CloudLayer)!!;
+    scene.world.register(MediumVolume)!!;
     scene.ambient_color = { 1, 1, 1 };
     scene.world.set_remove_hook(Mesh, &free_morph_weights, scene.hook_allocator);
     scene.world.set_remove_hook(ModelInstance, &free_model_instance, scene.hook_allocator);

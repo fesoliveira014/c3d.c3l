@@ -9,6 +9,10 @@
 
 const float FOG_SERIES_THRESHOLD = 1e-2; // mirrored as FOG_SERIES_THRESHOLD in height_fog.c3
 const float FOG_TRANSMITTANCE_FLOOR = 1e-4; // divides a segment's aerial perspective; below it the segment reads opaque
+const float MEDIUM_SUN_COSINE_FLOOR = 1e-4; // keeps a grazing sun's column finite, so a clear channel stays 1
+const float MEDIUM_PARALLEL_EPSILON = 1e-9; // a ray this close to a box slab's plane never crosses it
+const uint FOG_AIR_PIXEL = 0u; // air from the froxel volume and the aerial perspective table of a camera pixel
+const uint FOG_AIR_ANALYTIC = 1u; // air from analytic height fog and a marched atmosphere, for a ray from anywhere
 
 // Radiance x seen through the fog is x * transmittance + inscatter.
 struct FogTerms {
@@ -27,6 +31,17 @@ FogTerms fog_none() {
 float fog_rise_factor(float rise) {
     if (abs(rise) < FOG_SERIES_THRESHOLD) return 1.0 - rise * 0.5 + rise * rise / 6.0;
     return (1.0 - exp(-rise)) / rise;
+}
+
+vec3 fog_rise_factors(vec3 rise) {
+    return vec3(fog_rise_factor(rise.x), fog_rise_factor(rise.y), fog_rise_factor(rise.z));
+}
+
+// Henyey-Greenstein: the share of a light scattered through an angle, per steradian.
+float fog_phase(float cos_angle, float anisotropy) {
+    float squared = anisotropy * anisotropy;
+    float denominator = 1.0 + squared - 2.0 * anisotropy * cos_angle;
+    return (1.0 - squared) / (4.0 * PI * denominator * sqrt(denominator));
 }
 
 float height_fog_density(SkyFogGpu sky, vec3 position) {
@@ -227,12 +242,210 @@ FogTerms height_fog_beyond(FrameRoot frame, SkyFogGpu sky, vec2 uv, vec3 origin,
     return fog_compose(volume, height_fog_to_infinity(frame, sky, origin + direction * max(near, end), direction));
 }
 
+// Light a medium scatters in every direction: the environment's mean radiance, else the ambient.
+vec3 medium_ambient_color(FrameRoot frame) {
+    if (frame.environment != 0ul) {
+        EnvironmentGpu environment = EnvironmentGpu(frame.environment);
+        return environment_mean_radiance(environment.sh) * environment.intensity;
+    }
+    return frame.ambient.rgb;
+}
+
+// Where a ray enters and leaves a medium's box within [near, far]; the exit precedes the entry for a miss.
+vec2 medium_span(MediumGpu medium, vec3 origin, vec3 direction, float near, float far) {
+    vec3 box_origin = vec3(
+        dot(medium.world_to_local_0.xyz, origin) + medium.world_to_local_0.w,
+        dot(medium.world_to_local_1.xyz, origin) + medium.world_to_local_1.w,
+        dot(medium.world_to_local_2.xyz, origin) + medium.world_to_local_2.w
+    );
+    vec3 box_direction = vec3(
+        dot(medium.world_to_local_0.xyz, direction),
+        dot(medium.world_to_local_1.xyz, direction),
+        dot(medium.world_to_local_2.xyz, direction)
+    );
+
+    vec3 lower = -medium.extent_anisotropy.xyz;
+    vec3 upper = vec3(medium.extent_anisotropy.x, 0.0, medium.extent_anisotropy.z);
+    float enter = near;
+    float leave = far;
+    for (int axis = 0; axis < 3; axis++) {
+        if (abs(box_direction[axis]) < MEDIUM_PARALLEL_EPSILON) {
+            if (box_origin[axis] < lower[axis] || box_origin[axis] > upper[axis]) return vec2(far, near);
+            continue;
+        }
+        float first = (lower[axis] - box_origin[axis]) / box_direction[axis];
+        float second = (upper[axis] - box_origin[axis]) / box_direction[axis];
+        enter = max(enter, min(first, second));
+        leave = min(leave, max(first, second));
+    }
+    return vec2(enter, leave);
+}
+
+// The integral over a span of exp(e), as e runs linearly between two values that are at most zero.
+vec3 fog_exponential_integral(vec3 exponent_start, vec3 exponent_end, float span) {
+    return span * exp(max(exponent_start, exponent_end)) * fog_rise_factors(abs(exponent_end - exponent_start));
+}
+
+// The media in `covering` over [from, to] of a ray: Beer-Lambert over the summed coefficients, the ambient, and the sun
+// through each box's Henyey-Greenstein phase, attenuated by the column from the box's top face along the sun.
+FogTerms medium_interval(
+    FrameRoot frame,
+    MediumSetGpu set,
+    uint covering,
+    vec3 origin,
+    vec3 direction,
+    float from,
+    float to
+) {
+    vec3 absorption = vec3(0.0);
+    vec3 scattering = vec3(0.0);
+    for (uint index = 0u; index < MAX_VIEW_MEDIA; index++) {
+        if ((covering & (1u << index)) == 0u) continue;
+        absorption += set.media[index].absorption.xyz;
+        scattering += set.media[index].scattering.xyz;
+    }
+
+    float span = to - from;
+    vec3 optical_depth = (absorption + scattering) * span;
+    vec3 ambient_reach = fog_exponential_integral(vec3(0.0), -optical_depth, span);
+    vec3 sun_illuminance = set.sun_illuminance.rgb;
+
+    FogTerms terms;
+    terms.transmittance = exp(-optical_depth);
+    terms.inscatter = scattering * medium_ambient_color(frame) * ambient_reach;
+    if (sun_illuminance == vec3(0.0)) return terms;
+
+    vec3 to_sun = set.to_sun.xyz;
+    float phase_cosine = dot(direction, to_sun);
+    for (uint index = 0u; index < MAX_VIEW_MEDIA; index++) {
+        if ((covering & (1u << index)) == 0u) continue;
+        MediumGpu medium = set.media[index];
+        vec4 height_row = medium.world_to_local_1;
+        float scale = length(height_row.xyz);
+        vec3 up = height_row.xyz / scale;
+        float sun_cosine = dot(up, to_sun);
+        if (sun_cosine <= 0.0) continue;
+
+        float below_top = -(dot(height_row.xyz, origin + direction * from) + height_row.w) / scale;
+        float depth_start = max(below_top, 0.0);
+        float depth_end = max(depth_start - dot(up, direction) * span, 0.0);
+        vec3 column = (medium.absorption.xyz + medium.scattering.xyz) / max(sun_cosine, MEDIUM_SUN_COSINE_FLOOR);
+        vec3 reach = fog_exponential_integral(-column * depth_start, -column * depth_end - optical_depth, span);
+        float phase = fog_phase(phase_cosine, medium.extent_anisotropy.w);
+        terms.inscatter += medium.scattering.xyz * phase * sun_illuminance * reach;
+    }
+    return terms;
+}
+
+// The air over [from, to] of a ray; an infinite range takes the height fog's limit.
+FogTerms fog_air_range(
+    FrameRoot frame,
+    SkyFogGpu sky,
+    uint air,
+    vec2 uv,
+    vec3 origin,
+    vec3 direction,
+    float altitude,
+    float from,
+    float to,
+    bool infinite
+) {
+    if (air == FOG_AIR_PIXEL) {
+        if (infinite) return height_fog_beyond(frame, sky, uv, origin, direction, from);
+        return fog_compose(
+            height_fog_range(frame, sky, uv, origin, direction, from, to),
+            aerial_perspective_segment(sky, uv, direction.y, from, to)
+        );
+    }
+    if (infinite) return height_fog_to_infinity(frame, sky, origin + direction * from, direction);
+    FogTerms atmosphere = atmosphere_segment(sky, altitude, direction, to);
+    if (from > 0.0) atmosphere = fog_between(atmosphere_segment(sky, altitude, direction, from), atmosphere);
+    return fog_compose(height_fog_segment(frame, sky, origin, direction, from, to), atmosphere);
+}
+
+// Everything over [near, far] of a ray when the view has media: the boxes' entries and exits split it into
+// sub-intervals, each the sum of the media covering it or air where none does. An infinite far leaves in air.
+FogTerms fog_through_media(
+    FrameRoot frame,
+    SkyFogGpu sky,
+    uint air,
+    vec2 uv,
+    vec3 origin,
+    vec3 direction,
+    float altitude,
+    float near,
+    float far,
+    bool infinite
+) {
+    MediumSetGpu set = MediumSetGpu(sky.media);
+    uint count = min(sky.media_count, MAX_VIEW_MEDIA);
+    vec2 spans[MAX_VIEW_MEDIA];
+    float bounds[2u * MAX_VIEW_MEDIA + 2u];
+    uint bound_count = 0u;
+    bounds[bound_count++] = near;
+    for (uint index = 0u; index < count; index++) {
+        spans[index] = medium_span(set.media[index], origin, direction, near, far);
+        if (spans[index].y > spans[index].x) {
+            bounds[bound_count++] = spans[index].x;
+            bounds[bound_count++] = spans[index].y;
+        }
+    }
+    bounds[bound_count++] = far;
+
+    for (uint index = 1u; index < bound_count; index++) {
+        float bound = bounds[index];
+        uint position = index;
+        while (position > 0u && bounds[position - 1u] > bound) {
+            bounds[position] = bounds[position - 1u];
+            position--;
+        }
+        bounds[position] = bound;
+    }
+
+    FogTerms terms = fog_none();
+    for (uint interval = 0u; interval + 1u < bound_count; interval++) {
+        float from = bounds[interval];
+        float to = bounds[interval + 1u];
+        if (to <= from) continue;
+
+        uint covering = 0u;
+        for (uint index = 0u; index < count; index++) {
+            if (spans[index].x <= from && spans[index].y >= to) covering |= 1u << index;
+        }
+        FogTerms part = covering != 0u
+            ? medium_interval(frame, set, covering, origin, direction, from, to)
+            : fog_air_range(frame, sky, air, uv, origin, direction, altitude, from, to, infinite && to >= far);
+        terms = fog_compose(terms, part);
+    }
+    return terms;
+}
+
 // Fog over [near, far] of a ray: aerial perspective behind the height fog.
 FogTerms fog_segment(FrameRoot frame, SkyFogGpu sky, vec2 uv, vec3 origin, vec3 direction, float near, float far) {
     if (near >= far) return fog_none();
+    if (sky.media_count != 0u) {
+        return fog_through_media(frame, sky, FOG_AIR_PIXEL, uv, origin, direction, 0.0, near, far, false);
+    }
     return fog_compose(
         height_fog_range(frame, sky, uv, origin, direction, near, far),
         aerial_perspective_segment(sky, uv, direction.y, near, far)
+    );
+}
+
+// Fog from near along a pixel's ray to infinity: no aerial perspective, the medium's boxes and then the height fog.
+FogTerms fog_beyond(FrameRoot frame, SkyFogGpu sky, vec2 uv, vec3 origin, vec3 direction, float near) {
+    if (sky.media_count == 0u) return height_fog_beyond(frame, sky, uv, origin, direction, near);
+    return fog_through_media(
+        frame,
+        sky,
+        FOG_AIR_PIXEL,
+        uv,
+        origin,
+        direction,
+        0.0,
+        near,
+        BACKGROUND_VIEW_DISTANCE,
+        true
     );
 }
 
@@ -254,7 +467,7 @@ FogTerms fog_background_terms(FrameRoot frame, vec2 uv) {
     fog_pixel_ray(frame, uv, origin, direction);
     float near = fog_clip_start(frame, origin, direction);
     if (near >= BACKGROUND_VIEW_DISTANCE) return fog_none();
-    return height_fog_beyond(frame, sky, uv, origin, direction, near);
+    return fog_beyond(frame, sky, uv, origin, direction, near);
 }
 
 // Additive radiance adds no second in-scatter over the already-fogged background.
@@ -286,7 +499,7 @@ vec3 fog_behind(FrameRoot frame, vec3 surface_position, vec3 behind, float behin
     fog_view_ray(frame, surface_position, origin, direction, near);
     if (behind_depth == 0.0) {
         vec2 uv = fog_screen_uv(frame, surface_position);
-        FogTerms beyond = height_fog_beyond(frame, sky, uv, origin, direction, near);
+        FogTerms beyond = fog_beyond(frame, sky, uv, origin, direction, near);
         return behind * beyond.transmittance + beyond.inscatter;
     }
     vec3 forward = -normalize(vec3(frame.view[0][2], frame.view[1][2], frame.view[2][2]));
@@ -318,18 +531,37 @@ vec3 apply_fog_segment(FrameRoot frame, vec3 origin, vec3 hit_position, vec3 rad
     vec3 offset = hit_position - origin;
     float distance = length(offset);
     vec3 direction = distance > 0.0 ? offset / distance : vec3(0.0, 0.0, -1.0);
-    FogTerms fog = fog_compose(
-        height_fog_segment(frame, sky, origin, direction, 0.0, distance),
-        atmosphere_segment(sky, origin.y + frame.origin.y, direction, distance)
-    );
+    float altitude = origin.y + frame.origin.y;
+    FogTerms fog = sky.media_count != 0u
+        ? fog_through_media(frame, sky, FOG_AIR_ANALYTIC, vec2(0.0), origin, direction, altitude, 0.0, distance, false)
+        : fog_compose(
+            height_fog_segment(frame, sky, origin, direction, 0.0, distance),
+            atmosphere_segment(sky, altitude, direction, distance)
+        );
     return radiance * fog.transmittance + fog.inscatter;
 }
 
 // Radiance of a ray that leaves the scene from a point: the fog a background pixel takes, without the volume. The sky
-// the ray reads already holds the atmosphere, so none is added.
+// the ray reads already holds the atmosphere, so none is added past the last medium; with media, the air in front of
+// a box takes the marched atmosphere.
 vec3 apply_fog_to_infinity(FrameRoot frame, vec3 origin, vec3 direction, vec3 radiance) {
     if (frame.sky_fog == 0ul) return radiance;
-    FogTerms fog = height_fog_to_infinity(frame, SkyFogGpu(frame.sky_fog), origin, direction);
+    SkyFogGpu sky = SkyFogGpu(frame.sky_fog);
+    float altitude = origin.y + frame.origin.y;
+    FogTerms fog = sky.media_count != 0u
+        ? fog_through_media(
+            frame,
+            sky,
+            FOG_AIR_ANALYTIC,
+            vec2(0.0),
+            origin,
+            direction,
+            altitude,
+            0.0,
+            BACKGROUND_VIEW_DISTANCE,
+            true
+        )
+        : height_fog_to_infinity(frame, sky, origin, direction);
     return radiance * fog.transmittance + fog.inscatter;
 }
 

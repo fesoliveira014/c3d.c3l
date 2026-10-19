@@ -20,7 +20,7 @@ struct ExpectedPolicy @private {
 fn void test_every_registered_core_component_has_one_expected_policy() @test {
     assert(ecs::registered_type_count == 0);
     serial::register_core_codecs()!!;
-    ExpectedPolicy[19] expected = {
+    ExpectedPolicy[20] expected = {
         { .slot = ecs::assigned_slot(Mesh)!!, .version = 2, .name = "c3d.Mesh",
             .identity = Mesh::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(Camera)!!, .version = 1, .name = "c3d.Camera",
@@ -39,6 +39,8 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
             .identity = Decal::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(CloudLayer)!!, .version = 1, .name = "c3d.CloudLayer",
             .identity = CloudLayer::typeid, .component_description = true },
+        { .slot = ecs::assigned_slot(MediumVolume)!!, .version = 1, .name = "c3d.MediumVolume",
+            .identity = MediumVolume::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(InstancedMesh)!!, .version = 4, .name = "c3d.InstancedMesh",
             .identity = InstanceAuthoring::typeid },
         { .slot = ecs::assigned_slot(BillboardBatch)!!, .version = 1, .name = "c3d.BillboardBatch",

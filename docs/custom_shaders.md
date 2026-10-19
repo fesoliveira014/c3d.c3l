@@ -271,7 +271,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `reflection_probe.glsl` | `ReflectionSelection`, `reflection_probe_select`, `reflection_probe_weight`, `reflection_box_direction`, `reflection_probe_radiance`, `ENVIRONMENT_GGX_CUBE`, `ENVIRONMENT_CHARLIE_CUBE`; compiled in fragment and compute stages |
 | `ambient_occlusion.glsl` | `draw_ambient_occlusion`, `frame_ambient_occlusion`, `draw_bent_normal`, `frame_bent_normal` ([bent normals](ambient_occlusion.md#bent-normals)), `specular_occlusion` |
 | `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
-| `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) ([sky](sky.md#custom-stages)) |
+| `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) and [medium volumes](sky.md#medium-volumes) ([sky](sky.md#custom-stages)) |
 | `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](#scene-reads)) |
 | `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material`, `MaterialUvGrad`, `sample_standard_material_grad` ([explicit gradients](#explicit-gradients-and-tangents)) |
 | `decals.glsl` | `apply_decals` ([decals](materials.md#decals)) |
