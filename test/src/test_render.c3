@@ -389,6 +389,7 @@ fn void test_frame_root_packs_camera() @test {
     float pixel_scale = 900.0f / (2 * math::tan(camera.fov_y * 0.5f));
     assert(root.selection_camera == (Vec4){ 0, 0, 5, pixel_scale });
     assert(root.previous_selection_camera == root.selection_camera);
+    assert((root.flags & shader::FRAME_SELECTION_ORTHOGRAPHIC) == 0);
     assert((ulong)root.lights == 0 && root.light_count == 0);
     assert((ulong)root.shadows == 0 && root.shadow_count == 0);
 }
@@ -464,6 +465,64 @@ fn void test_frame_root_marks_clip_plane() @test {
         sky_fog:     (gpu::GpuAddress)0,
     );
     assert((root.flags & shader::FRAME_CLIP_PLANE) == 0 && root.clip_plane == (Vec4f){});
+}
+
+fn void test_frame_root_marks_orthographic_selection() @test {
+    shader::FrameRoot* root = mem::new(shader::FrameRoot);
+    defer free(root);
+    Camera perspective = camera::perspective_deg(60, 0.1f, 100);
+    Camera orthographic = camera::orthographic(10, 0.1f, 100);
+    CameraMatrices perspective_matrices = camera::derive_matrices(perspective, matrix::IDENTITY4, { 800, 600 });
+    CameraMatrices orthographic_matrices = camera::derive_matrices(orthographic, matrix::IDENTITY4, { 800, 600 });
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &orthographic_matrices,
+        camera:      &orthographic,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
+    );
+    assert((root.flags & shader::FRAME_SELECTION_ORTHOGRAPHIC) != 0);
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &perspective_matrices,
+        camera:      &perspective,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
+        trace:       (gpu::GpuAddress)0x1000,
+    );
+    assert((root.flags & shader::FRAME_SELECTION_ORTHOGRAPHIC) == 0 && (root.flags & shader::FRAME_TRACE_PRESENT) != 0);
+
+    render::SelectionCamera perspective_view = { .orthographic = false };
+    render::write_frame_root(
+        root:        root,
+        matrices:    &orthographic_matrices,
+        camera:      &orthographic,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
+        selection:   &perspective_view,
+    );
+    assert((root.flags & shader::FRAME_SELECTION_ORTHOGRAPHIC) == 0);
+
+    render::SelectionCamera orthographic_view = { .orthographic = true };
+    render::write_frame_root(
+        root:        root,
+        matrices:    &perspective_matrices,
+        camera:      &perspective,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
+        selection:   &orthographic_view,
+    );
+    assert((root.flags & shader::FRAME_SELECTION_ORTHOGRAPHIC) != 0);
 }
 
 fn void test_draw_root_packs_normal_columns() @test {

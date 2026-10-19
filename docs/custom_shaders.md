@@ -295,6 +295,7 @@ A custom vertex stage that draws a [quadtree batch](instancing.md#quadtree-selec
 float quadtree_range(QuadtreeGpu tree, uint depth, float pixel_scale, float world_scale);
 float quadtree_morph(QuadtreeGpu tree, uint depth, float vertex_distance, float pixel_scale, float world_scale);
 float quadtree_world_scale(mat4 node_world);
+bool quadtree_selection_orthographic(FrameRoot frame);
 ```
 
 `quadtree_range` is the selection range of a depth in a perspective view, in world units; the selection pass calls the same function. `quadtree_morph` is 0 at `R_{d-1} (1 - b)` from the selection camera, 1 at `R_{d-1}`, and 0 for a root and under the sphere metric. The arguments come from the draw:
@@ -312,7 +313,7 @@ float morph = quadtree_morph(
 );
 ```
 
-`DepthArray` is a `uint` array reference the stage declares. The batch's `QuadtreeGpu` is never zero for a quadtree batch, so a stage that reads it under `DRAW_QUADTREE` needs no further check. The include states the two conditions the ranges keep: no pop at a merge, and at most one depth between neighbours. An orthographic view (`frame.proj[3][3] == 1.0`) has no distance term and takes the size rule, so a stage skips `quadtree_morph` there; the morph is 0. Draws in shadow layers and the depth prepass read the owning view's camera from `FrameRoot.selection_camera`, so their surface matches the shaded one ([selection camera](views.md#selection-camera)).
+`DepthArray` is a `uint` array reference the stage declares. The batch's `QuadtreeGpu` is never zero for a quadtree batch, so a stage that reads it under `DRAW_QUADTREE` needs no further check. The include states the two conditions the ranges keep: no pop at a merge, and at most one depth between neighbours. An orthographic selecting view has no distance term and takes the size rule, so a stage skips `quadtree_morph` when `quadtree_selection_orthographic(frame)` holds; the morph is 0. That function reads `FRAME_SELECTION_ORTHOGRAPHIC` in `FrameRoot.flags`, not `frame.proj`: a shadow layer's `proj` is the light's, orthographic for every directional cascade whatever the view is. Draws in shadow layers and the depth prepass read the owning view's camera from `FrameRoot.selection_camera` and its projection kind from the flag, so their surface matches the shaded one ([selection camera](views.md#selection-camera)).
 
 ### Traced shadows
 

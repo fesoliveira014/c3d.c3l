@@ -197,11 +197,12 @@ that touch differ by at most one level. `morph_band <= (1 - lod_hysteresis) / 2`
   output is what it was.
 
 **Limits.** Selection and morph measure distance, which an orthographic view does not have: every node of a depth takes
-the level its extent gives and the stage morphs nothing in the view's own passes. A shadow layer cannot tell that its
-view is orthographic and morphs by distance, so keep `morph_band` zero for terrain drawn into orthographic views. Tiles
-of a [set](#tile-sets) morph each in their own quadtree and share one `morph_band`. They also share one set of ranges:
-every linked tile takes the largest box diagonal of each depth over the set, so the edge vertices of neighbouring tiles
-morph alike. A height edit, a link or an unlink in the set sets the ranges of every linked tile again.
+the level its extent gives and the stage morphs nothing in any of the view's passes. The stage reads
+`FRAME_SELECTION_ORTHOGRAPHIC` from the frame, which a shadow layer carries from its owning view, so the layers of an
+orthographic view skip the morph too and the layers of a perspective view keep it. Tiles of a [set](#tile-sets) morph
+each in their own quadtree and share one `morph_band`. They also share one set of ranges: every linked tile takes the
+largest box diagonal of each depth over the set, so the edge vertices of neighbouring tiles morph alike. A height edit,
+a link or an unlink in the set sets the ranges of every linked tile again.
 
 ## The node
 

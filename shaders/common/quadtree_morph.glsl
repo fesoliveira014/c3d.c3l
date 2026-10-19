@@ -25,7 +25,9 @@
 // does not compound past the natural doubling of the ranges.
 //
 // An orthographic view has no distance term: selection becomes a size test, every node of a depth takes the level
-// its extent gives, and the morph is 0. A stage skips quadtree_morph there (frame.proj[3][3] == 1.0).
+// its extent gives, and the morph is 0. A stage skips quadtree_morph when quadtree_selection_orthographic holds. That
+// test reads FrameRoot.flags, not frame.proj: a shadow layer's proj is the light's, orthographic for a directional
+// cascade whatever the selecting view is.
 
 // mirrored as quadtree_world_scale in quadtree.c3
 float quadtree_world_scale(mat4 node_world) {
@@ -57,6 +59,11 @@ float quadtree_morph(QuadtreeGpu tree, uint depth, float vertex_distance, float 
     float band = parent * tree.morph_band;
 
     return band > 0.0 ? clamp((vertex_distance - (parent - band)) / band, 0.0, 1.0) : step(parent, vertex_distance);
+}
+
+// Whether the camera that selected this pass's levels is orthographic. A shadow layer carries its owning view's answer.
+bool quadtree_selection_orthographic(FrameRoot frame) {
+    return (frame.flags & FRAME_SELECTION_ORTHOGRAPHIC) != 0u;
 }
 
 #endif

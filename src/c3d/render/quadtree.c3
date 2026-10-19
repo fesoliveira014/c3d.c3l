@@ -20,6 +20,7 @@ $assert scene::MAX_QUADTREE_DEPTH + 1 == 9; // QuadtreeGpu.levels in c3d.abi
 struct SelectionCamera {
     Vec4 current;
     Vec4 previous; // the same one rendering earlier; equals current after a camera cut
+    bool orthographic; // a shadow layer's own projection is the light's, so its frame cannot show this
 }
 
 struct QuadtreeOffsets @private {
@@ -76,7 +77,7 @@ fn SelectionCamera selection_camera_of(Camera* camera, Vec3 position, float heig
       ? height_pixels / camera.ortho_height
       : height_pixels / (2 * math::tan(camera.fov_y * 0.5f));
     Vec4 own = { position.x, position.y, position.z, pixel_scale };
-    return { .current = own, .previous = own };
+    return { .current = own, .previous = own, .orthographic = camera.projection == Projection.ORTHOGRAPHIC };
 }
 
 fn bool quadtree_nodes_stale(GpuInstances* slot, InstancedMesh* batch) @private {

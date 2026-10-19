@@ -31,11 +31,6 @@ struct TerrainMorphedHeight {
     float previous;
 };
 
-// A shadow layer's frame holds the light's projection: it tells the selecting view's only in that view's own passes.
-bool terrain_selection_is_orthographic(FrameRoot frame) {
-    return frame.proj[3][3] == 1.0 && frame.camera_position.xyz == frame.selection_camera.xyz;
-}
-
 // Height of an odd grid vertex on the parent level's surface, whose cells split from their +x,-z to their -x,+z corner.
 float terrain_parent_height(uint height_texture, TerrainParams params, ivec2 texel, ivec2 odd, int step) {
     ivec2 offset = odd.y == 0 ? ivec2(step, 0) : (odd.x == 0 ? ivec2(0, step) : ivec2(step, -step));
@@ -62,7 +57,7 @@ TerrainMorphedHeight terrain_morphed_height(
 
     InstanceEffectsGpu effects = InstanceEffectsGpu(draw.instance_effects);
     QuadtreeGpu tree = QuadtreeGpu(effects.instance_quadtree);
-    if (tree.metric != QUADTREE_METRIC_BOX_RANGES || terrain_selection_is_orthographic(frame)) return heights;
+    if (tree.metric != QUADTREE_METRIC_BOX_RANGES || quadtree_selection_orthographic(frame)) return heights;
 
     uint depth = TerrainDepthArray(effects.instance_depths).values[instance_source(draw)];
     vec3 fine_local = vec3(float(texel.x) * params.cell_size, fine_height, float(texel.y) * params.cell_size);
