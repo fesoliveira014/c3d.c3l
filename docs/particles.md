@@ -232,7 +232,10 @@ frame.
 The renderer stops reporting a frame once `FRAMES_IN_FLIGHT` frames have passed. An `update` that comes later than that,
 after a pause or a loading screen, therefore commits the step, because only an aborted frame is not submitted. The
 residual case is an aborted frame followed by such a gap: the step never ran, but its burst and queued shift count as
-consumed, and the burst is lost.
+consumed, and the burst is lost. If that frame was the system's first, the committed step also marks the device state
+live, so the next step reads a control block that no dispatch initialized, and the system draws garbage particles until
+they expire. The two cases cannot be told apart, since a first step that ran and one that aborted look the same after the
+gap, and treating the first as the second would discard a step that did run.
 
 ### Rebasing
 

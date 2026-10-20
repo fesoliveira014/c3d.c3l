@@ -120,6 +120,7 @@ fn void destroy_gpu_particles(GpuParticles* particles, Renderer* renderer) {
  Record one step of every prepared GPU system and publish its draw.
  Call once per frame after update_world and before the views render.
  An aborted frame followed by FRAMES_IN_FLIGHT or more frames without an update loses that step's burst and shift.
+ If that frame was the system's first, the system then steps from an uninitialized device state.
  @param [&inout] particles : "Retires the buffers of systems that died."
  @param [&inout] renderer : "Frame open, no overlay open."
  @param [&inout] scene : "Registered; matrices current."
