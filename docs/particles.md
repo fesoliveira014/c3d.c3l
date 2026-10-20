@@ -684,6 +684,14 @@ ray cast, on a canopy and two crates that are static physics bodies. It applies
 to the window and to `--benchmark`, and `--benchmark` prints `collision_skips`.
 The `particles` target selects `c3d_physics` for this; the particle package never imports physics.
 
+`--workers N` runs the [range kernels](#parallel-update) on a `c3d_job` pool of N workers; the `particles` target
+selects `c3d_job` for this, and the particle package never imports it. It applies to the window, `--benchmark` and
+`--stress`, which prints the worker count of each segment. `--views 2` and `--capacity N` apply to `--benchmark`: the
+first renders the second camera into its own target, and the second sets the spark pool, with the emission rate
+scaled to keep it full. The benchmark prints `upload_bytes`, the mean bytes uploaded per frame, which do not depend
+on the number of views, and `sparks_bounds_ms` and `sparks_copy_ms`, the CPU cost of the spark batch's bounds and
+record copy over the final pool.
+
 The example reads `Renderer.adapter_name`, borrowed until renderer destruction,
 and calls `renderer.log.check_validation()` through core. The latter reports a
 backend validation error retained in the recent diagnostic ring; overwritten
@@ -692,10 +700,11 @@ entries are no longer checked. Neither operation requires importing gpu.c3l.
 `--stress` runs only CPU work: one seeded system with 100,000 stretched
 billboards, emitted before timing, 60 warm-up updates and the requested number
 of measured updates. It reports simulation/publication, uncached
-`billboard_world_bounds` and `pack_billboard_records` separately. Every update
-advances the batch revision, so the bounds measurement rebuilds it. Packing
+`billboard_world_bounds` and `copy_billboard_records` separately, the latter
+printed as `billboard_pack_ms`. Every update
+advances the batch revision, so the bounds measurement rebuilds it. The copy
 writes a preallocated CPU array; upload and GPU execution are excluded. The
-printed checksum consumes bounds and packed output. `--stress` and
+printed checksum consumes bounds and copied output. `--stress` and
 `--benchmark` are separate modes.
 
 `--stress` prints two segments. `stress` is the full pool with no emission;
@@ -726,8 +735,8 @@ Baseline measured before the palette interpolation correction on September 30,
 | Live debris, mean / capacity | 0 / 1024 | 1020.9 / 1024 |
 
 These are this scene's measurements, not a general performance guarantee. The
-measured CPU update is below the 1 ms executor follow-up threshold; parallel
-execution was not implemented or measured.
+measured CPU update is below the 1 ms executor follow-up threshold. The stress
+measurements further down time the range kernels.
 
 The 100,000-particle CPU stress baseline at `0e9cd0d` on an Intel Core i9-14900K, Windows x64,
 C3 0.8.3 `-O3`, produced the following medians of three runs. Each run measured
@@ -745,6 +754,25 @@ convert every record to world space after a revision change; unchanged bounds
 are cached. This records the cost of that shared conversion without adding a
 second representation or an executor. It excludes emission, upload, sorting
 and rendering, and does not replace the default-scene measurement above.
+
+The same stress case with the [range kernels](#parallel-update), on an Intel Core i9-14900K (32 logical CPUs) under
+WSL2, C3 0.8.3 `-O3`, as medians of three runs of 300 updates after 60 warm-up updates. "Before" is the build before the
+range kernels and the counter draws; the other columns run the kernels inline or on a `c3d_job` pool.
+
+| CPU operation | Before | Inline | 4 workers | 8 workers |
+| --- | ---: | ---: | ---: | ---: |
+| Simulation and draw publication | 0.632 ms | 0.888 ms | 0.409 ms | 0.428 ms |
+| Uncached billboard bounds | 2.636 ms | 2.664 ms | 2.642 ms | 2.630 ms |
+| Billboard packing (before), record copy (after) | 0.855 ms | 0.400 ms | 0.390 ms | 0.377 ms |
+| Update plus packing or copy | 1.487 ms | 1.288 ms | 0.799 ms | 0.805 ms |
+
+Inline, the update costs more than before. Publication now counts the drawn particles in a first pass and writes
+64-byte records directly, and the record copy that follows costs less than the packing it replaces. The update stops
+improving between four and eight workers; the serial passes (expiry and admission) and the cost of each fork bound it,
+and were not measured separately. Bounds are not forked. At 100,000 particles (98 blocks) a hook halves the update.
+In the default `--benchmark` scene, whose largest pool holds eight blocks, `--workers 8` raised the update from
+0.13 ms to 0.44 ms. The example checksum is identical for 0, 4 and 8 workers. The counter draws changed it from
+1710.039694 to 1706.511658, and serialized data is unaffected.
 
 Windows acceptance passed all 17 particle CPU tests and six Vulkan cases, with
 validation. Native Linux compilation and the earlier 16 CPU tests passed in WSL

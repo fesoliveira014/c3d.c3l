@@ -699,7 +699,12 @@ fn void report_metrics(String segment, Metrics totals, uint frames) @local {
     }
 }
 
-fn void? report_batch_costs(Demo* demo, Renderer* renderer, String segment, uint frames) @local {
+fn void? report_batch_costs(
+    Demo* demo,
+    Renderer* renderer,
+    String segment,
+    uint frames,
+) @local {
     Node* child = demo.scene.node(demo.scene.get(demo.emitters[1], ParticleSystem).draw_node);
     BillboardBatch* batch = demo.scene.get(child, BillboardBatch);
     BillboardGpu[] records = mem::new_array(BillboardGpu, batch.capacity());
@@ -810,7 +815,14 @@ fn void? run_benchmark(Options options) @local {
         String name = segment ? "active" : "empty";
         if (options.lit_smoke) name = LIGHTING_NAMES[demo.smoke_params.lighting.ordinal].str_view();
         report_metrics(name, totals, options.frames);
-        if (active) report_batch_costs(&demo, &renderer, name, options.frames)!;
+        if (active) {
+            report_batch_costs(
+                demo: &demo,
+                renderer: &renderer,
+                segment: name,
+                frames: options.frames,
+            )!;
+        }
     }
     if (options.collide) {
         io::printfn("sparks,collision_skips,%d", demo.scene.get(demo.emitters[1], ParticleSystem).collision_skips);
