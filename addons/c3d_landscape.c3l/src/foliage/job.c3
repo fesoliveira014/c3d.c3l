@@ -36,7 +36,6 @@ struct ScatterJob {
 
 <*
  Capture a layer's pending scatter for detached ranges.
- Covers a layer attached but not prepared, and a prepared layer whose pose or density changed.
  @param [&in] scene : "World matrices current; the job reads the scene here only."
  @param [&in] assets
  @param scratch : "Holds the job's cell arrays; the job never frees them."
