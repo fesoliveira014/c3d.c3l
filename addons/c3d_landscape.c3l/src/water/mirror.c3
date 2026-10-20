@@ -89,12 +89,24 @@ fn void follow_wind(
     assets.mark_material_dirty(runtime.material);
 }
 
+// The second layer's pattern drifts as the first's turned by the cross angle,
+// so its scroll is that drift in its own coordinates.
 fn Vec4 ripple_velocity(Vec3 wind_velocity, Mat4 world, float drift) @private {
     Vec3 local = maths::transform_dir(maths::inverse_affine(world), wind_velocity);
     Vec2 first = (Vec2){ local.x, local.z } * drift;
+    Vec2 second = second_layer_coordinates(turn_by_cross_angle(first));
+    return { first.x, first.y, second.x, second.y };
+}
+
+fn Vec2 turn_by_cross_angle(Vec2 vector) @private {
     float cosine = math::cos(RIPPLE_CROSS_ANGLE);
     float sine = math::sin(RIPPLE_CROSS_ANGLE);
-    return { first.x, first.y, cosine * first.x - sine * first.y, sine * first.x + cosine * first.y };
+    return { cosine * vector.x - sine * vector.y, sine * vector.x + cosine * vector.y };
+}
+
+// The map from the first layer's coordinates to the second's; twin of ripple_second_uv in water.frag.glsl.
+fn Vec2 second_layer_coordinates(Vec2 first_layer) @private {
+    return turn_by_cross_angle(first_layer) * RIPPLE_SECOND_SCALE;
 }
 
 // A whole number of normal-map periods in the ripple reference's texture space leaves the ripples unchanged.

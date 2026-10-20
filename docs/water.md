@@ -290,15 +290,19 @@ the stage, the queries and the offsets of a [sea state](#sea-state) all carry it
 
 ## Ripples and wind
 
-The ripple reference is a `STANDARD` material whose normal map the stage samples twice at `uv0` plus two
-scroll offsets, through the reference's UV transform, sampler and `normal_scale`, and sums the two
-perturbations of the wave normal. Its other maps cost their fetches and are ignored. `update` turns the wind
-into two node-local scroll velocities: the wind in the node's frame times `ripple_drift`, and the same turned
-by `RIPPLE_CROSS_ANGLE`. The stage computes `offset = scroll_origin + scroll_velocity · (time − scroll_time)`;
-when the velocities change, `update` starts a new segment at the frame time whose origin is the old segment's
-offset there, wrapped to whole texture periods, so the ripples never jump. A steady wind and a still node write
-nothing: a steady frame uploads nothing for water. `update`'s wind scrolls the ripples only; the waves follow
-`set_sea_state`, and buoyancy follows the waves.
+The ripple reference is a `STANDARD` material whose normal map the stage samples twice, through the reference's UV
+transform, sampler and `normal_scale`, and sums the two perturbations of the wave normal. Its other maps cost their
+fetches and are ignored. The first layer samples at `uv0` plus its scroll offset. The second samples at
+`RIPPLE_SECOND_SCALE · R(RIPPLE_CROSS_ANGLE) · uv0` plus its scroll offset: `uv0` turned by `RIPPLE_CROSS_ANGLE` and
+scaled by the golden ratio, so the two tilings never realign and the map's repeat shows no lattice. The second layer's
+mip level follows its finer tiling. `update` turns the wind into two node-local scroll velocities. The first is the
+wind in the node's frame times `ripple_drift`. The second makes the second layer's pattern move at the first's speed
+in metres, along the first's direction turned by `RIPPLE_CROSS_ANGLE`: it is the first velocity turned by twice
+`RIPPLE_CROSS_ANGLE` and scaled by `RIPPLE_SECOND_SCALE`. The stage computes
+`offset = scroll_origin + scroll_velocity · (time − scroll_time)`; when the velocities change, `update` starts a new
+segment at the frame time whose origin is the old segment's offset there, wrapped to whole texture periods, so the
+ripples never jump. A steady wind and a still node write nothing: a steady frame uploads nothing for water.
+`update`'s wind scrolls the ripples only; the waves follow `set_sea_state`, and buoyancy follows the waves.
 
 ## Sea state
 
@@ -675,7 +679,8 @@ scene.update_world();
   and an unmoved ocean writes none. A node's turn about Y turns its waves and is not re-folded.
   The CPU queries read the same offsets and the same node matrix, so the twin holds across a move.
   `set_desc` keeps the offsets of waves whose direction and wavelength it leaves, and anchors a changed wave from phase
-  zero. The ripple scroll takes the local image of the move as well, so the ripples stay put in the world.
+  zero. The ripple scroll takes the local image of the move as well, in each layer's own coordinates, so the ripples
+  stay put in the world.
 - **Blend and drift.** A sea-state blend integrates each wave's phase in double ([Sea state](#sea-state)); a move
   during a blend subtracts `dot(g, A_new − A_old) / λ(t)` from that phase with the frame's blended direction and
   wavelength, so the pattern is continuous across the move. A changing wavelength stretches the pattern about `A`, the
@@ -1065,10 +1070,10 @@ the [vegetation](vegetation.md#the-example) example's grass and trees, then a la
 carves a cosine bowl 6 m deep and 55 m in radius into the height map before the terrain collider cooks it; no
 grass or tree grows under 0.3 m above the water. The sky is a generated equirectangular gradient with a sun
 disc, the scene's environment and background. The lake is `default_water_desc()` at 120 m with a generated
-tiling ripple normal map (4 m tiles) and a generated foam colour, on its own layer bit. The mirror view renders
-at `MIRROR_RENDER_SCALE` with the lines above. `--crates 16|256` drops 1 m crates (density 600, drag
-3000 N·s/m, well under the 36,000 N·s/m at which the drag limit binds, drag coefficient 1) over the middle
-40 m, each with `Buoyancy` over `fluid_sample`; they bob on the orbital motion of the waves, and
+tiling ripple normal map of eight non-aligned sine terms (4 m tiles) and a generated foam colour, on its own layer
+bit. The mirror view renders at `MIRROR_RENDER_SCALE` with the lines above. `--crates 16|256` drops 1 m crates
+(density 600, drag 3000 N·s/m, well under the 36,000 N·s/m at which the drag limit binds, drag coefficient 1) over the
+middle 40 m, each with `Buoyancy` over `fluid_sample`; they bob on the orbital motion of the waves, and
 `--current X,Z` adds a uniform current in m/s that carries them (not with `--benchmark`, whose settle gate
 expects still water).
 
