@@ -26,7 +26,8 @@ const uint SPRITE_SIZE @local = 64;
 const uint SMOKE_CAPACITY @local = 8192; // about 1 MiB of simulation and scene draw data
 const uint SPARK_CAPACITY @local = 4096;
 const uint DEBRIS_CAPACITY @local = 1024;
-const uint STRESS_CAPACITY @local = 100_000; // about 17 MiB of pool, draw and packed records
+const uint STRESS_CAPACITY @local = 100_000; // about 18 MiB of pool, draw and packed records
+const float SATURATED_REQUEST_FRACTION @local = 0.1f; // share of the pool requested every step of the saturated segment
 const uint DEFAULT_BENCHMARK_FRAMES @local = 300;
 const uint WARMUP_FRAMES @local = 60; // warm pipelines, uploads and delayed timestamp readback
 const uint PREWARM_STEPS @local = 1200; // twenty simulated seconds mix the ages before steady-state measurements
@@ -38,6 +39,7 @@ const ZString[3] EFFECT_NAMES @local = { "Smoke", "Sparks", "Debris" };
 struct Options @local {
     bool benchmark;
     bool stress;
+    bool drop_oldest;
     bool limit_frames;
     uint frames;
     String capture_rgba;
@@ -316,13 +318,34 @@ fn void? run_benchmark(Options options) @local {
     return renderer.log.check_validation();
 }
 
-fn void? run_stress(uint frames) @local {
+fn void? run_stress(uint frames, ParticleSaturation saturation) @local {
+    run_stress_segment(
+        segment: "stress",
+        frames: frames,
+        saturation: saturation,
+        rate: 0,
+    )!;
+    run_stress_segment(
+        segment: "saturated",
+        frames: frames,
+        saturation: saturation,
+        rate: STRESS_CAPACITY * SATURATED_REQUEST_FRACTION / STEP_SECONDS,
+    )!;
+}
+
+fn void? run_stress_segment(
+    String segment,
+    uint frames,
+    ParticleSaturation saturation,
+    float rate,
+) @local {
     Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
     defer scene::destroy_scene(&scene);
     particle::register_particles(&scene)!;
     ParticleSystemDesc desc = particle::default_particle_system_desc();
     desc.capacity = STRESS_CAPACITY;
-    desc.rate = 0;
+    desc.saturation = saturation;
+    desc.rate = rate;
     desc.render_mode = STRETCHED;
     desc.shape = CONE;
     desc.radius = 1;
@@ -366,13 +389,15 @@ fn void? run_stress(uint frames) @local {
             pack_ms += packed;
         }
     }
-    io::printfn("stress,frames,%d", frames);
-    io::printfn("stress,alive,%d", system.alive);
-    io::printfn("stress,draw_count,%d", batch.count);
-    io::printfn("stress,update_ms,%.6f", update_ms / frames);
-    io::printfn("stress,billboard_bounds_ms,%.6f", bounds_ms / frames);
-    io::printfn("stress,billboard_pack_ms,%.6f", pack_ms / frames);
-    io::printfn("stress,checksum,%.6f", checksum);
+    io::printfn("%s,frames,%d", segment, frames);
+    io::printfn("%s,alive,%d", segment, system.alive);
+    io::printfn("%s,refused,%d", segment, system.dropped);
+    io::printfn("%s,evicted,%d", segment, system.evicted);
+    io::printfn("%s,draw_count,%d", segment, batch.count);
+    io::printfn("%s,update_ms,%.6f", segment, update_ms / frames);
+    io::printfn("%s,billboard_bounds_ms,%.6f", segment, bounds_ms / frames);
+    io::printfn("%s,billboard_pack_ms,%.6f", segment, pack_ms / frames);
+    io::printfn("%s,checksum,%.6f", segment, checksum);
 }
 
 fn void? configure_split(Renderer* renderer, ViewId second, bool split) @local {
@@ -515,6 +540,7 @@ fn Options? parse_options(String[] args) @local {
         switch (args[index]) {
             case "--benchmark": options.benchmark = true;
             case "--stress": options.stress = true;
+            case "--drop-oldest": options.drop_oldest = true;
             case "--frames":
                 options.frames = option_value(args, &index)!.to_uint()!;
                 options.limit_frames = true;
@@ -523,6 +549,7 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (!options.frames || (options.stress && options.benchmark)
+        || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;
 }
@@ -534,11 +561,12 @@ fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark | --stress] [--frames count] [--capture-rgba path].");
+        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--frames count] [--capture-rgba path].");
         return 1;
     }
     Options options = parsed;
-    if (catch excuse = (options.stress ? run_stress(options.frames)
+    ParticleSaturation saturation = options.drop_oldest ? ParticleSaturation.DROP_OLDEST : ParticleSaturation.REFUSE;
+    if (catch excuse = (options.stress ? run_stress(options.frames, saturation)
         : options.benchmark ? run_benchmark(options) : run_interactive(options))) {
         io::eprintfn("Particles failed: %s", excuse);
         return 1;

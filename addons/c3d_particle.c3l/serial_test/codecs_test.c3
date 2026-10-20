@@ -51,6 +51,7 @@ fn void create_fixture(Fixture* fixture, ParticleRenderMode mode, uint capacity 
     fixture.source.add_node(fixture.root, "authored-child")!!;
     ParticleSystemDesc desc = particle::default_particle_system_desc();
     desc.capacity = 7;
+    desc.saturation = DROP_OLDEST;
     desc.seed = 12345;
     desc.render_mode = mode;
     desc.material = material;
@@ -128,12 +129,19 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(ParticleRange)!!.layout == 0xaf1f0c33b5e51627);
     assert(serial::described_type(LifetimeTable)!!.layout == 0xe4c18077262a7a22);
     assert(serial::described_type(LifetimeColorTable)!!.layout == 0x4eacd1a988dfc1b2);
-    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x1a366da2bd207420);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0xea58cb75a4a73416);
+    assert(serial::described_type(particle::ParticleSystemDescV1)!!.version == 1);
+    assert(serial::described_type(particle::ParticleSystemDescV1)!!.layout == 0x1a366da2bd207420);
+    assert(serial::described_type(particle::ParticleAuthoringV1)!!.version == 1);
+    assert(serial::described_type(particle::ParticleAuthoringV1)!!.layout == 0xea58cb75a4a73416);
+    assert(serial::described_type(ParticleSystemDesc)!!.version == 2);
+    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x63291d71ce5d82d3);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 2);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0x2bb779bddc9e4271);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("particle_system") && schema.contains("emitting"));
         assert(schema.contains("color_over_life") && schema.contains("BILLBOARD"));
+        assert(schema.contains("saturation") && schema.contains("DROP_OLDEST"));
     };
 }
 
@@ -175,6 +183,7 @@ fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @tes
                 assert(!system.is_prepared() && !system.emitting && system.alive == 0);
                 assert(system.pending_burst == 0 && system.dropped == 0 && system.emit_accumulator == 0);
                 assert(system.desc.capacity == 7 && system.desc.seed == 12345 && system.desc.render_mode == mode);
+                assert(system.desc.saturation == DROP_OLDEST && system.evicted == 0 && system.next_spawn == 0);
                 assert(system.desc.color_over_life.values[7] == source.desc.color_over_life.values[7]);
                 assert(restored.first_child && restored.first_child.name == "authored-child");
                 assert(fixture.destination.count(BillboardBatch) == 0 && fixture.destination.count(InstancedMesh) == 0);

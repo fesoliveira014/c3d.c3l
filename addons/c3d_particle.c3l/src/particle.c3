@@ -22,7 +22,7 @@ const float MAX_PARTICLE_STEP_SECONDS = 0.1f; // caps hitch integration; excess 
 *>
 const Vec3 PARTICLE_GRAVITY = { 0, -9.81f, 0 };
 
-const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 48 KiB pool for a small effect; draw arrays are additional
+const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 56 KiB pool for a small effect; draw arrays are additional
 const usz PARTICLE_FLOAT_STREAMS @private = 5;
 const uint SEED_BYTE_BITS @private = 8;
 
@@ -43,6 +43,14 @@ enum ParticleRenderMode {
     BILLBOARD,
     STRETCHED,
     MESH,
+}
+
+<*
+ Policy for emission requests that exceed the free capacity of a pool.
+*>
+enum ParticleSaturation {
+    REFUSE,
+    DROP_OLDEST,
 }
 
 <*
@@ -72,6 +80,7 @@ struct LifetimeColorTable {
 *>
 struct ParticleSystemDesc {
     uint capacity;
+    ParticleSaturation saturation;
     uint seed;
     ParticleRenderMode render_mode;
     MaterialId material;
@@ -108,9 +117,12 @@ struct ParticleSystem {
     float[] rotation;
     float[] spin;
     uint[] seed;
+    ulong[] spawn;
     uint alive;
     ulong pending_burst;
+    ulong next_spawn;
     ulong dropped;
+    ulong evicted;
     double emit_accumulator;
     Sfc32Random random;
     Entity draw_node;
@@ -191,6 +203,7 @@ fn void? prepare(Scene* scene, Node* emitter) {
     system.rotation = @carve_stream(float, &system, &cursor);
     system.spin = @carve_stream(float, &system, &cursor);
     system.seed = @carve_stream(uint, &system, &cursor);
+    system.spawn = @carve_stream(ulong, &system, &cursor);
     char[uint::size] seed_bytes;
     foreach (index, &value : seed_bytes) *value = (char)(desc.seed >> (index * SEED_BYTE_BITS));
     system.random.set_seed(seed_bytes[..]);
@@ -299,7 +312,8 @@ fn usz particle_pool_bytes(uint capacity) @private {
     usz cursor = (usz)capacity * Vec3::size;
     cursor = particle_align(cursor, Vec3::alignment) + (usz)capacity * Vec3::size;
     cursor = particle_align(cursor, float::alignment) + (usz)capacity * PARTICLE_FLOAT_STREAMS * float::size;
-    return particle_align(cursor, uint::alignment) + (usz)capacity * uint::size;
+    cursor = particle_align(cursor, uint::alignment) + (usz)capacity * uint::size;
+    return particle_align(cursor, ulong::alignment) + (usz)capacity * ulong::size;
 }
 
 macro @carve_stream($Type, ParticleSystem* system, usz* cursor) @private {
