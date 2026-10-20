@@ -16,8 +16,9 @@ const uint SOURCE_STRIDE @local = 7919; // prime, so slot * stride % count visit
 const uint DEPTH_LEVELS @local = 64; // few enough that equal depths are common
 const uint PLACED_INSTANCES @local = 101; // odd, so the list needs its 8-byte pad before the keys
 const uint CORE_WORKGROUP_LIMIT @local = 65535; // Vulkan 1.3 core minimum of maxComputeWorkGroupCount[0]
-const uint ABOVE_ROW_INSTANCES @local = CORE_WORKGROUP_LIMIT * shader::INSTANCE_CULL_GROUP_SIZE + 1; // one past what a one-row cull grid covers
-const uint ABOVE_ROW_SORT_INSTANCES @local = (1 << 23) + 1; // the next power-of-two capacity gives a global step 65,536 groups
+const uint ABOVE_ROW_INSTANCES @local =
+  CORE_WORKGROUP_LIMIT * shader::INSTANCE_CULL_GROUP_SIZE + 1; // one past what a one-row cull grid covers
+const uint ABOVE_ROW_SORT_INSTANCES @local = (1 << 23) + 1; // capacity 2^24: a global step has 65,536 groups
 const usz ROOMY_ARENA_BYTES @local = 1 << 30; // room for MAX_SORTED_INSTANCES, so only the cap refuses one more
 
 struct Random @local {
