@@ -83,15 +83,16 @@ scene.set_billboard_atlas(node, sheet)!;
   still holds whole frames.
 - **UVs.** UV0 maps the quad into the current cell and UV1 into the next one. Each
   rectangle is the cell cut by `inset` on all four sides, in UV units of the whole
-  texture. Within a cell the quad keeps its usual orientation: its v coordinate
-  runs from the bottom edge to the top edge, as for any billboard, so an image
-  stored top row first draws vertically flipped, with or without an atlas. Flip the
-  art in the texture. A 1x1 atlas with zero inset is the same as no atlas.
+  texture. The quad's uv origin is its top-left corner, as in texture space and
+  glTF: u runs from the left edge to the right edge and v from the top edge down,
+  so an image stored top row first draws upright, with or without an atlas, and so
+  does the art of every cell. A 1x1 atlas with zero inset is the same as no atlas.
 - **Materials.** Every material that samples UV0 steps through the cells, with no
   other change; a map that reads UV1 shows the next cell. A custom fragment blends
   a UV0 sample and a UV1 sample by `v_billboard.z`, the fraction of `frame`.
 - **`v_billboard`.** Vertex output location 8 holds (quad u, quad v, fraction of
-  `frame`), smoothly interpolated. UV0 no longer holds the quad coordinate under an
+  `frame`), smoothly interpolated, with v running from the quad's top edge down.
+  UV0 no longer holds the quad coordinate under an
   atlas, so a fragment that needs it reads `v_billboard.xy`. Without an atlas the
   third component is 0. Mesh draws write (uv0, 0); see
   [custom shaders](custom_shaders.md#billboard-varying).
@@ -124,8 +125,8 @@ This delivery supports `AlphaMode.BLEND`: Basic, Standard, Toon,
 non-transmissive Physical and Custom materials with no custom vertex stages.
 Core supplies the billboard vertex stage and ordinary fragment inputs, including
 UV0/UV1, world position, facing normal, tangent and per-record colour. Without a
-sprite sheet both UV sets cover the same quad. Custom fragments use normal
-scene-read declarations.
+sprite sheet both UV sets cover the same quad, with the origin at its top-left
+corner. Custom fragments use normal scene-read declarations.
 
 `BlendMode` controls source-over or additive composition. Additive RGB preserves
 destination alpha. In a view with `transparency = WEIGHTED`, a source-over batch

@@ -56,7 +56,7 @@ fn GpuGeometry*? acquire_billboard_geometry(Renderer* renderer) @private {
         { -0.5f, -0.5f, 0 }, { 0.5f, -0.5f, 0 }, { 0.5f, 0.5f, 0 },
         { -0.5f, -0.5f, 0 }, { 0.5f, 0.5f, 0 }, { -0.5f, 0.5f, 0 },
     };
-    Vec2[BILLBOARD_VERTICES] coordinates = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 0 }, { 1, 1 }, { 0, 1 } };
+    Vec2[BILLBOARD_VERTICES] coordinates = { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 0, 1 }, { 1, 0 }, { 0, 0 } };
     Vec3[BILLBOARD_VERTICES] normals;
     Vec4[BILLBOARD_VERTICES] tangents;
     Vec4[BILLBOARD_VERTICES] colors;

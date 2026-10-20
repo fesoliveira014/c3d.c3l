@@ -423,6 +423,18 @@ fn TextureId? add_padded_atlas_texture(Fixture* fixture, char[] colors) @private
     return fixture.assets.add_texture(desc, pixels);
 }
 
+fn MaterialId? add_two_row_material(Fixture* fixture, MaterialCommon common) @private {
+    char[16] rows = { 255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255 }; // first stored row red
+    TextureDesc desc = material::texture_2d_desc(2, 2, PixelFormat.RGBA8_UNORM);
+    desc.generate_mips = false;
+    TextureId texture = fixture.assets.add_texture(desc, rows[..])!;
+    BasicParams params = {
+        .color = { 1, 1, 1, 1 },
+        .map = material::texture_slot(texture, asset::SAMPLER_NEAREST),
+    };
+    return fixture.assets.add_material(material::basic(params, common));
+}
+
 fn void check_atlas_cell(Vec4[] pixels, Vec3 expected) @private {
     uint covered;
     foreach (pixel : pixels) {
@@ -487,6 +499,16 @@ fn void test_billboard_atlas_selects_cells_without_bleed_and_blends_frames() @te
     Vec4[] cut = read_float_target(&fixture, target.targets[0])!!;
     defer free(cut);
     foreach (pixel : cut) check_billboard_pixel(pixel, { cell_color.x, cell_color.y, cell_color.z, 1 });
+
+    target.scene.set_billboard_atlas(target.node, { .columns = 1, .rows = 1, .frame_count = 1 })!!;
+    target.scene.get(target.node, BillboardBatch).material = add_two_row_material(&fixture, common)!!;
+    values[0].frame = 0;
+    target.scene.set_billboards(target.node, values[..])!!;
+    render_billboard_frames(&fixture, &target)!!;
+    Vec4[] rows = read_float_target(&fixture, target.targets[0])!!;
+    defer free(rows);
+    check_billboard_pixel(billboard_pixel(rows, { 0, 1 }), RED);
+    check_billboard_pixel(billboard_pixel(rows, { 0, -1 }), BLUE);
 
     ShaderDesc desc = {
         .fragment = compile::compile_glsl(tmem, (String)BILLBOARD_FRAME_FRAGMENT[..], ShaderStage.FRAGMENT)!!,
