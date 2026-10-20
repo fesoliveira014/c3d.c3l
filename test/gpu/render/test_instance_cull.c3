@@ -30,6 +30,7 @@ const float CROWD_PART_SIZE @private = 0.5f;
 const Vec3 CROWD_POSE_OFFSET @private = { -1, 1, 0 };
 const Vec2 CROWD_EDGE_UV @private = { 0.919f, 0.211f }; // the edge walker's posed box at (1.45, 1, 0)
 const float LINE_STEP @private = 0.05f;
+const Vec2 OFF_CENTER_UV @private = { 0.716f, 0.5f }; // the instance at x = 0.7, whose matrix is not symmetric
 const usz OVERFLOW_ARENA_BYTES @private = 96; // counter, two indirect commands and one 4-instance list
 const String PULSE_VERTEX @private = "../../../examples/shaders/custom/pulse.vert.glsl";
 const String PULSE_FRAGMENT @private = "../../../examples/shaders/custom/pulse.frag.glsl";
@@ -463,14 +464,14 @@ fn void test_batch_at_rest_has_zero_velocity() @test {
     check_validation(&fixture.renderer);
 }
 
-fn uint? move_line_node(Fixture* fixture, DeformedScene* line, bool mark) @private {
+fn uint? move_line_node(Fixture* fixture, DeformedScene* line, bool mark, Vec2 uv = CENTER_UV) @private {
     enable_taa(fixture, fixture.view, debug: TaaDebug.VELOCITY)!;
     line.mesh.local.position.x = 0;
     uint pixel;
     for (uint frame = 0; frame < SETTLE_FRAMES; frame++) {
         line.mesh.local.position.x += LINE_STEP;
         if (mark) line.scene.mark_instances_dirty(line.mesh);
-        pixel = render_scene_and_sample(fixture, line)!;
+        pixel = render_scene_and_sample(fixture, line, uv)!;
     }
     return pixel;
 }
@@ -487,6 +488,20 @@ fn void test_moving_batch_node_velocity_matches_per_instance() @test {
     check_near_pixel(node_motion, per_instance);
     uint at_rest = settle_at_rest(&fixture, &line)!!;
     assert(node_motion != at_rest);
+
+    uint off_center_motion = move_line_node(
+        fixture: &fixture,
+        line:    &line,
+        mark:    false,
+        uv:      OFF_CENTER_UV,
+    )!!;
+    uint off_center_instance = move_line_node(
+        fixture: &fixture,
+        line:    &line,
+        mark:    true,
+        uv:      OFF_CENTER_UV,
+    )!!;
+    check_near_pixel(off_center_motion, off_center_instance);
     check_validation(&fixture.renderer);
 }
 
