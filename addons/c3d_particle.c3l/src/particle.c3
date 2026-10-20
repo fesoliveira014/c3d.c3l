@@ -27,7 +27,7 @@ const Vec3 PARTICLE_GRAVITY = { 0, -9.81f, 0 };
 *>
 const uint MAX_SUB_EMITTERS = 4; // each adds one trigger test per raised event
 
-const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 64 KiB pool for a small effect; draw arrays are additional
+const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 56 KiB pool for a small effect; draw arrays are additional
 const usz PARTICLE_FLOAT_STREAMS @private = 5;
 
 <*
