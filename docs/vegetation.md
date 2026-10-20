@@ -238,12 +238,14 @@ shadows, ambient occlusion, reflections, probe updates and path tracing follow t
 sway at the frame's time and applies no fade, so every instance of the layer traces, near the camera, off the screen
 or past the fade end.
 
-- **Cost.** Each instance takes one posed slot of the renderer: its own posed vertex streams, one pose
-  dispatch, 320 bytes of the frame's upload ring, and a refit copy of the geometry's triangle tree on the
-  software kind or a bottom level on the hardware kind. While wind blows, the sway moves with the
-  frame time, so every slot poses again every frame: the software kind refits every tree and the hardware kind
-  updates every bottom level in place. A calm layer, or a template amplitude of zero, poses nothing and
-  traces at rest. A layer of 4,000 trees takes 4,000 slots and as many dispatches and updates per frame.
+- **Cost.** Each instance takes one posed slot of the renderer: its own posed vertex streams, 256 bytes of the
+  frame's upload ring, and a refit copy of the geometry's triangle tree on the software kind or a bottom level
+  on the hardware kind. A cell poses all its instances in one dispatch, with 80 bytes of ring more, and the
+  frame's trees refit in one dispatch. While wind blows, the sway moves with the frame time, so every slot
+  poses again every frame: the software kind refits every tree and the hardware kind updates every bottom
+  level in place. A calm layer, or a template amplitude of zero, poses nothing and traces at rest. A layer
+  of 1,536 trees takes 1,536 slots, one pose dispatch per cell and, on the hardware kind, as many updates
+  per frame.
 - **Capacity.** Slots are `RendererDesc.max_posed_trace_instances` (64 by default), shared with skinned and
   morphed meshes and crowds, so size it for the instances that must follow the wind. Instances are admitted in
   collection order, not by distance. Swayed rows claim after every other kind, so a character that appears later
@@ -465,6 +467,8 @@ C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading fo
 `--shadows atlas|traced`, `--trace-sway` (with `--shadows traced` and both layers: the tree layer sets
 `trace_sway` and the renderer holds 1,536 posed slots; a benchmark prints a `trace` line per segment with the
 medians of posed rows, pose dispatches, refits, bottom-level updates and batches traced at rest),
+`--trace-software` (with `--shadows traced`: the renderer asks for no ray queries, so traced shadows take the
+software kind; the benchmark header names the kind),
 `--capture FILE.png` (one frame at a fixed pose looking across a tree's shadow, in a wind of 25 m/s blowing across it,
 with the same options), `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,
 `--width W --height H` (2560 × 1440 by default in benchmark mode), `--workers N` (with `--benchmark`: scatter each layer
