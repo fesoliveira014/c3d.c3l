@@ -12,6 +12,7 @@ const uint CLOTH_HULL_TRIANGLES @local = 2 * b3::MAX_HULL_VERTICES;
 const double NATIVE_BOUND_ERROR @local = 0.000003814697265625; // 32 binary32 epsilons
 const double NATIVE_BOUND_UNDERFLOW @local = 4.4841550858394146269559346665277e-44; // 32 minimum binary32 subnormals
 const float MAX_ENUMERATION_EXTENT @local = 1099511627776; // 2^40 keeps the native SAT products finite
+const double CUBE_DIAGONAL @local = 1.7320508075688775; // sqrt(3) rounded up; corner distance of a unit cube
 
 $assert b3::MAX_HULL_VERTICES == MAX_CONTACT_HULL_POINTS;
 
@@ -166,6 +167,68 @@ fn bool cloth_bounds_overlap(maths::Aabb first, maths::Aabb second) @local {
     return true;
 }
 
+fn maths::Aabb cloth_particle_bounds(Vec3[] positions) @local {
+    maths::Aabb bounds = {
+        .min = { float::max, float::max, float::max },
+        .max = { -float::max, -float::max, -float::max },
+    };
+    foreach (position : positions) {
+        bounds.min = math::min(bounds.min, position);
+        bounds.max = math::max(bounds.max, position);
+    }
+    return bounds;
+}
+
+fn bool cloth_bounds_contain(maths::Aabb bounds, Vec3 point) @local {
+    for (uint axis = 0; axis < 3; axis++) {
+        if (point[axis] < bounds.min[axis] || point[axis] > bounds.max[axis]) return false;
+    }
+    return true;
+}
+
+fn double cloth_contact_reach(cloth::ClothState* state) @private {
+    return (double)state.desc.thickness + state.desc.collisions.contact_tolerance;
+}
+
+fn maths::Aabb? cloth_reach_bounds(ContactFrame* frame, maths::Aabb local, double reach) @private {
+    double[3] lower = { double::max, double::max, double::max };
+    double[3] upper = { -double::max, -double::max, -double::max };
+    for (uint corner = 0; corner < 8; corner++) {
+        Vec3 point = {
+            (corner & 1) ? local.max.x : local.min.x,
+            (corner & 2) ? local.max.y : local.min.y,
+            (corner & 4) ? local.max.z : local.min.z,
+        };
+        ContactIntervals placed = contact_point(frame, point)!;
+        for (uint axis = 0; axis < 3; axis++) {
+            lower[axis] = math::min(lower[axis], placed[axis].min);
+            upper[axis] = math::max(upper[axis], placed[axis].max);
+        }
+    }
+
+    double magnitude;
+    for (uint axis = 0; axis < 3; axis++) {
+        double extreme = math::max(math::abs((double)local.min[axis]), math::abs((double)local.max[axis]));
+        magnitude = math::max(magnitude, extreme);
+    }
+
+    // The narrow query rounds its bounds outward to binary32, so the slack grows with the local magnitude.
+    ContactInterval slack = contact_multiply(
+        contact_add(contact_value(magnitude), contact_value(reach))!,
+        contact_value(NATIVE_BOUND_ERROR),
+    )!;
+    double margin = contact_multiply(contact_add(contact_value(reach), slack)!, contact_value(CUBE_DIAGONAL))!.max;
+
+    maths::Aabb bounds;
+    for (uint axis = 0; axis < 3; axis++) {
+        ContactInterval low = contact_subtract(contact_value(lower[axis]), contact_value(margin))!;
+        ContactInterval high = contact_add(contact_value(upper[axis]), contact_value(margin))!;
+        bounds.min[axis] = contact_float_bound(low.min, false)!;
+        bounds.max[axis] = contact_float_bound(high.max, true)!;
+    }
+    return bounds;
+}
+
 fn bool write_cloth_triangle(
     Vec3 first,
     Vec3 second,
@@ -248,10 +311,14 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
         state.contact_result.peak_candidates = math::max(state.contact_result.peak_candidates, (uint)count);
     }
 
-    double reach = (double)state.desc.thickness + state.desc.collisions.contact_tolerance;
+    double reach = cloth_contact_reach(state);
     foreach (position : positions) {
         if (!contact_finite(position)) return cloth::CONTACT_PRECISION_EXCEEDED~;
     }
+
+    bool point_in_time = !state.sweep_active;
+    maths::Aabb extent;
+    if (point_in_time && state.shapes.len) extent = cloth_particle_bounds(positions);
 
     if (state.desc.collide_ground) {
         foreach (index, position : positions) {
@@ -264,6 +331,7 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
 
     foreach (shape_index, &shape : state.shapes) {
         if (!state.bodies[shape.body].live) continue;
+        if (point_in_time && !cloth_bounds_overlap(extent, state.shape_bounds[shape_index])) continue;
 
         RigidBody* body = world.scene.get(world.scene.node(state.bodies[shape.body].owner), RigidBody);
         Collider* collider = &body.colliders[shape.collider];
@@ -282,6 +350,8 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
         if (shape.kind == HEIGHT_FIELD) height_field = collider.shape.height_field()!;
 
         foreach (particle, position : positions) {
+            if (point_in_time && !cloth_bounds_contain(state.shape_bounds[shape_index], position)) continue;
+
             maths::Aabb query = state.sweep_active
               ? cloth_swept_query_bounds(
                   state: state,

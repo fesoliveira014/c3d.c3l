@@ -256,6 +256,7 @@ struct ClothState {
     Mat4                 published_frame;
     Aabb                 local_bounds;
     ContactFrame[]       frames;
+    Aabb[]               shape_bounds;        // world, current substep, grown by the contact reach
     ClothCandidate[]     candidates;
     ClothContact[]       contacts;
     ClothFace[]          faces;

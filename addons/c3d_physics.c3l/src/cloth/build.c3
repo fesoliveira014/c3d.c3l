@@ -377,6 +377,7 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .staged_accelerations          = physics::carve(cursor, Vec3, counts.vertices),
         .staged_pin_targets            = physics::carve(cursor, Vec3, counts.pins),
         .frames                        = physics::carve(cursor, ContactFrame, counts.collisions.max_shapes),
+        .shape_bounds                  = physics::carve(cursor, Aabb, counts.collisions.max_shapes),
         .candidates                    = physics::carve(cursor, ClothCandidate, counts.collisions.max_candidates),
         .contacts                      = physics::carve(cursor, ClothContact, counts.collisions.max_contacts),
         .faces                         = physics::carve(cursor, ClothFace, self_collision ? counts.faces : 0),

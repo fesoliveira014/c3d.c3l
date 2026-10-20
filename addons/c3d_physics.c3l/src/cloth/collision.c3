@@ -129,6 +129,7 @@ fn void sample_bodies(Scene* scene, ClothState* state) @private {
 }
 
 fn void? place_shapes(ClothState* state, double progress) @private {
+    double reach = physics::cloth_contact_reach(state);
     foreach (index, &shape : state.shapes) {
         ClothBody* body = &state.bodies[shape.body];
         if (!body.live) continue;
@@ -139,6 +140,11 @@ fn void? place_shapes(ClothState* state, double progress) @private {
         state.shape_starts[index] = (Vec3)physics::contact_middle(physics::contact_point(&state.frames[index], shape.start)!);
         state.shape_ends[index] = (Vec3)physics::contact_middle(physics::contact_point(&state.frames[index], shape.end)!);
         if (!finite_vector(state.shape_starts[index]) || !finite_vector(state.shape_ends[index])) return CONTACT_PRECISION_EXCEEDED~;
+        state.shape_bounds[index] = physics::cloth_reach_bounds(
+            frame: &state.frames[index],
+            local: shape.bounds,
+            reach: reach,
+        )!;
     }
 }
 
