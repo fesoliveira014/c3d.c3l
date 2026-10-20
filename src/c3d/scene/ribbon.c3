@@ -142,15 +142,6 @@ fn RibbonPoint place_ribbon_point(Mat4 world, float width_scale, RibbonPoint poi
 }
 
 <*
- Transform a ribbon point's position into world space and scale its width.
- @param world : "Published affine node transform."
- @pure
-*>
-fn RibbonPoint world_ribbon_point(Mat4 world, RibbonPoint point) {
-    return place_ribbon_point(world, ribbon_width_scale(world) @pure, point) @pure;
-}
-
-<*
  Whether ribbon points satisfy the scene placement domain.
  @pure
 *>
