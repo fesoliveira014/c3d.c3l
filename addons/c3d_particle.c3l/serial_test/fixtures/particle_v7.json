@@ -1,0 +1,321 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "emitter",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "particle_system": {
+          "version": 7,
+          "value": {
+            "desc": {
+              "capacity": 7,
+              "saturation": "DROP_OLDEST",
+              "seed": 12345,
+              "render_mode": "MESH",
+              "material": "effect",
+              "geometry": "particle-mesh",
+              "shape": "CONE",
+              "radius": 2,
+              "half_extents": [
+                1,
+                2,
+                3
+              ],
+              "cone_angle": 0.400000006,
+              "rate": 7,
+              "lifetime": {
+                "min": 2,
+                "max": 3
+              },
+              "speed": {
+                "min": 1,
+                "max": 4
+              },
+              "size": {
+                "min": 0.200000003,
+                "max": 0.699999988
+              },
+              "rotation": {
+                "min": -1,
+                "max": 2
+              },
+              "spin": {
+                "min": -3,
+                "max": 3
+              },
+              "color_min": [
+                0.100000001,
+                0.200000003,
+                0.300000012,
+                0.400000006
+              ],
+              "color_max": [
+                2,
+                1,
+                0.5,
+                0.899999976
+              ],
+              "size_over_life": {
+                "values": [
+                  0,
+                  0.200000003,
+                  0.400000006,
+                  0.600000024,
+                  0.800000012,
+                  1,
+                  1.20000005,
+                  1.39999998
+                ]
+              },
+              "color_over_life": {
+                "values": [
+                  [
+                    0,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.100000001,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.200000003,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.300000012,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.400000006,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.5,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.600000024,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.699999988,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ]
+                ]
+              },
+              "gravity_scale": -0.5,
+              "drag": 0.800000012,
+              "stretch": 2,
+              "sub_emitters": [
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                }
+              ],
+              "sub_emitter_count": 0,
+              "max_events": 0,
+              "collision": {
+                "response": "BOUNCE",
+                "restitution": 0.300000012,
+                "friction": 0.200000003,
+                "radius_scale": 0.75,
+                "ground_plane": true,
+                "ground_height": -2.5,
+                "max_queries": 9,
+                "impact_speed": 2.5
+              },
+              "flipbook": {
+                "columns": 0,
+                "rows": 0,
+                "frame_count": 0,
+                "inset": [
+                  0,
+                  0
+                ],
+                "mode": "OVER_LIFE",
+                "fps": 0,
+                "random_start": false,
+                "blend": false
+              },
+              "turbulence": {
+                "strength": 1.5,
+                "frequency": 0.25,
+                "octaves": 2,
+                "period": 12,
+                "scroll": [
+                  0.5,
+                  -1,
+                  0.25
+                ]
+              },
+              "trail": {
+                "max_points": 5,
+                "point_interval": 0.0199999996,
+                "lifetime": 0.75,
+                "width": 0.125,
+                "width_over_trail": {
+                  "values": [
+                    1,
+                    0.875,
+                    0.75,
+                    0.625,
+                    0.5,
+                    0.375,
+                    0.25,
+                    0.125
+                  ]
+                },
+                "color_over_trail": {
+                  "values": [
+                    [
+                      1,
+                      0.5,
+                      0,
+                      0.899999976
+                    ],
+                    [
+                      1,
+                      0.5,
+                      0.100000001,
+                      0.899999976
+                    ],
+                    [
+                      1,
+                      0.5,
+                      0.200000003,
+                      0.899999976
+                    ],
+                    [
+                      1,
+                      0.5,
+                      0.300000012,
+                      0.899999976
+                    ],
+                    [
+                      1,
+                      0.5,
+                      0.400000006,
+                      0.899999976
+                    ],
+                    [
+                      1,
+                      0.5,
+                      0.5,
+                      0.899999976
+                    ],
+                    [
+                      1,
+                      0.5,
+                      0.600000024,
+                      0.899999976
+                    ],
+                    [
+                      1,
+                      0.5,
+                      0.699999988,
+                      0.899999976
+                    ]
+                  ]
+                },
+                "uv": "TILE",
+                "tile_length": 1.5,
+                "material": "trail"
+              }
+            },
+            "emitting": false
+          }
+        }
+      }
+    },
+    {
+      "id": 1,
+      "parent": 0,
+      "name": "authored-child",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    }
+  ]
+}
