@@ -28,7 +28,8 @@ const uint HEIGHT @local = 1080;
 const uint SPRITE_SIZE @local = 64;
 const uint SMOKE_CAPACITY @local = 8192; // about 1 MiB of simulation and scene draw data
 const uint SPARK_CAPACITY @local = 4096;
-const uint DEBRIS_CAPACITY @local = 1024;
+const uint DEBRIS_CAPACITY @local = 1024; // at SPARK_CAPACITY sparks; scales with --capacity
+const float DEBRIS_RATE @local = 450; // per second at SPARK_CAPACITY; scales with --capacity
 const uint PUFF_CAPACITY @local = 8192; // 448 KiB pool at SPARK_CAPACITY sparks; above the puffs alive
 const uint SPARK_EVENTS @local = 512; // 24 KiB queue at SPARK_CAPACITY sparks; above the deaths one step raises
 const float OBSTACLE_THICKNESS @local = 0.12f;
@@ -578,7 +579,7 @@ fn Demo? create_demo(Options options) @local {
     demo.emitters[1].local.position = { 0, 0.2f, 0 };
 
     ParticleSystemDesc debris = particle::default_particle_system_desc();
-    debris.capacity = DEBRIS_CAPACITY;
+    debris.capacity = scaled_with_sparks(DEBRIS_CAPACITY, options.capacity);
     debris.seed = 3;
     debris.render_mode = MESH;
     debris.material = debris_material;
@@ -587,7 +588,7 @@ fn Demo? create_demo(Options options) @local {
     debris.shape = CONE;
     debris.radius = 0.2f;
     debris.cone_angle = 0.5f;
-    debris.rate = 450;
+    debris.rate = DEBRIS_RATE * options.capacity / SPARK_CAPACITY;
     debris.lifetime = { .min = 2, .max = 3 };
     debris.speed = { .min = 4, .max = 7 };
     debris.size = { .min = 0.06f, .max = 0.15f };
@@ -595,7 +596,12 @@ fn Demo? create_demo(Options options) @local {
     debris.spin = { .min = -4, .max = 4 };
     debris.gravity_scale = 1;
     debris.size_over_life.values = { 1, 1, 1, 1, 1, 0.8f, 0.4f, 0 };
-    demo.emitters[2] = demo.scene.add_particle_system(debris, name: "debris")!;
+    demo.emitters[2] = add_system(
+        demo: &demo,
+        options: options,
+        desc: debris,
+        name: "debris",
+    )!;
     demo.emitters[2].local.position = { 3, 0.2f, 0 };
 
     if (options.embers) {
