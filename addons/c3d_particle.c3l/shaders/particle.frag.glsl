@@ -96,10 +96,9 @@ void main() {
         color.rgb = pre_exposed(frame, color.rgb);
     } else {
         vec3 view_direction = standard_view_direction(frame, v_world_pos);
-        vec3 axis = normalize(v_normal);
-        vec3 lit = frame.ambient.rgb + indirect_diffuse_irradiance(frame, v_world_pos, axis, view_direction);
+        vec3 normal = params.normal == PARTICLE_NORMAL_SPHERICAL ? spherical_normal() : normalize(v_normal);
+        vec3 lit = frame.ambient.rgb + indirect_diffuse_irradiance(frame, v_world_pos, normal, view_direction);
         if (params.lighting >= PARTICLE_DIRECT) {
-            vec3 normal = params.normal == PARTICLE_NORMAL_SPHERICAL ? spherical_normal() : axis;
             lit += direct_lighting(
                 frame,
                 draw,
