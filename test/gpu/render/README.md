@@ -49,8 +49,8 @@ that returns a store texture to the sampled state names the vertex, fragment and
 `test_billboard_atlas_selects_cells_without_bleed_and_blends_frames` draws frame 2 of a 2x2, 128-texel atlas whose four
 cells differ in colour, carry an 8-texel border at zero alpha and have a generated mip chain. At 1:1 and at four texels
 per pixel, every pixel with alpha shows only cell 2's colour; an inset of 16 texels fills the whole quad with that
-colour; and a custom fragment that outputs `v_billboard.z` reads 0.5 within 1/255 at frame 1.5. It runs under
-validation.
+colour; a two-row texture on a 1x1 atlas draws its first stored row at the top of the quad; and a custom fragment that
+outputs `v_billboard.z` reads 0.5 within 1/255 at frame 1.5. It runs under validation.
 
 The auto-exposure cases in `test_auto_exposure.c3` render constant-luminance backgrounds into float targets and
 read each rendering's adapted value from the view's readback. They check the GLSL adaptation against its C3 twin
