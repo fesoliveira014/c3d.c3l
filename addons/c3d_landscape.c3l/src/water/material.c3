@@ -243,7 +243,11 @@ fn Vec3 surface_reach(WaterDesc* desc, Wave[] waves, float envelope) @private {
 
 fn float spectral_envelope(WaterRuntime* runtime) @private => runtime.spectral ? runtime.spectral.envelope : 0;
 
-// The metres under the rest plane the surface can reach: the medium's offset and the mirror's clip plane follow it.
+// The metres under the rest plane the surface can reach now: the medium's offset and the mirror's clip plane follow it.
+// A simulated body reaches as far as its largest height since it woke, so a calm pond keeps its water fogged; a
+// spectral one as far as the envelope of the spectrum it is blending toward or has reached.
 fn float vertical_reach(WaterRuntime* runtime) @private {
-    return surface_reach(&runtime.desc, bounding_waves(runtime), spectral_envelope(runtime)).y;
+    if (runtime.simulation) return runtime.simulation.reach;
+    if (runtime.spectral) return runtime.spectral.envelope;
+    return total_amplitude(bounding_waves(runtime));
 }

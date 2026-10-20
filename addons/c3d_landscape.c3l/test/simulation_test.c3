@@ -3,6 +3,7 @@ module c3d_simulation_test;
 import std::math;
 import c3d;
 import c3d::asset;
+import c3d::camera;
 import c3d::landscape::terrain;
 import c3d::landscape::water;
 import c3d::material;
@@ -30,6 +31,7 @@ const uint WARM_FRAMES @local = 10;
 const float FINITE_DIFFERENCE_TOLERANCE @local = 1e-3f; // metres per second; float rounding of a height difference
 const float MOVING_MINIMUM @local = 0.01f; // metres per second: the sampled point visibly moves
 const float NORMAL_TOLERANCE @local = 1e-5f;
+const float REACH_TOLERANCE @local = 1e-6f; // metres: float rounding of a node's position and a plane's offset
 const uint TERRAIN_TEXELS @local = 129; // one chunk
 const float TERRAIN_HEIGHT_SCALE @local = 4;
 const ushort TERRAIN_HIGH @local = 32768; // 2 m of the 4 m scale: above the pond's rest plane
@@ -190,6 +192,26 @@ fn void test_simulation_does_not_depend_on_frame_rate() @test {
         assert(math::abs(slow_height - fast_height) <= SAME_STATE_TOLERANCE, "%f against %f", slow_height, fast_height);
     }
     assert(math::abs(drawn_height(&slow, slow_pond, BUMP_CENTRE.x, BUMP_CENTRE.z)) > SAME_STATE_TOLERANCE);
+}
+
+fn void test_a_step_moves_each_height_by_its_speed_once() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* pond = add_pond(&fixture, pond_desc());
+    SimulationState* state = state_of(&fixture, pond);
+    double time;
+    update_water(&fixture, time);
+    try_impulse(&fixture, pond.id)!!;
+    update_water(&fixture, time += STEP_SECONDS);
+
+    // From rest the stencil adds no force, so one step moves a height by its speed times the step, and only once.
+    float largest;
+    foreach (index, height : state.height) {
+        assert(height == state.speed[index] * (float)STEP_SECONDS, "vertex %d moved %f", index, height);
+        largest = max(largest, math::abs(height));
+    }
+    assert(largest > 0 && state.reach == largest);
 }
 
 fn void test_simulation_settles_and_stops_uploading() @test {
@@ -517,30 +539,71 @@ fn Vec3 grid_normal(SimulationState* state, uint column, uint row) @local {
     return normal.normalize();
 }
 
-fn void test_simulated_reach_is_the_height_clamp() @test {
+fn float medium_offset(Fixture* fixture, Node* pond) @local {
+    return -fixture.scene.node(fixture.scene.get(pond, WaterRuntime).medium_node).local.position.y;
+}
+
+// The clip plane update_mirror places for a camera over the pond.
+fn Plane mirror_plane(Fixture* fixture, Node* pond, Node* viewer) @local {
+    MirrorState state = water::update_mirror(
+        scene:          &fixture.scene,
+        body:           pond.id,
+        slot:           0,
+        viewing_camera: viewer.id,
+    )!!;
+    assert(state == MirrorState.PLACED);
+    return fixture.scene.get(pond, WaterRuntime).clip_plane;
+}
+
+fn void test_medium_and_clip_plane_follow_the_simulated_reach() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
-    Node* pond = add_pond(&fixture, pond_desc(), POND_LEVEL);
-    WaterRuntime* runtime = fixture.scene.get(pond, WaterRuntime);
+    WaterDesc desc = pond_desc();
+    desc.extent = SETTLE_EXTENT;
+    desc.simulation.damping = SETTLE_DAMPING;
+    Node* pond = add_pond(&fixture, desc, POND_LEVEL);
+    Node* viewer = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    viewer.local.position = { 0, POND_LEVEL + 4, 6 };
+    fixture.scene.update_world();
+    SimulationState* state = state_of(&fixture, pond);
 
+    // The mesh keeps the clamp; a calm pond reaches nowhere, so its medium starts at the skin and its clip plane
+    // at the rest plane.
     Aabb bounds = fixture.scene.get(pond, Mesh).local_bounds;
     assert(bounds.min.y == -water::SIMULATION_MAX_HEIGHT && bounds.max.y == water::SIMULATION_MAX_HEIGHT);
-    assert(bounds.min.x == -POND_EXTENT / 2 && bounds.max.x == POND_EXTENT / 2);
-    assert(math::abs(runtime.clip_plane.d - (water::SIMULATION_MAX_HEIGHT - POND_LEVEL)) <= 1e-6f);
-    Node* medium = fixture.scene.node(runtime.medium_node);
-    assert(math::abs(medium.local.position.y + water::SIMULATION_MAX_HEIGHT + water::MEDIUM_SKIN) <= 1e-6f);
+    assert(bounds.min.x == -SETTLE_EXTENT / 2 && bounds.max.x == SETTLE_EXTENT / 2);
+    assert(math::abs(medium_offset(&fixture, pond) - water::MEDIUM_SKIN) <= REACH_TOLERANCE);
+    assert(math::abs(mirror_plane(&fixture, pond, viewer).d + POND_LEVEL) <= REACH_TOLERANCE);
 
-    // Only the clamp bounds a simulated height, whatever the push.
-    SimulationState* state = runtime.simulation;
-    foreach (&speed : state.speed) *speed = -1000;
-    state.awake = true;
+    // A ripple pushes both down to its peak, and no further.
     double time;
     update_water(&fixture, time);
+    try_impulse(&fixture, pond.id)!!;
+    for (uint frame = 0; frame < WARM_FRAMES; frame++) update_water(&fixture, time += STEP_SECONDS);
+    float peak;
+    foreach (height : state.height) peak = max(peak, math::abs(height));
+    assert(state.reach >= peak && state.reach > MOVING_MINIMUM && state.reach < water::SIMULATION_MAX_HEIGHT);
+    assert(math::abs(medium_offset(&fixture, pond) - (state.reach + water::MEDIUM_SKIN)) <= REACH_TOLERANCE);
+    assert(math::abs(mirror_plane(&fixture, pond, viewer).d - (state.reach - POND_LEVEL)) <= REACH_TOLERANCE);
+
+    // Settling gives the reach back.
+    uint frames;
+    while (state.awake && frames++ < SETTLE_LIMIT_FRAMES) update_water(&fixture, time += STEP_SECONDS);
+    assert(!state.awake && state.reach == 0);
+    assert(math::abs(medium_offset(&fixture, pond) - water::MEDIUM_SKIN) <= REACH_TOLERANCE);
+    assert(math::abs(mirror_plane(&fixture, pond, viewer).d + POND_LEVEL) <= REACH_TOLERANCE);
+
+    // Only the clamp bounds a simulated height, whatever the push.
+    foreach (&speed : state.speed) *speed = -1000;
+    state.awake = true;
     for (uint frame = 0; frame < WARM_FRAMES; frame++) update_water(&fixture, time += STEP_SECONDS);
     float lowest;
     foreach (height : state.height) lowest = min(lowest, height);
     assert(lowest == -water::SIMULATION_MAX_HEIGHT, "the lowest height is %f", lowest);
+    assert(state.reach == water::SIMULATION_MAX_HEIGHT);
+    float clamped_offset = water::SIMULATION_MAX_HEIGHT + water::MEDIUM_SKIN;
+    assert(math::abs(medium_offset(&fixture, pond) - clamped_offset) <= REACH_TOLERANCE);
 }
 
 fn void test_simulated_set_desc_keeps_its_grid() @test {

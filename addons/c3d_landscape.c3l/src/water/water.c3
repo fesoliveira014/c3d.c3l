@@ -385,7 +385,6 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .grid           = surface,
         .mirrors        = mirrors,
         .medium_node    = medium_node.id,
-        .clip_plane     = mirror_clip_plane(node.world, surface_reach(&desc, desc.waves[:desc.wave_count], envelope).y),
         .rest_min       = { rest.min.x, rest.min.z },
         .rest_max       = { rest.max.x, rest.max.z },
         .ocean          = layout,
@@ -394,6 +393,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         .spectral_bound = spectral ? spectral.bound : 0,
     });
     WaterRuntime* runtime = scene.get(node, WaterRuntime);
+    runtime.clip_plane = mirror_clip_plane(node.world, vertical_reach(runtime));
     if (simulation) {
         follow_ground(
             scene:   scene,

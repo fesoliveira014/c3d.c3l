@@ -42,7 +42,7 @@ const uint MIN_SIMULATION_CELLS = 16; // a coarser lattice cannot show a ripple
 <*
  Metres a simulated height is clamped to, up and down.
 *>
-const float SIMULATION_MAX_HEIGHT = 1; // sizes the mesh bounds, the medium offset and the mirror's clip plane
+const float SIMULATION_MAX_HEIGHT = 1; // sizes the mesh bounds; the medium and the clip plane follow the reach instead
 
 <*
  Height in metres under which a simulated body can settle.
@@ -80,6 +80,7 @@ struct SimulationState {
     bool[]    wet;             // false where the ground stands at or above the rest plane
     usz       wet_count;
     TextureId texture;         // owned: this frame's drawn heights and the previous frame's
+    float     reach;           // largest height magnitude since the body woke; the medium and the clip plane follow it
     float     fraction;        // share of a step the drawn heights are past the prior ones
     double    accumulator;     // seconds past the last whole step
     double    last_time;
@@ -236,6 +237,7 @@ fn void advance_simulation(
     if (!state.awake) return;
 
     state.accumulator += elapsed;
+    float reach_before = state.reach;
     uint substeps = simulation_substeps(&runtime.desc);
     uint steps;
     while (state.accumulator >= SIMULATION_STEP && steps < MAX_SIMULATION_STEPS_PER_UPDATE) {
@@ -249,6 +251,7 @@ fn void advance_simulation(
     state.fraction = (float)(state.accumulator / SIMULATION_STEP);
 
     if (steps > 0 && is_settled(state)) settle(state);
+    if (state.reach != reach_before) write_medium(scene, node, runtime);
     upload_simulation(assets, state);
 }
 
@@ -260,7 +263,8 @@ fn void step_simulation(SimulationState* state, WaterSimulation* simulation, uin
     float decay = math::exp(-simulation.damping * interval);
     for (uint substep = 0; substep < substeps; substep++) {
         accelerate(state, stiffness, decay);
-        drift(state, interval);
+        float peak = drift(state, interval);
+        state.reach = max(state.reach, peak);
     }
 }
 
@@ -287,11 +291,16 @@ fn float wall_height(SimulationState* state, usz index, float centre) @private {
     return state.wet[index] ? state.height[index] : centre;
 }
 
-fn void drift(SimulationState* state, float interval) @private {
+// Moves the wet heights by their speeds and returns the largest magnitude among them.
+fn float drift(SimulationState* state, float interval) @private {
+    float peak;
     foreach (index, &height : state.height) {
         if (!state.wet[index]) continue;
+
         *height = math::clamp(*height + state.speed[index] * interval, -SIMULATION_MAX_HEIGHT, SIMULATION_MAX_HEIGHT);
+        peak = max(peak, math::abs(*height));
     }
+    return peak;
 }
 
 fn bool is_settled(SimulationState* state) @private {
@@ -308,6 +317,7 @@ fn void settle(SimulationState* state) @private {
     state.speed[..] = 0;
     state.accumulator = 0;
     state.fraction = 0;
+    state.reach = 0;
     state.awake = false;
 }
 
