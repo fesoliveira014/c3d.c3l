@@ -137,6 +137,11 @@ fn void test_geometry_write_moves_the_draw_and_reports_its_velocity() @test {
     fixture.assets.mark_geometry_dirty(target.geometry);
     assert(fixture.assets.geometry(target.geometry).data.bounds.max.x != WRITE_REACH);
     assert(sample_displaced_frame(&target, shader, 0, written: false)!! == home);
+
+    fixture.assets.mark_geometry_dirty(target.geometry);
+    assert(sample_displaced_frame(&target, shader, OFFSCREEN_OFFSET)!! != home);
+    fixture.assets.mark_geometry_dirty(target.geometry);
+    assert(sample_displaced_frame(&target, shader, 0)!! == home);
     check_validation(renderer);
 }
 
