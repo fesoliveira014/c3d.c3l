@@ -1614,11 +1614,21 @@ fn Node* add_pending_layer(Fixture* fixture, FoliageDesc desc) @local {
 }
 
 fn ScatterJob take_job(Fixture* fixture, Node* layer, Allocator allocator) @local {
-    return foliage::scatter_job(&fixture.scene, &fixture.assets, layer.id, allocator)!!;
+    return foliage::scatter_job(
+        scene:   &fixture.scene,
+        assets:  &fixture.assets,
+        layer:   layer.id,
+        scratch: allocator,
+    )!!;
 }
 
 fn fault scatter_job_fault(Fixture* fixture, Node* layer) @local {
-    return @catch(foliage::scatter_job(&fixture.scene, &fixture.assets, layer.id, tmem));
+    return @catch(foliage::scatter_job(
+        scene:   &fixture.scene,
+        assets:  &fixture.assets,
+        layer:   layer.id,
+        scratch: tmem,
+    ));
 }
 
 fn void? try_commit(Fixture* fixture, ScatterJob* job) @local {
