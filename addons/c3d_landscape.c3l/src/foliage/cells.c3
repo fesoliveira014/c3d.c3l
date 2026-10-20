@@ -27,6 +27,11 @@ struct StagedCell @private {
     Node*       created; // null when the cell already has a node
 }
 
+struct CellStorage @private {
+    Transform[] transforms;
+    Vec4[]      colors;
+}
+
 fn FoliageRuntime? create_runtime(Allocator allocator, uint cells_per_side, FoliageDesc desc) @private {
     sz count = (sz)cells_per_side * cells_per_side;
     sz bytes = count * Entity::size;
@@ -58,8 +63,8 @@ fn void free_runtime(FoliageRuntime* runtime) @private {
     *runtime = {};
 }
 
-fn CellRange whole_grid(FoliageRuntime* runtime) @private {
-    return { .end_column = runtime.cells_per_side, .end_row = runtime.cells_per_side };
+fn CellRange whole_grid(uint cells_per_side) @private {
+    return { .end_column = cells_per_side, .end_row = cells_per_side };
 }
 
 // Cells whose candidates can sample a texel of the rectangle, through both node transforms.
@@ -125,27 +130,33 @@ fn CellRange cells_meeting_extent(
 }
 
 // Each cell once, where ranges overlap.
+macro void @distinct_cells(CellRange[] ranges; @body(uint column, uint row)) @private {
+    foreach (range_index, range : ranges) {
+        for (uint row = range.first_row; row < range.end_row; row++) {
+            for (uint column = range.first_column; column < range.end_column; column++) {
+                if (in_ranges(ranges[:range_index], column, row)) continue;
+
+                @body(column, row);
+            }
+        }
+    }
+}
+
 fn void place_ranges(
     Scene* scene,
     ScatterFrame* frame,
     FoliageRuntime* runtime,
     CellRange[] ranges,
 ) @private {
-    foreach (index, range : ranges) {
-        for (uint row = range.first_row; row < range.end_row; row++) {
-            for (uint column = range.first_column; column < range.end_column; column++) {
-                if (in_ranges(ranges[:index], column, row)) continue;
-
-                place_existing_cell(
-                    scene:   scene,
-                    frame:   frame,
-                    runtime: runtime,
-                    column:  column,
-                    row:     row,
-                );
-            }
-        }
-    }
+    @distinct_cells(ranges; uint column, uint row) {
+        place_existing_cell(
+            scene:   scene,
+            frame:   frame,
+            runtime: runtime,
+            column:  column,
+            row:     row,
+        );
+    };
 }
 
 fn bool in_ranges(CellRange[] ranges, uint column, uint row) @private {
@@ -167,37 +178,51 @@ fn void place_existing_cell(
     if (!cell.generation) return;
 
     Node* node = scene.node(cell);
-    if (runtime.desc.lod) {
-        LodGroupState* state = scene.get(node, LodGroup).state;
-        runtime.instances -= state.count;
-        uint count = place_cell(
-            frame:      frame,
-            column:     column,
-            row:        row,
-            transforms: state.transforms,
-            colors:     state.colors,
-        );
-        scene.publish_lod_instances(node, count);
-        runtime.instances += count;
-        runtime.placed_cells++;
-        return;
-    }
-
-    InstancedMesh* batch = scene.get(node, InstancedMesh);
-    runtime.instances -= batch.count;
-    batch.count = place_cell(
+    CellStorage storage = cell_storage(scene, runtime, node);
+    uint count = place_cell(
         frame:      frame,
         column:     column,
         row:        row,
-        transforms: batch.transforms,
-        colors:     batch.colors,
+        transforms: storage.transforms,
+        colors:     storage.colors,
     );
-    runtime.instances += batch.count;
-    scene.mark_instances_dirty(node);
+    publish_cell(
+        scene:   scene,
+        runtime: runtime,
+        node:    node,
+        count:   count,
+    );
+}
+
+fn CellStorage cell_storage(Scene* scene, FoliageRuntime* runtime, Node* node) @private {
+    if (runtime.desc.lod) {
+        LodGroupState* state = scene.get(node, LodGroup).state;
+        return { .transforms = state.transforms, .colors = state.colors };
+    }
+    InstancedMesh* batch = scene.get(node, InstancedMesh);
+    return { .transforms = batch.transforms, .colors = batch.colors };
+}
+
+// The cell's arrays already hold the instances.
+fn void publish_cell(
+    Scene* scene,
+    FoliageRuntime* runtime,
+    Node* node,
+    uint count,
+) @private {
+    if (runtime.desc.lod) {
+        runtime.instances -= scene.get(node, LodGroup).state.count;
+        scene.publish_lod_instances(node, count);
+    } else {
+        InstancedMesh* batch = scene.get(node, InstancedMesh);
+        runtime.instances -= batch.count;
+        batch.count = count;
+        scene.mark_instances_dirty(node);
+    }
+    runtime.instances += count;
     runtime.placed_cells++;
 }
 
-// All or nothing: counts, then the node budget, then every allocation, before any cell changes.
 fn void? rescatter(
     Scene* scene,
     AssetStore* assets,
@@ -211,41 +236,56 @@ fn void? rescatter(
     @pool() {
         uint[] counts = alloc::new_array(tmem, uint, (sz)runtime.cells.len);
         counts[..] = NOT_COUNTED;
-        uint new_nodes;
-        foreach (range_index, range : ranges) {
-            for (uint row = range.first_row; row < range.end_row; row++) {
-                for (uint column = range.first_column; column < range.end_column; column++) {
-                    if (in_ranges(ranges[:range_index], column, row)) continue;
-
-                    usz index = (usz)row * runtime.cells_per_side + column;
-                    counts[index] = count_cell(frame, column, row);
-                    if (counts[index] && !runtime.cells[index].generation) new_nodes++;
-                }
-            }
-        }
-        if (new_nodes > scene.world.entities.free_count) return c3d::CAPACITY_EXCEEDED~;
-        StagedCell[] staged = alloc::new_array(tmem, StagedCell, (sz)runtime.cells.len);
-        stage_cells(
+        @distinct_cells(ranges; uint column, uint row) {
+            counts[(usz)row * runtime.cells_per_side + column] = count_cell(frame, column, row);
+        };
+        install_counts(
             scene:   scene,
             assets:  assets,
             node:    node,
-            runtime: runtime,
-            counts:  counts,
-            staged:  staged,
-        )!;
-        commit_cells(
-            scene:   scene,
             desc:    desc,
             runtime: runtime,
             counts:  counts,
-            staged:  staged,
-        );
+        )!;
     };
     place_ranges(
         scene:   scene,
         frame:   frame,
         runtime: runtime,
         ranges:  ranges,
+    );
+}
+
+// All or nothing: the node budget, then every allocation, before any cell changes. Runs inside a @pool.
+fn void? install_counts(
+    Scene* scene,
+    AssetStore* assets,
+    Node* node,
+    FoliageDesc* desc,
+    FoliageRuntime* runtime,
+    uint[] counts,
+) @private {
+    uint new_nodes;
+    foreach (index, count : counts) {
+        if (count != NOT_COUNTED && count && !runtime.cells[index].generation) new_nodes++;
+    }
+    if (new_nodes > scene.world.entities.free_count) return c3d::CAPACITY_EXCEEDED~;
+
+    StagedCell[] staged = alloc::new_array(tmem, StagedCell, (sz)runtime.cells.len);
+    stage_cells(
+        scene:   scene,
+        assets:  assets,
+        node:    node,
+        runtime: runtime,
+        counts:  counts,
+        staged:  staged,
+    )!;
+    commit_cells(
+        scene:   scene,
+        desc:    desc,
+        runtime: runtime,
+        counts:  counts,
+        staged:  staged,
     );
 }
 
