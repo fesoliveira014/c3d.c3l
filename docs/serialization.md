@@ -543,12 +543,13 @@ verified ownership.
 See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).
 
 ParticleSystem restores its descriptor and emitting flag in VALUE. The payload is
-version 4. Version 2 added `saturation`, version 3 the sub-emitters and
-`max_events`, and version 4 adds `collision`; older payloads in both encodings
-read `REFUSE`, no sub-emitters and no collision. The collision callback is
-runtime-only. Sub-emitter targets are same-subtree entity references. Its pool, event queue,
+version 7. Version 2 added `saturation`, version 3 the sub-emitters and
+`max_events`, version 4 `collision`, version 5 `flipbook`, version 6 `turbulence`
+and version 7 `trail`; older payloads in both encodings read `REFUSE`, no
+sub-emitters, no collision, no flipbook, no turbulence and no trail. The collision
+callback is runtime-only. Sub-emitter targets are same-subtree entity references. Its pool, event queue,
 random state, counters and draw child restart through explicit preparation.
-A generated draw child selected without its owner is rejected. See
+A generated draw or trail child selected without its owner is rejected. See
 [particle serialization](../addons/c3d_particle.c3l/src/serial/README.md).
 
 AudioEmitter and AudioListener are described components. The emitter saves its clip by key, bus index, volume, pitch, distances, looping and playing. The bus index means the entry of the reading system's `AudioDesc.buses`; a bus past that table fails the voice start and counts in `AudioStats.start_failures`. Playback position is not saved: a loaded playing emitter starts from the clip's beginning at the next `AudioSystem.update`. AudioVoiceLink is transient and never written. The reading store registers the clip kind and holds a clip under the saved key.
