@@ -19,11 +19,12 @@ const float DEPTH_RADIUS @private = 0.025f; // the size times the default radius
 const float DEPTH_LIFETIME @private = 10;
 const float DEPTH_VIEW_WIDTH @private = 8; // world units across the target, so eight pixels to the unit
 const float DEPTH_CAMERA_HEIGHT @private = 10;
+const float DEPTH_FIELD_OF_VIEW @private = 60; // sees about 11.5 metres of floor across
 const uint DEPTH_TARGET @private = 64;
 const float FLOOR_SIZE @private = 20;
 const uint AIRBORNE_STEP @private = 12; // the particles have fallen less than half a metre
 const float AIRBORNE_MINIMUM @private = 1;
-const uint DEPTH_FRAMES @private = 90; // the fall takes about 40 steps, and the particles launched upward are down by 60
+const uint DEPTH_FRAMES @private = 90; // the fall takes about 40 steps; those launched upward are down by 60
 const float REST_MARGIN @private = 0.05f; // the most a settled particle may lie above the floor
 const float REST_TOLERANCE @private = 1e-3f;
 const float FALLEN_THROUGH @private = -0.5f; // a particle that met no floor lies far below by the end
@@ -49,6 +50,7 @@ fn DepthScene? create_depth_scene(
     bool slab,
     bool launched = true,
     float drop_height = DEPTH_DROP_HEIGHT,
+    bool perspective = false,
 ) @private {
     DepthScene depth;
     StandardParams matte = material::STANDARD_PARAMS_DEFAULT;
@@ -82,7 +84,10 @@ fn DepthScene? create_depth_scene(
     depth.emitter = fixture.scene.add_particle_system(desc)!;
     depth.emitter.local.position = slab ? SLAB_LANDING : (Vec3){ 0, drop_height, 0 };
 
-    depth.camera = fixture.scene.add_camera(camera::orthographic(DEPTH_VIEW_WIDTH, 0.1f, 100))!;
+    Camera lens = perspective
+        ? camera::perspective_deg(DEPTH_FIELD_OF_VIEW, 0.1f)
+        : camera::orthographic(DEPTH_VIEW_WIDTH, 0.1f, 100);
+    depth.camera = fixture.scene.add_camera(lens)!;
     depth.camera.local.position = { 0, DEPTH_CAMERA_HEIGHT, 0 };
     depth.camera.local.rotation = maths::rotation_between({ 0, 0, -1 }, { 0, -1, 0 });
     depth.target = render::create_render_target(
@@ -157,7 +162,7 @@ fn void test_gpu_particles_stick_on_the_depth_view() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
-    DepthScene depth = create_depth_scene(&fixture, false)!!;
+    DepthScene depth = create_depth_scene(&fixture, false, perspective: true)!!;
     run_depth_frames(&fixture, &depth, DEPTH_BURST, true);
     assert(depth.settled_count == DEPTH_BURST);
     foreach (record : depth.settled[:DEPTH_BURST]) {
