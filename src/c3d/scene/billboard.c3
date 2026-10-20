@@ -23,7 +23,17 @@ enum BillboardFacing {
 }
 
 <*
- Placement, dimensions and colour of one billboard.
+ Sprite-sheet layout of a billboard batch; zero columns disables it.
+*>
+struct BillboardAtlas {
+    uint columns;
+    uint rows;
+    uint frame_count;
+    Vec2 inset; // UV units cut from each cell edge
+}
+
+<*
+ Placement, dimensions, colour and sprite-sheet frame of one billboard.
 *>
 struct Billboard {
     Vec3 position;
@@ -31,6 +41,7 @@ struct Billboard {
     Vec3 direction;
     float rotation;
     Vec4 color;
+    float frame; // the integer part selects the cell; the fraction blends toward the next cell
 }
 
 <*
@@ -52,6 +63,7 @@ struct BillboardBatch {
     uint count;
     uint revision;
     BillboardAggregate aggregate;
+    BillboardAtlas atlas;
 }
 
 <*
@@ -70,9 +82,11 @@ fn Node*? Scene.add_billboards(
     BillboardFacing facing = BillboardFacing.CAMERA,
     Node* parent = null,
     String name = "",
+    BillboardAtlas atlas = {},
 ) {
     if (billboards.len > capacity) return c3d::CAPACITY_EXCEEDED~;
     check_billboards(billboards)!;
+    check_billboard_atlas(atlas)!;
     Node* node = self.add_node(parent, name)!;
     BillboardBatch batch = {
         .material = material,
@@ -80,6 +94,7 @@ fn Node*? Scene.add_billboards(
         .billboards = alloc::new_array(self.allocator, Billboard, (sz)capacity),
         .count = (uint)billboards.len,
         .revision = 1,
+        .atlas = atlas,
     };
     batch.billboards[:billboards.len] = billboards[..];
     self.world.add(node.id, batch);
@@ -99,6 +114,18 @@ fn void? Scene.set_billboards(&self, Node* node, Billboard[] billboards) {
     check_billboards(billboards)!;
     batch.billboards[:billboards.len] = billboards[..];
     batch.count = (uint)billboards.len;
+    self.mark_billboards_dirty(node);
+}
+
+<*
+ Replace a batch's sprite-sheet layout.
+ @param [&in] node : "Carries BillboardBatch."
+ @return? c3d::INVALID_ARGUMENT
+ @require self.has(node, BillboardBatch)
+*>
+fn void? Scene.set_billboard_atlas(&self, Node* node, BillboardAtlas atlas) {
+    check_billboard_atlas(atlas)!;
+    self.get(node, BillboardBatch).atlas = atlas;
     self.mark_billboards_dirty(node);
 }
 
@@ -160,12 +187,33 @@ fn bool billboards_valid(Billboard[] billboards) {
             || !math::is_finite(billboard.size.y) || billboard.size.x < 0 || billboard.size.y < 0) {
             return false;
         }
+        if (!math::is_finite(billboard.frame) || billboard.frame < 0) return false;
     }
     return true;
 }
 
+<*
+ Whether an atlas is off or has a consistent grid, frame count and inset.
+ @pure
+*>
+fn bool billboard_atlas_valid(BillboardAtlas atlas) {
+    for (usz axis = 0; axis < 2; axis++) {
+        if (!math::is_finite(atlas.inset[axis]) || atlas.inset[axis] < 0) return false;
+    }
+    if (atlas.columns == 0) return true;
+
+    ulong cells = (ulong)atlas.columns * atlas.rows;
+    if (atlas.frame_count == 0 || atlas.frame_count > cells) return false;
+
+    return atlas.inset.x < 0.5f / atlas.columns && atlas.inset.y < 0.5f / atlas.rows;
+}
+
 fn void? check_billboards(Billboard[] billboards) @local {
     if (!billboards_valid(billboards)) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? check_billboard_atlas(BillboardAtlas atlas) @local {
+    if (!billboard_atlas_valid(atlas)) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void free_billboards(Entity entity, void* component, void* user) @private {

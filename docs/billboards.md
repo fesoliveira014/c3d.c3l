@@ -35,9 +35,10 @@ changes its length and initializes newly exposed entries to unit white quads.
 Neither grows capacity. Invalid record data returns `INVALID_ARGUMENT`; exceeding
 capacity returns `CAPACITY_EXCEEDED`. Faults leave existing records unchanged.
 
-Records require finite values and nonnegative dimensions. Zero dimensions and
-zero direction are allowed. Direct edits to records, facing or material require
-`mark_billboards_dirty`; direct count edits must stay within capacity. The
+Records require finite values, nonnegative dimensions and a finite nonnegative
+`frame`. Zero dimensions and zero direction are allowed. Direct edits to records,
+facing, atlas or material require `mark_billboards_dirty`; direct count edits must
+stay within capacity, and a directly edited atlas must satisfy the rules below. The
 aggregate cache is library-owned. Component pointers are short-lived ECS borrows.
 
 ## Orientation and units
@@ -57,13 +58,74 @@ For a WORLD child with identity authored pose, positions/directions are already
 world-space; the parent still owns the subtree and supplies inherited visibility.
 Layer masks remain independent. See [scene nodes](scene.md).
 
+## Sprite sheets
+
+`BillboardBatch.atlas`, a `BillboardAtlas`, lays a sprite sheet over the textures
+of the batch's material. It is off while `columns` is 0.
+
+```c3
+BillboardAtlas sheet = { .columns = 4, .rows = 4, .frame_count = 14, .inset = { 0.5f / 512, 0.5f / 512 } };
+Node* node = scene.add_billboards(
+    material: material_id,
+    capacity: 128,
+    billboards: values[..],
+    atlas: sheet,
+)!;
+scene.set_billboard_atlas(node, sheet)!;
+```
+
+- **Frames.** Frames run row-major from the top-left cell of the image as stored:
+  frame 0 is the first column of the first stored row. A billboard's `frame` is
+  a float. Its integer part, taken modulo `frame_count`, is the current cell; its
+  fraction blends toward the next cell, which wraps from the last frame to frame 0.
+  Applications wrap `frame` as they advance it and keep it below 2^24, where a float
+  still holds whole frames.
+- **UVs.** UV0 maps the quad into the current cell and UV1 into the next one. Each
+  rectangle is the cell cut by `inset` on all four sides, in UV units of the whole
+  texture. The quad's uv origin is its top-left corner, as in texture space and
+  glTF: u runs from the left edge to the right edge and v from the top edge down,
+  so an image stored top row first draws upright, with or without an atlas, and so
+  does the art of every cell. A 1x1 atlas with zero inset is the same as no atlas.
+- **Materials.** Every material that samples UV0 steps through the cells, with no
+  other change; a map that reads UV1 shows the next cell. A custom fragment blends
+  a UV0 sample and a UV1 sample by `v_billboard.z`, the fraction of `frame`.
+- **`v_billboard`.** Vertex output location 8 holds (quad u, quad v, fraction of
+  `frame`), smoothly interpolated, with v running from the quad's top edge down.
+  UV0 no longer holds the quad coordinate under an
+  atlas, so a fragment that needs it reads `v_billboard.xy`. Without an atlas the
+  third component is 0. Mesh draws write (uv0, 0); see
+  [custom shaders](custom_shaders.md#billboard-varying).
+- **Validation.** `INVALID_ARGUMENT` from `add_billboards`, `set_billboards`,
+  `set_billboard_atlas` and the serialization codec for: a `frame` that is not
+  finite or is negative; `columns` of 1 or more with `rows` 0; `frame_count`
+  outside 1 to `columns` x `rows`; an `inset` component that is not finite, is
+  negative, or is at least half a cell on its axis. A fault leaves the batch
+  unchanged. `set_billboard_atlas` bumps the batch revision.
+
+### Edges and mipmaps
+
+Neighbouring cells meet at a texel boundary, so filtering can mix their colours.
+
+- Set `inset` to half a texel of the atlas texture on each axis (0.5 divided by
+  the texture's width, and by its height). Bilinear taps at mip 0 then stay inside
+  the cell.
+- With mipmaps, a tap at level `l` reads texels up to 2^l texels from the sample
+  position. Pad each cell with a border of at least 2^(m-1) texels for `m` sampled
+  levels (0 to m-1), filled with the cell's own edge colour at zero alpha, so a
+  neighbour's colour only ever enters a tap at zero alpha and the premultiplied
+  output hides it.
+- Anisotropic filtering widens the footprint along one axis without a bound the
+  padding rule can name, so it carries no guarantee. Leave it off for atlas
+  textures.
+
 ## Materials and supported paths
 
 This delivery supports `AlphaMode.BLEND`: Basic, Standard, Toon,
 non-transmissive Physical and Custom materials with no custom vertex stages.
 Core supplies the billboard vertex stage and ordinary fragment inputs, including
-UV0/UV1, world position, facing normal, tangent and per-record colour. Both UV
-sets cover the same quad. Custom fragments use normal scene-read declarations.
+UV0/UV1, world position, facing normal, tangent and per-record colour. Without a
+sprite sheet both UV sets cover the same quad, with the origin at its top-left
+corner. Custom fragments use normal scene-read declarations.
 
 `BlendMode` controls source-over or additive composition. Additive RGB preserves
 destination alpha. In a view with `transparency = WEIGHTED`, a source-over batch
@@ -97,7 +159,8 @@ each billboard in the index capacity and refresh after structural changes.
 
 Removing the node or an ancestor frees its records through the scene hook.
 Shared materials/textures remain in the asset store. GPU records are 64 bytes
-per capacity entry, uploaded only after a revision/node-world change and retired
-through normal frame completion after an absence. The renderer owns one shared
+per capacity entry, plus a 32-byte atlas block per batch, uploaded only after a
+revision/node-world change and retired through normal frame completion after an
+absence. The renderer owns one shared
 quad. Empty batches create no billboard upload, draw, cull, sort or scene-read
 request. Zero-area records produce no visible geometry or singular normal matrix.

@@ -438,10 +438,11 @@ fn void? acquire_instance_records(
     GpuInstances* slot,
     uint capacity,
     usz record_size,
+    usz header_size = 0,
 ) @private {
     if (slot.capacity < capacity) {
         gpu::AllocationDesc records_desc = {
-            .size         = (usz)capacity * record_size,
+            .size         = header_size + (usz)capacity * record_size,
             .alignment    = STREAM_ALIGNMENT,
             .memory_class = gpu::MemoryClass.GPU_PRIVATE,
             .access       = { .graphics },
@@ -455,7 +456,7 @@ fn void? acquire_instance_records(
             renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
         }
         slot.allocation = allocation;
-        slot.records = address;
+        slot.records = (gpu::GpuAddress)((ulong)address + header_size);
         slot.capacity = capacity;
         slot.revision = 0;
     } else {

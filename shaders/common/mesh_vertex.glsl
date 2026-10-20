@@ -34,6 +34,7 @@ layout(location = 6) out vec4 v_clip_pos;
 #ifdef VELOCITY
 layout(location = 7) out vec4 v_prev_clip_pos;
 #endif
+layout(location = 8) out vec3 v_billboard;
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -336,6 +337,7 @@ void write_mesh_outputs(
 #endif
     v_uv0 = vertex.uv0;
     v_uv1 = vertex.uv1;
+    v_billboard = vec3(vertex.uv0, 0.0);
     v_color = vertex.color;
     if ((draw.flags & DRAW_SWAY_VERTEX_ALPHA) != 0u) v_color.a = 1.0;
     v_color *= instance.color;
