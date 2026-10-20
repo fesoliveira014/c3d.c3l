@@ -42,6 +42,10 @@ const uint BAND_ROW @local = GRID_SIDE / 2; // the prop row that bobs: GRID_SIDE
 const float BAND_BOB_HEIGHT @local = 0.4f;
 const float BAND_BOB_RADIANS_PER_SECOND @local = 3;
 const float BAND_PHASE_PER_COLUMN @local = 0.1f; // radians
+const Vec3 PROPS_POSITION @local = { 0, PROP_SIZE * 0.5f, 12 };
+const float MOVE_NODE_RADIUS @local = 3;
+const float MOVE_NODE_RADIANS_PER_SECOND @local = 0.6f;
+const float MOVE_NODE_SPIN_RADIANS_PER_SECOND @local = 0.2f;
 const double BENCHMARK_FRAMES_PER_SECOND @local = 60; // the benchmark loop's fixed frame time
 const uint GLASS_SIDE @local = 22; // 10,648 blended cubes, the sorted-instance lever; 47 gives 103,823
 const float GLASS_SPACING @local = 0.4f;
@@ -99,12 +103,15 @@ struct BenchmarkOptions @local {
     bool           fade_field;
     bool           edit_band;
     bool           whole_publication;
+    bool           move_node;
 }
 
-struct BandEdit @local {
+struct SceneEdit @local {
     Scene*   scene;
     Batches* batches;
+    bool     edit_band;
     bool     whole_publication;
+    bool     move_node;
 }
 
 struct Controls @local {
@@ -118,6 +125,7 @@ struct Controls @local {
     bool taa;
     bool band;
     bool whole_publication;
+    bool move_node;
     bool picked;
     String pick_name;
     uint pick_instance;
@@ -227,7 +235,7 @@ fn Node*? add_props(Scene* scene, GeometryId prop, MaterialId white) @local {
             batch.colors[index] = { u, 0.4f, v, 1 };
         }
     }
-    node.local.position = { 0, PROP_SIZE * 0.5f, 12 };
+    node.local.position = PROPS_POSITION;
     return node;
 }
 
@@ -393,6 +401,19 @@ fn void animate(Scene* scene, Batches* batches, double time) @local {
     scene.mark_instances_dirty(batches.trio);
 }
 
+fn void move_props(Batches* batches, double time) @local {
+    float angle = (float)time * MOVE_NODE_RADIANS_PER_SECOND;
+    batches.props.local.position = PROPS_POSITION + (Vec3){
+        MOVE_NODE_RADIUS * math::cos(angle),
+        0,
+        MOVE_NODE_RADIUS * math::sin(angle),
+    };
+    batches.props.local.rotation = quaternion::from_axis_angle{float}(
+        { 0, 1, 0 },
+        (float)time * MOVE_NODE_SPIN_RADIANS_PER_SECOND,
+    );
+}
+
 fn void animate_band(
     Scene* scene,
     Node* props,
@@ -414,8 +435,11 @@ fn void animate_band(
 }
 
 fn void edit_each_frame(void* user, uint frame) @local {
-    BandEdit* edit = user;
+    SceneEdit* edit = user;
     double time = (double)frame / BENCHMARK_FRAMES_PER_SECOND;
+    if (edit.move_node) move_props(edit.batches, time);
+    if (!edit.edit_band) return;
+
     animate(edit.scene, edit.batches, time);
     animate_band(
         scene:             edit.scene,
@@ -465,7 +489,12 @@ fn void apply_wind(Scene* scene, Batches* batches, bool wind) @local {
     scene.get(batches.pulses, InstancedMesh).sway = sway;
 }
 
-fn bool draw_controls(Controls* controls, Scene* scene, Batches* batches) @local {
+fn bool draw_controls(
+    Controls* controls,
+    Scene* scene,
+    Batches* batches,
+    uint upload_bytes,
+) @local {
     bool changed;
     imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -474,6 +503,8 @@ fn bool draw_controls(Controls* controls, Scene* scene, Batches* batches) @local
         imgui::checkbox("Animate", &controls.animate);
         imgui::checkbox("Bob a prop row (B)", &controls.band);
         imgui::checkbox("Publish the whole batch (U)", &controls.whole_publication);
+        imgui::checkbox("Move the prop batch node (N)", &controls.move_node);
+        imgui::text("Bytes uploaded this frame: %u", upload_bytes);
         changed |= imgui::checkbox("Motion blur", &controls.motion_blur);
         changed |= imgui::checkbox("TAA", &controls.taa);
         changed |= imgui::checkbox("Deferred shading", &controls.deferred);
@@ -542,11 +573,12 @@ fn void? run(
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     Controls controls = {
-        .animate           = true,
+        .animate           = !options.move_node,
         .culling           = true,
         .glass             = true,
         .band              = options.edit_band,
         .whole_publication = options.whole_publication,
+        .move_node         = options.move_node,
     };
     render::configure_view(renderer, renderer.default_view, view_desc_of(&controls))!;
     renderer.prepare_scene(scene)!;
@@ -559,7 +591,12 @@ fn void? run(
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
 
-        bool changed = draw_controls(&controls, scene, &batches);
+        bool changed = draw_controls(
+            controls:     &controls,
+            scene:        scene,
+            batches:      &batches,
+            upload_bytes: renderer.stats.upload_bytes,
+        );
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;
@@ -568,6 +605,10 @@ fn void? run(
         if (input.key_pressed(platform::Scancode.U) && !input.keyboard_captured_by_gui) {
             controls.whole_publication = !controls.whole_publication;
         }
+        if (input.key_pressed(platform::Scancode.N) && !input.keyboard_captured_by_gui) {
+            controls.move_node = !controls.move_node;
+        }
+        if (controls.move_node) move_props(&batches, window.clock.total);
         if (controls.animate) animate(scene, &batches, window.clock.total);
         if (controls.band) {
             animate_band(
@@ -621,6 +662,10 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             options.whole_publication = args[index] == "whole";
             continue;
         }
+        if (args[index] == "--move-node") {
+            options.move_node = true;
+            continue;
+        }
         if (args[index] != "--fade-field") return c3d::INVALID_ARGUMENT~;
         options.fade_field = true;
     }
@@ -642,8 +687,8 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkFlags flags) @local {
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("instance_edit=%s fade_field=%s cells=%d props=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s",
-        options.edit_band ? (options.whole_publication ? "whole" : "range") : "none",
+    io::eprintfn("instance_edit=%s move_node=%s fade_field=%s cells=%d props=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s",
+        options.edit_band ? (options.whole_publication ? "whole" : "range") : "none", options.move_node,
         options.fade_field, options.fade_field ? FIELD_SIDE * FIELD_SIDE : 0, GRID_SIDE * GRID_SIDE,
         flags.width, flags.height, flags.warmup, flags.frames, flags.validation, flags.gpu_timings, timestamps_active,
         flags.capture, flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
@@ -665,8 +710,14 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
     )!;
     Orbit orbit = ORBIT_START;
     BenchmarkRun run = { .scene = &scene, .camera_node = add_orbit_camera(&scene, &orbit)! };
-    BandEdit edit = { .scene = &scene, .batches = &batches, .whole_publication = options.whole_publication };
-    if (options.edit_band) {
+    SceneEdit edit = {
+        .scene             = &scene,
+        .batches           = &batches,
+        .edit_band         = options.edit_band,
+        .whole_publication = options.whole_publication,
+        .move_node         = options.move_node,
+    };
+    if (options.edit_band || options.move_node) {
         run.before_frame = &edit_each_frame;
         run.before_frame_user = &edit;
     }
@@ -785,7 +836,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [--fade-field] [--instance-edit range|whole] [--gpu-timings] or --benchmark [--fade-field] [--instance-edit range|whole] --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--screen-space-gi on|off] [--ssgi-trace linear|hierarchical] [--ssgi-steps N] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [--fade-field] [--instance-edit range|whole] [--move-node] [--gpu-timings] or --benchmark [--fade-field] [--instance-edit range|whole] [--move-node] --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--screen-space-gi on|off] [--ssgi-trace linear|hierarchical] [--ssgi-steps N] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }

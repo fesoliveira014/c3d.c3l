@@ -34,6 +34,7 @@ const Vec4 WARM @private = { 1, 0.5f, 0.25f, 1 };
 const Vec4 COOL @private = { 0.25f, 0.5f, 1, 1 };
 const Vec2 CENTER_UV @private = { 0.5f, 0.5f };
 const Vec3 CAMERA_POSITION @private = { 0, 0, 3 };
+const Vec3 ORIGIN_CROSSING @private = { 300, 0, 0 }; // reference position in the next frame-origin cell
 const float CAMERA_TURN_DEGREES @private = 2;
 const float CAMERA_SLIDE @private = 0.1f;
 const float ORTHOGRAPHIC_HEIGHT @private = 2;
@@ -1077,10 +1078,10 @@ fn void test_taa_with_deformed_and_instanced_motion_records_cleanly() @test {
     check_validation(renderer);
 }
 
-fn void? render_instanced_frame(Fixture* fixture, bool both_views = false) @private {
+fn void? render_instanced_frame(Fixture* fixture, bool both_views = false, Vec3 reference = {}) @private {
     fixture.scene.update_world();
     if (both_views) return render_both_views(fixture);
-    fixture.renderer.begin_frame()!;
+    fixture.renderer.begin_frame({ .reference_position = reference })!;
     defer catch render::abort_frame(&fixture.renderer);
     render_view_and_finish(fixture)!;
     return fixture.renderer.end_frame();
@@ -1236,7 +1237,10 @@ fn void test_instance_records_upload_only_on_change() @test {
 
     batch_node.local.position.x += 0.1f;
     render_instanced_frame(&fixture)!!;
-    check_uploads(renderer, one_batch);
+    check_uploads(renderer, unchanged);
+
+    render_instanced_frame(&fixture, reference: ORIGIN_CROSSING)!!;
+    check_uploads(renderer, unchanged);
 
     render_instanced_frame(&fixture, both_views: true)!!;
     Uploads both_unchanged = frame_uploads(renderer);

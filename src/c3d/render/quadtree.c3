@@ -445,6 +445,7 @@ fn void? record_quadtree_selection(Renderer* renderer, QuadtreeSelection[] selec
                 .quadtree_params        = batch.quadtree.metric == QuadtreeMetric.BOX_RANGES
                   ? selection.instances.quadtree_params : (gpu::GpuAddress)0,
                 .quadtree_depths        = selection.instances.quadtree_depths,
+                .node_world             = bitcast(maths::rebase(selection.node.world, renderer.frame_origin), Mat4f),
             };
             uint groups = (batch.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
             gpu::cmd_dispatch(&renderer.commands, block.address, { groups, 1, 1 })!;

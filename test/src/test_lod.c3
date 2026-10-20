@@ -339,13 +339,12 @@ fn void test_lod_gpu_records_keep_logical_indices_after_parity_changes() @test {
         metadata: metadata[..],
         unmirrored: unmirrored[..],
         mirrored: mirrored[..],
-        world: node.world,
         state: state,
     );
     assert(split == 2 && unmirrored[0] == 1 && unmirrored[1] == 3);
     assert(mirrored[0] == 0 && mirrored[1] == 2);
     foreach (index, record : records) {
-        assert(bitcast(record.model, Mat4) == node.world.mul(placements[index].to_mat4()));
+        assert(bitcast(record.model, Mat4) == placements[index].to_mat4());
         assert(metadata[index].generation == state.slot_generations[index]);
     }
     uint generation = metadata[0].generation;
@@ -357,7 +356,6 @@ fn void test_lod_gpu_records_keep_logical_indices_after_parity_changes() @test {
         metadata: metadata[..],
         unmirrored: unmirrored[..],
         mirrored: mirrored[..],
-        world: node.world,
         state: state,
     );
     assert(split == 3 && unmirrored[0] == 0 && mirrored[0] == 2);
