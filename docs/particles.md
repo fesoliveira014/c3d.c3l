@@ -492,6 +492,14 @@ sheet follows the edge rules for four sampled mip levels. It applies to the wind
 save the image with `--capture-rgba`. The inspector's smoke controls drive both smoke materials. The flag does not
 combine with `--stress`.
 
+`--lit-smoke` shows only the smoke, lit: a plume with a point light circling it, under a directional light
+whose shadow an overhead slab casts across part of the plume. The L key cycles the lighting through its four
+modes and the N key cycles the normal through its three. `--lighting` and `--normal` set the starting modes
+by lowercase name, for example `--lighting direct_shadowed --normal volume`. With `--benchmark`, the run
+reports the transparent pass for AMBIENT, DIRECT and DIRECT_SHADOWED as the segments `ambient`, `direct`
+and `direct_shadowed`, or for the `--lighting` mode alone. Sparks and debris do not emit, and the flag does
+not combine with `--stress`, `--sparks`, `--smoke` or `--collide`.
+
 `--collide` makes the sparks bounce on the ground plane and, through a physics
 ray cast, on a canopy and two crates that are static physics bodies. It applies
 to the window and to `--benchmark`, and `--benchmark` prints `collision_skips`.

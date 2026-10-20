@@ -54,16 +54,36 @@ const float PUFF_EDGE_WARP @local = 0.35f; // share of the radius the lobes move
 const float PUFF_THINNING @local = 0.6f; // opacity lost by the last frame
 const float[2] PUFF_LOBES @local = { 3, 5 };
 const float[2] PUFF_LOBE_DRIFT @local = { 0.7f, -1.1f };
+const ZString[4] LIGHTING_NAMES @local = { "unlit", "ambient", "direct", "direct_shadowed" };
+const ZString[3] NORMAL_NAMES @local = { "camera", "spherical", "volume" };
+const ParticleLighting[3] LIT_BENCHMARK_LIGHTING @local = { AMBIENT, DIRECT, DIRECT_SHADOWED };
+const Vec3 LIT_SMOKE_POSITION @local = { 0, 0.15f, 0 };
+const Vec3[2] LIT_CAMERA_POSITIONS @local = { { 4.5f, 2.5f, 9.5f }, { -7, 2.5f, 6 } };
+const Vec3 LIT_CAMERA_FOCUS @local = { 0, 2, 0 };
+const ParticleRange LIT_SMOKE_LIFETIME @local = { .min = 3, .max = 4 }; // a plume the frame holds
+const Vec3 SLAB_SIZE @local = { 2.4f, OBSTACLE_THICKNESS, 2.4f };
+const Vec3 SLAB_POSITION @local = { 0.9f, 2.2f, 0.3f }; // offset toward the sun, so its shadow falls across the plume
+const float LAMP_ORBIT_RADIUS @local = 1.8f;
+const float LAMP_ORBIT_HEIGHT @local = 1.4f;
+const float LAMP_ORBIT_SPEED @local = 0.7f; // radians per second
+const float LAMP_INTENSITY @local = 6;
+const float LAMP_RANGE @local = 8;
+const float SMOKE_ANISOTROPY @local = 0.4f;
+const float MAX_SMOKE_ANISOTROPY @local = 0.95f; // below one, where the phase function diverges
 
 struct Options @local {
     bool benchmark;
     bool stress;
     bool sparks;
     bool smoke;
+    bool lit_smoke;
     bool collide;
     bool drop_oldest;
     bool limit_frames;
+    bool single_lighting;
     uint frames;
+    ParticleLighting lighting;
+    ParticleNormal normal;
     String capture_rgba;
 }
 
@@ -75,6 +95,8 @@ struct Demo @local {
     Node*[3] emitters;
     Node*[2] cameras;
     Node* spark_puffs;
+    Node* lamp;
+    bool lit_smoke;
     MaterialId smoke;
     MaterialId sparks;
     MaterialId smoke_sheet;
@@ -156,10 +178,65 @@ fn void destroy_demo(Demo* demo) @local {
     asset::destroy_asset_store(&demo.assets);
 }
 
+fn void? add_lit_smoke_props(Demo* demo) @local {
+    demo.lamp = demo.scene.add_light(light::point({ 1, 0.65f, 0.35f }, LAMP_INTENSITY, LAMP_RANGE), name: "lamp")!;
+
+    GeometryId slab_geometry;
+    @pool() {
+        Geometry shape = geometry::box(
+            allocator: tmem,
+            width: SLAB_SIZE.x,
+            height: SLAB_SIZE.y,
+            depth: SLAB_SIZE.z,
+        );
+        slab_geometry = demo.assets.add_geometry(&shape)!;
+    };
+    StandardParams surface = material::STANDARD_PARAMS_DEFAULT;
+    surface.base_color = { 0.35f, 0.4f, 0.5f, 1 };
+    surface.metallic = 0;
+    surface.roughness = 0.6f;
+    MaterialId slab_material = demo.assets.add_material(material::standard(surface))!;
+
+    Node* slab = demo.scene.add_mesh(slab_geometry, slab_material, name: "slab")!;
+    slab.local.position = SLAB_POSITION;
+}
+
+fn void orbit_lamp(Demo* demo, double elapsed) @local {
+    if (!demo.lamp) return;
+
+    float angle = (float)elapsed * LAMP_ORBIT_SPEED;
+    demo.lamp.local.position = {
+        LIT_SMOKE_POSITION.x + math::cos(angle) * LAMP_ORBIT_RADIUS,
+        LAMP_ORBIT_HEIGHT,
+        LIT_SMOKE_POSITION.z + math::sin(angle) * LAMP_ORBIT_RADIUS,
+    };
+}
+
+fn void? apply_smoke_params(Demo* demo) @local {
+    demo.assets.@set_custom_params(demo.smoke, demo.smoke_params)!;
+    if (demo.smoke_sheet.generation) demo.assets.@set_custom_params(demo.smoke_sheet, demo.smoke_params)!;
+}
+
+fn void? cycle_smoke_look(Demo* demo, Input* input) @local {
+    bool changed;
+    if (input.key_pressed(platform::Scancode.L)) {
+        usz next = ((usz)demo.smoke_params.lighting.ordinal + 1) % LIGHTING_NAMES.len;
+        demo.smoke_params.lighting = ParticleLighting::from_ordinal(next);
+        changed = true;
+    }
+    if (input.key_pressed(platform::Scancode.N)) {
+        usz next = ((usz)demo.smoke_params.normal.ordinal + 1) % NORMAL_NAMES.len;
+        demo.smoke_params.normal = ParticleNormal::from_ordinal(next);
+        changed = true;
+    }
+    if (changed) apply_smoke_params(demo)!;
+}
+
 fn Demo? create_demo(Options options) @local {
     Demo demo = {
         .assets = asset::create_asset_store(mem, asset::default_asset_store_desc()),
         .scene = scene::create_scene(mem, { .max_nodes = 48 }),
+        .lit_smoke = options.lit_smoke,
     };
     defer catch destroy_demo(&demo);
     particle::register_particles(&demo.scene)!;
@@ -170,6 +247,11 @@ fn Demo? create_demo(Options options) @local {
     TextureId sprite = add_sprite(&demo.assets)!;
     demo.smoke_params = { .color = { 0.8f, 0.86f, 0.95f, 1 }, .soft_distance = 0.5f, .lighting = AMBIENT };
     demo.spark_params = { .color = { 1, 0.6f, 0.1f, 1 }, .soft_distance = 0.08f };
+    if (options.lit_smoke) {
+        demo.smoke_params.lighting = options.lighting;
+        demo.smoke_params.normal = options.normal;
+        demo.smoke_params.anisotropy = SMOKE_ANISOTROPY;
+    }
     demo.smoke = particle::add_particle_material(
         assets: &demo.assets,
         shader: shader,
@@ -213,8 +295,9 @@ fn Demo? create_demo(Options options) @local {
     surface.metallic = 0;
     surface.roughness = 0.7f;
     MaterialId debris_material = demo.assets.add_material(material::standard(surface))!;
-    Node* sun = demo.scene.add_light(light::directional({ 1, 0.9f, 0.8f }, 2, false))!;
+    Node* sun = demo.scene.add_light(light::directional({ 1, 0.9f, 0.8f }, 2, options.lit_smoke))!;
     sun.local.rotation = maths::look_rotation({ -0.5f, -1, -0.3f }, { 0, 1, 0 });
+    if (options.lit_smoke) add_lit_smoke_props(&demo)!;
 
     ParticleSystemDesc smoke = particle::default_particle_system_desc();
     smoke.capacity = SMOKE_CAPACITY;
@@ -223,7 +306,7 @@ fn Demo? create_demo(Options options) @local {
     smoke.radius = 0.3f;
     smoke.cone_angle = 0.25f;
     smoke.rate = 1400;
-    smoke.lifetime = { .min = 5, .max = 7 };
+    smoke.lifetime = options.lit_smoke ? LIT_SMOKE_LIFETIME : (ParticleRange){ .min = 5, .max = 7 };
     smoke.speed = { .min = 0.8f, .max = 1.5f };
     smoke.size = { .min = 0.18f, .max = 0.35f };
     smoke.rotation = { .min = -(float)math::PI, .max = (float)math::PI };
@@ -249,7 +332,7 @@ fn Demo? create_demo(Options options) @local {
     float[8] opacity = { 0, 0.7f, 1, 1, 0.9f, 0.6f, 0.3f, 0 };
     foreach (index, alpha : opacity) smoke.color_over_life.values[index] = { 1, 1, 1, alpha };
     demo.emitters[0] = demo.scene.add_particle_system(smoke, name: "smoke")!;
-    demo.emitters[0].local.position = { -3, 0.15f, 0 };
+    demo.emitters[0].local.position = options.lit_smoke ? LIT_SMOKE_POSITION : (Vec3){ -3, 0.15f, 0 };
 
     if (options.sparks) {
         ParticleSystemDesc puff = particle::default_particle_system_desc();
@@ -329,10 +412,10 @@ fn Demo? create_demo(Options options) @local {
 
     demo.cameras[0] = demo.scene.add_camera(camera::perspective_deg(55, 0.1f, 100))!;
     demo.cameras[1] = demo.scene.add_camera(camera::perspective_deg(55, 0.1f, 100))!;
-    demo.cameras[0].local.position = { 10, 7, 17 };
-    demo.cameras[1].local.position = { -14, 6, 6 };
+    demo.cameras[0].local.position = options.lit_smoke ? LIT_CAMERA_POSITIONS[0] : (Vec3){ 10, 7, 17 };
+    demo.cameras[1].local.position = options.lit_smoke ? LIT_CAMERA_POSITIONS[1] : (Vec3){ -14, 6, 6 };
     demo.scene.update_world();
-    foreach (camera : demo.cameras) camera.look_at({ 0, 3, 0 });
+    foreach (camera : demo.cameras) camera.look_at(options.lit_smoke ? LIT_CAMERA_FOCUS : (Vec3){ 0, 3, 0 });
     demo.scene.update_world();
     return demo;
 }
@@ -416,9 +499,9 @@ fn void advance_physics(Demo* demo, float dt) @local {
 }
 
 fn void set_emission(Demo* demo, bool active) @local {
-    foreach (emitter : demo.emitters) {
+    foreach (index, emitter : demo.emitters) {
         ParticleSystem* system = demo.scene.get(emitter, ParticleSystem);
-        system.emitting = active;
+        system.emitting = active && (!demo.lit_smoke || index == 0);
     }
 }
 
@@ -464,9 +547,16 @@ fn void? run_benchmark(Options options) @local {
     io::printfn("frames,%d", options.frames);
     io::printn("validation,on");
     io::printn("execution,inline");
-    for (uint segment = 0; segment < 2; segment++) {
-        set_emission(&demo, segment != 0);
-        if (segment) {
+    uint segments = 2;
+    if (options.lit_smoke) segments = options.single_lighting ? 1 : LIT_BENCHMARK_LIGHTING.len;
+    for (uint segment = 0; segment < segments; segment++) {
+        bool active = options.lit_smoke || segment != 0;
+        if (options.lit_smoke) {
+            demo.smoke_params.lighting = options.single_lighting ? options.lighting : LIT_BENCHMARK_LIGHTING[segment];
+            apply_smoke_params(&demo)!;
+        }
+        set_emission(&demo, active);
+        if (active) {
             for (uint step = 0; step < PREWARM_STEPS; step++) {
                 advance_physics(&demo, STEP_SECONDS);
                 particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 });
@@ -480,6 +570,7 @@ fn void? run_benchmark(Options options) @local {
         for (ulong frame = 0; frame < total_frames; frame++) {
             time::Clock frame_start = clock::now();
             advance_physics(&demo, STEP_SECONDS);
+            orbit_lamp(&demo, (double)renderer.frame_index * STEP_SECONDS);
             demo.scene.update_world();
             time::Clock update_start = clock::now();
             particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 });
@@ -507,7 +598,9 @@ fn void? run_benchmark(Options options) @local {
                 last_gpu_frame = stats.gpu_frame_index;
             }
         }
-        report_metrics(segment ? "active" : "empty", totals, options.frames);
+        String name = segment ? "active" : "empty";
+        if (options.lit_smoke) name = LIGHTING_NAMES[demo.smoke_params.lighting.ordinal].str_view();
+        report_metrics(name, totals, options.frames);
     }
     if (options.collide) {
         io::printfn("sparks,collision_skips,%d", demo.scene.get(demo.emitters[1], ParticleSystem).collision_skips);
@@ -657,19 +750,27 @@ fn void? controls(
             imgui::text("Dropped events: %llu", sparks.dropped_events);
             imgui::text("Skipped events: %llu", sparks.skipped_events);
         }
-        bool ambient = demo.smoke_params.lighting == ParticleLighting.AMBIENT;
-        bool material_changed = imgui::checkbox("Ambient smoke", &ambient);
-        material_changed |= imgui::slider_float(
+        bool material_changed = imgui::slider_float(
             label: "Soft distance",
             v: &demo.smoke_params.soft_distance,
             v_min: 0,
             v_max: 1,
         );
-        demo.smoke_params.lighting = ambient ? ParticleLighting.AMBIENT : ParticleLighting.UNLIT;
-        if (material_changed) {
-            demo.assets.@set_custom_params(demo.smoke, demo.smoke_params)!;
-            if (demo.smoke_sheet.generation) demo.assets.@set_custom_params(demo.smoke_sheet, demo.smoke_params)!;
+        if (demo.lit_smoke) {
+            imgui::text("Lighting (L): %s", LIGHTING_NAMES[demo.smoke_params.lighting.ordinal]);
+            imgui::text("Normal (N): %s", NORMAL_NAMES[demo.smoke_params.normal.ordinal]);
+            material_changed |= imgui::slider_float(
+                label: "Anisotropy",
+                v: &demo.smoke_params.anisotropy,
+                v_min: -MAX_SMOKE_ANISOTROPY,
+                v_max: MAX_SMOKE_ANISOTROPY,
+            );
+        } else {
+            bool ambient = demo.smoke_params.lighting == ParticleLighting.AMBIENT;
+            material_changed |= imgui::checkbox("Ambient smoke", &ambient);
+            demo.smoke_params.lighting = ambient ? ParticleLighting.AMBIENT : ParticleLighting.UNLIT;
         }
+        if (material_changed) apply_smoke_params(demo)!;
         Material* sparks = &demo.assets.material(demo.sparks).data;
         bool additive = sparks.common.blend_mode == BlendMode.ADDITIVE;
         if (imgui::checkbox("Additive sparks", &additive)) {
@@ -726,7 +827,9 @@ fn void? run_interactive(Options options) @local {
                 previous_width = renderer.output_width;
                 previous_height = renderer.output_height;
             }
+            if (demo.lit_smoke && !window.input.keyboard_captured_by_gui) cycle_smoke_look(&demo, &window.input)!;
             advance_physics(&demo, window.clock.delta);
+            orbit_lamp(&demo, elapsed);
             demo.scene.update_world();
             time::Clock started = clock::now();
             particle::update(&demo.scene, window.clock.delta, { wind, 0, 0 });
@@ -757,14 +860,37 @@ fn String? option_value(String[] args, usz* index) @local {
     return args[*index];
 }
 
+fn ParticleLighting? parse_lighting(String name) @local {
+    foreach (index, label : LIGHTING_NAMES) {
+        if (label.str_view() == name) return ParticleLighting::from_ordinal(index);
+    }
+    return c3d::INVALID_ARGUMENT~;
+}
+
+fn ParticleNormal? parse_normal(String name) @local {
+    foreach (index, label : NORMAL_NAMES) {
+        if (label.str_view() == name) return ParticleNormal::from_ordinal(index);
+    }
+    return c3d::INVALID_ARGUMENT~;
+}
+
 fn Options? parse_options(String[] args) @local {
-    Options options = { .frames = DEFAULT_BENCHMARK_FRAMES };
+    Options options = {
+        .frames = DEFAULT_BENCHMARK_FRAMES,
+        .lighting = ParticleLighting.DIRECT_SHADOWED,
+        .normal = ParticleNormal.SPHERICAL,
+    };
     for (usz index = 1; index < args.len; index++) {
         switch (args[index]) {
             case "--benchmark": options.benchmark = true;
             case "--stress": options.stress = true;
             case "--sparks": options.sparks = true;
             case "--smoke": options.smoke = true;
+            case "--lit-smoke": options.lit_smoke = true;
+            case "--lighting":
+                options.lighting = parse_lighting(option_value(args, &index)!)!;
+                options.single_lighting = true;
+            case "--normal": options.normal = parse_normal(option_value(args, &index)!)!;
             case "--collide": options.collide = true;
             case "--drop-oldest": options.drop_oldest = true;
             case "--frames":
@@ -774,9 +900,11 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    bool scene_effect = options.sparks || options.smoke || options.collide;
+    bool scene_effect = options.sparks || options.smoke || options.collide || options.lit_smoke;
+    bool lit_option = options.single_lighting || options.normal != ParticleNormal.SPHERICAL;
     if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
-        || (options.drop_oldest && !options.stress)
+        || (options.lit_smoke && (options.sparks || options.smoke || options.collide))
+        || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;
 }
@@ -789,7 +917,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
         io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--smoke] [--collide]");
-        io::eprintn("    [--frames count] [--capture-rgba path].");
+        io::eprintn("    [--lit-smoke [--lighting name] [--normal name]] [--frames count] [--capture-rgba path].");
         return 1;
     }
     Options options = parsed;
