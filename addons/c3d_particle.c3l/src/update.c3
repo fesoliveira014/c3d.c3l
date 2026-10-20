@@ -108,6 +108,7 @@ fn void publish_billboards(
     BillboardBatch* batch = scene.get(node, BillboardBatch);
     BillboardJob job = { .system = system, .batch = batch };
     uint written = assign_draw_slots(system, parallel);
+
     run_blocks(
         parallel: parallel,
         range: &write_billboard_blocks,
@@ -129,6 +130,7 @@ fn void publish_meshes(
     InstancedMesh* batch = scene.get(node, InstancedMesh);
     MeshJob job = { .system = system, .batch = batch };
     uint written = assign_draw_slots(system, parallel);
+
     run_blocks(
         parallel: parallel,
         range: &write_mesh_blocks,
