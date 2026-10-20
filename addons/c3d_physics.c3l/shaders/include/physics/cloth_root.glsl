@@ -5,7 +5,7 @@
 #include "c3d_abi.glsl"
 
 #ifndef CLOTH_LOCAL_SIZE
-#define CLOTH_LOCAL_SIZE 64 // mirrored as FUSED_GROUP_SIZE in gpu/cloth.c3
+#define CLOTH_LOCAL_SIZE 64 // mirrored as FUSED_GROUP_SIZE in gpu/cloth_record.c3
 #endif
 
 layout(local_size_x = CLOTH_LOCAL_SIZE) in;
@@ -14,7 +14,7 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-// Mirrors ClothRoot in gpu/cloth.c3.
+// Mirrors ClothRoot in gpu/cloth_record.c3.
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ClothRoot {
     uint64_t positions;          // vec4 per particle: world position, inverse mass
     uint64_t predicted;          // vec4 per particle: position after this substep's prediction and projections

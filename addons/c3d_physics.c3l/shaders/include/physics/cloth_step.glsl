@@ -7,12 +7,12 @@
 #define CLOTH_COHERENT
 #endif
 
-const uint PASS_PREDICT = 1u;        // mirrored in gpu/cloth.c3; predict every particle in this pass, before projecting
-const uint PASS_COLLIDE = 2u;        // mirrored in gpu/cloth.c3; collide every particle in this pass, after projecting
-const uint PASS_INTEGRATE = 4u;      // mirrored in gpu/cloth.c3; integrate every particle in this pass, after colliding
-const uint PASS_INITIALIZE = 8u;     // mirrored in gpu/cloth.c3; copy the initial state before the pass's other work
-const uint PASS_OUTPUT = 16u;        // mirrored in gpu/cloth.c3; write the output geometry from the final positions
-const uint PASS_FINAL_SUBSTEP = 32u; // mirrored in gpu/cloth.c3; the pass belongs to the request's last substep
+const uint PASS_PREDICT = 1u;        // mirrored in gpu/cloth_record.c3; predict every particle in this pass, before projecting
+const uint PASS_COLLIDE = 2u;        // mirrored in gpu/cloth_record.c3; collide every particle in this pass, after projecting
+const uint PASS_INTEGRATE = 4u;      // mirrored in gpu/cloth_record.c3; integrate every particle in this pass, after colliding
+const uint PASS_INITIALIZE = 8u;     // mirrored in gpu/cloth_record.c3; copy the initial state before the pass's other work
+const uint PASS_OUTPUT = 16u;        // mirrored in gpu/cloth_record.c3; write the output geometry from the final positions
+const uint PASS_FINAL_SUBSTEP = 32u; // mirrored in gpu/cloth_record.c3; the pass belongs to the request's last substep
 const float MIN_EDGE_LENGTH = 1e-7;  // metres; mirrored as MIN_CONSTRAINT_LENGTH in solve.c3
 
 layout(buffer_reference, std430, buffer_reference_align = 16) CLOTH_COHERENT buffer StepVectors {

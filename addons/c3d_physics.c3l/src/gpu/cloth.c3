@@ -110,11 +110,10 @@ fn void destroy_gpu_cloths(GpuCloths* cloths, Renderer* renderer) {
 }
 
 <*
- Record the due steps of every prepared GPU cloth, before the frame's other dispatches.
- Packs a cloth at the first update that sees it and releases it at the first that does not.
+ Record the due steps of every prepared GPU cloth.
  An aborted frame is replayed; one followed by FRAMES_IN_FLIGHT frames without an update counts as applied.
  @param [&inout] cloths : "Retires the ranges of cloths it no longer sees."
- @param [&inout] renderer : "Frame open, no dispatch recorded and no view rendered."
+ @param [&inout] renderer : "Frame open, with no dispatch recorded yet."
  @param [&inout] assets : "Holds the output geometry of every cloth."
  @param [&inout] scene : "Registered; matrices current; cloths updated by update_cloths."
  @return? c3d::CAPACITY_EXCEEDED, Renderer.create_buffer!, Renderer.write_buffer!, Renderer.upload_geometry!
