@@ -21,7 +21,13 @@ GPU_DECLARE_READONLY_ARRAY_REF(InstanceArray, InstanceGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(VisibleArray, uint);
 #endif
 #ifdef VELOCITY
-GPU_DECLARE_READONLY_ARRAY_REF(PreviousInstanceArray, mat4);
+GPU_DECLARE_READONLY_ARRAY_REF(PreviousInstanceArray, AffineRowsGpu);
+
+// The previous matrix of an instance, expanded from its affine rows.
+mat4 previous_instance_matrix(uint64_t instances, uint index) {
+    AffineRowsGpu rows = PreviousInstanceArray(instances).values[index];
+    return transpose(mat4(rows.row_0, rows.row_1, rows.row_2, vec4(0.0, 0.0, 0.0, 1.0)));
+}
 #endif
 
 layout(location = 0) out vec3 v_world_pos;
@@ -69,8 +75,9 @@ mat4 previous_world_model(DrawRoot draw, uint source, mat4 current_world) {
     mat4 previous_world;
     if (previous_pose.instances != 0ul
         && source >= previous_pose.instances_first && source < previous_pose.instances_end) {
-        mat4 previous_local = PreviousInstanceArray(previous_pose.instances)
-            .values[source - previous_pose.instances_first];
+        mat4 previous_local = previous_instance_matrix(
+            previous_pose.instances, source - previous_pose.instances_first
+        );
         previous_world = (draw.prev_model * draw.model) * previous_local;
     } else {
         previous_world = draw.prev_model * current_world;
@@ -299,7 +306,7 @@ void write_mesh_outputs(
 #endif
 
             uint64_t previous_parts = PreviousPoseGpu(draw.previous_pose).instances;
-            local *= previous_parts != 0ul ? PreviousInstanceArray(previous_parts).values[part_source]
+            local *= previous_parts != 0ul ? previous_instance_matrix(previous_parts, part_source)
                 : InstanceArray(part.part_instances).values[part_source].model;
         }
 
