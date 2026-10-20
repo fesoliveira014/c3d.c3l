@@ -312,7 +312,8 @@ than `NONE` then also collides with the depth that `view` last rendered, in the 
 under the same `BOUNCE`, `STICK` or `DIE` response; when both offer a hit, the nearer along the move answers. A zero
 `view` disables it. `camera` is the node the application passes to `render_view` for that view. The recommended view is
 the main camera: one view serves every GPU system of the update, and the other views never affect the simulation.
-`max_queries` has no meaning for a GPU system.
+A GPU system uses no `max_queries`, but a response with no `ground_plane` still needs it non-zero, because
+`check_particle_collision` faults `INVALID_ARGUMENT` otherwise; the default is non-zero.
 
 ```c3
 gpu::update(
@@ -373,6 +374,9 @@ upload ring for every dispatch of every GPU system.
 - the result depends on the view: a surface the named camera cannot see does not stop a particle;
 - contact lags one frame: a surface that moved since the depth was rendered is still where it was;
 - the view must render every frame that should collide, because a stale depth is not used;
+- mesh particles write depth, so a mesh particle can meet another one's previous rendering when its move away from the
+  camera is longer than that particle's half-depth and no nearer surface covers the texel; a fast diagonal stream can
+  show it;
 - a particle that starts a step behind a surface is not pulled out of it, so one that rises through the underside of a
   surface the camera sees from above passes through.
 
@@ -422,6 +426,10 @@ sets the draw child's bounds override to that union grown by:
 
 - `speed.max` times `lifetime.max`;
 - the fall `½·|g|·T·(T + 0.1 s)` along gravity, one-sided;
+- for a `BOUNCE` response, the speed bound times `T` on every axis in place of the first term, where the bound adds the
+  inherited speed, `|g|·T`, the winds and the turbulence to `speed.max`: a bounce off a sloped surface in a depth turns
+  the fall sideways and never speeds a particle up, and the plane's own bounces are widened too because the reach cannot
+  know whether `update` receives a depth;
 - with non-zero drag, the winds of the last lifetime times `T`, one-sided, and the turbulence speed bound times `T`,
   where the bound is the curl supremum 8.5 times the octave amplitudes;
 - the largest drawn half-extent, from the size tables and the stretch, or for MESH the largest size times the distance

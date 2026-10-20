@@ -257,8 +257,9 @@ mirrors GPU work should commit only when this is true.
 `Renderer.view_depth_frame(view)` returns the index of the last submitted frame whose rendering of the view wrote its depth
 image. `end_frame` publishes it for every view that `render_view` recorded as a raster view in a submitted frame, so a
 frame that faults or is discarded leaves the previous answer. It faults `render::NOT_READY` before the first such frame,
-after a `configure_view` that recreates the images (a changed output or working extent), and always for a path-traced
-view, which writes no depth; `INVALID_ID` for a dead view. A dispatch that names `read_view_depth(view)` before the
+after a `configure_view` that recreates the images (a changed output or working extent); `INVALID_ID` for a dead view. A
+path-traced rendering never sets it, so a path-traced view reports `NOT_READY`, except one that `configure_view`
+switched from raster in place, which keeps its depth image and reports its last raster rendering. A dispatch that names `read_view_depth(view)` before the
 view's `render_view` of the open frame reads the depth of the frame this reports, so a reader that kept the camera of
 that frame knows the two belong together. A view that the application does not render every frame reports an older
 frame, and the reader decides whether that depth still serves.
