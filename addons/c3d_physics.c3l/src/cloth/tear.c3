@@ -816,10 +816,11 @@ fn void seed_cloth_topology(
                     destinations: destinations,
                     starts:       &state.edge_color_starts,
                 );
-                order_constraints_by_color(
+                state.bend_colors = order_constraints_by_color(
                     constraints:  state.bend_storage,
                     used_colors:  used_colors,
                     destinations: destinations[:state.bend_storage.len],
+                    starts:       &state.bend_color_starts,
                 );
             };
         }

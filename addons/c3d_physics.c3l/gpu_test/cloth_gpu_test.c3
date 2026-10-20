@@ -4,6 +4,7 @@ import c3d;
 import c3d::asset;
 import c3d::geometry;
 import c3d::material;
+import c3d::maths;
 import c3d::physics;
 import c3d::physics::cloth @public;
 import c3d::scene;
@@ -92,7 +93,22 @@ fn void test_gpu_cloth_prepares_a_bendless_sheet_and_keeps_its_edge_colors() @te
     };
 }
 
-fn void test_gpu_cloth_with_bends_faults_unsupported_and_stays_unprepared() @test {
+fn void test_gpu_cloth_prepares_distance_bends_and_keeps_their_colors() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    @pool() {
+        Node* node = add_hanging_sheet(&fixture);
+        fixture.scene.add_cloth(&fixture.assets, node, device_desc(cloth::DEFAULT_BEND_STIFFNESS))!!;
+
+        ClothState* state = fixture.scene.get(node, Cloth).state;
+        assert(state.bends.len > 0 && state.bend_colors > 1);
+        assert(state.bend_color_starts[0] == 0 && state.bend_color_starts[state.bend_colors] == state.bends.len);
+    };
+}
+
+fn void test_gpu_cloth_with_dihedral_bends_faults_unsupported_and_stays_unprepared() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
@@ -100,7 +116,9 @@ fn void test_gpu_cloth_with_bends_faults_unsupported_and_stays_unprepared() @tes
     @pool() {
         Node* node = add_hanging_sheet(&fixture);
         uint geometries = fixture.assets.geometries.free_count;
-        fixture.scene.attach_cloth(&fixture.assets, node, device_desc(cloth::DEFAULT_BEND_STIFFNESS))!!;
+        ClothDesc desc = device_desc(cloth::DEFAULT_BEND_STIFFNESS);
+        desc.bend_mode = ClothBendMode.DIHEDRAL;
+        fixture.scene.attach_cloth(&fixture.assets, node, desc)!!;
 
         assert(@catch(cloth::prepare(&fixture.scene, &fixture.assets, node)) == c3d::UNSUPPORTED);
         assert(!fixture.scene.get(node, Cloth).is_prepared());

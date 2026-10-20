@@ -1,6 +1,7 @@
 module c3d::render::cloth_gpu_acceptance;
 
 import c3d;
+import c3d::anim;
 import c3d::asset;
 import c3d::camera;
 import c3d::material;
@@ -13,6 +14,7 @@ import c3d::scene;
 import gpu;
 import std::io;
 import std::math;
+import std::math::quaternion;
 
 const uint SMALL_CELLS @private = 32; // a 33x33-vertex flag, one workgroup per step
 const uint LARGE_CELLS @private = 40; // a 41x41-vertex flag, above DEVICE_SINGLE_PASS_PARTICLES
@@ -33,6 +35,15 @@ const float TWIN_TOLERANCE @private = 2e-3f; // metres; the device against the C
 const float MIN_TRAVEL @private = 0.5f; // metres; the twins must swing for the comparison to mean anything
 const float TWIN_GROUND @private = POLE_HEIGHT - 0.5f; // the swinging sheet reaches the plane
 const uint IMAGE_SIZE @private = 64;
+const uint MOTION_PERIOD @private = 60; // steps of one owner sway
+const float SWAY_AMPLITUDE @private = 0.05f; // metres the owner moves along the flag's width; larger sways make the flag chaotic
+const float YAW_AMPLITUDE @private = 0.05f; // radians the owner turns about the pole
+const float SOFT_COMPLIANCE @private = 0.04f; // of the order of a particle's inverse mass over one substep squared
+const Vec3 BREEZE @private = { 0, 0, 2 }; // m/s, across the hanging flag
+const float BREEZE_CAP @private = 1.8f; // m/s; below the breeze, so the cap applies
+const uint TRANSPORT_LEVELS @private = 4;
+const uint JOINT_COUNT @private = 2;
+const float TIP_ROLL_AMPLITUDE @private = 0.05f; // radians the rig's tip turns about the flag's depth
 
 struct Fixture @private {
     AssetStore     assets;
@@ -43,6 +54,16 @@ struct Fixture @private {
     Node*          camera;
     RenderTargetId target;
     ViewId         view;
+    SkeletonId     skeleton;
+    Node*[2]       joints; // the rig of skinned flags: a root at the pole and a tip under it
+}
+
+struct FlagOptions @private {
+    float bend_stiffness; // distance bends project at this stiffness
+    bool  soft;           // the second row is held by soft attachments
+    bool  transport;      // each particle follows its owner's motion by a weight that varies per particle
+    bool  wind;           // a breeze blows across the flag
+    bool  skinned;        // the owner is skinned to the rig
 }
 
 fn void? create_fixture(Fixture* fixture, GpuClothsDesc budget = cloth_gpu::GPU_CLOTHS_DEFAULT) @private {
@@ -99,12 +120,16 @@ fn void check_validation(Fixture* fixture) @private {
 }
 
 // A flag in the horizontal plane, pinned along its first row, which gravity swings down to hang from the pins.
-fn GeometryId? add_flag_geometry(Fixture* fixture, uint cells) @private {
+fn GeometryId? add_flag_geometry(Fixture* fixture, uint cells, bool skinned = false) @private {
     uint side = cells + 1;
     Geometry sheet = {
         .positions = alloc::new_array(tmem, Vec3, (sz)(side * side)),
         .indices   = alloc::new_array(tmem, uint, (sz)(6 * cells * cells)),
     };
+    if (skinned) {
+        sheet.joints = alloc::new_array(tmem, ushort[<4>], (sz)(side * side));
+        sheet.weights = alloc::new_array(tmem, Vec4, (sz)(side * side));
+    }
     for (uint row = 0; row < side; row++) {
         for (uint column = 0; column < side; column++) {
             sheet.positions[row * side + column] = {
@@ -112,6 +137,11 @@ fn GeometryId? add_flag_geometry(Fixture* fixture, uint cells) @private {
                 0,
                 (float)row / cells * FLAG_DEPTH,
             };
+            if (skinned) {
+                float tip_share = (float)row / cells;
+                sheet.joints[row * side + column] = { 0, 1, 0, 0 };
+                sheet.weights[row * side + column] = { 1 - tip_share, tip_share, 0, 0 };
+            }
         }
     }
     usz next;
@@ -128,18 +158,54 @@ fn GeometryId? add_flag_geometry(Fixture* fixture, uint cells) @private {
     return fixture.assets.add_geometry(&sheet);
 }
 
+fn void? add_rig(Fixture* fixture) @private {
+    if (fixture.skeleton.generation) return;
+
+    int[] parents = alloc::new_array(mem, int, JOINT_COUNT);
+    parents[0] = -1;
+    parents[1] = 0;
+    Mat4[] inverse_bind = alloc::new_array(mem, Mat4, JOINT_COUNT);
+    foreach (&bind : inverse_bind) *bind = matrix::IDENTITY4;
+    Skeleton skeleton = { .parents = parents, .inverse_bind = inverse_bind };
+    fixture.skeleton = fixture.assets.add_skeleton_owned(&skeleton)!;
+    fixture.joints[0] = fixture.scene.add_node(name: "pole_joint")!;
+    fixture.joints[0].local.position = { 0, POLE_HEIGHT, 0 };
+    fixture.joints[1] = fixture.scene.add_node(fixture.joints[0], "tip_joint")!;
+}
+
+fn ClothAttachment[] soft_row(uint cells) @private {
+    ClothAttachment[] row = alloc::new_array(tmem, ClothAttachment, (sz)(cells + 1));
+    foreach (column, &attachment : row) {
+        *attachment = { .particle = cells + 1 + (uint)column, .weight = 1, .compliance = SOFT_COMPLIANCE };
+    }
+    return row;
+}
+
+fn float[] transport_weights(uint particles) @private {
+    float[] weights = alloc::new_array(tmem, float, (sz)particles);
+    foreach (index, &weight : weights) *weight = (float)(index % TRANSPORT_LEVELS) / TRANSPORT_LEVELS;
+    return weights;
+}
+
 fn Node*? add_flag(
     Fixture* fixture,
     GeometryId geometry,
     uint cells,
     ClothExecution execution,
     Entity[] colliders = {},
+    FlagOptions options = {},
 ) @private {
     MaterialCommon two_sided = material::MATERIAL_COMMON_DEFAULT;
     two_sided.double_sided = true;
     MaterialId material = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }, two_sided))!;
     Node* flag = fixture.scene.add_mesh(geometry, material, name: "flag")!;
     flag.local.position = { 0, POLE_HEIGHT, 0 };
+    if (options.skinned) {
+        add_rig(fixture)!;
+        Node*[] joints = alloc::new_array(mem, Node*, JOINT_COUNT);
+        joints[..] = fixture.joints[..];
+        fixture.scene.add(flag, (SkinBinding){ .skeleton = fixture.skeleton, .joints = joints });
+    }
     fixture.scene.update_world();
 
     uint[] pins = alloc::new_array(tmem, uint, (sz)(cells + 1));
@@ -147,11 +213,16 @@ fn Node*? add_flag(
     ClothDesc desc = cloth::default_cloth_desc();
     desc.pins = pins;
     desc.colliders = colliders;
-    desc.bend_stiffness = 0;
+    desc.bend_stiffness = options.bend_stiffness;
     desc.damping = DAMPING;
     desc.ground_height = TWIN_GROUND;
     desc.execution = execution;
+    if (options.soft) desc.attachments = soft_row(cells);
+    if (options.transport) desc.transport = transport_weights((cells + 1) * (cells + 1));
     fixture.scene.add_cloth(&fixture.assets, flag, desc, &fixture.physics)!;
+    if (options.wind) {
+        fixture.scene.add(flag, (Wind){ .velocity = BREEZE, .max_speed = BREEZE_CAP });
+    }
     return flag;
 }
 
@@ -245,16 +316,44 @@ struct TwinResult @private {
     uint  touching; // particles resting on the ground plane
 }
 
-fn TwinResult twin_run(Fixture* fixture, uint cells, ClothStepShape shape) @private {
-    GeometryId geometry = add_flag_geometry(fixture, cells)!!;
-    Node* host = add_flag(fixture, geometry, cells, ClothExecution.CPU)!!;
-    Node* device = add_flag(fixture, geometry, cells, ClothExecution.GPU)!!;
+// The owner sways and turns along a period of MOTION_PERIOD steps; a skinned owner stays and its rig does.
+fn void pose_owners(Fixture* fixture, Node*[] flags, uint step, bool skinned) @private {
+    float phase = 2 * (float)math::PI * (float)step / MOTION_PERIOD;
+    float sway = SWAY_AMPLITUDE * math::sin(phase);
+    Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, YAW_AMPLITUDE * math::sin(phase));
+    if (skinned) {
+        fixture.joints[0].local.position = { sway, POLE_HEIGHT, 0 };
+        fixture.joints[0].local.rotation = yaw;
+        fixture.joints[1].local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, TIP_ROLL_AMPLITUDE * math::sin(2 * phase));
+    } else {
+        foreach (flag : flags) {
+            flag.local.position = { sway, POLE_HEIGHT, 0 };
+            flag.local.rotation = yaw;
+        }
+    }
+    fixture.scene.update_world();
+}
+
+fn TwinResult twin_run(
+    Fixture* fixture,
+    uint cells,
+    ClothStepShape shape,
+    FlagOptions options = {},
+    bool moving = false,
+) @private {
+    GeometryId geometry = add_flag_geometry(fixture, cells, options.skinned)!!;
+    Node* host = add_flag(fixture, geometry, cells, ClothExecution.CPU, options: options)!!;
+    Node* device = add_flag(fixture, geometry, cells, ClothExecution.GPU, options: options)!!;
+    Node*[2] flags = { host, device };
     ClothState* host_state = fixture.scene.get(host, Cloth).state;
     assert(cloth_gpu::step_shape((uint)host_state.positions.len) == shape);
     Vec3[] initial = alloc::new_array(tmem, Vec3, host_state.positions.len);
     initial[..] = host_state.positions[..];
 
-    for (uint step = 0; step < TWIN_STEPS; step++) run_frame(fixture, true)!!;
+    for (uint step = 0; step < TWIN_STEPS; step++) {
+        if (moving) pose_owners(fixture, flags[..], step, options.skinned);
+        run_frame(fixture, true)!!;
+    }
     for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(fixture, false)!!;
 
     TwinResult result;
@@ -272,16 +371,26 @@ fn TwinResult twin_run(Fixture* fixture, uint cells, ClothStepShape shape) @priv
     return result;
 }
 
+fn void report_twin(String name, TwinResult result) @private {
+    io::printfn("%s worst %.3e m, travel %.3f m, touching %d", name, result.worst, result.travel, result.touching);
+    assert(result.travel > MIN_TRAVEL);
+    assert(result.worst <= TWIN_TOLERANCE);
+}
+
 fn void test_small_flag_matches_its_cpu_twin_in_one_dispatch_per_step() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
 
     @pool() {
-        TwinResult result = twin_run(&fixture, SMALL_CELLS, ClothStepShape.SINGLE);
-        io::printfn("v1 single worst %.3e m, travel %.3f m, touching %d", result.worst, result.travel, result.touching);
-        assert(result.travel > MIN_TRAVEL && result.touching > 0);
-        assert(result.worst <= TWIN_TOLERANCE);
+        TwinResult result = twin_run(
+            &fixture,
+            SMALL_CELLS,
+            ClothStepShape.SINGLE,
+            { .bend_stiffness = cloth::DEFAULT_BEND_STIFFNESS },
+        );
+        report_twin("v1 single", result);
+        assert(result.touching > 0);
     };
 }
 
@@ -291,10 +400,102 @@ fn void test_large_flag_matches_its_cpu_twin_in_fused_passes() @test {
     defer destroy_fixture(&fixture);
 
     @pool() {
-        TwinResult result = twin_run(&fixture, LARGE_CELLS, ClothStepShape.FUSED);
-        io::printfn("v1 fused worst %.3e m, travel %.3f m, touching %d", result.worst, result.travel, result.touching);
-        assert(result.travel > MIN_TRAVEL && result.touching > 0);
-        assert(result.worst <= TWIN_TOLERANCE);
+        TwinResult result = twin_run(
+            &fixture,
+            LARGE_CELLS,
+            ClothStepShape.FUSED,
+            { .bend_stiffness = cloth::DEFAULT_BEND_STIFFNESS },
+        );
+        report_twin("v1 fused", result);
+        assert(result.touching > 0);
+    };
+}
+
+fn void test_small_flag_in_a_breeze_matches_its_cpu_twin() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        report_twin("wind single", twin_run(&fixture, SMALL_CELLS, ClothStepShape.SINGLE, { .wind = true }));
+    };
+}
+
+fn void test_large_flag_in_a_breeze_matches_its_cpu_twin_in_fused_passes() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        report_twin("wind fused", twin_run(&fixture, LARGE_CELLS, ClothStepShape.FUSED, { .wind = true }));
+    };
+}
+
+fn void test_small_flag_with_soft_attachments_follows_a_moving_owner_like_its_cpu_twin() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        TwinResult result = twin_run(
+            &fixture,
+            SMALL_CELLS,
+            ClothStepShape.SINGLE,
+            { .soft = true, .transport = true },
+            moving: true,
+        );
+        report_twin("soft single", result);
+    };
+}
+
+fn void test_large_flag_with_soft_attachments_follows_a_moving_owner_like_its_cpu_twin() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        TwinResult result = twin_run(
+            &fixture,
+            LARGE_CELLS,
+            ClothStepShape.FUSED,
+            { .soft = true, .transport = true },
+            moving: true,
+        );
+        report_twin("soft fused", result);
+    };
+}
+
+fn void test_small_skinned_flag_follows_its_reference_like_its_cpu_twin() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        TwinResult result = twin_run(
+            &fixture,
+            SMALL_CELLS,
+            ClothStepShape.SINGLE,
+            { .soft = true, .transport = true, .skinned = true },
+            moving: true,
+        );
+        report_twin("skinned single", result);
+    };
+}
+
+fn void test_large_skinned_flag_follows_its_reference_like_its_cpu_twin_in_fused_passes() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        TwinResult result = twin_run(
+            &fixture,
+            LARGE_CELLS,
+            ClothStepShape.FUSED,
+            { .soft = true, .transport = true, .skinned = true },
+            moving: true,
+        );
+        report_twin("skinned fused", result);
     };
 }
 
@@ -314,6 +515,16 @@ fn void test_dispatches_per_step_follow_the_step_shape() @test {
     ClothState* state = fixture.scene.get(large_flag, Cloth).state;
     run_frame(&fixture, true)!!;
     uint passes = state.desc.substeps * state.desc.iterations * state.edge_colors;
+    assert(fixture.renderer.stats.dispatches == passes + 1);
+
+    fixture.scene.remove_cloth(large_flag);
+    FlagOptions breeze = { .bend_stiffness = cloth::DEFAULT_BEND_STIFFNESS, .wind = true };
+    Node* breezy_flag = add_flag(&fixture, large, LARGE_CELLS, ClothExecution.GPU, options: breeze)!!;
+    state = fixture.scene.get(breezy_flag, Cloth).state;
+    passes = state.desc.substeps * state.desc.iterations * (state.edge_colors + state.bend_colors);
+    run_frame(&fixture, true)!!;
+    assert(fixture.renderer.stats.dispatches == passes + 2); // the first step initializes in a pass of its own
+    run_frame(&fixture, true)!!;
     assert(fixture.renderer.stats.dispatches == passes + 1);
 }
 
