@@ -380,6 +380,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             .material            = owned,
             .receive_shadow      = true,
             .trace               = desc.trace,
+            .trace_facing        = TraceFacing.FRONT,
             .has_bounds_override = true,
             .local_bounds        = drawn_bounds(
                 rest:     rest,
@@ -528,6 +529,7 @@ fn void? set_desc(
     Mesh* mesh = scene.get(node, Mesh);
     mesh.geometry = surface;
     mesh.trace = desc.trace;
+    mesh.trace_facing = TraceFacing.FRONT;
     mesh.local_bounds = drawn_bounds(
         rest:     rest,
         desc:     &desc,

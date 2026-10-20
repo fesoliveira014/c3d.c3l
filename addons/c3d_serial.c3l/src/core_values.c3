@@ -22,7 +22,8 @@ const ulong BILLBOARD_V1_LAYOUT @local = 0x2a7839a4c39e5ee2;
 const ulong BILLBOARD_ATLAS_LAYOUT @local = 0x366f90f50a77c888;
 const ulong BILLBOARD_LAYOUT @local = 0x3c55ee05bb7d1d63;
 const ulong RIBBON_POINT_LAYOUT @local = 0xc047a14f5cf2005b;
-const ulong MESH_LAYOUT @local = 0x81e7097de8b07d0c;
+const ulong MESH_LAYOUT @local = 0x061a1aad82ccdd35;
+const ulong MESH_V2_LAYOUT @local = 0x81e7097de8b07d0c;
 const ulong MESH_V1_LAYOUT @local = 0x5e1d3cb5a05dfe89;
 
 struct LodEffectsV1 @private {
@@ -47,6 +48,20 @@ struct MeshV1 @private {
     bool       cast_shadow;
     bool       receive_shadow;
     bool       trace;
+    float[]    morph_weights;
+    bool       has_bounds_override;
+    Aabb       local_bounds;
+    bool       vertex_motion;
+    ulong      vertex_history_token @tag("transient", true);
+}
+
+struct MeshV2 @private {
+    GeometryId geometry;
+    MaterialId material;
+    bool       cast_shadow;
+    bool       receive_shadow;
+    bool       trace;
+    bool       trace_only;
     float[]    morph_weights;
     bool       has_bounds_override;
     Aabb       local_bounds;
@@ -80,9 +95,16 @@ fn void? register_core_value_types() {
     register_core_value(RibbonPoint, RIBBON_POINT_LAYOUT, &defaults_ribbon_point)!;
     describe::register_reflected(MeshV1)!;
     register_core_value(MeshV1, MESH_V1_LAYOUT, &defaults_mesh_v1)!;
+    describe::register_reflected(MeshV2)!;
+    register_described_type(
+        $Type: MeshV2,
+        version: 2,
+        layout: MESH_V2_LAYOUT,
+        defaults: &defaults_mesh_v2,
+    )!;
     register_described_type(
         $Type: Mesh,
-        version: 2,
+        version: 3,
         layout: MESH_LAYOUT,
         defaults: &defaults_mesh,
     )!;
@@ -168,6 +190,10 @@ fn void defaults_ribbon_point(void* value) @local {
 
 fn void defaults_mesh(void* value) @local {
     *(Mesh*)value = { .cast_shadow = true, .receive_shadow = true, .trace = true };
+}
+
+fn void defaults_mesh_v2(void* value) @local {
+    *(MeshV2*)value = { .cast_shadow = true, .receive_shadow = true, .trace = true };
 }
 
 fn void defaults_mesh_v1(void* value) @local {
