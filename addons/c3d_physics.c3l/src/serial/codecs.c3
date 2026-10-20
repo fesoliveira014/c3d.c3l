@@ -31,7 +31,7 @@ struct JointAuthoring @private {
     ParallelJoint[] parallel;
 }
 
-const ulong BODY_LAYOUT @private = 0xc7083025384ef72b;
+const ulong BODY_LAYOUT @private = 0x78275c55924a1b97;
 const ulong BUOYANCY_V1_LAYOUT @local = 0xf4af0c421ff3e4fa;
 const ulong BUOYANCY_LAYOUT @local = 0x496968a7efc736b9;
 
@@ -46,6 +46,12 @@ struct BuoyancyAuthoring @private {
     float drag_coefficient;
 }
 
+serial::BinaryCompatibility[2] body_binary_compatibility @private = {
+    { .version = 1, .read = &read_body_v1, .upgrade = &upgrade_body_v1 },
+    { .version = 2, .read = &read_body_v2, .upgrade = &upgrade_body_v2 },
+};
+uint[2] body_text_default_versions @private = { 1, 2 };
+
 serial::BinaryCompatibility[1] buoyancy_binary_compatibility @local = {
     { .version = 1, .read = &read_buoyancy_v1 },
 };
@@ -59,13 +65,14 @@ uint[1] buoyancy_text_default_versions @local = { 1 };
 fn void? register_serial_codecs() {
     register_serial_value_types()!;
     register_body_v1_values()!;
+    register_body_v2_values()!;
     describe::register_reflected(BodyAuthoring)!;
     describe::register_reflected(JointAuthoring)!;
     describe::register_reflected(BuoyancyAuthoringV1)!;
     describe::register_reflected(BuoyancyAuthoring)!;
     serial::register_described_type(
         $Type: BodyAuthoring,
-        version: 2,
+        version: 3,
         layout: BODY_LAYOUT,
         defaults: &defaults_body_authoring,
     )!;

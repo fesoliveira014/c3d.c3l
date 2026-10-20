@@ -194,6 +194,15 @@ faults `INVALID_ARGUMENT` on a `HEIGHTS` source, with a zero count or past the m
 `material_indices` then hold its cells plus one ring of map cells, `(count_x + 2) * (count_z + 2)` in all. The
 window is part of the entry key.
 
+A `TEXTURE` field may also carry `neighbours`, four `HeightFieldNeighbour { texture, material_indices }` by
+`HeightFieldSide`, that continue its map past a side. Where the map ends, the apron of a side holds the neighbour's
+second column or row in, so two tiles cook as one surface along their shared edge. A neighbour needs the same
+format and shared-edge length and faults `INVALID_ARGUMENT` otherwise, as do neighbours on a `HEIGHTS` source and a
+neighbour's `material_indices` that are not one per neighbour cell; an `RGBA32_FLOAT` map with a neighbour faults
+`UNSUPPORTED`. A field with a neighbour quantizes over the fixed range 0 to 1, a height step of
+`scale.y / 65535`. The neighbour textures and their revisions are part of the entry key. A whole field's
+`material_indices` stay one per cell and the cook adds the ring; a window keeps its ring in its own indices.
+
 The scale is baked at cook time and is positive. A zero or nonfinite component returns
 `INVALID_ARGUMENT`, a negative component returns `UNSUPPORTED`, and a spacing whose reciprocal is not
 finite returns `DEGENERATE_GEOMETRY`. A source is validated before any native call:

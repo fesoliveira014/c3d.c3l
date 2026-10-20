@@ -5,8 +5,9 @@ import c3d::describe;
 import c3d::serial;
 
 const ulong HEIGHT_FIELD_WINDOW_LAYOUT @private = 0x1ef8e9c1092e86d1;
-const ulong HEIGHT_FIELD_LAYOUT @private = 0x81b6bf6cbb20c0f4;
-const ulong COLLIDER_DESC_LAYOUT @private = 0xf3ffcc18d6404c63;
+const ulong HEIGHT_FIELD_NEIGHBOUR_LAYOUT @private = 0x01e8bbd479194a11;
+const ulong HEIGHT_FIELD_LAYOUT @private = 0x59ff79aafb2fe6a2;
+const ulong COLLIDER_DESC_LAYOUT @private = 0x8571e64c7c13f15c;
 
 <*
  Register shared physics field layouts and semantic defaults.
@@ -16,6 +17,7 @@ fn void? register_serial_value_types() {
     serial::register_core_value_types()!;
     describe::register_reflected(CollisionFilter)!;
     describe::register_reflected(HeightFieldWindow)!;
+    describe::register_reflected(HeightFieldNeighbour)!;
     describe::register_reflected(HeightField)!;
     describe::register_type(SurfaceMaterialDesc, &describe_surface_material)!;
     describe::register_reflected(MotionLocks)!;
@@ -37,9 +39,10 @@ fn void? register_serial_value_types() {
     describe::register_reflected(Force)!;
     register_physics_value(CollisionFilter, 0xada86db77bf9d58b, &defaults_collision_filter)!;
     register_physics_value(HeightFieldWindow, HEIGHT_FIELD_WINDOW_LAYOUT, &defaults_height_field_window)!;
+    register_physics_value(HeightFieldNeighbour, HEIGHT_FIELD_NEIGHBOUR_LAYOUT, &defaults_height_field_neighbour)!;
     serial::register_described_type(
         $Type: HeightField,
-        version: 2,
+        version: 3,
         layout: HEIGHT_FIELD_LAYOUT,
         defaults: &defaults_height_field,
     )!;
@@ -48,7 +51,7 @@ fn void? register_serial_value_types() {
     register_physics_value(CompoundChild, 0x8be77500d57a8de3, &defaults_compound_child)!;
     serial::register_described_type(
         $Type: ColliderDesc,
-        version: 2,
+        version: 3,
         layout: COLLIDER_DESC_LAYOUT,
         defaults: &defaults_collider_desc,
     )!;
@@ -68,10 +71,10 @@ fn void? register_serial_value_types() {
     register_physics_value(Force, 0x6333ff51fe9956a4, &defaults_force)!;
 }
 
-macro void? register_physics_value($Type, ulong layout, serial::DefaultsFn defaults) @private {
+macro void? register_physics_value($Type, ulong layout, serial::DefaultsFn defaults, uint version = 1) @private {
     serial::register_described_type(
         $Type: $Type,
-        version: 1,
+        version: version,
         layout: layout,
         defaults: defaults,
     )!;
@@ -79,6 +82,7 @@ macro void? register_physics_value($Type, ulong layout, serial::DefaultsFn defau
 
 fn void defaults_collision_filter(void* value) @private => *(CollisionFilter*)value = FILTER_ALL;
 fn void defaults_height_field_window(void* value) @private => *(HeightFieldWindow*)value = {};
+fn void defaults_height_field_neighbour(void* value) @private => *(HeightFieldNeighbour*)value = {};
 fn void defaults_height_field(void* value) @private => *(HeightField*)value = {};
 fn void defaults_surface_material_desc(void* value) @private => *(SurfaceMaterialDesc*)value = default_surface_material();
 fn void defaults_motion_locks(void* value) @private => *(MotionLocks*)value = {};

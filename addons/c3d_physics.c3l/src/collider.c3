@@ -12,7 +12,8 @@ struct HeightGrid @private {
     uint z;
     uint samples_x;
     uint samples_z;
-    char apron_sides; // b3::HEIGHT_FIELD_APRON_* bits of the sides that read a neighbour
+    char apron_sides;     // b3::HEIGHT_FIELD_APRON_* bits of the sides whose padding is read
+    char neighbour_sides; // the apron sides past the map's edge, read from the neighbour maps
 }
 
 fn uint HeightGrid.padding(&self) => apron_padding(self.apron_sides);
@@ -25,6 +26,12 @@ fn usz HeightGrid.padded_sample_count(&self) {
 fn usz HeightGrid.padded_cell_count(&self) {
     uint padding = self.padding();
     return (usz)(self.samples_x - 1 + 2 * padding) * (usz)(self.samples_z - 1 + 2 * padding);
+}
+
+// A window's material indices carry its ring; a whole map's stay one per cell.
+fn usz HeightGrid.authored_cell_count(&self, HeightFieldWindow window) {
+    if (window_covers_map(window)) return (usz)(self.samples_x - 1) * (usz)(self.samples_z - 1);
+    return self.padded_cell_count();
 }
 
 fn void? check_collider(PhysicsWorld* world, ColliderDesc* desc, BodyKind kind) @private {
@@ -51,14 +58,17 @@ fn void? check_collider(PhysicsWorld* world, ColliderDesc* desc, BodyKind kind) 
             HeightField field = desc.height_field;
             switch (field.source) {
                 case HEIGHTS:
-                    if (!window_covers_map(field.window)) return c3d::INVALID_ARGUMENT~;
+                    if (!window_covers_map(field.window) || has_neighbour_data(&field)) return c3d::INVALID_ARGUMENT~;
                     if (field.count_x < 2 || field.count_z < 2) return c3d::INVALID_ARGUMENT~;
                     if (field.heights.len != (usz)field.count_x * field.count_z) return c3d::INVALID_ARGUMENT~;
                     return check_cell_materials(desc, (usz)(field.count_x - 1) * (usz)(field.count_z - 1));
                 case TEXTURE:
                     check_height_map(world.assets, field.texture)!;
-                    HeightGrid grid = height_grid(world.assets.texture(field.texture).desc, field.window)!;
-                    return check_cell_materials(desc, grid.padded_cell_count());
+                    char neighbour_sides = check_height_neighbours(world.assets, &field)!;
+                    check_neighbour_cells(&field, desc.face_materials.len)!;
+                    TextureDesc map = world.assets.texture(field.texture).desc;
+                    HeightGrid grid = height_grid(map, field.window, neighbour_sides)!;
+                    return check_cell_materials(desc, grid.authored_cell_count(field.window));
             }
         case COMPOUND:
             if (kind != STATIC) return STATIC_ONLY~;
@@ -138,19 +148,30 @@ fn bool window_covers_map(HeightFieldWindow window) @private {
 }
 
 // The window's own samples include its far row and column, which the next window shares.
-fn HeightGrid? height_grid(TextureDesc source, HeightFieldWindow window) @private {
-    if (window_covers_map(window)) return { .samples_x = source.width, .samples_z = source.height };
+fn HeightGrid? height_grid(TextureDesc source, HeightFieldWindow window, char neighbour_sides = 0) @private {
+    if (window_covers_map(window)) {
+        if (neighbour_sides && source.format == RGBA32_FLOAT) return c3d::UNSUPPORTED~;
+        return {
+            .samples_x       = source.width,
+            .samples_z       = source.height,
+            .apron_sides     = neighbour_sides,
+            .neighbour_sides = neighbour_sides,
+        };
+    }
     if (!window.count_x || !window.count_z) return c3d::INVALID_ARGUMENT~;
     if ((usz)window.x + window.count_x >= source.width || (usz)window.z + window.count_z >= source.height) {
         return c3d::INVALID_ARGUMENT~;
     }
     if (source.format == RGBA32_FLOAT) return c3d::UNSUPPORTED~;
+    char interior_sides = window_apron_sides(window, { .x = source.width - 1, .z = source.height - 1 });
+    char beyond_sides = neighbour_sides & ~interior_sides;
     return {
-        .x           = window.x,
-        .z           = window.z,
-        .samples_x   = window.count_x + 1,
-        .samples_z   = window.count_z + 1,
-        .apron_sides = window_apron_sides(window, { .x = source.width - 1, .z = source.height - 1 }),
+        .x               = window.x,
+        .z               = window.z,
+        .samples_x       = window.count_x + 1,
+        .samples_z       = window.count_z + 1,
+        .apron_sides     = interior_sides | beyond_sides,
+        .neighbour_sides = beyond_sides,
     };
 }
 
@@ -175,8 +196,12 @@ fn usz padded_map_index(uint origin, uint position, uint padding, uint count) @p
 fn void? check_cell_materials(ColliderDesc* desc, usz cell_count) @local {
     if (!desc.material_indices.len) return;
     if (desc.material_indices.len != cell_count) return c3d::INVALID_ARGUMENT~;
-    foreach (index : desc.material_indices) {
-        if (index != HEIGHT_FIELD_HOLE && index >= desc.face_materials.len) return c3d::INVALID_ARGUMENT~;
+    check_cell_values(desc.material_indices, desc.face_materials.len)!;
+}
+
+fn void? check_cell_values(char[] indices, usz face_material_count) @private {
+    foreach (index : indices) {
+        if (index != HEIGHT_FIELD_HOLE && index >= face_material_count) return c3d::INVALID_ARGUMENT~;
     }
 }
 
