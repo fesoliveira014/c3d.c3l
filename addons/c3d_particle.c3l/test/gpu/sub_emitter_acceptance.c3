@@ -26,7 +26,7 @@ const uint BIRTH_BURST @private = 16;
 const uint BIRTH_COUNT @private = 2;
 const float DROP_HEIGHT @private = 0.5f;
 const float IMPACT_SIZE @private = 0.02f;
-const uint IMPACT_FRAMES @private = 30; // one fall and the first bounce; the second impact is later
+const uint IMPACT_FRAMES @private = 30; // the fall takes about 19 steps
 const uint IMPACT_BURST @private = 8;
 
 alias FrameCheck = fn void(Fixture* fixture, void* context);
@@ -300,27 +300,36 @@ fn void test_gpu_births_fire_for_emitted_and_delivered_particles() @test {
     assert(system_of(&fixture, last_node).alive == BIRTH_BURST * BIRTH_COUNT);
 }
 
-fn void test_gpu_impact_sub_emitter_spawns_at_the_ground_hit() @test {
+fn void test_gpu_ground_hits_raise_impact_and_death_events() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
-    Node* child_node = add_system(&fixture, sub_desc(&fixture, 64, SUB_LIFETIME_LONG));
+    Node* impact_child = add_system(&fixture, sub_desc(&fixture, 64, SUB_LIFETIME_LONG));
+    Node* death_child = add_system(&fixture, sub_desc(&fixture, 64, SUB_LIFETIME_LONG));
     ParticleSystemDesc parent_desc = sub_desc(&fixture, 64, SUB_LIFETIME_LONG);
     parent_desc.size = { .min = IMPACT_SIZE, .max = IMPACT_SIZE };
-    parent_desc.speed = { .min = 0, .max = 0 };
     parent_desc.gravity_scale = 1;
-    parent_desc.collision.response = CollisionResponse.BOUNCE;
+    parent_desc.collision.response = CollisionResponse.DIE;
     parent_desc.collision.ground_plane = true;
     listen(
         desc: &parent_desc,
-        sub_emitter: { .trigger = IMPACT, .target = child_node.id, .count = 1 },
+        sub_emitter: { .trigger = IMPACT, .target = impact_child.id, .count = 1 },
         max_events: 64,
+    );
+    listen(
+        desc: &parent_desc,
+        sub_emitter: { .trigger = DEATH, .target = death_child.id, .count = 1 },
+        max_events: 64,
+        index: 1,
     );
     Node* parent_node = add_system(&fixture, parent_desc);
     parent_node.local.position = { 0, DROP_HEIGHT, 0 };
-    system_of(&fixture, parent_node).emit_burst(IMPACT_BURST);
+    ParticleSystem* parent = system_of(&fixture, parent_node);
+    parent.emit_burst(IMPACT_BURST);
     fixture.scene.update_world();
     run_sub_frames(&fixture, IMPACT_FRAMES, STEP_SECONDS);
 
-    assert(system_of(&fixture, child_node).alive == IMPACT_BURST);
+    assert(parent.alive == 0);
+    assert(system_of(&fixture, impact_child).alive == IMPACT_BURST);
+    assert(system_of(&fixture, death_child).alive == IMPACT_BURST);
 }
