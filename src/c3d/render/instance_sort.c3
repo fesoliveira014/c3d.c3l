@@ -8,7 +8,7 @@ import std::math;
 <*
  Instances a blended batch range may hold and still draw sorted.
 *>
-const uint MAX_SORTED_INSTANCES = 1 << 21; // cull dispatch within the 65,535-group core minimum; the default arena overflows first
+const uint MAX_SORTED_INSTANCES = 1 << 21; // 78 sort steps at the cap; the default arena overflows first
 
 struct SortStep @private {
     uint mode;
@@ -102,7 +102,8 @@ fn void? record_instance_sort(Renderer* renderer, CullItem[] items) @private {
                     .distance = step.distance,
                     .mode     = step.mode,
                 };
-                gpu::cmd_dispatch(&renderer.commands, root_span.address, { sort_groups(step, capacity), 1, 1 })!;
+                gpu::Vec3u grid = dispatch_grid(renderer, sort_groups(step, capacity));
+                gpu::cmd_dispatch(&renderer.commands, root_span.address, grid)!;
                 renderer.stats.sort_dispatches++;
             }
             gpu::Barrier sorted_step = { .before = { .compute }, .after = { .compute } };

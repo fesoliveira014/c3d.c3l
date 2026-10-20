@@ -899,12 +899,26 @@ fn uint pose_groups(uint vertex_count) @private {
     return (vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
 }
 
-// Groups wrap into rows past the device's limit along x, which trace_pose_linear_index folds back into one index.
+<*
+ Workgroups along x and y covering groups, with x at most max_x.
+ @require max_x > 0
+ @pure
+*>
+fn gpu::Vec3u grid_shape(uint groups, uint max_x) @private {
+    uint columns = math::clamp(groups, 1u, max_x);
+    return { columns, (groups + columns - 1) / columns, 1 };
+}
+
+// Groups wrap into rows past the device's limit along x; linear_group_index folds them back into one index.
+fn gpu::Vec3u dispatch_grid(Renderer* renderer, uint groups) @private {
+    return grid_shape(groups, renderer.caps.max_compute_work_group_count.x);
+}
+
 // The depth is the independent sources a crowd part poses along z.
 fn gpu::Vec3u pose_grid(Renderer* renderer, uint vertex_count, uint depth = 1) @private {
-    uint groups = pose_groups(vertex_count);
-    uint columns = math::clamp(groups, 1u, renderer.caps.max_compute_work_group_count.x);
-    return { columns, (groups + columns - 1) / columns, depth };
+    gpu::Vec3u grid = dispatch_grid(renderer, pose_groups(vertex_count));
+    grid.z = depth;
+    return grid;
 }
 
 $assert TraceRefitRoot::size == 48; // mirrored as TRACE_REFIT_ROOT_BYTES in trace_refit.comp.glsl

@@ -227,7 +227,7 @@ fn void? record_lod_selection(Renderer* renderer, LodSelection[] selections) @pr
             InstanceCullRoot* root = (InstanceCullRoot*)block.bytes.ptr;
             fill_lod_thresholds(state, selection.impostor, ((float*)&root.lod_thresholds)[:scene::MAX_LOD_CHOICES]);
             uint groups = (state.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
-            gpu::cmd_dispatch(&renderer.commands, block.address, { groups, 1, 1 })!;
+            gpu::cmd_dispatch(&renderer.commands, block.address, dispatch_grid(renderer, groups))!;
             renderer.stats.cull_dispatches++;
         }
         if (recorded) {

@@ -399,7 +399,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
             }
             write_cull_planes(root, item.bounded ? item.frustum : &open_frustum);
             uint groups = (range.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
-            gpu::cmd_dispatch(&renderer.commands, root_span.address, { groups, 1, 1 })!;
+            gpu::cmd_dispatch(&renderer.commands, root_span.address, dispatch_grid(renderer, groups))!;
             renderer.stats.cull_dispatches++;
             renderer.cull_tested += range.count;
         }

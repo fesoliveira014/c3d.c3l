@@ -1,13 +1,14 @@
 #ifndef C3D_TRACE_POSE_STREAMS_GLSL
 #define C3D_TRACE_POSE_STREAMS_GLSL
 
+#include "dispatch_grid.glsl"
 #include "vertex_pull.glsl"
 
 GPU_DECLARE_WRITEONLY_ARRAY_REF(TracePoseStream, float);
 
 // The vertex this invocation poses, before any range check: a long row dispatches a 2-D grid of groups.
 uint trace_pose_linear_index() {
-    return (gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x) * TRACE_POSE_GROUP_SIZE + gl_LocalInvocationID.x;
+    return linear_group_index(TRACE_POSE_GROUP_SIZE);
 }
 
 // The inputs of pull_mesh_vertex in mesh_vertex.glsl, which a compute stage cannot include.
