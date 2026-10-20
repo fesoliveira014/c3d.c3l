@@ -771,6 +771,10 @@ billboard bounds and the record copy (the record packing, in the "Before" column
 | Update alone | 0.605 ms | 0.860 ms | 0.272 ms | 0.235 ms |
 | Update, bounds and copy | 1.460 ms | 1.430 ms | 0.793 ms | 0.755 ms |
 
+The Inline column was measured with the two-pass publication. The single-pass inline publication cuts the inline update by
+about a fifth: 1.058 ms to 0.823 ms, alternating builds in one session on a WSL host under load. The native figures
+are not remeasured.
+
 Bounds are not forked. The serial passes (expiry and admission) and the cost of each fork bound the gain from more
 workers; they are not measured separately. A pool of at most one block runs inline whatever the hook. In the default
 `--benchmark` scene, with about 4.1k sparks, the update costs 0.088 ms before the kernels, 0.118 ms inline and 0.089 ms
