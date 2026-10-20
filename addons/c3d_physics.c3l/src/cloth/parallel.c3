@@ -48,7 +48,9 @@ fn void collect_cloth_work(PhysicsWorld* world) @private {
             world.cloth_stats.pending++;
         } else {
             Node* node = world.scene.node(entity);
-            if (component.authoring.held) {
+            if (component.state.desc.execution == ClothExecution.GPU) {
+                collect_device_cloth(world, component.state, node, component.authoring.held);
+            } else if (component.authoring.held) {
                 collect_held_cloth(world, component.state, node);
             } else {
                 enqueue_cloth_work(world, component.state, { .source = ORDINARY, .node = node });

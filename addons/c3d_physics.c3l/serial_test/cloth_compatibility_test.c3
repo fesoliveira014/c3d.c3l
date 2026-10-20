@@ -2,6 +2,7 @@ module c3d_physics_serial_test;
 
 import c3d;
 import c3d::physics @public;
+import c3d::physics::cloth;
 import c3d::scene;
 import c3d::serial @public;
 
@@ -47,6 +48,7 @@ fn void test_cloth_v9_fixtures_read_their_authoring() @test {
             assert(desc.substeps == 2 && desc.iterations == 3 && desc.colliders.len == 1);
             assert(desc.sleep_speed == 0.35f && desc.sleep_steps == 17 && desc.density == 0.35f);
             assert(desc.collisions.self_collision && desc.collisions.continuous);
+            assert(desc.execution == ClothExecution.CPU);
         };
     }
 }

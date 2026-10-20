@@ -99,7 +99,9 @@ fn char[] prior_cloth_text(String text, uint version) @private {
                 ? "\"cuts\""
                 : version == 7
                   ? "\"sleep_speed\""
-                  : "\"density\"";
+                  : version == 8
+                    ? "\"density\""
+                    : "\"execution\"";
     sz cloth_component = text.index_of("\"cloth\"")!!;
     sz field_start = cloth_component + text[cloth_component..].index_of(first_field)!!;
     sz fields_start = text[:field_start].rindex_of_char(',')!!;
@@ -114,8 +116,9 @@ fn char[] prior_cloth_text(String text, uint version) @private {
     sz version_start = cloth_start + ((String)legacy[cloth_start..]).index_of("\"version\"")!!;
     sz version_value = version_start + ((String)legacy[version_start..]).index_of_char(':')!! + 1;
     while (legacy[version_value] == ' ') version_value++;
-    assert(legacy[version_value] == '9');
+    assert(legacy[version_value] == '1' && legacy[version_value + 1] == '0');
     legacy[version_value] = (char)('0' + version);
+    legacy[version_value + 1] = ' ';
     return legacy;
 }
 
@@ -207,6 +210,28 @@ fn void test_cloth_both_formats_preserve_source_authoring_and_restore_pending() 
     }
 }
 
+fn void test_cloth_execution_round_trips_in_both_encodings() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+            Node* node = add_cloth_fixture(&fixture);
+            fixture.source.get(node, Cloth).authoring.desc.execution = ClothExecution.GPU;
+            char[] bytes = encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: fixture.root,
+                text_mode: text_mode,
+            )!!;
+
+            Node* restored = decode(&fixture, bytes, text_mode)!!;
+            Cloth* owner = fixture.destination.get(child_named(restored, "fabric"), Cloth);
+            assert(!owner.is_prepared() && owner.authoring.desc.execution == ClothExecution.GPU);
+        };
+    }
+}
+
 fn void test_cloth_contact_failure_keeps_serialized_self_authoring() @test {
     foreach (text_mode : (bool[2]){ false, true }) {
         @pool() {
@@ -283,7 +308,7 @@ fn void test_cloth_late_authoring_copy_failure_rolls_back_body_and_mesh() @test 
 }
 
 fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported() @test {
-    foreach (version : (uint[8]){ 1, 2, 3, 4, 5, 6, 7, 8 }) @pool() {
+    foreach (version : (uint[9]){ 1, 2, 3, 4, 5, 6, 7, 8, 9 }) @pool() {
         Fixture fixture;
         create_fixture(&fixture);
         defer destroy_fixture(&fixture);
@@ -301,14 +326,20 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
         ClothCollisionDesc defaults = cloth::default_cloth_collision_desc();
         assert(!owner.is_prepared() && owner.state == null);
         assert(!owner.authoring.desc.cuts.len);
-        if (version == 8) {
+        assert(owner.authoring.desc.execution == ClothExecution.CPU);
+        if (version >= 8) {
             assert(owner.authoring.desc.sleep_speed == 0.35f && owner.authoring.desc.sleep_steps == 17);
         } else {
             assert(owner.authoring.desc.sleep_speed == 0 && owner.authoring.desc.sleep_steps == cloth::DEFAULT_CLOTH_SLEEP_STEPS);
         }
-        assert(owner.authoring.desc.density == cloth::DEFAULT_CLOTH_DENSITY);
-        assert(owner.authoring.desc.drag_coefficient == cloth::DEFAULT_CLOTH_DRAG_COEFFICIENT);
-        assert(owner.authoring.desc.lift_coefficient == cloth::DEFAULT_CLOTH_LIFT_COEFFICIENT);
+        if (version == 9) {
+            assert(owner.authoring.desc.density == 0.35f);
+            assert(owner.authoring.desc.drag_coefficient == 0.9f && owner.authoring.desc.lift_coefficient == 0.45f);
+        } else {
+            assert(owner.authoring.desc.density == cloth::DEFAULT_CLOTH_DENSITY);
+            assert(owner.authoring.desc.drag_coefficient == cloth::DEFAULT_CLOTH_DRAG_COEFFICIENT);
+            assert(owner.authoring.desc.lift_coefficient == cloth::DEFAULT_CLOTH_LIFT_COEFFICIENT);
+        }
         assert(owner.authoring.desc.tears.opening_iterations == cloth::DEFAULT_OPENING_ITERATIONS);
         assert(!owner.authoring.desc.transport.len);
         assert(!owner.authoring.desc.render_particles.len && !owner.authoring.desc.tangent_frame && owner.authoring.desc.tangent_uv_set == 0);
@@ -338,6 +369,8 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
         assert(owner.authoring.desc.pins == (uint[4]){ 3, 1, 1, 0 }[..]);
         assert(owner.authoring.desc.gravity_scale == 0.2f && owner.authoring.desc.ground_height == -3);
 
+        if (version == 9) continue;
+
         char[] binary = encode(
             scene: &fixture.source,
             assets: &fixture.assets,
@@ -345,7 +378,7 @@ fn void test_cloth_prior_text_defaults_contacts_and_prior_binary_is_unsupported(
             text_mode: false,
         )!!;
         sz type_version = ((String)binary).index_of("cloth")!! + "cloth".len;
-        assert(binary[type_version] == 9);
+        assert(binary[type_version] == 10);
         binary[type_version] = (char)version;
         uint before = fixture.destination.world.entities.free_count;
         uint geometries = fixture.assets.geometries.free_count;
