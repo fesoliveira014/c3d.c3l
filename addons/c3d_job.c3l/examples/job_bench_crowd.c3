@@ -39,6 +39,8 @@ const ClipTolerance CROWD_CLIP_TOLERANCE @local = {
     .scale = 1e-3f,
     .weight = 1e-3f,
 }; // 1 mm, 1 mrad, 0.1% scale and weight: compressed crowds stay visually identical
+const usz CACHE_LINE_BYTES @local = 64;
+const usz PROBE_BLOCK_CAPACITY @local = 8;
 const ulong DIGEST_OFFSET @local = 0xcbf29ce484222325;
 const ulong DIGEST_PRIME @local = 0x100000001b3;
 
@@ -231,6 +233,99 @@ fn Node*? add_bench_crowd(CrowdSetup* setup, Scene* scene) @local {
     );
 }
 
+struct ProbeBlock @local {
+    String name;
+    usz address;
+    usz bytes;
+}
+
+fn usz probe_blocks(PoseScratch* scratch, ProbeBlock[PROBE_BLOCK_CAPACITY]* blocks) @local {
+    usz count;
+    (*blocks)[count++] = {
+        .name = "channels",
+        .address = (usz)scratch.channels.ptr,
+        .bytes = scratch.channels.len * ChannelSums::size,
+    };
+    (*blocks)[count++] = {
+        .name = "morph_weights",
+        .address = (usz)scratch.morph_weights.ptr,
+        .bytes = scratch.morph_weights.len * float::size,
+    };
+    (*blocks)[count++] = {
+        .name = "sample",
+        .address = (usz)scratch.sample.ptr,
+        .bytes = scratch.sample.len * float::size,
+    };
+    foreach (values : scratch.morph_sums) {
+        if (!values.len || count == PROBE_BLOCK_CAPACITY) continue;
+
+        (*blocks)[count++] = { .name = "morph_sums", .address = (usz)values.ptr, .bytes = values.len * float::size };
+    }
+
+    PoseCache* cache = scratch.cache;
+    if (cache && count + 2 <= PROBE_BLOCK_CAPACITY) {
+        (*blocks)[count++] = { .name = "cache", .address = (usz)cache, .bytes = PoseCache::size };
+        (*blocks)[count++] = {
+            .name = "cache.entries",
+            .address = (usz)cache.entries.ptr,
+            .bytes = cache.entries.len * $Typeof(cache.entries[0])::size,
+        };
+    }
+
+    return count;
+}
+
+fn bool probe_lines_overlap(ProbeBlock* left, ProbeBlock* right) @local {
+    usz left_last = (left.address + left.bytes - 1) / CACHE_LINE_BYTES;
+    usz right_last = (right.address + right.bytes - 1) / CACHE_LINE_BYTES;
+
+    return left.address / CACHE_LINE_BYTES <= right_last && right.address / CACHE_LINE_BYTES <= left_last;
+}
+
+fn void probe_scratch_lines(PoseScratch[] scratches, String phases, uint workers) @local {
+    usz pairs;
+    usz sample_pairs;
+
+    for (usz first = 0; first < scratches.len; first++) {
+        for (usz second = first + 1; second < scratches.len; second++) {
+            ProbeBlock[PROBE_BLOCK_CAPACITY] left;
+            ProbeBlock[PROBE_BLOCK_CAPACITY] right;
+            usz left_count = probe_blocks(&scratches[first], &left);
+            usz right_count = probe_blocks(&scratches[second], &right);
+
+            for (usz left_index = 0; left_index < left_count; left_index++) {
+                for (usz right_index = 0; right_index < right_count; right_index++) {
+                    ProbeBlock* left_block = &left[left_index];
+                    ProbeBlock* right_block = &right[right_index];
+                    if (!left_block.bytes || !right_block.bytes) continue;
+                    if (!probe_lines_overlap(left_block, right_block)) continue;
+
+                    pairs++;
+                    if (left_block.name == "sample" && right_block.name == "sample") sample_pairs++;
+                    io::printfn(
+                        "# layout_pair phases=%s workers=%d scratch %d %s with scratch %d %s",
+                        phases,
+                        workers,
+                        first,
+                        left_block.name,
+                        second,
+                        right_block.name,
+                    );
+                }
+            }
+        }
+    }
+
+    io::printfn(
+        "# layout phases=%s workers=%d scratches=%d shared_line_pairs=%d sample_sample_pairs=%d",
+        phases,
+        workers,
+        scratches.len,
+        pairs,
+        sample_pairs,
+    );
+}
+
 fn double crowd_milliseconds(time::Clock started) @local {
     return (double)(clock::now() - started) / NANOSECONDS_PER_MILLISECOND;
 }
@@ -265,6 +360,8 @@ fn void? time_crowd(
     defer {
         foreach (&scratch : scratches) anim::destroy_crowd_pose_scratch(state, scratch);
     }
+
+    if (mode == CrowdPath.POOL) probe_scratch_lines(scratches, setup.shared ? "shared" : "unshared", workers);
 
     SampleRun run = { .state = state, .assets = setup.assets, .scratches = scratches, .batch = batch };
 
