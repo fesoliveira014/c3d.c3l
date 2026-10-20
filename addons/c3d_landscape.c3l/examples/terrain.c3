@@ -188,6 +188,7 @@ fn void? add_terrain_collider(Demo* demo, Node* node) @local {
     TerrainCollisionInput input = terrain::collision_input(demo.scene, node.id)!;
     ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
     collider.height_field = { .source = TEXTURE, .texture = input.height_map };
+    foreach (side, neighbour : input.neighbours) collider.height_field.neighbours[side].texture = neighbour;
     collider.local.scale = input.scale;
     if (!demo.options.collision_window) {
         return demo.physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1]);
@@ -202,6 +203,7 @@ fn void? add_terrain_collider(Demo* demo, Node* node) @local {
     );
 }
 
+// Every tile is linked before its collider cooks: a neighbour's map is read when the field cooks.
 fn void? add_terrain_colliders(Demo* demo) @local {
     foreach (node : demo.ground.terrain_nodes()) {
         add_terrain_collider(demo, node)!;

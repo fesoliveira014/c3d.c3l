@@ -6,11 +6,17 @@ import c3d::scene;
 import std::math;
 
 <*
+ Sides of a collider that can continue into a linked tile: west, east, north, south.
+*>
+const uint COLLISION_SIDES = 4;
+
+<*
  Collider values that reproduce a terrain's surface under the physics height-field convention.
 *>
 struct TerrainCollisionInput {
-    TextureId height_map; // the terrain's own map, as a TEXTURE height-field source
-    Vec3      scale;      // { cell_size, height_scale, cell_size }, as the collider's local scale
+    TextureId                  height_map; // the terrain's own map, as a TEXTURE height-field source
+    Vec3                       scale;      // { cell_size, height_scale, cell_size }, as the collider's local scale
+    TextureId[COLLISION_SIDES] neighbours; // linked tiles' maps: west, east, north, south; empty where none
 }
 
 <*
@@ -23,6 +29,7 @@ struct TerrainHeightRange {
 
 <*
  Collider values for a terrain node.
+ Rebuild the colliders of both tiles when a link changes.
  @param [&in] scene : "World matrices current."
  @return? c3d::INVALID_ID, c3d::UNSUPPORTED
 *>
@@ -31,10 +38,19 @@ fn TerrainCollisionInput? collision_input(Scene* scene, Entity node) {
     if (!has_unit_axes(scene.node(node).world)) return c3d::UNSUPPORTED~;
 
     TerrainDesc* desc = &scene.world.get(node, Terrain).desc;
-    return {
+    TerrainCollisionInput input = {
         .height_map = desc.height_map,
         .scale      = { desc.cell_size, desc.height_scale, desc.cell_size },
     };
+    TerrainSet* set = parent_set(scene, scene.node(node));
+    if (!set) return input;
+
+    foreach (direction : TerrainNeighbour::values[:COLLISION_SIDES]) {
+        if (try neighbour = set.neighbour(node, direction)) {
+            input.neighbours[direction.ordinal] = scene.world.get(neighbour, Terrain).desc.height_map;
+        }
+    }
+    return input;
 }
 
 <*
