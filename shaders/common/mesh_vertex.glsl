@@ -61,15 +61,29 @@ InstanceGpu world_instance(DrawRoot draw, uint source) {
 #endif
 
 #if defined(VELOCITY) && defined(INSTANCED)
+// instances_end carries this bit when the previous matrices are 48-byte affine rows.
+const uint PREVIOUS_RECORD_AFFINE = 0x80000000u; // mirrored as PREVIOUS_RECORD_AFFINE in view.c3
+GPU_DECLARE_READONLY_ARRAY_REF(PreviousAffineArray, vec4);
+
 // The world model the view drew an instance with last time. An instance without a previous matrix did not change,
 // so draw.prev_model carries only the batch node's motion; prev_model * model is the node's previous world.
 mat4 previous_world_model(DrawRoot draw, uint source, mat4 current_world) {
     PreviousPoseGpu previous_pose = PreviousPoseGpu(draw.previous_pose);
     mat4 previous_world;
     if (previous_pose.instances != 0ul
-        && source >= previous_pose.instances_first && source < previous_pose.instances_end) {
-        mat4 previous_local = PreviousInstanceArray(previous_pose.instances)
-            .values[source - previous_pose.instances_first];
+        && source >= previous_pose.instances_first
+        && source < (previous_pose.instances_end & ~PREVIOUS_RECORD_AFFINE)) {
+        uint index = source - previous_pose.instances_first;
+        mat4 previous_local;
+        if ((previous_pose.instances_end & PREVIOUS_RECORD_AFFINE) != 0u) {
+            PreviousAffineArray rows = PreviousAffineArray(previous_pose.instances);
+            previous_local = transpose(mat4(
+                rows.values[index * 3u], rows.values[index * 3u + 1u], rows.values[index * 3u + 2u],
+                vec4(0.0, 0.0, 0.0, 1.0)
+            ));
+        } else {
+            previous_local = PreviousInstanceArray(previous_pose.instances).values[index];
+        }
         previous_world = (draw.prev_model * draw.model) * previous_local;
     } else {
         previous_world = draw.prev_model * current_world;

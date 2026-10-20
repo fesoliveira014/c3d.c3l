@@ -1960,7 +1960,7 @@ fn gpu::GpuAddress? upload_previous_pose(
                 locals = pose.instances[span.first:span.end - span.first];
             }
 
-            base = upload_previous_instances(renderer, locals.ptr, locals.len * Mat4f::size)!;
+            base = upload_previous_instances(renderer, locals)!;
             instances.set(key, base);
         }
         bind_previous_instances(
@@ -1985,9 +1985,11 @@ fn void bind_previous_instances(
     uint offset,
 ) @local {
     // A draw that starts at instance offset indexes its own matrices from zero.
-    previous.instances = offset_by_instances(base, offset > span.first ? offset - span.first : 0, Mat4f::size);
+    PreviousUploadProbe* probe = &previous_upload_probe;
+    previous.instances = offset_by_instances(base, offset > span.first ? offset - span.first : 0, probe.stride);
     previous.instances_first = span.first > offset ? span.first - offset : 0;
     previous.instances_end = span.end > offset ? span.end - offset : 0;
+    if (probe.stride == PREVIOUS_AFFINE_STRIDE) previous.instances_end |= PREVIOUS_RECORD_AFFINE;
 }
 
 fn VertexHistory vertex_history_of(AssetStore* assets, MeshCandidate* candidate, PoseRecord* pose) @private {
@@ -2024,20 +2026,28 @@ fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @priv
 
 const usz PREVIOUS_UPLOAD_PERIOD = 64;
 const String PREVIOUS_UPLOAD_ENV = "C3D_PREVIOUS_UPLOAD_OFFSET";
+const String PREVIOUS_STRIDE_ENV = "C3D_PREVIOUS_STRIDE";
+const usz PREVIOUS_FULL_STRIDE = Mat4f::size;
+const usz PREVIOUS_AFFINE_STRIDE = 48;
+const uint PREVIOUS_RECORD_AFFINE = 0x80000000; // mirrored as PREVIOUS_RECORD_AFFINE in mesh_vertex.glsl
 
 struct PreviousUploadProbe {
     bool resolved;
     bool active;
     uint offset;
+    usz  stride;
     uint uploads;
     uint misplaced;
     uint first_address_mod;
 }
 
-PreviousUploadProbe previous_upload_probe;
+PreviousUploadProbe previous_upload_probe = { .stride = PREVIOUS_FULL_STRIDE };
 
 fn void resolve_previous_upload_probe(PreviousUploadProbe* probe) @local {
     probe.resolved = true;
+    String stride = env::tget_var(PREVIOUS_STRIDE_ENV) ?? "";
+    if (stride == "48") probe.stride = PREVIOUS_AFFINE_STRIDE;
+
     String value = env::tget_var(PREVIOUS_UPLOAD_ENV) ?? "";
     uint? parsed = value.to_uint();
     if (catch parsed) return;
@@ -2045,9 +2055,29 @@ fn void resolve_previous_upload_probe(PreviousUploadProbe* probe) @local {
     probe.offset = parsed;
 }
 
-fn gpu::GpuAddress? upload_previous_instances(Renderer* renderer, void* data, usz size) @local {
+fn void pack_affine_rows(float[] rows, Mat4f[] matrices) @local {
+    foreach (usz index, &matrix : matrices) {
+        float* values = (float*)matrix;
+        for (usz row = 0; row < 3; row++) {
+            for (usz column = 0; column < 4; column++) {
+                rows[index * 12 + row * 4 + column] = values[column * 4 + row];
+            }
+        }
+    }
+}
+
+fn gpu::GpuAddress? upload_previous_instances(Renderer* renderer, Mat4f[] matrices) @local {
     PreviousUploadProbe* probe = &previous_upload_probe;
     if (!probe.resolved) resolve_previous_upload_probe(probe);
+
+    void* data = matrices.ptr;
+    usz size = matrices.len * Mat4f::size;
+    if (probe.stride == PREVIOUS_AFFINE_STRIDE) {
+        float[] rows = alloc::new_array(tmem, float, matrices.len * 12);
+        pack_affine_rows(rows, matrices);
+        data = rows.ptr;
+        size = matrices.len * PREVIOUS_AFFINE_STRIDE;
+    }
 
     UploadRing* ring = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT].upload;
     usz natural = align_up(ring.head, STREAM_ALIGNMENT);

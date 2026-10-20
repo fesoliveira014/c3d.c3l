@@ -443,8 +443,8 @@ fn void edit_each_frame(void* user, uint frame) @local {
         edit.reported = true;
         String offset = probe.active ? string::tformat("%d", probe.offset) : "unset";
         String observed = probe.uploads > 0 ? string::tformat("%d", probe.first_address_mod) : "none";
-        io::eprintfn("previous_upload_offset=%s first_address_mod_64=%s uploads=%d misplaced=%d",
-            offset, observed, probe.uploads, probe.misplaced);
+        io::eprintfn("previous_upload_offset=%s first_address_mod_64=%s uploads=%d misplaced=%d stride=%d",
+            offset, observed, probe.uploads, probe.misplaced, (int)probe.stride);
     }
 
     double time = (double)frame / BENCHMARK_FRAMES_PER_SECOND;
