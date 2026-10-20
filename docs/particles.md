@@ -85,6 +85,8 @@ scene.update_world();
 particle::update(&scene, delta_seconds, wind_velocity);
 ```
 
+Update steps every system, runs the [sub-emitters](#events-and-sub-emitters), then publishes the
+draws, so particles spawned by events are drawn in the same update.
 Render every camera afterward. Rendering does not advance the simulation.
 `wind_velocity` is application-owned world-space air velocity in metres/second.
 Hidden emitters continue simulating. Their WORLD/identity draw child inherits
@@ -92,8 +94,8 @@ visibility and subtree lifetime; update explicitly copies the emitter's layer
 mask because layers are not inherited.
 
 After an origin rebase, call `scene.shift_particles(offset)` after `Scene.shift_origin` and before `update_world`. It
-subtracts the offset from every live particle position and resets each draw child, which is world-space and was
-moved by the scene shift, to the identity transform. The next `update_world` and `particle::update` publish the draws.
+subtracts the offset from every live particle position and every queued event position, and resets each draw child,
+which is world-space and was moved by the scene shift, to the identity transform. The next `update_world` and `particle::update` publish the draws.
 
 The descriptor is captured at creation and remains immutable. Runtime controls
 are `ParticleSystem.emitting`, `emit_burst(count)`, emitter transforms and wind.
@@ -176,6 +178,71 @@ selection reorders the pool in place; pool order carries no meaning, as expiry
 already swap-removes. The `spawn` stream adds 8 bytes per particle to the pool
 under either policy.
 
+## Events and sub-emitters
+
+A sub-emitter spawns particles in another particle system where a particle of this one is born or dies.
+`ParticleSystemDesc.sub_emitters` holds up to `MAX_SUB_EMITTERS` entries, `sub_emitter_count` of them in use.
+`max_events` sizes the event queue; it must be at least 1 when sub-emitters are present.
+A `SubEmitter` has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `trigger` | `DEATH` fires when a particle expires or is evicted. `BIRTH` fires when a particle is emitted. `IMPACT` is part of the interface and nothing raises it, so such a sub-emitter never fires. |
+| `target` | The node of the particle system that receives the children; it may be the same system. |
+| `count` | Particles spawned per event. |
+| `inherit_velocity` | Share of the parent particle's velocity added to each child, in [0, 1]. |
+| `on_evict` | Lets `DEATH` fire for evicted particles as well. Off by default, which bounds cascades under `DROP_OLDEST`. |
+
+### Events
+
+A step raises `DEATH` events with cause `EXPIRED` or `EVICTED`, and `BIRTH` events. An event is queued only if
+some sub-emitter of that system accepts it, so events nobody listens for neither occupy the queue nor count as
+dropped. An event records the particle's position, velocity and seed, and its index in the system's event sequence.
+
+The queue has `max_events` entries of 48 bytes each, inside the pool allocation. An event raised into a full queue
+is lost and counted in `dropped_events`. Size the queue for the most events one update can raise: the deaths and
+births of one step, plus events carried over from the previous update.
+
+### Delivery
+
+After every system has stepped, `particle::update` processes the queues in store order, then queue order, and
+delivers each event to each accepting sub-emitter in index order. A delivery spawns `count` particles in the
+target, at the event position, through the target's own emission shape and descriptor. The target's world matrix
+supplies the orientation and scale; its translation is replaced by the event position. A child's velocity is
+its emitted velocity plus the parent's velocity times `inherit_velocity`. Children start at age zero and are first
+integrated by the next update.
+
+The children draw from a generator seeded by a hash of the parent particle's seed, the event index and the
+sub-emitter index. They consume none of the target's own random stream, and equal inputs replay equal children.
+
+A target that is not alive, is not a particle system, or is not prepared is skipped, and each skipped delivery is
+counted in the source system's `skipped_events`. Update adds and removes no nodes, so targets must exist and be
+prepared before the update runs; attach pending systems and call `prepare_subtree` first.
+
+A delivery requests `count` particles from the target as a burst would, so the target's
+[saturation policy](#saturation) applies. With `REFUSE`, children that do not fit are counted in the target's
+`dropped`. With `DROP_OLDEST`, the target evicts its oldest particles to make room, counted in its `evicted`, and
+raises `EVICTED` events for its own sub-emitters; children beyond its capacity are counted in its `dropped`.
+
+### Recursion
+
+Events raised while events are being delivered wait for the next update. These are `BIRTH` events of children
+and `EVICTED` events in a target. A chain from A to B to A therefore advances one level per update, and the work of
+one update is bounded by the queue capacities.
+
+### Counters
+
+| Counter | Counts |
+| --- | --- |
+| `dropped` | Requested particles refused for lack of room. |
+| `evicted` | Live particles removed to make room. |
+| `dropped_events` | Events lost to a full queue. |
+| `skipped_events` | Deliveries whose target was unavailable. |
+
+All four are cumulative, start at zero, saturate instead of wrapping, and restart when a system is read from
+serialized data. A descriptor with more than `MAX_SUB_EMITTERS` sub-emitters, an `inherit_velocity` outside
+[0, 1], or sub-emitters with `max_events` of zero fails `INVALID_ARGUMENT`.
+
 ## Draw modes and materials
 
 BILLBOARD uses square camera-facing quads. STRETCHED supplies core with world
@@ -204,10 +271,10 @@ volume. Fog uses `apply_material_fog` before coverage is premultiplied exactly
 once. ADDITIVE adds coverage-scaled RGB and preserves destination alpha.
 
 Simulation is inline, with no allocation during normal step/update. The pool is
-one aligned allocation of nine capacity-sized streams; core separately owns
-draw arrays and persistent GPU records. GPU simulation, collision, ribbons,
-flipbooks, sub-emitters, serialization and parallel execution are outside this
-delivery. Core billboard material restrictions are documented separately.
+one aligned allocation of nine capacity-sized streams and the event queue; core
+separately owns draw arrays and persistent GPU records. GPU simulation, collision,
+ribbons, flipbooks and parallel execution are outside this delivery. Core
+billboard material restrictions are documented separately.
 
 ## Example and measurements
 
@@ -222,6 +289,10 @@ Linux uses `build/particles` without `.exe`. The window shows smoke, additive
 stretched sparks and mesh debris, with emitting/burst controls, wind, smoke
 lighting/soft distance, spark blending and a second camera. Validation is always
 enabled. `--frames N` closes an interactive smoke test after N frames.
+
+`--sparks` adds a smoke system that each dying spark feeds through a `DEATH`
+sub-emitter, and shows its live count with the event counters. It applies to the
+window and to `--benchmark`, which also prints them.
 
 The example reads `Renderer.adapter_name`, borrowed until renderer destruction,
 and calls `renderer.log.check_validation()` through core. The latter reports a
@@ -295,4 +366,4 @@ Windows.
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 2, which adds `saturation`; version 1 payloads in both encodings read `REFUSE`. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
+Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 3. Version 2 added `saturation` and version 3 adds `sub_emitters`, `sub_emitter_count` and `max_events`; older payloads in both encodings read the defaults. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
