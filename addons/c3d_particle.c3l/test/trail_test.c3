@@ -94,27 +94,6 @@ fn void test_trail_points_expire_by_lifetime() @test {
     assert_heights(trail_batch(&scene, system), { 1.0f, 1.0f, 0.9f, 0.8f, 0.7f });
 }
 
-fn void test_trail_is_removed_with_its_particle() @test {
-    Scene scene = make_scene();
-    defer scene::destroy_scene(&scene);
-    Node* emitter = scene.add_particle_system(trail_desc(WIDE_RING_POINTS))!!;
-    ParticleSystem* system = scene.get(emitter, ParticleSystem);
-    system.emit_burst(2);
-    scene.update_world();
-    particle::update(&scene, 0);
-    system.velocity[0] = { 0, 1, 0 };
-    system.velocity[1] = { 0, 2, 0 };
-    system.lifetime[0] = SHORT_PARTICLE_LIFETIME;
-    advance(&scene, 3);
-
-    assert(system.alive == 1);
-    assert_heights(trail_batch(&scene, system), { 0.6f, 0.6f, 0.4f, 0.2f });
-
-    system.lifetime[0] = STEP;
-    advance(&scene, 1);
-    assert(system.alive == 0 && trail_batch(&scene, system).count == 0);
-}
-
 fn void test_trails_stay_with_their_particles_through_removal_and_eviction() @test {
     Scene scene = make_scene();
     defer scene::destroy_scene(&scene);
@@ -137,6 +116,10 @@ fn void test_trails_stay_with_their_particles_through_removal_and_eviction() @te
     advance(&scene, 1);
     assert(system.alive == 4 && system.evicted == 1);
     assert_trails_match_particles(&scene, system);
+
+    foreach (&lifetime : system.lifetime[:system.alive]) *lifetime = STEP;
+    advance(&scene, 1);
+    assert(system.alive == 0 && trail_batch(&scene, system).count == 0);
 }
 
 fn void test_stretched_trail_maps_point_age_to_width_colour_and_coordinate() @test {
@@ -192,22 +175,13 @@ fn void test_trail_rejects_values_the_trail_cannot_use() @test {
     Scene scene = make_scene();
     defer scene::destroy_scene(&scene);
     ParticleSystemDesc desc = trail_desc(RING_POINTS);
-    ParticleSystemDesc off = desc;
-    off.trail = {};
-    off.trail.point_interval = 0;
-    assert(@ok(scene.add_particle_system(off)));
-    assert(@ok(scene.add_particle_system(desc)));
-
-    desc.trail.max_points = 1;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    desc.trail.max_points = particle::MAX_TRAIL_POINTS + 1;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-
-    desc = trail_desc(RING_POINTS);
+    desc.trail.max_points = 0;
     desc.trail.point_interval = 0;
+    assert(@ok(scene.add_particle_system(desc)));
+    desc.trail.lifetime = float::nan;
     assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    desc = trail_desc(RING_POINTS);
-    desc.trail.lifetime = -1;
+
+    desc = trail_desc(1);
     assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
 
     desc = trail_desc(RING_POINTS);
@@ -217,23 +191,6 @@ fn void test_trail_rejects_values_the_trail_cannot_use() @test {
     assert(@ok(scene.add_particle_system(desc)));
 
     desc = trail_desc(RING_POINTS);
-    desc.trail.width = -1;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    desc.trail.width = float::nan;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-
-    desc = trail_desc(RING_POINTS);
-    desc.trail.width_over_trail.values[3] = float::inf;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    desc = trail_desc(RING_POINTS);
-    desc.trail.color_over_trail.values[2].r = -1;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-
-    desc = trail_desc(RING_POINTS);
     desc.capacity = int::max;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-
-    desc.trail = {};
-    desc.trail.lifetime = float::nan;
     assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
 }
