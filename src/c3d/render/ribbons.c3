@@ -19,8 +19,10 @@ $assert scene::RIBBON_BREAK == shader::RIBBON_POINT_BREAK;
  @require records.len > batch.count
 *>
 fn void pack_ribbon_records(RibbonPointGpu[] records, Mat4 node_world, RibbonBatch* batch) {
+    float width_scale = scene::ribbon_width_scale(node_world);
+
     foreach (index, point : batch.points[:batch.count]) {
-        RibbonPoint world = scene::world_ribbon_point(node_world, point);
+        RibbonPoint world = scene::place_ribbon_point(node_world, width_scale, point);
         records[index] = {
             .position_width = { world.position.x, world.position.y, world.position.z, world.width },
             .color = world.color,

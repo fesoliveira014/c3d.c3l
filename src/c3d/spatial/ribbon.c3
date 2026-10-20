@@ -22,9 +22,11 @@ fn bool ribbon_batch_is_live(AssetStore* assets, RibbonBatch* batch) {
  @require points.len > 0
 *>
 fn Aabb ribbon_bounds(Mat4 world, RibbonPoint[] points) {
+    float width_scale = scene::ribbon_width_scale(world) @pure;
+
     Aabb bounds;
     foreach (index, point : points) {
-        RibbonPoint placed = scene::world_ribbon_point(world, point) @pure;
+        RibbonPoint placed = scene::place_ribbon_point(world, width_scale, point) @pure;
         float radius = 0.5f * placed.width;
         Vec3 extent = { radius, radius, radius };
         Aabb box = { .min = placed.position - extent, .max = placed.position + extent };
