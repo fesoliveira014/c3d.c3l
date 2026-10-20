@@ -407,7 +407,8 @@ fn void? record_raster_view(
             transparent_start = candidates.len - transparent_count;
             weighted_start = candidates.len - weighted_count;
             foreach (&candidate : candidates) {
-                GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer) : candidate.billboards
+                GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer)
+                  : candidate.billboards || candidate.ribbons
                   ? acquire_billboard_geometry(renderer)! : resolve_geometry(renderer, candidate.geometry)!;
                 Material* material_description = candidate_material(renderer, candidate);
                 MaterialRes*? resolved = candidate.impostor ? &renderer.impostor_material_resource : resolve_material(renderer, candidate.material);
@@ -490,6 +491,9 @@ fn void? record_raster_view(
                     candidate:    candidate,
                     geometry:     geometry,
                 )!;
+                gpu::GpuAddress records = candidate_instanced(candidate)
+                  ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0;
+                if (candidate.billboards) effects = billboard_atlas_address(candidate.billboards, records);
                 usz index;
                 switch (list) {
                     case GBUFFER: index = gbuffer_filled++;
@@ -531,10 +535,9 @@ fn void? record_raster_view(
                     .skin      = posed.active ? (gpu::GpuAddress)0 : resolve_candidate_skin(renderer, candidate)!,
                     .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
                     .posed     = posed,
-                    .instance_data  = candidate_instanced(candidate)
-                      ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
+                    .instance_data  = records,
                     .effects   = effects,
-                    .front_face = !candidate.billboards && model_reflected != view_reflected
+                    .front_face = !candidate.billboards && !candidate.ribbons && model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
                     .weighted  = weighted,
                     .custom_velocity = custom_velocity_stage(renderer, material_description, candidate_instanced(candidate))!,
@@ -975,7 +978,7 @@ fn void? record_raster_view(
                 gpu::MappedGpuSpan draw_span = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                 write_draw_root(
                     root:          (DrawRoot*)draw_span.bytes.ptr,
-                    world:         item.candidate.billboards ? matrix::IDENTITY4
+                    world:         item.candidate.billboards || item.candidate.ribbons ? matrix::IDENTITY4
                       : maths::rebase(item.candidate.node.world, renderer.frame_origin),
                     prev_world:    prev_world,
                     frame:         frame_span.address,
@@ -1483,6 +1486,13 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
             if (batch.count) {
                 MeshPreparation prepared = prepare_billboards(self, batch)!;
+                sheen |= prepared.sheen;
+                scene_reads |= prepared.scene_reads;
+            }
+        };
+        scene.@each(RibbonBatch; Entity entity, RibbonBatch* batch) {
+            if (batch.count > 1) {
+                MeshPreparation prepared = prepare_ribbons(self, batch)!;
                 sheen |= prepared.sheen;
                 scene_reads |= prepared.scene_reads;
             }
@@ -2700,7 +2710,8 @@ fn gpu::PipelineHandle? pipeline_for(
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
     ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
-    if (vertex.shader == BILLBOARD_VERTEX && published.desc.vertex.shaded.len) return PIPELINE_REJECTED~;
+    bool quad_vertex = vertex.shader == BILLBOARD_VERTEX || vertex.shader == RIBBON_VERTEX;
+    if (quad_vertex && published.desc.vertex.shaded.len) return PIPELINE_REJECTED~;
     key.custom = { .vertex = published.desc.vertex.shaded.len > 0, .fragment = true };
     uint weighted_flag = weighted ? shader::SHADER_FLAG_WEIGHTED_BLEND : 0;
     key.fragment = custom_fragment_variant(&published.desc, shadow_flags | weighted_flag);

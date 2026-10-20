@@ -54,6 +54,7 @@ const uint CULLING_PASSES @private = 3; // shadow layer, depth prepass, view; th
 const String TEXTURED_MODEL @private = "../../../examples/assets/gltf/BoxTextured.glb";
 const uint PREPARE_FRAME_LIMIT @private = 64; // bounded bands complete the fixture within this iteration guard
 const usz PREPARE_TEST_BYTES @private = 64 << 10; // several texture rows per call, smaller than the complete fixture
+const uint OWNED_ALLOCATION_LIMIT @private = 4; // readbacks that helpers hand over to be freed with the renderer
 
 struct FillRoot @private {
     Vec4 color;
@@ -97,6 +98,8 @@ struct Fixture @private {
     ViewId second_view;
     ViewId display_view;
     gpu::MappedGpuSpan readback;
+    gpu::GpuAllocation[OWNED_ALLOCATION_LIMIT] owned_allocations;
+    uint owned_allocation_count;
     bool renderer_alive;
 }
 
@@ -110,6 +113,15 @@ struct DeformedScene @private {
     Node* mesh;
     Node* camera;
 }
+
+struct LiveFixture @private {
+    Fixture* fixture;
+    String creator;
+    uint sequence;
+}
+
+LiveFixture live_fixture @private;
+uint fixtures_created @private;
 
 fn void? create_fixture(
     Allocator allocator,
@@ -127,6 +139,7 @@ fn void? create_fixture(
     uint max_posed_trace_instances = 0,
     uint max_trace_instances = 0,
     usz texture_budget_bytes = 0,
+    String creator = $$FUNC,
 ) @private {
     fixture.allocator = allocator;
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
@@ -240,6 +253,40 @@ fn void? create_fixture(
         .debug_name = "acceptance_readback",
     };
     fixture.readback = gpu::allocate_mapped_memory(&fixture.renderer.device, &readback_desc)!;
+
+    fixtures_created++;
+    live_fixture = {
+        .fixture  = fixture,
+        .creator  = creator,
+        .sequence = fixtures_created,
+    };
+    test::@setup(&ignore_setup, &destroy_leaked_fixture);
+}
+
+fn gpu::MappedGpuSpan? allocate_owned_readback(Fixture* fixture, gpu::AllocationDesc* desc) @private {
+    assert(fixture.owned_allocation_count < OWNED_ALLOCATION_LIMIT);
+    gpu::MappedGpuSpan span = gpu::allocate_mapped_memory(&fixture.renderer.device, desc)!;
+    fixture.owned_allocations[fixture.owned_allocation_count] = span.span.allocation();
+    fixture.owned_allocation_count++;
+    return span;
+}
+
+fn void ignore_setup() @private {}
+
+fn void destroy_leaked_fixture() @private {
+    if (live_fixture.fixture == null) return;
+
+    io::printfn(
+        "fixture %d created by %s outlived its test; destroying it",
+        live_fixture.sequence,
+        live_fixture.creator,
+    );
+
+    gpu::Runtime runtime = live_fixture.fixture.renderer.runtime;
+    destroy_fixture(live_fixture.fixture);
+    if (try gpu::enumerate_adapters(&runtime)) {
+        io::printn("its runtime is still alive: the test holds device allocations that only it could free");
+    }
 }
 
 fn material::TextureDesc storage_texture_desc(ZString debug_name) @private {
@@ -384,10 +431,14 @@ fn ComputeShaderId? add_compute_shader(Fixture* fixture, String source, String[]
 }
 
 fn void destroy_fixture(Fixture* fixture) @private {
+    if (live_fixture.fixture == fixture) live_fixture = {};
     if (fixture.renderer_alive) {
         render::wait_frames(&fixture.renderer)!!;
         gpu::GpuAllocation allocation = fixture.readback.span.allocation();
         gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
+        foreach (&owned : fixture.owned_allocations[:fixture.owned_allocation_count]) {
+            gpu::free_allocation(&fixture.renderer.device, owned)!!;
+        }
         check_validation(&fixture.renderer);
         render::destroy_renderer(&fixture.renderer);
     }

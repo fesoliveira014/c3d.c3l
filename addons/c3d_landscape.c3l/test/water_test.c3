@@ -514,7 +514,7 @@ fn void test_trace_follows_the_desc_and_the_stage_poses_every_frame() @test {
     assert(fixture.assets.geometry(mesh.geometry).data.normals.len == 21 * 21);
     ShaderId shader = fixture.assets.material(mesh.material).data.custom.shader;
     CustomTracePose* pose = &fixture.assets.shader(shader).desc.trace_pose;
-    assert(pose.single.len > 0 && pose.reads_time);
+    assert(pose.single.len > 0 && pose.reads_time && fixture.assets.shader(shader).desc.trace_pose_grid);
 
     desc.trace = false;
     try_set_desc(&fixture, node, desc)!!;

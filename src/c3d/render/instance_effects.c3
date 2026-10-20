@@ -121,6 +121,7 @@ fn float instance_fade_scale(InstanceFade fade, float seed, float distance) {
 }
 
 fn uint batch_effect_flags(MeshCandidate* candidate) @private {
+    if (candidate.billboards) return candidate.billboards.atlas.columns ? shader::DRAW_BILLBOARD_ATLAS : 0;
     if (candidate.lod) return instance_effect_flags(candidate.lod.state.effects.sway, candidate.lod.state.effects.fade);
     if (!candidate.batch) return 0;
     return instance_effect_flags(candidate.batch.sway, candidate.batch.fade)

@@ -24,7 +24,9 @@
         "test/material_test.c3",
         "test/shift_test.c3",
         "test/event_test.c3",
-        "test/collision_test.c3"
+        "test/collision_test.c3",
+        "test/flipbook_test.c3",
+        "test/turbulence_test.c3"
       ]
     },
     "particles": {

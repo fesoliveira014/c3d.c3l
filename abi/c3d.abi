@@ -385,6 +385,7 @@ const uint INSTANCE_SORT_WRITE_LIST = 8;
 const uint INSTANCE_KIND_MESH = 0;
 const uint INSTANCE_KIND_BILLBOARD = 1;
 const uint INSTANCE_KIND_LOD = 2;
+const uint INSTANCE_KIND_RIBBON = 3; // a renderer slot key only; the cull kernel never sees it
 const uint LOD_SELECT = 1;
 const uint LOD_CULL = 2;
 const uint LOD_FINALIZE = 3;
@@ -414,7 +415,7 @@ root InstanceCullRoot {
     uint       first;
     uint       count;
     GpuAddress keys;
-    GpuAddress instance_effects;
+    GpuAddress instance_effects; // a billboard kind holds an atlas block here, which the kernel never reads
     uint       kind;
     uint       _pad3;
     vec4       depth_axis;
@@ -470,6 +471,28 @@ struct BillboardGpu {
     vec4 color;
     float rotation;
     uint facing;
+    float frame;
+    uint _pad1;
+}
+
+root BillboardAtlasGpu {
+    uint columns;
+    uint rows;
+    uint frame_count;
+    uint _pad0;
+    vec2 inset;
+    uint _pad1;
+    uint _pad2;
+}
+
+// mirrored as RIBBON_BREAK in scene/ribbon.c3
+const uint RIBBON_POINT_BREAK = 1;
+
+struct RibbonPointGpu {
+    vec4 position_width; // xyz: position in the frame origin's space, w: width in metres after node scale
+    vec4 color;
+    float v;
+    uint flags;
     uint _pad0;
     uint _pad1;
 }
@@ -525,7 +548,9 @@ root MorphWeightsGpu {
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
 const uint DRAW_SCREEN_SPACE_TERMS = 4;
-// DrawRoot.instance_effects is read only under DRAW_SWAY, DRAW_DISTANCE_FADE or DRAW_QUADTREE; DRAW_SWAY_VERTEX_ALPHA alone reads vertex colour only.
+// DrawRoot.instance_effects addresses InstanceEffectsGpu on instanced draws, read only under DRAW_SWAY,
+// DRAW_DISTANCE_FADE or DRAW_QUADTREE, and BillboardAtlasGpu on billboard draws, read only under
+// DRAW_BILLBOARD_ATLAS. It addresses nothing else. DRAW_SWAY_VERTEX_ALPHA alone reads vertex colour only.
 const uint DRAW_SWAY = 8;
 const uint DRAW_DISTANCE_FADE = 16;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32;
@@ -535,6 +560,8 @@ const uint DRAW_VERTEX_HISTORY_INVALID = 64;
 const uint DRAW_TRACED_REFLECTION = 128;
 // The batch is a quadtree: its effects block holds the addresses of its QuadtreeGpu and depths.
 const uint DRAW_QUADTREE = 256;
+// The billboard batch has a sprite-sheet atlas: DrawRoot.instance_effects holds its BillboardAtlasGpu.
+const uint DRAW_BILLBOARD_ATLAS = 512;
 
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint GBUFFER_PROXY_SKIP_SHIFT = 16; // flags bits 16..31 hold the proxy skip height in GBUFFER_PROXY_SKIP_UNIT steps

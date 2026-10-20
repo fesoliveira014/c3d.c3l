@@ -63,6 +63,7 @@
         "test_impostor.c3",
         "test_instance_sort.c3",
         "test_billboards.c3",
+        "test_ribbons.c3",
         "test_probe_volume.c3",
         "test_probe_update.c3",
         "test_probe_classification_lifetime.c3",

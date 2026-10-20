@@ -101,6 +101,7 @@ fn void refresh_bounds(
     ushort[] texels,
     TexelRect rect,
     float height_scale,
+    BoundsJob* job = null,
 ) @private {
     uint leaf_side = level_side(runtime, 0);
     uint last_chunk = leaf_side - 1;
@@ -109,11 +110,15 @@ fn void refresh_bounds(
     uint first_z = rect.z > 0 ? (rect.z - 1) / CHUNK_CELLS : 0;
     uint last_x = min((rect.x + rect.columns - 1) / CHUNK_CELLS, last_chunk);
     uint last_z = min((rect.z + rect.rows - 1) / CHUNK_CELLS, last_chunk);
-    for (uint z = first_z; z <= last_z; z++) {
-        for (uint x = first_x; x <= last_x; x++) {
-            QuadNode leaf = { .x = x, .z = z };
-            build_leaf(runtime, texels, leaf);
-            if (runtime.trace_deviation.len) refresh_chunk_gaps(runtime, texels, leaf);
+    if (job) {
+        adopt_leaves(runtime, job);
+    } else {
+        for (uint z = first_z; z <= last_z; z++) {
+            for (uint x = first_x; x <= last_x; x++) {
+                QuadNode leaf = { .x = x, .z = z };
+                build_leaf(runtime, texels, leaf);
+                if (runtime.trace_deviation.len) refresh_chunk_gaps(runtime, texels, leaf);
+            }
         }
     }
 

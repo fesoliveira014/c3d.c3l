@@ -13,7 +13,8 @@ with GPU selection for instanced placements, optional static impostors and a
 5,000-tree example. Impostors reduce triangles but can increase GPU time; see
 the [measured acceptance](docs/impostor_acceptance.md).
 Core [billboard batches](docs/billboards.md) provide camera-facing and directional
-quads through the transparent material pipeline.
+quads through the transparent material pipeline, and [ribbon batches](docs/ribbons.md)
+camera-facing strips through lists of points.
 The optional [particle add-on](docs/particles.md) supplies CPU simulation, effect
 materials and the smoke/sparks/debris example.
 

@@ -18,7 +18,10 @@ const ulong LOD_LEVEL_LAYOUT @local = 0x0f3cb1108b618099;
 const ulong LOD_DESC_LAYOUT @local = 0xefefc2e5eb2ac7ff;
 const ulong LOD_EFFECTS_LAYOUT @local = 0x9c8fe3507ce978dc;
 const ulong LOD_EFFECTS_V1_LAYOUT @local = 0xf3d91f0510c4f53d;
-const ulong BILLBOARD_LAYOUT @local = 0x2a7839a4c39e5ee2;
+const ulong BILLBOARD_V1_LAYOUT @local = 0x2a7839a4c39e5ee2;
+const ulong BILLBOARD_ATLAS_LAYOUT @local = 0x366f90f50a77c888;
+const ulong BILLBOARD_LAYOUT @local = 0x3c55ee05bb7d1d63;
+const ulong RIBBON_POINT_LAYOUT @local = 0xc047a14f5cf2005b;
 const ulong MESH_LAYOUT @local = 0x81e7097de8b07d0c;
 const ulong MESH_V1_LAYOUT @local = 0x5e1d3cb5a05dfe89;
 
@@ -28,6 +31,14 @@ struct LodEffectsV1 @private {
     bool cast_shadow;
     bool receive_shadow;
     bool trace;
+}
+
+struct BillboardV1 @private {
+    Vec3 position;
+    Vec2 size;
+    Vec3 direction;
+    float rotation;
+    Vec4 color;
 }
 
 struct MeshV1 @private {
@@ -62,7 +73,11 @@ fn void? register_core_value_types() {
     register_core_value(LodEffects, LOD_EFFECTS_LAYOUT, &defaults_lod_effects)!;
     describe::register_reflected(LodEffectsV1)!;
     register_core_value(LodEffectsV1, LOD_EFFECTS_V1_LAYOUT, &defaults_lod_effects_v1)!;
+    describe::register_reflected(BillboardV1)!;
+    register_core_value(BillboardV1, BILLBOARD_V1_LAYOUT, &defaults_billboard_v1)!;
+    register_core_value(BillboardAtlas, BILLBOARD_ATLAS_LAYOUT, &defaults_billboard_atlas)!;
     register_core_value(Billboard, BILLBOARD_LAYOUT, &defaults_billboard)!;
+    register_core_value(RibbonPoint, RIBBON_POINT_LAYOUT, &defaults_ribbon_point)!;
     describe::register_reflected(MeshV1)!;
     register_core_value(MeshV1, MESH_V1_LAYOUT, &defaults_mesh_v1)!;
     register_described_type(
@@ -131,8 +146,24 @@ fn void defaults_lod_effects_v1(void* value) @local {
     *(LodEffectsV1*)value = { .cast_shadow = true, .receive_shadow = true, .trace = true };
 }
 
+fn void defaults_billboard_v1(void* value) @local {
+    *(BillboardV1*)value = {
+        .size = scene::BILLBOARD_DEFAULT.size,
+        .direction = scene::BILLBOARD_DEFAULT.direction,
+        .color = scene::BILLBOARD_DEFAULT.color,
+    };
+}
+
+fn void defaults_billboard_atlas(void* value) @local {
+    *(BillboardAtlas*)value = {};
+}
+
 fn void defaults_billboard(void* value) @local {
     *(Billboard*)value = scene::BILLBOARD_DEFAULT;
+}
+
+fn void defaults_ribbon_point(void* value) @local {
+    *(RibbonPoint*)value = scene::RIBBON_POINT_DEFAULT;
 }
 
 fn void defaults_mesh(void* value) @local {

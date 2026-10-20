@@ -96,6 +96,7 @@ fn ShaderId? terrain_shader(AssetStore* assets, bool* created = null) @private {
             .instanced_velocity = landscape::TERRAIN_VERTEX_INSTANCED_VELOCITY_SPIRV[..],
         },
         .trace_pose       = { .single = landscape::TERRAIN_TRACE_POSE_SPIRV[..] },
+        .trace_pose_grid  = true,
         .param_block_size = TerrainParams::size,
     };
     ShaderId shader = assets.add_shader(&desc, SHADER_KEY)!;

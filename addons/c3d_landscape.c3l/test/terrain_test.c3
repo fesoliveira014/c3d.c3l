@@ -5,6 +5,7 @@ import std::math::quaternion;
 import c3d;
 import c3d::asset;
 import c3d::geometry;
+import c3d::landscape;
 import c3d::landscape::terrain;
 import c3d::maths;
 import c3d::material;
@@ -15,7 +16,7 @@ const uint SMALL_TEXELS @local = 129; // one chunk, one level
 const uint TWO_LEVEL_TEXELS @local = 257; // 2 x 2 finest chunks under one root
 const uint THREE_LEVEL_TEXELS @local = 513; // 4 x 4 finest chunks, three levels
 const uint FOUR_LEVEL_TEXELS @local = 1025; // 8 x 8 finest chunks, four levels
-const uint LARGE_TEXELS @local = 2049; // a level-0 trace grid of 4,198,401 vertices, past MAX_TRACE_VERTICES
+const uint LARGE_TEXELS @local = 2049; // a level-0 trace grid of 4,198,401 vertices, past one 65,535-group row
 const float CELL_SIZE @local = 0.5f;
 const float HEIGHT_SCALE @local = 20;
 const float HEIGHT_TOLERANCE @local = 0.001f; // metres; float rounding of the rotated node and box3d's ray
@@ -52,6 +53,7 @@ const uint GRID_CORNER_Z @local = 76;
 const uint LEVEL_TWO_CENTER_X @local = 102; // a vertex of the two-texel grid and the middle of a four-texel cell
 const uint LEVEL_TWO_CENTER_Z @local = 78;
 const float TRACE_ERROR_TOLERANCE @local = 1e-6f; // float rounding of the same product of texels and scale
+const uint BOUNDS_RANGE_SPAN @local = 3; // finest chunks per range; 16 chunks end in a piece of one
 
 struct Fixture @local {
     AssetStore   assets;
@@ -489,7 +491,7 @@ fn void test_terrain_drawn_deviation_per_level() @test {
     assert(math::abs(after.drawn_deviation[2] - whole) <= TRACE_ERROR_TOLERANCE);
 }
 
-fn void test_trace_grids_past_a_limit_are_invalid_argument() @test {
+fn void test_trace_level_not_below_the_level_count_is_invalid_argument() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
@@ -499,13 +501,19 @@ fn void test_trace_grids_past_a_limit_are_invalid_argument() @test {
     assert(@catch(try_add_terrain(&fixture, node, levels)) == c3d::INVALID_ARGUMENT);
     assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, TerrainRuntime));
 
-    // A grid of 2049 by 2049 vertices is more threads than one dispatch can pose.
-    TerrainDesc crowded = traced_desc(&fixture, add_height_map(&fixture, LARGE_TEXELS, SEED), level: 0);
-    assert(@catch(terrain::attach_terrain(&fixture.scene, &fixture.assets, node, crowded)) == c3d::INVALID_ARGUMENT);
-    assert(!fixture.scene.has(node, Terrain));
-
     levels.trace_level = 1;
     try_add_terrain(&fixture, node, levels)!!;
+}
+
+fn void test_trace_grid_past_one_dispatch_row_attaches() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = fixture.scene.add_node()!!;
+
+    TerrainDesc crowded = traced_desc(&fixture, add_height_map(&fixture, LARGE_TEXELS, SEED), level: 0);
+    terrain::attach_terrain(&fixture.scene, &fixture.assets, node, crowded)!!;
+    assert(fixture.scene.has(node, Terrain));
 }
 
 fn void test_trace_grid_is_a_trace_only_child_that_leaves_with_its_terrain() @test {
@@ -522,6 +530,8 @@ fn void test_trace_grid_is_a_trace_only_child_that_leaves_with_its_terrain() @te
     Mesh* mesh = fixture.scene.get(grid, Mesh);
     assert(grid.parent == node && mesh.trace && mesh.trace_only && mesh.cast_shadow);
     assert(c3d::same_id(mesh.material, runtime.material));
+    ShaderId shader = fixture.assets.material(mesh.material).data.custom.shader;
+    assert(fixture.assets.shader(shader).desc.trace_pose_grid);
     assert(fixture.assets.geometry(mesh.geometry).vertex_count == side * side);
     assert(mesh.has_bounds_override && mesh.local_bounds.min.x == 0);
     assert(mesh.local_bounds.max.x == (float)(TWO_LEVEL_TEXELS - 1) * CELL_SIZE);
@@ -550,6 +560,108 @@ fn void test_revision_bump_without_mark_dirty_rebuilds_bounds() @test {
 
     Node* fresh = add_terrain_node(&fixture, terrain_desc(&fixture, copy_height_map(&fixture, desc.height_map)));
     assert_same_bounds(fixture.scene.get(edited, TerrainRuntime), fixture.scene.get(fresh, TerrainRuntime));
+}
+
+// Disjoint ranges that cover every finest chunk once, the last first.
+fn void run_bounds_job(BoundsJob* job) @local {
+    uint end = job.range_count();
+    while (end > 0) {
+        uint first = end > BOUNDS_RANGE_SPAN ? end - BOUNDS_RANGE_SPAN : 0;
+        job.run_range(first, end - first);
+        end = first;
+    }
+}
+
+fn BoundsJob? take_bounds_job(Fixture* fixture, Node* node, Allocator scratch) @local {
+    return terrain::bounds_job(
+        scene:   &fixture.scene,
+        assets:  &fixture.assets,
+        node:    node,
+        scratch: scratch,
+    );
+}
+
+fn void? try_commit_bounds(Fixture* fixture, BoundsJob* job) @local {
+    return terrain::commit_bounds(&fixture.scene, &fixture.assets, job);
+}
+
+fn void assert_same_records(Fixture* fixture, Node* first, Node* second) @local {
+    InstancedMesh* a = fixture.scene.get(first, InstancedMesh);
+    InstancedMesh* b = fixture.scene.get(second, InstancedMesh);
+    assert(a.count > 0 && a.count == b.count);
+    assert(mem::equals(a.transforms[:a.count], b.transforms[:b.count]));
+    assert(mem::equals(a.colors[:a.count], b.colors[:b.count]));
+}
+
+fn void test_bounds_job_matches_the_serial_build() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TextureId map = add_height_map(&fixture, THREE_LEVEL_TEXELS, SEED);
+
+    // A pending terrain prepared from the job's leaves.
+    Node* built = fixture.scene.add_node()!!;
+    terrain::attach_terrain(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   built,
+        desc:   traced_desc(&fixture, map),
+    )!!;
+    @pool() {
+        BoundsJob job = take_bounds_job(&fixture, built, tmem)!!;
+        run_bounds_job(&job);
+        try_commit_bounds(&fixture, &job)!!;
+    };
+    Node* serial = add_terrain_node(&fixture, traced_desc(&fixture, copy_height_map(&fixture, map)));
+    assert_same_bounds(fixture.scene.get(built, TerrainRuntime), fixture.scene.get(serial, TerrainRuntime));
+    assert_same_records(&fixture, built, serial);
+
+    // A prepared terrain whose height map revision moved without mark_dirty.
+    write_extreme_texels(&fixture, map, { .x = 100, .z = 100, .columns = 60, .rows = 60 });
+    fixture.assets.mark_texture_dirty(map);
+    @pool() {
+        BoundsJob job = take_bounds_job(&fixture, built, tmem)!!;
+        run_bounds_job(&job);
+        try_commit_bounds(&fixture, &job)!!;
+    };
+    Node* fresh = add_terrain_node(&fixture, traced_desc(&fixture, copy_height_map(&fixture, map)));
+    assert_same_bounds(fixture.scene.get(built, TerrainRuntime), fixture.scene.get(fresh, TerrainRuntime));
+    assert_same_records(&fixture, built, fresh);
+}
+
+fn void test_bounds_job_commit_is_stale_after_a_height_edit() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED));
+    Node* node = add_terrain_node(&fixture, desc);
+    update_terrain(&fixture);
+    TerrainRuntime* runtime = fixture.scene.get(node, TerrainRuntime);
+    uint revision = runtime.revision;
+
+    write_extreme_texels(&fixture, desc.height_map, { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE });
+    fixture.assets.mark_texture_dirty(desc.height_map);
+    @pool() {
+        ushort[] minimum = alloc::new_array(tmem, ushort, runtime.minimum.len);
+        minimum[..] = runtime.minimum[..];
+        BoundsJob job = take_bounds_job(&fixture, node, tmem)!!;
+        run_bounds_job(&job);
+
+        // Only the height map's revision moves, so only that key can make the job stale.
+        TexelRect later = { .x = 200, .z = 200, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+        write_extreme_texels(&fixture, desc.height_map, later);
+        fixture.assets.mark_texture_dirty(desc.height_map);
+        assert(@catch(try_commit_bounds(&fixture, &job)) == landscape::STALE);
+        assert(runtime.revision == revision && !runtime.stale);
+        assert(mem::equals(runtime.minimum, minimum));
+
+        // A job taken again commits.
+        BoundsJob retaken = take_bounds_job(&fixture, node, tmem)!!;
+        run_bounds_job(&retaken);
+        try_commit_bounds(&fixture, &retaken)!!;
+    };
+    Node* fresh = add_terrain_node(&fixture, terrain_desc(&fixture, copy_height_map(&fixture, desc.height_map)));
+    assert_same_bounds(runtime, fixture.scene.get(fresh, TerrainRuntime));
 }
 
 fn void test_size_changing_replacement_faults_invalid_argument() @test {

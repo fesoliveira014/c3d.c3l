@@ -171,6 +171,14 @@ fn void add_core(Fixture* fixture) @private {
         facing: DIRECTIONAL,
         name: "billboards",
     )!!;
+    RibbonPoint[2] strip = { scene::RIBBON_POINT_DEFAULT, scene::RIBBON_POINT_DEFAULT };
+    strip[1].position = { 0, 1, 0 };
+    scene.add_ribbons(
+        material: fixture.material,
+        capacity: 3,
+        points: &strip,
+        name: "ribbons",
+    )!!;
     Mat4 basis = matrix::IDENTITY4;
     basis.m01 = 0.25f;
     basis.m03 = 2;

@@ -391,7 +391,8 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
     InstanceKey key = {
         .scene = candidate.scene_identity,
         .node = candidate.node.id,
-        .kind = candidate.billboards ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
+        .kind = candidate.billboards ? shader::INSTANCE_KIND_BILLBOARD
+          : candidate.ribbons ? shader::INSTANCE_KIND_RIBBON : shader::INSTANCE_KIND_MESH,
     };
     uint index = renderer.instances.acquire(key, renderer.frame_index)!;
     GpuInstances* slot = &renderer.instances.slots[index];
@@ -402,6 +403,18 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
                 renderer: renderer,
                 index: index,
                 batch: billboards,
+                world: candidate.node.world,
+            )!;
+        }
+        return slot.records;
+    }
+    if (RibbonBatch* ribbons = candidate.ribbons) {
+        if (slot.capacity <= ribbons.points.len || slot.revision != ribbons.revision
+            || slot.world != candidate.node.world || slot.origin != renderer.frame_origin) {
+            upload_ribbon_records(
+                renderer: renderer,
+                index: index,
+                batch: ribbons,
                 world: candidate.node.world,
             )!;
         }
@@ -438,10 +451,11 @@ fn void? acquire_instance_records(
     GpuInstances* slot,
     uint capacity,
     usz record_size,
+    usz header_size = 0,
 ) @private {
     if (slot.capacity < capacity) {
         gpu::AllocationDesc records_desc = {
-            .size         = (usz)capacity * record_size,
+            .size         = header_size + (usz)capacity * record_size,
             .alignment    = STREAM_ALIGNMENT,
             .memory_class = gpu::MemoryClass.GPU_PRIVATE,
             .access       = { .graphics },
@@ -455,7 +469,7 @@ fn void? acquire_instance_records(
             renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
         }
         slot.allocation = allocation;
-        slot.records = address;
+        slot.records = (gpu::GpuAddress)((ulong)address + header_size);
         slot.capacity = capacity;
         slot.revision = 0;
     } else {

@@ -16,6 +16,8 @@ const char[] INSTANCES_V2_BINARY @local = $embed("../../../test/fixtures/instanc
 const char[] INSTANCES_V2_TEXT @local = $embed("../../../test/fixtures/instances_v2/instances-v2.jsonc");
 const char[] INSTANCES_V3_BINARY @local = $embed("../../../test/fixtures/instances_v3/instances-v3.bin");
 const char[] INSTANCES_V3_TEXT @local = $embed("../../../test/fixtures/instances_v3/instances-v3.jsonc");
+const char[] BILLBOARDS_V1_BINARY @local = $embed("../../../test/fixtures/billboards_v1/billboards-v1.bin");
+const char[] BILLBOARDS_V1_TEXT @local = $embed("../../../test/fixtures/billboards_v1/billboards-v1.jsonc");
 
 fn Node* child_named(Node* parent, String name) @private {
     for (Node* child = parent.first_child; child; child = child.next_sibling) {
@@ -54,6 +56,8 @@ fn void test_core_batches_preserve_live_values_and_capacity_in_both_encodings() 
         )!!;
         Billboard[1] billboards = { scene::BILLBOARD_DEFAULT };
         billboards[0].rotation = 0.5f;
+        billboards[0].frame = 2.5f;
+        BillboardAtlas sheet = { .columns = 2, .rows = 3, .frame_count = 5, .inset = { 0.01f, 0.02f } };
         fixture.source.add_billboards(
             material: material_id,
             capacity: 3,
@@ -61,6 +65,21 @@ fn void test_core_batches_preserve_live_values_and_capacity_in_both_encodings() 
             facing: DIRECTIONAL,
             parent: root,
             name: "billboards",
+            atlas: sheet,
+        )!!;
+        RibbonPoint[3] strip;
+        strip[..] = scene::RIBBON_POINT_DEFAULT;
+        strip[0].position = { 1, 2, 3 };
+        strip[0].width = 0.5f;
+        strip[1].color = { 0.1f, 0.2f, 0.3f, 0.4f };
+        strip[1].v = 0.75f;
+        strip[2].flags = scene::RIBBON_BREAK;
+        fixture.source.add_ribbons(
+            material: material_id,
+            capacity: 4,
+            points: strip[..],
+            parent: root,
+            name: "ribbons",
         )!!;
         Mat4 basis = matrix::IDENTITY4;
         basis.m01 = 0.25f;
@@ -142,6 +161,15 @@ fn void test_core_batches_preserve_live_values_and_capacity_in_both_encodings() 
             assert(billboard_batch.count == 1 && billboard_batch.billboards.len == 3);
             assert(billboard_batch.facing == DIRECTIONAL && billboard_batch.billboards[0].rotation == 0.5f);
             assert(billboard_batch.billboards[2].size == (Vec2){ 1, 1 });
+            assert(billboard_batch.billboards[0].frame == 2.5f && billboard_batch.billboards[2].frame == 0);
+            assert(billboard_batch.atlas.columns == 2 && billboard_batch.atlas.rows == 3);
+            assert(billboard_batch.atlas.frame_count == 5 && billboard_batch.atlas.inset == sheet.inset);
+            RibbonBatch* ribbon_batch = fixture.destination.get(child_named(restored, "ribbons"), RibbonBatch);
+            assert(ribbon_batch.count == 3 && ribbon_batch.points.len == 4);
+            assert(ribbon_batch.points[0].position == strip[0].position && ribbon_batch.points[0].width == 0.5f);
+            assert(ribbon_batch.points[1].color == strip[1].color && ribbon_batch.points[1].v == 0.75f);
+            assert(ribbon_batch.points[2].flags == scene::RIBBON_BREAK);
+            assert(ribbon_batch.points[3].width == 1 && ribbon_batch.points[3].flags == 0);
             LodGroupState* single = fixture.destination.get(child_named(restored, "single"), LodGroup).state;
             assert(single.mode == SINGLE && single.count == 1 && !single.transforms.len);
             assert(single.desc.parts[0].local.m01 == 0.25f && single.desc.parts[0].local.m03 == 2);
@@ -195,11 +223,13 @@ fn void test_core_batch_writers_reject_invalid_live_billboards_and_effects() @te
             parent: root,
         )!!;
         String valid = fixture_text(&fixture, root);
-        for (uint invalid = 0; invalid < 2; invalid++) {
+        for (uint invalid = 0; invalid < 3; invalid++) {
             if (invalid == 0) {
                 fixture.source.get(billboard_node, BillboardBatch).billboards[0].size.x = -1;
-            } else {
+            } else if (invalid == 1) {
                 fixture.source.get(instances, InstancedMesh).sway.amplitude = -1;
+            } else {
+                fixture.source.get(billboard_node, BillboardBatch).atlas = { .columns = 2 };
             }
             assert(@catch(serial::write_subtree(
                 allocator: tmem,
@@ -214,6 +244,7 @@ fn void test_core_batch_writers_reject_invalid_live_billboards_and_effects() @te
                 root: root,
             )) == c3d::INVALID_ARGUMENT);
             fixture.source.get(billboard_node, BillboardBatch).billboards[0] = scene::BILLBOARD_DEFAULT;
+            fixture.source.get(billboard_node, BillboardBatch).atlas = {};
             fixture.source.get(instances, InstancedMesh).sway = {};
         }
         assert(fixture_text(&fixture, root) == valid);
@@ -504,6 +535,38 @@ fn void test_instanced_v1_fixtures_read_without_a_quadtree() @test {
             assert(!batch.quadtree.parents.len && !batch.quadtree.leaves.len && !batch.quadtree.revision);
             assert(batch.quadtree.split_pixels == 0 && batch.quadtree.hysteresis == 0);
             assert(batch.is_leaf(0) && batch.leaf_instances() == 5);
+            fixture.destination.remove(restored);
+        }
+    };
+}
+
+fn void test_billboard_v1_fixtures_read_without_an_atlas() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+
+        MaterialId material_id = fixture.assets.add_material(material::basic({}), "billboards_v1/material")!!;
+
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, BILLBOARDS_V1_BINARY)!!
+              : serial::read_subtree_text(
+                    scene: &fixture.destination,
+                    assets: &fixture.assets,
+                    text: (String)BILLBOARDS_V1_TEXT,
+                )!!;
+            BillboardBatch* batch = fixture.destination.get(restored, BillboardBatch);
+            assert(batch.count == 3 && batch.billboards.len == 4 && batch.facing == DIRECTIONAL);
+            assert(c3d::same_id(batch.material, material_id));
+            assert(restored.local.position == (Vec3){ 3, -1, 5 } && restored.layers == 5);
+            assert(batch.billboards[2].position == (Vec3){ 2, 1, -2 } && batch.billboards[2].rotation == 0.5f);
+            assert(batch.billboards[1].direction == (Vec3){ 1, 0, 0 } && batch.billboards[2].size == (Vec2){ 2, 2 });
+            assert(batch.billboards[0].color == (Vec4){ 0.1f, 0.2f, 0.3f, 1 });
+            assert(batch.billboards[3].size == (Vec2){ 1, 1 });
+            foreach (billboard : batch.billboards) assert(billboard.frame == 0);
+            assert(batch.atlas.columns == 0 && batch.atlas.rows == 0 && batch.atlas.frame_count == 0);
             fixture.destination.remove(restored);
         }
     };

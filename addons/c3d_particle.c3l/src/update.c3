@@ -26,6 +26,7 @@ fn void update(Scene* scene, float dt, Vec3 wind = {}) {
                 emitter_world: emitter.world,
                 dt: dt,
                 wind: wind,
+                world_shift: scene.world_shift,
             );
         }
     };
@@ -81,6 +82,7 @@ fn void process_events(Scene* scene, ParticleSystem* source) @private {
 
 fn void publish_billboards(Scene* scene, Node* node, ParticleSystem* system) @private {
     BillboardBatch* batch = scene.get(node, BillboardBatch);
+    ParticleFlipbook* flipbook = &system.desc.flipbook;
     uint written;
     for (uint index = 0; index < system.alive; index++) {
         float life = system.age[index] / system.lifetime[index];
@@ -92,12 +94,22 @@ fn void publish_billboards(Scene* scene, Node* node, ParticleSystem* system) @pr
             direction = system.velocity[index];
             height += direction.length() * system.desc.stretch;
         }
+        float frame;
+        if (flipbook.columns) {
+            frame = flipbook_frame(
+                flipbook: flipbook,
+                seed: system.seed[index],
+                age: system.age[index],
+                lifetime: system.lifetime[index],
+            );
+        }
         batch.billboards[written++] = {
             .position = system.position[index],
             .size = { width, height },
             .direction = direction,
             .rotation = system.rotation[index],
             .color = particle_color(system, index, life),
+            .frame = frame,
         };
     }
     bool changed = written || batch.count;
