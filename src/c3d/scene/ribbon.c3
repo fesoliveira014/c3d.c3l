@@ -130,13 +130,14 @@ fn float ribbon_width_scale(Mat4 world) {
 }
 
 <*
- Transform a ribbon point's position into world space and scale its width.
+ Transform a ribbon point into world space with a precomputed width scale.
  @param world : "Published affine node transform."
+ @param width_scale : "Mean scale of world, from ribbon_width_scale."
  @pure
 *>
-fn RibbonPoint world_ribbon_point(Mat4 world, RibbonPoint point) {
+fn RibbonPoint place_ribbon_point(Mat4 world, float width_scale, RibbonPoint point) {
     point.position = maths::transform_point(world, point.position) @pure;
-    point.width *= ribbon_width_scale(world);
+    point.width *= width_scale;
     return point;
 }
 
