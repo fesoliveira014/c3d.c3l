@@ -390,7 +390,7 @@ window and to `--benchmark`, which also prints them.
 `--collide` makes the sparks bounce on the ground plane and, through a physics
 ray cast, on a canopy and two crates that are static physics bodies. It applies
 to the window and to `--benchmark`, and `--benchmark` prints `collision_skips`.
-The `particles` target selects `c3d_physics` for this; the particle package does not.
+The `particles` target selects `c3d_physics` for this; the particle package never imports physics.
 
 The example reads `Renderer.adapter_name`, borrowed until renderer destruction,
 and calls `renderer.log.check_validation()` through core. The latter reports a
