@@ -391,7 +391,7 @@ view's attachment-only multisample images, `msaa_color` and a forward view's `ms
 A hierarchical GI depth pyramid also holds one single-level view and heap slot per mip, in addition to
 its full-chain view. A render target also holds one attachment view. So do a view's `hdr_color`, `depth`,
 scene snapshots, weighted accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view,
-and each multisample image, sample-0 copy or edge mask, at most 6 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
+and each multisample image, sample-0 copy or edge mask, at most 7 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
 three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
 table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
 default, so a store filled past about 1,000 uploaded textures faults on upload unless `texture_capacity` is raised.
@@ -408,8 +408,9 @@ Images a view allocates at creation, by setting:
 | `motion_blur` | +1, plus the 2 tile images |
 | Velocity, under `TAA`, `motion_blur`, `screen_space_gi`, `ambient_occlusion.temporal` or `ray_tracing.reflection_history` | +1 |
 | `DEFERRED` G-buffer | +5 |
-| `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used, +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` on a `FORWARD` view; a `DEFERRED` view also holds its G-buffer at that count, adds +1 `msaa_edges`, +1 `normal_sample_zero` with ambient occlusion, screen-space GI or `ray_tracing.reflections`, +1 `specular_sample_zero` with `ray_tracing.reflections` |
+| `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used; a `FORWARD` view adds +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` and +1 `msaa_proxy_skip` with ray-traced ambient occlusion; a `DEFERRED` view also holds its G-buffer at that count, adds +1 `msaa_edges`, +1 `normal_sample_zero` with ambient occlusion, screen-space GI or `ray_tracing.reflections`, +1 `specular_sample_zero` with `ray_tracing.reflections`, +1 `flags_sample_zero` with ray-traced ambient occlusion or `ray_tracing.reflections` |
 | `ambient_occlusion` | +2: `ao_raw` and `ao`, `R8_UNORM`, or `RGBA8_UNORM` with `ambient_occlusion.bent_normals` |
+| `ambient_occlusion` of kind `RAY_TRACED`, on a `FORWARD` view | +1: `proxy_skip`, `R32_UINT` |
 | `ambient_occlusion.temporal` | +4: two history images, `R16_FLOAT` or `RGBA16_FLOAT` with `bent_normals`, and two depth images |
 | `screen_space_gi` | +7 |
 | Enabled `screen_space_gi` with `trace = HIERARCHICAL` | +1 full-resolution depth pyramid |
@@ -725,7 +726,8 @@ An MSAA view draws its depth prepass, its forward pass and the sky into multisam
 
 - `DEPTH_PREPASS` writes `msaa_depth` and resolves sample 0 into `depth`, so ambient occlusion, screen-space GI and
   traced reflections read a single-sample depth. With traced reflections its thin surface image is multisample too, and
-  a copy of sample 0 fills `reflection_gbuffer`.
+  a copy of sample 0 fills `reflection_gbuffer`. With ray-traced ambient occlusion it also writes the multisample
+  `msaa_proxy_skip` word, and a copy of sample 0 fills `proxy_skip`.
 - `FORWARD_OPAQUE` writes `msaa_color` and `msaa_depth` and resolves into `hdr_color` and `depth`: color is the average
   of the samples, depth is sample 0. Opaque items, Toon outlines, installed impostors and the sky draw here.
 
@@ -754,9 +756,10 @@ surface, and once per sample where they do not. Its pass order is:
 - `DEPTH_PREPASS` fills `msaa_depth` and resolves sample 0 into `depth`, so the pruned cluster reduction and every
   later single-sample reader find a depth before the G-buffer exists.
 - `GBUFFER` draws the five channels at the view's count with depth `EQUAL` against `msaa_depth`. Copies of sample 0 of
-  the normal and specular channels follow: `normal_sample_zero` with ambient occlusion, screen-space GI or traced
-  reflections, and `specular_sample_zero` with traced reflections. Those effects read `depth` and the copies, as a
-  forward view's effects read its resolved images.
+  the normal, specular and flags channels follow: `normal_sample_zero` with ambient occlusion, screen-space GI or traced
+  reflections, `specular_sample_zero` with traced reflections, and `flags_sample_zero` with ray-traced ambient occlusion
+  or traced reflections. Those effects read `depth` and the copies, as a forward view's effects read its resolved
+  images.
 - `MSAA_EDGES` is a fullscreen pass at pixel rate that writes `msaa_edges`, a single-sample `R8_UINT` mask. A pixel is
   an edge when any sample differs from sample 0: in depth by more than a fraction of the larger reverse-Z depth, in the
   layer mask or the flag bits at all, or in a color, normal, roughness, occlusion, emissive or specular channel by
@@ -789,7 +792,7 @@ G-buffer channel show sample 0.
 | A count an image cannot be created at on the device | Faults `UNSUPPORTED`; adapters differ in the counts they accept |
 | `FXAA`, `NONE` | Allowed; FXAA filters the resolved image |
 | Motion blur, screen-space GI | Velocity from sample 0 |
-| Ambient occlusion, screen-space GI, traced reflections | Read the resolved depth and the sample-0 thin surface (forward) or sample-0 copies of the G-buffer channels (deferred) |
+| Ambient occlusion, screen-space GI, traced reflections | Read the resolved depth and the sample-0 thin surface (forward) or sample-0 copies of the G-buffer channels (deferred); ray-traced ambient occlusion also reads sample 0 of the proxy skip word |
 | Traced shadows | Evaluated per fragment on a forward view; on a deferred view per pixel, and per sample at edges |
 | Depth of field, auto focus, bloom, grading, LUT, auto exposure | Read the resolved images |
 | Decals | Unchanged: applied in the receiving draw's stage |
@@ -798,7 +801,7 @@ G-buffer channel show sample 0.
 | Shadow maps, overlays, reflection captures, probe updates, `bake_impostor` | Single-sample |
 
 `create_view` and `configure_view` check every image the view needs at the working extent, and a fault changes nothing.
-Changing `msaa`, velocity use or traced reflections reallocates only the multisample images. `ViewStats.images` counts
+Changing `msaa`, velocity use, traced reflections or the ambient occlusion kind reallocates only the multisample images. `ViewStats.images` counts
 them. Bytes per working pixel at `N` samples:
 
 | Image | Bytes per pixel |
@@ -806,8 +809,10 @@ them. Bytes per working pixel at `N` samples:
 | `msaa_color`, `msaa_depth` | `12 · N` (8 and 4) |
 | `msaa_velocity` | `4 · N` with motion blur alone, `8 · N` with screen-space GI, temporal ambient occlusion or reflection history |
 | `msaa_reflection_gbuffer` | `8 · N`, on a forward view |
+| `msaa_proxy_skip` | `4 · N`, on a forward view with ray-traced ambient occlusion |
 | G-buffer, deferred | `28 · N`, in place of the 28 of a single-sample G-buffer |
 | `normal_sample_zero`, `specular_sample_zero` | 8 each, single-sample |
+| `proxy_skip`, `flags_sample_zero` | 4 each, single-sample |
 | `msaa_edges`, deferred | 1, single-sample |
 
 The single-sample images keep their formats and usages and are the resolve and copy targets.
@@ -821,7 +826,9 @@ a Toon material draws its [outline](materials.md#toon-outline) in that pass. A
 `DEPTH_PREPASS` over its opaque set, then [`AMBIENT_OCCLUSION`](ambient_occlusion.md) when enabled,
 then `FORWARD_OPAQUE` with depth `EQUAL` and no depth write, so every opaque pixel is shaded once.
 Without it, `FORWARD_OPAQUE` writes depth itself and shades every fragment that passes the depth
-test at the time it is drawn; ambient occlusion, screen-space GI and ray-traced reflections force the prepass on. The prepass pays one more
+test at the time it is drawn; ambient occlusion, screen-space GI and ray-traced reflections force the prepass on. With
+ray-traced ambient occlusion the prepass also writes the [proxy skip word](scene_trace.md#trace-proxies), one `R32_UINT`
+output per fragment. The prepass pays one more
 geometry pass with depth-only shaders and wins wherever opaque overdraw would be shaded more than
 once. Measured on an RTX 4090 at 1080p with flat lights: Sponza with 64 lights, forward opaque
 1.70 to 1.89 ms without it against 0.85 to 0.98 ms plus a 0.04 ms prepass with it; the
@@ -958,4 +965,5 @@ forward shaders along the face-corrected vertex normal; neither reads the normal
 surfaces the two directions differ slightly.
 
 Ambient occlusion, screen-space GI and traced reflections on a deferred view read the G-buffer's normal channel, and
-traced reflections its specular weight; on an MSAA view they read the sample-0 copies.
+traced reflections its specular weight; on an MSAA view they read the sample-0 copies. Ray-traced ambient occlusion and
+traced reflections also read its flags channel for the proxy skip height.

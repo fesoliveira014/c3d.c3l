@@ -56,6 +56,7 @@ struct CustomTracePose {
 struct ShaderDesc {
     char[]           fragment;
     char[]           gbuffer;
+    char[]           depth; // prepass fragment of forward views with traced ambient occlusion
     TracedFragment   traced_fragment;
     WeightedFragment weighted_fragment;
     CustomVertex     vertex;
@@ -182,6 +183,7 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) {
     return {
         .fragment = copy_slice(allocator, desc.fragment),
         .gbuffer = desc.gbuffer.len ? copy_slice(allocator, desc.gbuffer) : (char[]){},
+        .depth = desc.depth.len ? copy_slice(allocator, desc.depth) : (char[]){},
         .traced_fragment = {
             .hardware = desc.traced_fragment.hardware.len
               ? copy_slice(allocator, desc.traced_fragment.hardware) : (char[]){},
@@ -228,6 +230,7 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) {
 fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) {
     alloc::free(allocator, desc.fragment.ptr);
     alloc::free(allocator, desc.gbuffer.ptr);
+    alloc::free(allocator, desc.depth.ptr);
     alloc::free(allocator, desc.traced_fragment.hardware.ptr);
     alloc::free(allocator, desc.traced_fragment.software.ptr);
     alloc::free(allocator, desc.weighted_fragment.shaded.ptr);

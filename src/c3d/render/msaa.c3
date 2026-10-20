@@ -2,6 +2,7 @@ module c3d::render;
 
 import c3d;
 import c3d::render::post @public;
+import c3d::shader;
 import gpu;
 
 const gpu::TextureUsage MSAA_COLOR_USAGE @private = { .color_attach };
@@ -87,6 +88,12 @@ fn bool msaa_normal_copy_wanted(ViewDesc* desc) @private {
 
 fn bool msaa_specular_copy_wanted(ViewDesc* desc) @private {
     return desc.msaa != MsaaSamples.ONE && desc.shading == ShadingPath.DEFERRED && desc.ray_tracing.reflections;
+}
+
+fn bool msaa_flags_copy_wanted(ViewDesc* desc) @private {
+    if (desc.msaa == MsaaSamples.ONE || desc.shading != ShadingPath.DEFERRED) return false;
+
+    return desc.ambient_occlusion.kind == AoKind.RAY_TRACED || desc.ray_tracing.reflections;
 }
 
 // Screen-space effects and traced reflections read one sample of the deferred channels they use.
@@ -176,6 +183,10 @@ fn void? validate_msaa_support(Renderer* renderer, ViewDesc* desc, uint[<2>] out
         supported = msaa_image_supported(&probe, REFLECTION_SURFACE_FORMAT, MSAA_SAMPLED_USAGE)!;
     }
 
+    if (supported && proxy_skip_wanted(desc)) {
+        supported = msaa_image_supported(&probe, PROXY_SKIP_FORMAT, MSAA_SAMPLED_USAGE)!;
+    }
+
     if (!supported) return c3d::UNSUPPORTED~;
 }
 
@@ -257,6 +268,16 @@ fn void? acquire_msaa_images(Renderer* renderer, ViewRecord* record) @private {
         )!;
     }
 
+    if (proxy_skip_wanted(desc) && !record.msaa_proxy_skip.texture.is_valid()) {
+        record.msaa_proxy_skip = allocate_msaa_target(
+            renderer:   renderer,
+            record:     record,
+            format:     PROXY_SKIP_FORMAT,
+            usage:      MSAA_SAMPLED_USAGE,
+            debug_name: "msaa_proxy_skip",
+        )!;
+    }
+
     if (msaa_normal_copy_wanted(desc) && !record.normal_sample_zero.texture.is_valid()) {
         record.normal_sample_zero = allocate_sample_zero_target(
             renderer:   renderer,
@@ -274,6 +295,15 @@ fn void? acquire_msaa_images(Renderer* renderer, ViewRecord* record) @private {
             debug_name: "specular_sample_zero",
         )!;
     }
+
+    if (msaa_flags_copy_wanted(desc) && !record.flags_sample_zero.texture.is_valid()) {
+        record.flags_sample_zero = allocate_sample_zero_target(
+            renderer:   renderer,
+            record:     record,
+            channel:    GBufferChannel.FLAGS,
+            debug_name: "flags_sample_zero",
+        )!;
+    }
 }
 
 // Clears the staged images a new configuration cannot reuse; the caller retires what it gave up.
@@ -281,6 +311,7 @@ fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private 
     ViewDesc* desc = &staged.desc;
     if (!msaa_normal_copy_wanted(desc)) staged.normal_sample_zero = {};
     if (!msaa_specular_copy_wanted(desc)) staged.specular_sample_zero = {};
+    if (!msaa_flags_copy_wanted(desc)) staged.flags_sample_zero = {};
     if (desc.msaa == MsaaSamples.ONE || desc.shading != ShadingPath.DEFERRED) staged.msaa_edges = {};
 
     if (desc.msaa != previous.msaa) {
@@ -288,6 +319,7 @@ fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private 
         staged.msaa_depth = {};
         staged.msaa_velocity = {};
         staged.msaa_reflection_gbuffer = {};
+        staged.msaa_proxy_skip = {};
         staged.gbuffer = {};
         staged.msaa_edges = {};
         return;
@@ -298,15 +330,19 @@ fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private 
     }
 
     if (!msaa_reflection_gbuffer_wanted(desc)) staged.msaa_reflection_gbuffer = {};
+    if (!proxy_skip_wanted(desc)) staged.msaa_proxy_skip = {};
 
     // Only a deferred view samples its multisample depth, and a usage cannot change in place.
     if (staged.msaa_depth.view.is_valid() != (desc.shading == ShadingPath.DEFERRED)) staged.msaa_depth = {};
 }
 
 fn PipelineKey sample_zero_pipeline_key(gpu::Format target_format) @private {
+    // The flag selects the unsigned-integer form, which copies a packed word.
+    bool word = target_format == PROXY_SKIP_FORMAT;
+
     return {
         .vertex        = { .shader = FULLSCREEN },
-        .fragment      = { .shader = SAMPLE_ZERO },
+        .fragment      = { .shader = SAMPLE_ZERO, .flags = word ? shader::SHADER_FLAG_PROXY_SKIP : 0 },
         .color_formats = { [0] = target_format },
         .color_count   = 1,
         .depth_format  = gpu::Format.UNDEFINED,

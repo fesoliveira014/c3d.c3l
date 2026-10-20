@@ -4,6 +4,9 @@
 #include "descriptor_heap.glsl"
 #include "material_maps.glsl"
 #include "custom_material.glsl"
+#ifdef PROXY_SKIP
+#include "proxy_skip_output.glsl"
+#endif
 
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
@@ -17,6 +20,9 @@ layout(push_constant) uniform Push {
 } pc;
 
 void main() {
+#ifdef PROXY_SKIP
+    write_proxy_skip();
+#endif
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     if ((draw.flags & DRAW_ALPHA_MASK) == 0u) return;
     BasicMaterialGpu material = BasicMaterialGpu(draw.material);

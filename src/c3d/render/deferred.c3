@@ -205,6 +205,14 @@ fn void? record_deferred_sample_zero(Renderer* renderer, ViewRecord* record) @pr
             destination: &record.specular_sample_zero,
         )!;
     }
+
+    if (record.flags_sample_zero.texture.is_valid()) {
+        record_sample_zero(
+            renderer:    renderer,
+            source:      &record.gbuffer[GBufferChannel.FLAGS.ordinal],
+            destination: &record.flags_sample_zero,
+        )!;
+    }
 }
 
 fn void? record_lighting_pass(

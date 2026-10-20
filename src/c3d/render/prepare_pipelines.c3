@@ -146,6 +146,10 @@ fn PipelineKey? prepare_cache_key(Renderer* renderer, PreparePipelineUnit* reque
         case DEPTH:
             key.custom = { .vertex = desc.vertex.depth.len > 0 };
             if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY | instanced };
+            if ((key.fragment.flags & shader::SHADER_FLAG_PROXY_SKIP) != 0 && desc.depth.len > 0) {
+                key.custom.depth = true;
+                key.fragment = {};
+            }
         case VELOCITY:
             key.custom = { .vertex = (instanced ? desc.vertex.instanced_velocity : desc.vertex.velocity).len > 0 };
             if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_VELOCITY | instanced };
@@ -466,20 +470,25 @@ fn void list_mesh_pipelines(
             );
         }
 
-        if (desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD && list == DrawList.OPAQUE) {
-            ReflectionPrepass reflection = gbuffer_encodable(material)
-              ? ReflectionPrepass.WRITTEN : ReflectionPrepass.MASKED;
-            PipelineKey thin = shadow_pipeline_key(
+        bool traces_reflections = desc.ray_tracing.reflections && desc.shading == ShadingPath.FORWARD;
+        bool proxy_skip = proxy_skip_wanted(desc);
+        if ((traces_reflections || proxy_skip) && list == DrawList.OPAQUE) {
+            ReflectionPrepass reflection = ReflectionPrepass.OFF;
+            if (traces_reflections) {
+                reflection = gbuffer_encodable(material) ? ReflectionPrepass.WRITTEN : ReflectionPrepass.MASKED;
+            }
+            PipelineKey prepass = shadow_pipeline_key(
                 vertex: reflection == ReflectionPrepass.WRITTEN ? vertex : depth_vertex,
                 wireframe: wireframe,
                 material: material,
                 vertex_color: vertex_color,
                 reflection: reflection,
                 samples: samples,
+                proxy_skip: proxy_skip,
             );
             list_prepare_key(
                 requests: requests,
-                key: thin,
+                key: prepass,
                 pass: PreparePipelinePass.DEPTH,
                 shader: custom,
             );
@@ -590,6 +599,11 @@ fn void list_view_pipelines(
         if (msaa_specular_copy_wanted(desc)) {
             gpu::Format specular = GBUFFER_FORMATS[GBufferChannel.EMISSIVE_SPECULAR.ordinal];
             list_prepare_key(requests, sample_zero_pipeline_key(specular));
+        }
+
+        bool proxy_skip_copy = desc.msaa != MsaaSamples.ONE && proxy_skip_wanted(desc);
+        if (proxy_skip_copy || msaa_flags_copy_wanted(desc)) {
+            list_prepare_key(requests, sample_zero_pipeline_key(PROXY_SKIP_FORMAT));
         }
 
         if (desc.transparency == TransparencyMode.WEIGHTED) {
