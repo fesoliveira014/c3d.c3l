@@ -16,7 +16,7 @@ const uint SMALL_TEXELS @local = 129; // one chunk, one level
 const uint TWO_LEVEL_TEXELS @local = 257; // 2 x 2 finest chunks under one root
 const uint THREE_LEVEL_TEXELS @local = 513; // 4 x 4 finest chunks, three levels
 const uint FOUR_LEVEL_TEXELS @local = 1025; // 8 x 8 finest chunks, four levels
-const uint LARGE_TEXELS @local = 2049; // a level-0 trace grid of 4,198,401 vertices, past MAX_TRACE_VERTICES
+const uint LARGE_TEXELS @local = 2049; // a level-0 trace grid of 4,198,401 vertices, past one 65,535-group row
 const float CELL_SIZE @local = 0.5f;
 const float HEIGHT_SCALE @local = 20;
 const float HEIGHT_TOLERANCE @local = 0.001f; // metres; float rounding of the rotated node and box3d's ray
@@ -491,7 +491,7 @@ fn void test_terrain_drawn_deviation_per_level() @test {
     assert(math::abs(after.drawn_deviation[2] - whole) <= TRACE_ERROR_TOLERANCE);
 }
 
-fn void test_trace_grids_past_a_limit_are_invalid_argument() @test {
+fn void test_trace_level_not_below_the_level_count_is_invalid_argument() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
@@ -501,13 +501,19 @@ fn void test_trace_grids_past_a_limit_are_invalid_argument() @test {
     assert(@catch(try_add_terrain(&fixture, node, levels)) == c3d::INVALID_ARGUMENT);
     assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, TerrainRuntime));
 
-    // A grid of 2049 by 2049 vertices is more threads than one dispatch can pose.
-    TerrainDesc crowded = traced_desc(&fixture, add_height_map(&fixture, LARGE_TEXELS, SEED), level: 0);
-    assert(@catch(terrain::attach_terrain(&fixture.scene, &fixture.assets, node, crowded)) == c3d::INVALID_ARGUMENT);
-    assert(!fixture.scene.has(node, Terrain));
-
     levels.trace_level = 1;
     try_add_terrain(&fixture, node, levels)!!;
+}
+
+fn void test_trace_grid_past_one_dispatch_row_attaches() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = fixture.scene.add_node()!!;
+
+    TerrainDesc crowded = traced_desc(&fixture, add_height_map(&fixture, LARGE_TEXELS, SEED), level: 0);
+    terrain::attach_terrain(&fixture.scene, &fixture.assets, node, crowded)!!;
+    assert(fixture.scene.has(node, Terrain));
 }
 
 fn void test_trace_grid_is_a_trace_only_child_that_leaves_with_its_terrain() @test {
@@ -524,6 +530,8 @@ fn void test_trace_grid_is_a_trace_only_child_that_leaves_with_its_terrain() @te
     Mesh* mesh = fixture.scene.get(grid, Mesh);
     assert(grid.parent == node && mesh.trace && mesh.trace_only && mesh.cast_shadow);
     assert(c3d::same_id(mesh.material, runtime.material));
+    ShaderId shader = fixture.assets.material(mesh.material).data.custom.shader;
+    assert(fixture.assets.shader(shader).desc.trace_pose_grid);
     assert(fixture.assets.geometry(mesh.geometry).vertex_count == side * side);
     assert(mesh.has_bounds_override && mesh.local_bounds.min.x == 0);
     assert(mesh.local_bounds.max.x == (float)(TWO_LEVEL_TEXELS - 1) * CELL_SIZE);

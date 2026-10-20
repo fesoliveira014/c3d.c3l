@@ -60,6 +60,7 @@ struct ShaderDesc {
     WeightedFragment weighted_fragment;
     CustomVertex     vertex;
     CustomTracePose  trace_pose;
+    bool             trace_pose_grid; // trace pose stages use trace_pose_index; rows may pass the 1-D dispatch limit
     usz              param_block_size;
     SceneReads       scene_reads;
 }
@@ -214,6 +215,7 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) {
               ? copy_slice(allocator, desc.trace_pose.instanced) : (char[]){},
             .reads_time = desc.trace_pose.reads_time,
         },
+        .trace_pose_grid = desc.trace_pose_grid,
         .param_block_size = desc.param_block_size,
         .scene_reads = desc.scene_reads,
     };

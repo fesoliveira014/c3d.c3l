@@ -664,6 +664,7 @@ fn void test_shader_trace_pose_forms_are_copied_and_replaceable() @test {
     desc.vertex.instanced_shaded = vertex[..];
     desc.vertex.instanced_depth = vertex[..];
     desc.trace_pose = { .single = single[..], .instanced = instanced[..], .reads_time = true };
+    desc.trace_pose_grid = true;
     ShaderId id = store.add_shader(&desc)!!;
     single[0] = 0;
     instanced[0] = 0;
@@ -672,11 +673,12 @@ fn void test_shader_trace_pose_forms_are_copied_and_replaceable() @test {
     CustomTracePose* pose = &record.desc.trace_pose;
     assert(pose.single.ptr != &single[0] && pose.instanced.ptr != &instanced[0]);
     assert(pose.single.len == 2 && pose.single[0] == 8 && pose.instanced.len == 2 && pose.instanced[1] == 11);
-    assert(pose.reads_time);
+    assert(pose.reads_time && record.desc.trace_pose_grid);
 
     ShaderDesc without = make_shader_desc(fragment[..], vertex[..], vertex[..]);
     store.replace_shader(id, &without)!!;
     assert(record.header.revision == 2 && pose.single.len == 0 && pose.instanced.len == 0 && !pose.reads_time);
+    assert(!record.desc.trace_pose_grid);
 }
 
 fn void test_copy_and_free_shader_desc_round_trip_the_weighted_forms() @test {

@@ -11,6 +11,13 @@ layout(push_constant) uniform Push {
 
 GPU_DECLARE_READONLY_ARRAY_REF(TracePoseInstanceArray, InstanceGpu);
 
+// The vertex this invocation poses; false past the row's vertex count.
+bool trace_pose_index(out uint index) {
+    TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
+    index = trace_pose_linear_index();
+    return index < root.vertex_count;
+}
+
 // Rest vertex i of the row's geometry, with the streams pull_mesh_vertex reads.
 TracePoseVertex trace_pose_vertex(uint index) {
     TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
