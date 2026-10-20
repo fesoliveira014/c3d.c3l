@@ -8,12 +8,15 @@ import c3d::scene;
 import std::math;
 
 const float SUB_LIFETIME_LONG @private = 10;
+const uint SMALL_CAPACITY @private = 64;
+const uint QUEUE_EVENTS @private = 64; // above the deaths one step raises in any case here
+const uint CHILD_COUNT @private = 2;
 const uint SUB_FRAMES @private = 12;
 const uint DEATH_BURST @private = 32;
 const float DEATH_LIFETIME @private = 0.1f;
 const uint DEATH_COUNT @private = 3;
 const uint SMALL_QUEUE @private = 8;
-const float WHOLE_STEP @private = 0.1f; // the longest step, so a newborn shorter-lived than it dies in its first
+const float LONGEST_STEP @private = 0.1f; // the longest step, so a newborn shorter-lived than it dies in its first
 const float SHORT_LIFETIME @private = 0.05f;
 const uint SKIPPED_BURST @private = 8;
 const uint VELOCITY_BURST @private = 16;
@@ -23,7 +26,6 @@ const uint REBASE_FIRST @private = 4; // the deaths fall around step 6, so a shi
 const uint REBASE_COUNT @private = 5;
 const Vec3 REBASE_OFFSET @private = { 0.7f, 0, -0.3f };
 const uint BIRTH_BURST @private = 16;
-const uint BIRTH_COUNT @private = 2;
 const float DROP_HEIGHT @private = 0.5f;
 const float IMPACT_SIZE @private = 0.02f;
 const uint IMPACT_FRAMES @private = 30; // the fall takes about 19 steps
@@ -131,11 +133,11 @@ fn void test_gpu_death_sub_emitter_spawns_count_children_per_death() @test {
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
     Node* child_node = add_system(&fixture, sub_desc(&fixture, CAPACITY, SUB_LIFETIME_LONG));
-    ParticleSystemDesc parent_desc = sub_desc(&fixture, 64, DEATH_LIFETIME);
+    ParticleSystemDesc parent_desc = sub_desc(&fixture, SMALL_CAPACITY, DEATH_LIFETIME);
     listen(
         desc: &parent_desc,
         sub_emitter: { .trigger = DEATH, .target = child_node.id, .count = DEATH_COUNT },
-        max_events: 64,
+        max_events: QUEUE_EVENTS,
     );
     ParticleSystem* parent = system_of(&fixture, add_system(&fixture, parent_desc));
     ParticleSystem* child = system_of(&fixture, child_node);
@@ -152,28 +154,28 @@ fn void test_gpu_full_event_buffer_counts_dropped_events() @test {
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
     Node* child_node = add_system(&fixture, sub_desc(&fixture, CAPACITY, SUB_LIFETIME_LONG));
-    ParticleSystemDesc parent_desc = sub_desc(&fixture, 64, SHORT_LIFETIME);
+    ParticleSystemDesc parent_desc = sub_desc(&fixture, SMALL_CAPACITY, SHORT_LIFETIME);
     listen(
         desc: &parent_desc,
-        sub_emitter: { .trigger = DEATH, .target = child_node.id, .count = 2 },
+        sub_emitter: { .trigger = DEATH, .target = child_node.id, .count = CHILD_COUNT },
         max_events: SMALL_QUEUE,
     );
     ParticleSystem* parent = system_of(&fixture, add_system(&fixture, parent_desc));
     ParticleSystem* child = system_of(&fixture, child_node);
     parent.emit_burst(DEATH_BURST);
     fixture.scene.update_world();
-    run_sub_frames(&fixture, 3, WHOLE_STEP);
+    run_sub_frames(&fixture, 3, LONGEST_STEP);
 
     assert(parent.dropped_events == DEATH_BURST - SMALL_QUEUE);
-    assert(child.alive == 2 * SMALL_QUEUE);
+    assert(child.alive == CHILD_COUNT * SMALL_QUEUE);
 }
 
 fn void test_gpu_delivery_across_executions_is_skipped_and_counted() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
-    Node* cpu_child_node = add_system(&fixture, sub_desc(&fixture, 64, SUB_LIFETIME_LONG, ParticleExecution.CPU));
-    Node* device_child_node = add_system(&fixture, sub_desc(&fixture, 64, SUB_LIFETIME_LONG));
+    Node* cpu_child_node = add_system(&fixture, sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG, ParticleExecution.CPU));
+    Node* device_child_node = add_system(&fixture, sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG));
     SubEmitter[2] sub_emitters = {
         { .trigger = DEATH, .target = cpu_child_node.id, .count = 1 },
         { .trigger = DEATH, .target = device_child_node.id, .count = 1 },
@@ -181,11 +183,11 @@ fn void test_gpu_delivery_across_executions_is_skipped_and_counted() @test {
     ParticleExecution[2] executions = { ParticleExecution.GPU, ParticleExecution.CPU };
     ParticleSystem*[2] parents;
     foreach (index, execution : executions) {
-        ParticleSystemDesc desc = sub_desc(&fixture, 64, DEATH_LIFETIME, execution);
+        ParticleSystemDesc desc = sub_desc(&fixture, SMALL_CAPACITY, DEATH_LIFETIME, execution);
         listen(
             desc: &desc,
             sub_emitter: sub_emitters[index],
-            max_events: 16,
+            max_events: QUEUE_EVENTS,
         );
         parents[index] = system_of(&fixture, add_system(&fixture, desc));
         parents[index].emit_burst(SKIPPED_BURST);
@@ -246,16 +248,16 @@ fn void test_gpu_children_follow_the_cpu_reference() @test {
     ParticleSystem*[2] child_systems;
     ParticleExecution[2] executions = { ParticleExecution.CPU, ParticleExecution.GPU };
     foreach (index, execution : executions) {
-        ParticleSystemDesc child_desc = sub_desc(&fixture, 64, SUB_LIFETIME_LONG, execution);
+        ParticleSystemDesc child_desc = sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG, execution);
         child_desc.speed = { .min = 0, .max = 0 };
         Node* child_node = add_system(&fixture, child_desc);
         child_node.local.position = { FAR_CHILD_X, 0, 0 };
-        ParticleSystemDesc parent_desc = sub_desc(&fixture, 64, DEATH_LIFETIME, execution);
+        ParticleSystemDesc parent_desc = sub_desc(&fixture, SMALL_CAPACITY, DEATH_LIFETIME, execution);
         parent_desc.speed = { .min = VELOCITY_SPEED, .max = VELOCITY_SPEED };
         listen(
             desc: &parent_desc,
             sub_emitter: { .trigger = DEATH, .target = child_node.id, .count = 1, .inherit_velocity = 1 },
-            max_events: 64,
+            max_events: QUEUE_EVENTS,
         );
         system_of(&fixture, add_system(&fixture, parent_desc)).emit_burst(VELOCITY_BURST);
         child_systems[index] = system_of(&fixture, child_node);
@@ -277,36 +279,36 @@ fn void test_gpu_births_fire_for_emitted_and_delivered_particles() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
-    Node* last_node = add_system(&fixture, sub_desc(&fixture, 64, SUB_LIFETIME_LONG));
-    ParticleSystemDesc middle_desc = sub_desc(&fixture, 64, SUB_LIFETIME_LONG);
+    Node* last_node = add_system(&fixture, sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG));
+    ParticleSystemDesc middle_desc = sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG);
     listen(
         desc: &middle_desc,
         sub_emitter: { .trigger = BIRTH, .target = last_node.id, .count = 1 },
-        max_events: 64,
+        max_events: QUEUE_EVENTS,
     );
     Node* middle_node = add_system(&fixture, middle_desc);
-    ParticleSystemDesc first_desc = sub_desc(&fixture, 64, SUB_LIFETIME_LONG);
+    ParticleSystemDesc first_desc = sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG);
     listen(
         desc: &first_desc,
-        sub_emitter: { .trigger = BIRTH, .target = middle_node.id, .count = BIRTH_COUNT },
-        max_events: 64,
+        sub_emitter: { .trigger = BIRTH, .target = middle_node.id, .count = CHILD_COUNT },
+        max_events: QUEUE_EVENTS,
     );
     ParticleSystem* first = system_of(&fixture, add_system(&fixture, first_desc));
     first.emit_burst(BIRTH_BURST);
     fixture.scene.update_world();
     run_sub_frames(&fixture, SUB_FRAMES, STEP_SECONDS);
 
-    assert(system_of(&fixture, middle_node).alive == BIRTH_BURST * BIRTH_COUNT);
-    assert(system_of(&fixture, last_node).alive == BIRTH_BURST * BIRTH_COUNT);
+    assert(system_of(&fixture, middle_node).alive == BIRTH_BURST * CHILD_COUNT);
+    assert(system_of(&fixture, last_node).alive == BIRTH_BURST * CHILD_COUNT);
 }
 
 fn void test_gpu_ground_hits_raise_impact_and_death_events() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
-    Node* impact_child = add_system(&fixture, sub_desc(&fixture, 64, SUB_LIFETIME_LONG));
-    Node* death_child = add_system(&fixture, sub_desc(&fixture, 64, SUB_LIFETIME_LONG));
-    ParticleSystemDesc parent_desc = sub_desc(&fixture, 64, SUB_LIFETIME_LONG);
+    Node* impact_child = add_system(&fixture, sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG));
+    Node* death_child = add_system(&fixture, sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG));
+    ParticleSystemDesc parent_desc = sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG);
     parent_desc.size = { .min = IMPACT_SIZE, .max = IMPACT_SIZE };
     parent_desc.gravity_scale = 1;
     parent_desc.collision.response = CollisionResponse.DIE;
@@ -314,12 +316,12 @@ fn void test_gpu_ground_hits_raise_impact_and_death_events() @test {
     listen(
         desc: &parent_desc,
         sub_emitter: { .trigger = IMPACT, .target = impact_child.id, .count = 1 },
-        max_events: 64,
+        max_events: QUEUE_EVENTS,
     );
     listen(
         desc: &parent_desc,
         sub_emitter: { .trigger = DEATH, .target = death_child.id, .count = 1 },
-        max_events: 64,
+        max_events: QUEUE_EVENTS,
         index: 1,
     );
     Node* parent_node = add_system(&fixture, parent_desc);
