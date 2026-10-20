@@ -660,8 +660,7 @@ fn void? check_particle_execution(ParticleSystemDesc* desc) @private {
     $else
         ParticleCollision* collision = &desc.collision;
         bool needs_depth = collision.response != CollisionResponse.NONE && !collision.ground_plane;
-        bool refused = needs_depth || desc.saturation == ParticleSaturation.DROP_OLDEST;
-        if (refused) return c3d::UNSUPPORTED~;
+        if (needs_depth) return c3d::UNSUPPORTED~;
     $endif
 }
 

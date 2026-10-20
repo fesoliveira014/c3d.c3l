@@ -133,6 +133,7 @@ fn void destroy_gpu_particles(GpuParticles* particles, Renderer* renderer) {
  Call once per frame after update_world and before the views render.
  An aborted frame followed by FRAMES_IN_FLIGHT or more frames without an update loses that step's burst and shift.
  If that frame was the system's first, the system then steps from an uninitialized device state.
+ A fault that aborts the frame ends the update there and returns the first fault.
  @param [&inout] particles : "Retires the buffers of systems that died."
  @param [&inout] renderer : "Frame open, no overlay open."
  @param [&inout] scene : "Registered; matrices current."
@@ -162,7 +163,7 @@ fn void? update(
 
     fault failure;
     scene.@each(ParticleSystem; entity, system) {
-        if (system.is_prepared() && system.desc.execution == ParticleExecution.GPU) {
+        if (renderer.frame_open && system.is_prepared() && system.desc.execution == ParticleExecution.GPU) {
             if (catch excuse = step_system(
                 particles: particles,
                 renderer: renderer,
@@ -180,7 +181,7 @@ fn void? update(
     if (catch excuse = deliver_events(particles, renderer, scene)) {
         if (!failure) failure = excuse;
     }
-    retire_unseen(particles, renderer)!;
+    if (renderer.frame_open) retire_unseen(particles, renderer)!;
     if (failure) return failure~;
 }
 
@@ -237,6 +238,7 @@ fn void adopt_counters(
     system.dropped = (ulong)words[1] | ((ulong)words[2] << 32);
     system.dropped_events = (ulong)words[4] | ((ulong)words[5] << 32);
     system.skipped_events = (ulong)words[6] | ((ulong)words[7] << 32);
+    system.evicted = (ulong)words[8] | ((ulong)words[9] << 32);
 }
 
 fn void? step_system(
@@ -402,8 +404,9 @@ fn void? deliver_events(GpuParticles* particles, Renderer* renderer, Scene* scen
     scene.@each(ParticleSystem; entity, system) {
         GpuSystemSlot* slot;
         if (system.is_prepared() && system.desc.execution == ParticleExecution.GPU) slot = find_slot(particles, entity);
-        if (slot && slot.chained == particles.stamp) {
+        if (renderer.frame_open && slot && slot.chained == particles.stamp) {
             foreach (sub_index, &sub_emitter : system.desc.sub_emitters[:system.desc.sub_emitter_count]) {
+                if (!renderer.frame_open) break;
                 if (catch excuse = deliver_sub_emitter(
                     particles: particles,
                     renderer: renderer,
