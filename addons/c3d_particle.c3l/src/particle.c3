@@ -41,6 +41,7 @@ const Vec3 PARTICLE_GRAVITY = { 0, -9.81f, 0 };
 *>
 const uint MAX_SUB_EMITTERS = 4; // each adds one trigger test per raised event
 
+const uint PARTICLE_BLOCK @private = 1024; // particles per range kernel unit; amortizes a fork and still balances workers
 const uint DEFAULT_COLLISION_QUERIES @private = 256; // callback casts per step; each is one world query
 const float DEFAULT_IMPACT_SPEED @private = 1; // above the 0.98 m/s gravity adds in the longest step
 const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 56 KiB pool for a small effect; draw arrays are additional
@@ -291,6 +292,7 @@ struct ParticleSystem {
     float[] rotation;
     float[] spin;
     uint[] seed;
+    uint[] block_offsets; // one entry per PARTICLE_BLOCK; kernel counts, then first draw slots
     ulong[] spawn;
     Vec3[] trail_position; // max_points ring slots per particle, in the particle's own block
     float[] trail_stamp; // particle age when the slot was recorded
@@ -407,6 +409,7 @@ fn void? prepare(Scene* scene, Node* emitter) {
     system.rotation = @carve_stream(float, &system, &cursor, desc.capacity);
     system.spin = @carve_stream(float, &system, &cursor, desc.capacity);
     system.seed = @carve_stream(uint, &system, &cursor, desc.capacity);
+    system.block_offsets = @carve_stream(uint, &system, &cursor, block_count(desc.capacity));
     system.spawn = @carve_stream(ulong, &system, &cursor, desc.capacity);
     system.events = @carve_stream(ParticleEvent, &system, &cursor, desc.max_events);
     if (desc.trail.max_points) {
@@ -438,6 +441,7 @@ fn void? prepare(Scene* scene, Node* emitter) {
               ? BillboardFacing.DIRECTIONAL : BillboardFacing.CAMERA,
             parent: emitter,
             atlas: flipbook_atlas(&desc.flipbook),
+            source: BillboardSource.RECORDS,
         )!;
     }
     defer catch scene.remove(child);
@@ -550,7 +554,7 @@ fn usz particle_pool_bytes(uint capacity, uint max_events, uint max_trail_points
     usz cursor = (usz)capacity * Vec3::size;
     cursor = particle_align(cursor, Vec3::alignment) + (usz)capacity * Vec3::size;
     cursor = particle_align(cursor, float::alignment) + (usz)capacity * PARTICLE_FLOAT_STREAMS * float::size;
-    cursor = particle_align(cursor, uint::alignment) + (usz)capacity * uint::size;
+    cursor = particle_align(cursor, uint::alignment) + ((usz)capacity + block_count(capacity)) * uint::size;
     cursor = particle_align(cursor, ulong::alignment) + (usz)capacity * ulong::size;
     cursor = particle_align(cursor, ParticleEvent::alignment) + (usz)max_events * ParticleEvent::size;
     if (!max_trail_points) return cursor;

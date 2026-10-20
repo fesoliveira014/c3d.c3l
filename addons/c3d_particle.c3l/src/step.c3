@@ -1,5 +1,6 @@
 module c3d::particle;
 
+import c3d;
 import c3d::maths;
 import std::math;
 
@@ -37,6 +38,17 @@ struct SpawnDraws @private {
     ulong ordinal;
 }
 
+struct AdvanceJob @private {
+    ParticleSystem* system;
+    Vec3 acceleration_step;
+    Vec3 wind;
+    float drag;
+    float seconds;
+    uint survivors;
+    bool turbulent;
+    TurbulenceField field;
+}
+
 <*
  Advance one particle pool without touching scene structure.
  @param [&inout] system : "Live, initialized particle system."
@@ -44,6 +56,7 @@ struct SpawnDraws @private {
  @param dt : "Finite nonnegative seconds; capped at the maximum step."
  @param wind : "Finite world-space air velocity in metres per second."
  @param world_shift : "Total origin shift; keeps turbulence fixed to world points."
+ @param parallel : "Runs the range kernels; ranges never share writes."
  @require system.is_prepared()
  @require dt >= 0 && math::is_finite(dt)
  @require math::is_finite(wind.x) && math::is_finite(wind.y) && math::is_finite(wind.z)
@@ -54,6 +67,7 @@ fn void step(
     float dt,
     Vec3 wind,
     double[<3>] world_shift = {},
+    ParallelFor parallel = {},
 ) {
     float seconds = math::min(dt, MAX_PARTICLE_STEP_SECONDS);
     system.turbulence_time += seconds;
@@ -96,16 +110,23 @@ fn void step(
         );
     }
 
-    for (index = 0; index < system.alive; index++) {
-        Vec3 velocity = system.velocity[index] + acceleration_step;
-        Vec3 air = wind;
-        if (turbulent) air += turbulence_air_velocity(&field, system.position[index]);
-        velocity = velocity * (1 - drag) + air * drag;
-        system.velocity[index] = velocity;
-        system.position[index] += velocity * seconds;
-        system.rotation[index] += system.spin[index] * seconds;
-        if (index >= survivors) system.age[index] = seconds;
-    }
+    AdvanceJob job = {
+        .system = system,
+        .acceleration_step = acceleration_step,
+        .wind = wind,
+        .drag = drag,
+        .seconds = seconds,
+        .survivors = survivors,
+        .turbulent = turbulent,
+        .field = field,
+    };
+    parallel.for_ranges(
+        range: &advance_blocks,
+        data: &job,
+        count: block_count(system.alive),
+        batch: 1,
+    );
+
     index = survivors;
     while (index < system.alive) {
         if (system.age[index] >= system.lifetime[index]) {
@@ -114,9 +135,27 @@ fn void step(
             index++;
         }
     }
-    collide(system, seconds);
-    record_trails(system, seconds);
+    collide(system, seconds, parallel);
+    record_trails(system, seconds, parallel);
     system.event_due = system.event_count;
+}
+
+fn void advance_blocks(void* data, uint first, uint count) @private {
+    AdvanceJob* job = data;
+    ParticleSystem* system = job.system;
+    for (uint block = first; block < first + count; block++) {
+        ParticleSpan span = particle_span(system.alive, block);
+        for (uint index = span.begin; index < span.end; index++) {
+            Vec3 velocity = system.velocity[index] + job.acceleration_step;
+            Vec3 air = job.wind;
+            if (job.turbulent) air += turbulence_air_velocity(&job.field, system.position[index]);
+            velocity = velocity * (1 - job.drag) + air * job.drag;
+            system.velocity[index] = velocity;
+            system.position[index] += velocity * job.seconds;
+            system.rotation[index] += system.spin[index] * job.seconds;
+            if (index >= job.survivors) system.age[index] = job.seconds;
+        }
+    }
 }
 
 fn void emit_at(

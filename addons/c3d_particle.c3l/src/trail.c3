@@ -1,7 +1,13 @@
 module c3d::particle;
 
+import c3d;
 import c3d::scene;
 import std::math;
+
+struct TrailJob @private {
+    ParticleSystem* system;
+    float seconds;
+}
 
 fn void reset_trail(ParticleSystem* system, uint index) @private {
     if (!system.desc.trail.max_points) return;
@@ -78,19 +84,34 @@ fn void drop_expired_trail_points(ParticleSystem* system, uint index) @private {
     system.trail_count[index] = count;
 }
 
-fn void record_trails(ParticleSystem* system, float seconds) @private {
-    ParticleTrail* trail = &system.desc.trail;
-    if (!trail.max_points) return;
+fn void record_trails(ParticleSystem* system, float seconds, ParallelFor parallel) @private {
+    if (!system.desc.trail.max_points) return;
 
-    for (uint index = 0; index < system.alive; index++) {
-        float clock = system.trail_clock[index] + seconds;
-        if (clock >= trail.point_interval) {
-            append_trail_point(system, index);
-            clock -= trail.point_interval;
-            if (clock >= trail.point_interval) clock = 0;
+    TrailJob job = { .system = system, .seconds = seconds };
+    parallel.for_ranges(
+        range: &record_trail_blocks,
+        data: &job,
+        count: block_count(system.alive),
+        batch: 1,
+    );
+}
+
+fn void record_trail_blocks(void* data, uint first, uint count) @private {
+    TrailJob* job = data;
+    ParticleSystem* system = job.system;
+    ParticleTrail* trail = &system.desc.trail;
+    for (uint block = first; block < first + count; block++) {
+        ParticleSpan span = particle_span(system.alive, block);
+        for (uint index = span.begin; index < span.end; index++) {
+            float clock = system.trail_clock[index] + job.seconds;
+            if (clock >= trail.point_interval) {
+                append_trail_point(system, index);
+                clock -= trail.point_interval;
+                if (clock >= trail.point_interval) clock = 0;
+            }
+            system.trail_clock[index] = clock;
+            drop_expired_trail_points(system, index);
         }
-        system.trail_clock[index] = clock;
-        drop_expired_trail_points(system, index);
     }
 }
 

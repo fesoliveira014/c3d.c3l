@@ -1,14 +1,26 @@
 module c3d::particle;
 
+import c3d;
 import std::math;
 
 const Vec3 GROUND_NORMAL @private = { 0, 1, 0 };
 
-fn void collide(ParticleSystem* system, float seconds) @private {
+struct GroundJob @private {
+    ParticleSystem* system;
+    float seconds;
+}
+
+fn void collide(ParticleSystem* system, float seconds, ParallelFor parallel) @private {
     ParticleCollision* collision = &system.desc.collision;
     bool queries_enabled = system.collision_cast && collision.max_queries > 0;
     if (collision.response == CollisionResponse.NONE || !system.alive) return;
     if (!collision.ground_plane && !queries_enabled) return;
+
+    // Events are raised in visit order, so only a system that raises none can visit blocks in any order.
+    if (!system.collision_cast && !system.desc.sub_emitter_count) {
+        collide_ground_plane(system, seconds, parallel);
+        return;
+    }
 
     bool dies = collision.response == CollisionResponse.DIE;
     uint count = system.alive;
@@ -19,12 +31,10 @@ fn void collide(ParticleSystem* system, float seconds) @private {
     for (uint visit = 0; visit < count; visit++) {
         uint index = (start + visit) % count;
         Vec3 to = system.position[index];
-        // The pool keeps no previous position; the last move was exactly velocity * seconds.
-        Vec3 from = to - system.velocity[index] * seconds;
+        Vec3 from = previous_position(system, index, seconds);
         if (from == to) continue;
 
-        float life = system.age[index] / system.lifetime[index];
-        float radius = system.size[index] * system.desc.size_over_life.sample(life) * collision.radius_scale;
+        float radius = collision_radius(system, index);
         ParticleHit hit;
         bool found = collision.ground_plane && hit_ground_plane(
             from: from,
@@ -66,6 +76,67 @@ fn void collide(ParticleSystem* system, float seconds) @private {
         }
     }
     if (retired) remove_retired(system);
+}
+
+fn void collide_ground_plane(ParticleSystem* system, float seconds, ParallelFor parallel) @private {
+    GroundJob job = { .system = system, .seconds = seconds };
+    uint blocks = block_count(system.alive);
+    parallel.for_ranges(
+        range: &collide_ground_blocks,
+        data: &job,
+        count: blocks,
+        batch: 1,
+    );
+
+    uint retired;
+    foreach (block_retired : system.block_offsets[:blocks]) retired += block_retired;
+    if (retired) remove_retired(system);
+}
+
+fn void collide_ground_blocks(void* data, uint first, uint count) @private {
+    GroundJob* job = data;
+    ParticleSystem* system = job.system;
+    ParticleCollision* collision = &system.desc.collision;
+    bool dies = collision.response == CollisionResponse.DIE;
+    for (uint block = first; block < first + count; block++) {
+        ParticleSpan span = particle_span(system.alive, block);
+        uint retired;
+        for (uint index = span.begin; index < span.end; index++) {
+            Vec3 to = system.position[index];
+            Vec3 from = previous_position(system, index, job.seconds);
+            if (from == to) continue;
+
+            float radius = collision_radius(system, index);
+            ParticleHit hit;
+            bool found = hit_ground_plane(
+                from: from,
+                to: to,
+                radius: radius,
+                plane_height: collision.ground_height,
+                hit: &hit,
+            );
+            if (found) {
+                respond_to_hit(
+                    system: system,
+                    index: index,
+                    hit: hit,
+                    radius: radius,
+                );
+                if (dies) retired++;
+            }
+        }
+        system.block_offsets[block] = retired;
+    }
+}
+
+// The pool keeps no previous position; the last move was exactly velocity * seconds.
+fn Vec3 previous_position(ParticleSystem* system, uint index, float seconds) @private {
+    return system.position[index] - system.velocity[index] * seconds;
+}
+
+fn float collision_radius(ParticleSystem* system, uint index) @private {
+    float life = system.age[index] / system.lifetime[index];
+    return system.size[index] * system.desc.size_over_life.sample(life) * system.desc.collision.radius_scale;
 }
 
 fn bool hit_ground_plane(
