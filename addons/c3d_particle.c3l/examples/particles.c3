@@ -1057,9 +1057,10 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     bool scene_effect = options.sparks || options.smoke || options.collide || options.lit_smoke;
+    bool companion_effect = options.sparks || options.smoke || options.collide || options.embers || options.trails;
     bool lit_option = options.single_lighting || options.normal != ParticleNormal.SPHERICAL;
     if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
-        || (options.lit_smoke && (options.sparks || options.smoke || options.collide))
+        || (options.lit_smoke && companion_effect)
         || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;

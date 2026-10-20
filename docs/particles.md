@@ -613,7 +613,7 @@ modes and the N key cycles the normal through its three. `--lighting` and `--nor
 by lowercase name, for example `--lighting direct_shadowed --normal volume`. With `--benchmark`, the run
 reports the transparent pass for AMBIENT, DIRECT and DIRECT_SHADOWED as the segments `ambient`, `direct`
 and `direct_shadowed`, or for the `--lighting` mode alone. Sparks and debris do not emit, and the flag does
-not combine with `--stress`, `--sparks`, `--smoke` or `--collide`.
+not combine with `--stress`, `--sparks`, `--smoke`, `--embers`, `--trails` or `--collide`.
 
 `--embers` adds a system of rising additive embers whose drag follows a three-octave turbulence field that scrolls
 upward. It applies to the window, which shows the live count, and to `--benchmark`, which prints `embers,alive`. With
