@@ -397,7 +397,7 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
     uint index = renderer.instances.acquire(key, renderer.frame_index)!;
     GpuInstances* slot = &renderer.instances.slots[index];
     if (BillboardBatch* billboards = candidate.billboards) {
-        if (slot.capacity < billboards.billboards.len || slot.revision != billboards.revision
+        if (slot.capacity < billboards.capacity() || slot.revision != billboards.revision
             || slot.world != candidate.node.world || slot.origin != renderer.frame_origin) {
             upload_billboard_records(
                 renderer: renderer,

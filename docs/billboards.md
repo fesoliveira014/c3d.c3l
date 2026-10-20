@@ -42,6 +42,22 @@ facing, atlas or material require `mark_billboards_dirty`; direct count edits mu
 stay within capacity, and a directly edited atlas must satisfy the rules below. The
 aggregate cache is library-owned. Component pointers are short-lived ECS borrows.
 
+## Sources
+
+`BillboardBatch.source` selects where a batch's draw data lives. `add_billboards` takes it as a trailing argument.
+
+- **`BILLBOARDS`**, the default, holds node-local `Billboard` values in `billboards`. Core converts them to world-space
+  records once per revision.
+- **`RECORDS`** holds world-space `BillboardRecord` values in `records`, in the renderer's 64-byte layout. The owner writes
+  `records[:count]`, sets each `facing` to the batch's `BillboardFacing` ordinal, and calls `mark_billboards_dirty`. Core
+  subtracts the frame origin as it copies them to the upload, and builds no `Billboard`.
+
+A RECORDS batch is drawn without its node's world matrix, so its node must keep an identity world; a WORLD child with
+an identity pose does. Records are not validated: the owner keeps them finite. Passing `billboards` with `RECORDS`
+returns `INVALID_ARGUMENT`, and `set_billboards` and `resize_billboards` apply to `BILLBOARDS` batches only. Bounds, picking
+and `SceneIndex` read both sources through `BillboardBatch.billboard(index)`. The serialization codec faults
+`UNSUPPORTED` when exporting a `RECORDS` batch.
+
 ## Orientation and units
 
 Positions and directions are node-local. `size` is full width/height, `rotation`

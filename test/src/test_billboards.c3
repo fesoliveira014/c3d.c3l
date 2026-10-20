@@ -215,3 +215,98 @@ fn void test_billboard_index_and_linear_pick_preserve_source_identity() @test {
     index.refresh(&assets, &scene)!!;
     @pool() { assert(index.pick(tmem, &assets, ray).len == 0); };
 }
+
+fn void test_record_batch_copies_records_relative_to_frame_origin() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 1 });
+    defer scene::destroy_scene(&scene);
+    Node* node = scene.add_billboards(
+        material: {},
+        capacity: 4,
+        source: BillboardSource.RECORDS,
+    )!!;
+    BillboardBatch* batch = scene.get(node, BillboardBatch);
+    batch.records[0] = {
+        .position_width = { 300, 5, -500, 2 },
+        .direction_height = { 0, 1, 0, 4 },
+        .color = { 0.1f, 0.2f, 0.3f, 0.4f },
+        .rotation = 0.7f,
+        .facing = 1,
+        .frame = 2.5f,
+    };
+    batch.records[1] = {
+        .position_width = { -8, 0, 30, 0.5f },
+        .direction_height = { 1, 0, 0, 1.5f },
+        .color = { 1, 0.5f, 0.25f, 1 },
+        .rotation = -0.3f,
+        .facing = 1,
+        .frame = 0,
+    };
+    batch.count = 2;
+    BillboardGpu[2] copied;
+    render::copy_billboard_records(copied[..], batch, { 256, 0, -512 });
+    assert(copied[0].position_width == (Vec4){ 44, 5, 12, 2 });
+    assert(copied[1].position_width == (Vec4){ -264, 0, 542, 0.5f });
+    sz tail = (sz)(BillboardGpu::size - Vec4::size);
+    assert(mem::equals(&copied[0].direction_height, &batch.records[0].direction_height, tail));
+    assert(mem::equals(&copied[1].direction_height, &batch.records[1].direction_height, tail));
+}
+
+fn void test_record_batch_bounds_index_and_pick_read_records() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&scene);
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.alpha_mode = AlphaMode.BLEND;
+    MaterialId material_id = assets.add_material(material::basic(common: common))!!;
+    Billboard[3] values = { scene::BILLBOARD_DEFAULT, scene::BILLBOARD_DEFAULT, scene::BILLBOARD_DEFAULT };
+    values[0].position = { -4, 0, 0 };
+    values[1].position = { 0, 1, 0 };
+    values[1].size = { 2, 2 };
+    values[1].direction = { 0, 2, 0 };
+    values[2].position = { 4, 0, 0 };
+    values[2].size = { 3, 3 };
+    Node* billboards = scene.add_billboards(material: material_id, capacity: 3, billboards: values[..])!!;
+    Node* records = scene.add_billboards(
+        material: material_id,
+        capacity: 3,
+        source: BillboardSource.RECORDS,
+    )!!;
+    BillboardBatch* source = scene.get(billboards, BillboardBatch);
+    BillboardBatch* packed = scene.get(records, BillboardBatch);
+    BillboardGpu[3] converted;
+    render::pack_billboard_records(converted[..], matrix::IDENTITY4, source);
+    foreach (index, &record : packed.records) *record = *(BillboardRecord*)&converted[index];
+    packed.count = 3;
+    scene.update_world();
+
+    Aabb expected = spatial::billboard_world_bounds(billboards, source);
+    Aabb actual = spatial::billboard_world_bounds(records, packed);
+    assert(near_vector(expected.min, actual.min) && near_vector(expected.max, actual.max));
+
+    SceneIndex index = spatial::create_scene_index(mem, 6);
+    defer spatial::destroy_scene_index(&index);
+    index.refresh(&assets, &scene)!!;
+    assert(index.count == 6);
+    for (uint instance = 0; instance < 3; instance++) {
+        Aabb first = index.entries[instance].bounds;
+        Aabb second = index.entries[3 + instance].bounds;
+        assert(index.entries[instance].node == billboards && index.entries[3 + instance].node == records);
+        assert(near_vector(first.min, second.min) && near_vector(first.max, second.max));
+    }
+
+    Ray ray = { .origin = { 0, 1, 3 }, .direction = { 0, 0, -1 } };
+    @pool() {
+        PickHit[] hits = index.pick(allocator: tmem, assets: &assets, ray: ray);
+        PickHit[] linear = spatial::pick(
+            allocator: tmem,
+            assets: &assets,
+            scene: &scene,
+            ray: ray,
+        );
+        assert(hits.len == 2 && linear.len == 2);
+        foreach (hit : hits) assert(hit.instance_index == 1 && hit.billboard);
+        foreach (hit : linear) assert(hit.instance_index == 1 && hit.billboard);
+        assert(hits[0].node != hits[1].node && linear[0].node != linear[1].node);
+    };
+}
