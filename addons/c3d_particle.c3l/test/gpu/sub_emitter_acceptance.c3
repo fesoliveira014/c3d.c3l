@@ -44,19 +44,14 @@ struct InheritedChildren @private {
     ParticleSystem* device;
 }
 
-fn ParticleSystemDesc sub_desc(
-    Fixture* fixture,
-    uint capacity,
-    float lifetime,
-    ParticleExecution execution = ParticleExecution.GPU,
-) @private {
+fn ParticleSystemDesc sub_desc(Fixture* fixture, uint capacity, float lifetime) @private {
     ParticleSystemDesc desc = particle::default_particle_system_desc();
     desc.capacity = capacity;
     desc.seed = 3;
     desc.material = fixture.material;
     desc.lifetime = { .min = lifetime, .max = lifetime };
     desc.size = { .min = 0.1f, .max = 0.1f };
-    desc.execution = execution;
+    desc.execution = ParticleExecution.GPU;
     return desc;
 }
 
@@ -174,7 +169,9 @@ fn void test_gpu_delivery_across_executions_is_skipped_and_counted() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
-    Node* cpu_child_node = add_system(&fixture, sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG, ParticleExecution.CPU));
+    ParticleSystemDesc cpu_child_desc = sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG);
+    cpu_child_desc.execution = ParticleExecution.CPU;
+    Node* cpu_child_node = add_system(&fixture, cpu_child_desc);
     Node* device_child_node = add_system(&fixture, sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG));
     SubEmitter[2] sub_emitters = {
         { .trigger = DEATH, .target = cpu_child_node.id, .count = 1 },
@@ -183,7 +180,8 @@ fn void test_gpu_delivery_across_executions_is_skipped_and_counted() @test {
     ParticleExecution[2] executions = { ParticleExecution.GPU, ParticleExecution.CPU };
     ParticleSystem*[2] parents;
     foreach (index, execution : executions) {
-        ParticleSystemDesc desc = sub_desc(&fixture, SMALL_CAPACITY, DEATH_LIFETIME, execution);
+        ParticleSystemDesc desc = sub_desc(&fixture, SMALL_CAPACITY, DEATH_LIFETIME);
+        desc.execution = execution;
         listen(
             desc: &desc,
             sub_emitter: sub_emitters[index],
@@ -248,11 +246,13 @@ fn void test_gpu_children_follow_the_cpu_reference() @test {
     ParticleSystem*[2] child_systems;
     ParticleExecution[2] executions = { ParticleExecution.CPU, ParticleExecution.GPU };
     foreach (index, execution : executions) {
-        ParticleSystemDesc child_desc = sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG, execution);
+        ParticleSystemDesc child_desc = sub_desc(&fixture, SMALL_CAPACITY, SUB_LIFETIME_LONG);
+        child_desc.execution = execution;
         child_desc.speed = { .min = 0, .max = 0 };
         Node* child_node = add_system(&fixture, child_desc);
         child_node.local.position = { FAR_CHILD_X, 0, 0 };
-        ParticleSystemDesc parent_desc = sub_desc(&fixture, SMALL_CAPACITY, DEATH_LIFETIME, execution);
+        ParticleSystemDesc parent_desc = sub_desc(&fixture, SMALL_CAPACITY, DEATH_LIFETIME);
+        parent_desc.execution = execution;
         parent_desc.speed = { .min = VELOCITY_SPEED, .max = VELOCITY_SPEED };
         listen(
             desc: &parent_desc,
