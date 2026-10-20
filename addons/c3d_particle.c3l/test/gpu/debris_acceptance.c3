@@ -187,6 +187,7 @@ fn void check_debris(Fixture* fixture, Pair* pair, BufferId copied) @private {
     InstancedMesh* host = fixture.scene.get(fixture.scene.node(pair.cpu.draw_node), InstancedMesh);
     InstancedMesh* mirror = fixture.scene.get(fixture.scene.node(pair.device.draw_node), InstancedMesh);
     assert(host.count == pair.cpu.alive && mirror.count == pair.cpu.alive);
+    Aabb box = fixture.assets.geometry(pair.device.desc.geometry).data.bounds;
     uint[CAPACITY] order;
     sort_by_spawn(pair.cpu, order[..]);
     for (uint rank = 0; rank < pair.cpu.alive; rank++) {
@@ -210,6 +211,12 @@ fn void check_debris(Fixture* fixture, Pair* pair, BufferId copied) @private {
         }
         for (usz component = 0; component < 4; component++) {
             assert(math::abs(found.rotation.v[component] - expected.rotation.v[component]) <= POSITION_TOLERANCE);
+        }
+
+        Aabb placed = maths::aabb_transform(box, found.to_mat4());
+        for (usz axis = 0; axis < 3; axis++) {
+            assert(placed.min[axis] >= mirror.local_bounds.min[axis]);
+            assert(placed.max[axis] <= mirror.local_bounds.max[axis]);
         }
     }
 }
