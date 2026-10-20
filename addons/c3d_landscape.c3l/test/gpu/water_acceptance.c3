@@ -76,16 +76,6 @@ const float MEDIUM_DISTANCE @local = 4;
 const Vec3 BED_POSITION @local = { 0, -6.5f, 0 }; // a plate with its top face 6 m under the rest plane
 const Vec3 CEILING_POSITION @local = { 0, 3.5f, 0 }; // a plate with its bottom face 3 m over it
 const Vec3 PLATE_SIZE @local = { MURKY_EXTENT, 1, MURKY_EXTENT };
-const float SHALLOW_EXTENT @local = 8; // metres along the shallow body's side, and along its bed
-const float SHALLOW_CELL_SIZE @local = 0.5f;
-const Vec3 SHALLOW_BED_POSITION @local = { 0, -0.6f, 0 }; // a plate with its top face 0.1 m under the rest plane
-const Vec3 SHALLOW_BED_SIZE @local = { SHALLOW_EXTENT, 1, SHALLOW_EXTENT };
-const float BED_ALBEDO @local = 0.8f;
-const int[<2>][9] BED_PIXELS @local = {
-    { 24, 24 }, { 32, 24 }, { 40, 24 }, { 24, 32 }, { 32, 32 }, { 40, 32 }, { 24, 40 }, { 32, 40 }, { 40, 40 },
-};
-const float AO_MATCH_TOLERANCE @local = 0.03f; // relative to the untraced bed: the open-ground bound of the AO cases
-const float OCCLUDED_RATIO_MAXIMUM @local = 0.5f; // the bed under a double-sided row measures 0.09 of the untraced one
 const Vec3 SURFACE_CAMERA_POSITION @local = { 0, 2, 0 }; // over the water, under the ceiling
 const Vec3 DIVER_POSITION @local = { 0, -2, 0 };
 const float OVERHEAD_FOV_DEGREES @local = 90; // wide: the window samples the frame where the refracted direction lies
@@ -145,6 +135,16 @@ const double[3] PROBE_TIMES @local = { 0.5, 1.0, 1.5 }; // seconds; half a secon
 const double SHADOW_PROBE_TIME @local = 2;
 const float MOVE_MINIMUM @local = 0.05f; // metres: wave 0 moves the surface by up to 0.22 m in half a second
 const bool[2] TRACE_KINDS @local = { false, true }; // ray_queries: software walk, then ray queries
+const float SHALLOW_EXTENT @local = 8; // metres along the shallow body's side, and along its bed
+const float SHALLOW_CELL_SIZE @local = 0.5f;
+const Vec3 SHALLOW_BED_POSITION @local = { 0, -0.6f, 0 }; // a plate with its top face 0.1 m under the rest plane
+const Vec3 SHALLOW_BED_SIZE @local = { SHALLOW_EXTENT, 1, SHALLOW_EXTENT };
+const float BED_ALBEDO @local = 0.8f;
+const int[<2>][9] BED_PIXELS @local = {
+    { 24, 24 }, { 32, 24 }, { 40, 24 }, { 24, 32 }, { 32, 32 }, { 40, 32 }, { 24, 40 }, { 32, 40 }, { 40, 40 },
+};
+const float AO_MATCH_TOLERANCE @local = 0.03f; // relative to the untraced bed: the open-ground bound of the AO cases
+const float OCCLUDED_RATIO_MAXIMUM @local = 0.5f; // the bed under a double-sided row measures 0.09 of the untraced one
 
 const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with default_water_desc, the example's waves
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
