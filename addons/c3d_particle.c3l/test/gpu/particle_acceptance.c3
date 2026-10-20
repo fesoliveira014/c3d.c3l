@@ -23,6 +23,17 @@ const uint SHEET_WIDTH @private = 4; // two cells of two texels, so filtering in
 const uint SHEET_HEIGHT @private = 2;
 const uint SHEET_CELL_WIDTH @private = SHEET_WIDTH / 2;
 const uint SHEET_TEXEL_BYTES @private = 4;
+const float LIT_QUAD_SIZE @private = 2;
+const float LIT_MARGIN @private = 0.1f; // keeps the measured regions off the quad's edge and centre lines
+const float LIT_SUN_INTENSITY @private = 3;
+const float LIT_LAMP_INTENSITY @private = 4;
+const float LIT_SHADOW_REMAINDER @private = 0.5f; // share of the sun's light that may reach a shadowed half
+const float LIT_PHASE_ANISOTROPY @private = 0.5f;
+const Vec3 LIT_LAMP_POSITION @private = { 2, 1.5f, 1.5f }; // toward +X and +Y of the quad, on the camera side
+const Vec3 LIT_BACKLIT_POSITION @private = { 0, 0, -3 }; // behind the quad, on the camera's view axis
+const Vec3 LIT_SUN_TRAVEL @private = { -1, 0, -0.5f }; // from +X and the camera side
+const Vec3 LIT_WALL_POSITION @private = { 2.6f, 0, 1 }; // beyond the view's right edge, across the sun's path
+const Vec3 LUMINANCE_WEIGHTS @private = { 0.2126f, 0.7152f, 0.0722f };
 
 struct Fixture @private {
     AssetStore assets;
@@ -401,4 +412,94 @@ fn void test_particle_flipbook_blends_adjacent_frames() @test {
     system.age[0] = system.lifetime[0] / 2;
     particle::update(&fixture.scene, 0);
     check_pixel(centre(&fixture), { 0.5f, 0, 0.5f, 1 });
+}
+
+fn float side_luminance(Vec4[] pixels, Vec2 side) @private {
+    float half_size = LIT_QUAD_SIZE / 2;
+    float total;
+    uint count;
+    for (uint row = 0; row < IMAGE_SIZE; row++) {
+        for (uint column = 0; column < IMAGE_SIZE; column++) {
+            Vec2 offset = {
+                VIEW_HEIGHT * (((float)column + 0.5f) / IMAGE_SIZE - 0.5f),
+                VIEW_HEIGHT * (0.5f - ((float)row + 0.5f) / IMAGE_SIZE),
+            };
+            float along = offset.x * side.x + offset.y * side.y;
+            float across = offset.x * side.y + offset.y * side.x;
+            if (along < LIT_MARGIN || along > half_size - LIT_MARGIN
+                || math::abs(across) > half_size - LIT_MARGIN) continue;
+
+            Vec4 pixel = pixels[row * IMAGE_SIZE + column];
+            total += pixel.xyz.dot(LUMINANCE_WEIGHTS);
+            count++;
+        }
+    }
+    assert(count > 0);
+    return total / count;
+}
+
+fn void set_look(Fixture* fixture, ParticleNormal normal, float anisotropy = 0) @private {
+    fixture.params.lighting = ParticleLighting.DIRECT_SHADOWED;
+    fixture.params.normal = normal;
+    fixture.params.anisotropy = anisotropy;
+    fixture.assets.@set_custom_params(fixture.material, fixture.params)!!;
+}
+
+fn float rendered_side_luminance(Fixture* fixture, Vec2 side) @private {
+    render_frames(fixture);
+    Vec4[] pixels = read_pixels(fixture);
+    defer free(pixels);
+    return side_luminance(pixels, side);
+}
+
+fn void test_particle_lit_smoke_follows_lights_shadows_and_phase() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    fixture.scene.ambient_intensity = 0;
+    ParticleSystemDesc desc = quiet_desc();
+    desc.size = { .min = LIT_QUAD_SIZE, .max = LIT_QUAD_SIZE };
+    Node* emitter = add_emitter(&fixture, desc);
+    burst(&fixture, emitter);
+    set_look(&fixture, ParticleNormal.SPHERICAL);
+    Node* lamp = fixture.scene.add_light(light::point({ 1, 1, 1 }, LIT_LAMP_INTENSITY), name: "lamp")!!;
+    lamp.local.position = LIT_LAMP_POSITION;
+    Node* sun = fixture.scene.add_light(light::directional({ 1, 1, 1 }, LIT_SUN_INTENSITY), name: "sun")!!;
+    sun.local.rotation = maths::look_rotation(LIT_SUN_TRAVEL, { 0, 1, 0 });
+    sun.visible = false;
+    GeometryId wall_geometry;
+    @pool() {
+        Geometry wall_shape = geometry::box(
+            allocator: tmem,
+            width: 0.2f,
+            height: 6,
+            depth: 4,
+        );
+        wall_geometry = fixture.assets.add_geometry(&wall_shape)!!;
+    };
+    Node* wall = fixture.scene.add_mesh(wall_geometry, fixture.assets.add_material(material::basic({}))!!)!!;
+    wall.local.position = LIT_WALL_POSITION;
+    wall.visible = false;
+
+    render_frames(&fixture);
+    Vec4[] sphere = read_pixels(&fixture);
+    defer free(sphere);
+    assert(side_luminance(sphere, { 1, 0 }) > side_luminance(sphere, { -1, 0 }));
+    assert(side_luminance(sphere, { 0, 1 }) > side_luminance(sphere, { 0, -1 }));
+
+    lamp.visible = false;
+    sun.visible = true;
+    float open = rendered_side_luminance(&fixture, { 1, 0 });
+    assert(open > 0);
+    wall.visible = true;
+    assert(rendered_side_luminance(&fixture, { 1, 0 }) < open * LIT_SHADOW_REMAINDER);
+
+    sun.visible = false;
+    wall.visible = false;
+    lamp.visible = true;
+    lamp.local.position = LIT_BACKLIT_POSITION;
+    set_look(&fixture, ParticleNormal.VOLUME, LIT_PHASE_ANISOTROPY);
+    float forward = centre(&fixture).x;
+    set_look(&fixture, ParticleNormal.VOLUME, -LIT_PHASE_ANISOTROPY);
+    assert(forward > centre(&fixture).x);
 }
