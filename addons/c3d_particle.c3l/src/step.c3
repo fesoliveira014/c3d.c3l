@@ -4,9 +4,11 @@ import c3d;
 import c3d::maths;
 import std::math;
 
-const float RANDOM_UNIT_SCALE @private = 1.0f / 16777216.0f; // high 24 bits fit a float mantissa exactly
+// High 24 bits fit a float mantissa exactly; mirrored as PARTICLE_UNIT_SCALE in particle_random.glsl.
+const float RANDOM_UNIT_SCALE @private = 1.0f / 16777216.0f;
 const uint RANDOM_UNIT_SHIFT @private = 8;
-const float FULL_TURN @private = 2 * (float)math::PI;
+const float FULL_TURN @private = 2 * (float)math::PI; // mirrored as PARTICLE_FULL_TURN in particle_step.glsl
+// The HASH_ constants are mirrored as literals in particle_pcg_hash in particle_random.glsl.
 const uint HASH_MULTIPLIER @private = 747796405;
 const uint HASH_INCREMENT @private = 2891336453;
 const uint HASH_OUTPUT_MULTIPLIER @private = 277803737;

@@ -79,6 +79,14 @@ enum ParticleSaturation {
 }
 
 <*
+ Processor that runs a particle system's simulation.
+*>
+enum ParticleExecution {
+    CPU,
+    GPU,
+}
+
+<*
  Occurrence in a particle's life that a sub-emitter reacts to.
 *>
 enum ParticleTrigger {
@@ -278,6 +286,7 @@ struct ParticleSystemDesc {
     ParticleTrail trail;
     bool mesh_cast_shadow; // MESH only; the batch casts into the shadow maps when its material is opaque or masked
     bool mesh_trace; // MESH only; one scene trace instance per live particle, against the renderer's trace capacity
+    ParticleExecution execution; // immutable after prepare; GPU needs the C3D_PARTICLE_GPU build
 }
 
 <*
@@ -340,7 +349,7 @@ fn void ParticleSystem.emit_burst(&self, uint count) {
  Install the cast the system's particles collide through; a null cast removes it.
  The cast runs on the calling thread inside particle::update.
  @param context : "Passed to every cast; must outlive the system or be cleared first."
- @require self.is_prepared()
+ @require self.is_prepared() && self.desc.execution == ParticleExecution.CPU
 *>
 fn void ParticleSystem.set_collision(&self, ParticleCollisionFn cast, void* context) {
     self.collision_cast = cast;
@@ -351,7 +360,7 @@ fn void ParticleSystem.set_collision(&self, ParticleCollisionFn cast, void* cont
  Create an emitter and its owned draw child.
  @param [in] parent : "Null selects the scene root."
  @param name : "Copied into the scene allocator."
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require self.world.is_registered(ParticleSystem)
 *>
 fn Node*? Scene.add_particle_system(
@@ -388,7 +397,7 @@ fn bool ParticleSystem.is_prepared(&self) => self.block != null;
  Prepare a pending particle system atomically; prepared systems are unchanged.
  @param [&inout] scene : "Registered; owns the pool and draw child."
  @param [&in] emitter : "Carries ParticleSystem."
- @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require scene.has(emitter, ParticleSystem)
 *>
 fn void? prepare(Scene* scene, Node* emitter) {
@@ -396,32 +405,18 @@ fn void? prepare(Scene* scene, Node* emitter) {
     if (system.is_prepared()) return;
     ParticleSystemDesc desc = system.desc;
     check_particle_desc(&desc)!;
-    usz pool_bytes = particle_pool_bytes(desc.capacity, desc.max_events, desc.trail.max_points);
+    check_particle_execution(&desc)!;
+    bool device = desc.execution == ParticleExecution.GPU;
+    usz pool_bytes = device
+      ? GpuStepState::size : particle_pool_bytes(desc.capacity, desc.max_events, desc.trail.max_points);
     void*? block = alloc::malloc_try(scene.allocator, (sz)pool_bytes);
     if (catch block) return c3d::CAPACITY_EXCEEDED~;
     system.block = block;
     defer catch alloc::free(scene.allocator, system.block);
-    usz cursor;
-    system.position = @carve_stream(Vec3, &system, &cursor, desc.capacity);
-    system.velocity = @carve_stream(Vec3, &system, &cursor, desc.capacity);
-    system.age = @carve_stream(float, &system, &cursor, desc.capacity);
-    system.lifetime = @carve_stream(float, &system, &cursor, desc.capacity);
-    system.size = @carve_stream(float, &system, &cursor, desc.capacity);
-    system.rotation = @carve_stream(float, &system, &cursor, desc.capacity);
-    system.spin = @carve_stream(float, &system, &cursor, desc.capacity);
-    system.seed = @carve_stream(uint, &system, &cursor, desc.capacity);
-    system.block_offsets = @carve_stream(uint, &system, &cursor, block_count(desc.capacity));
-    system.spawn = @carve_stream(ulong, &system, &cursor, desc.capacity);
-    system.events = @carve_stream(ParticleEvent, &system, &cursor, desc.max_events);
-    if (desc.trail.max_points) {
-        usz points = (usz)desc.capacity * desc.trail.max_points;
-        system.trail_position = @carve_stream(Vec3, &system, &cursor, points);
-        system.trail_stamp = @carve_stream(float, &system, &cursor, points);
-        system.trail_distance = @carve_stream(float, &system, &cursor, points);
-        system.trail_clock = @carve_stream(float, &system, &cursor, desc.capacity);
-        system.path_length = @carve_stream(float, &system, &cursor, desc.capacity);
-        system.trail_head = @carve_stream(uint, &system, &cursor, desc.capacity);
-        system.trail_count = @carve_stream(uint, &system, &cursor, desc.capacity);
+    if (device) {
+        *gpu_step_state(&system) = {};
+    } else {
+        carve_particle_streams(&system);
     }
     Node* child;
     if (desc.render_mode == ParticleRenderMode.MESH) {
@@ -442,7 +437,7 @@ fn void? prepare(Scene* scene, Node* emitter) {
               ? BillboardFacing.DIRECTIONAL : BillboardFacing.CAMERA,
             parent: emitter,
             atlas: flipbook_atlas(&desc.flipbook),
-            source: BillboardSource.RECORDS,
+            source: device ? BillboardSource.DEVICE : BillboardSource.RECORDS,
         )!;
     }
     defer catch scene.remove(child);
@@ -468,7 +463,7 @@ fn void? prepare(Scene* scene, Node* emitter) {
  Prepare pending particle systems in a subtree, retaining successful owners.
  @param [&inout] scene : "Registered; prepared owners remain unchanged."
  @param [in] root : "Null selects the scene root; root is included."
- @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn void? prepare_subtree(Scene* scene, Node* root = null) {
     if (!root) root = scene.root;
@@ -495,12 +490,16 @@ fn void? prepare_subtree(Scene* scene, Node* root = null) {
 fn void Scene.shift_particles(&self, Vec3 offset) {
     self.@each(ParticleSystem; entity, system) {
         if (system.is_prepared()) {
-            for (uint index = 0; index < system.alive; index++) system.position[index] -= offset;
-            for (uint index = 0; index < system.event_count; index++) system.events[index].position -= offset;
             self.node(system.draw_node).local = maths::TRANSFORM_IDENTITY;
-            if (system.desc.trail.max_points) {
-                shift_trail_points(system, offset);
-                self.node(system.trail_node).local = maths::TRANSFORM_IDENTITY;
+            if (system.desc.execution == ParticleExecution.GPU) {
+                shift_gpu_step(gpu_step_state(system), offset);
+            } else {
+                for (uint index = 0; index < system.alive; index++) system.position[index] -= offset;
+                for (uint index = 0; index < system.event_count; index++) system.events[index].position -= offset;
+                if (system.desc.trail.max_points) {
+                    shift_trail_points(system, offset);
+                    self.node(system.trail_node).local = maths::TRANSFORM_IDENTITY;
+                }
             }
         }
     };
@@ -545,6 +544,32 @@ fn void? register_particles(Scene* scene) {
     scene.register(ParticleSystem)!;
     scene.register(ParticleDrawOwner)!;
     scene.set_remove_hook(ParticleSystem, &free_particle_system, scene.hook_allocator);
+}
+
+fn void carve_particle_streams(ParticleSystem* system) @private {
+    ParticleSystemDesc* desc = &system.desc;
+    usz cursor;
+    system.position = @carve_stream(Vec3, system, &cursor, desc.capacity);
+    system.velocity = @carve_stream(Vec3, system, &cursor, desc.capacity);
+    system.age = @carve_stream(float, system, &cursor, desc.capacity);
+    system.lifetime = @carve_stream(float, system, &cursor, desc.capacity);
+    system.size = @carve_stream(float, system, &cursor, desc.capacity);
+    system.rotation = @carve_stream(float, system, &cursor, desc.capacity);
+    system.spin = @carve_stream(float, system, &cursor, desc.capacity);
+    system.seed = @carve_stream(uint, system, &cursor, desc.capacity);
+    system.block_offsets = @carve_stream(uint, system, &cursor, block_count(desc.capacity));
+    system.spawn = @carve_stream(ulong, system, &cursor, desc.capacity);
+    system.events = @carve_stream(ParticleEvent, system, &cursor, desc.max_events);
+    if (desc.trail.max_points) {
+        usz points = (usz)desc.capacity * desc.trail.max_points;
+        system.trail_position = @carve_stream(Vec3, system, &cursor, points);
+        system.trail_stamp = @carve_stream(float, system, &cursor, points);
+        system.trail_distance = @carve_stream(float, system, &cursor, points);
+        system.trail_clock = @carve_stream(float, system, &cursor, desc.capacity);
+        system.path_length = @carve_stream(float, system, &cursor, desc.capacity);
+        system.trail_head = @carve_stream(uint, system, &cursor, desc.capacity);
+        system.trail_count = @carve_stream(uint, system, &cursor, desc.capacity);
+    }
 }
 
 fn usz particle_align(usz cursor, usz alignment) @private {
@@ -624,6 +649,20 @@ fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
     if (desc.render_mode != ParticleRenderMode.MESH && (desc.mesh_cast_shadow || desc.mesh_trace)) {
         return c3d::INVALID_ARGUMENT~;
     }
+}
+
+fn void? check_particle_execution(ParticleSystemDesc* desc) @private {
+    if (desc.execution == ParticleExecution.CPU) return;
+
+    $if !$feat(C3D_PARTICLE_GPU):
+        return c3d::UNSUPPORTED~;
+    $else
+        ParticleCollision* collision = &desc.collision;
+        bool needs_depth = collision.response != CollisionResponse.NONE && !collision.ground_plane;
+        bool refused = desc.trail.max_points || desc.sub_emitter_count || needs_depth
+            || desc.render_mode == ParticleRenderMode.MESH || desc.saturation == ParticleSaturation.DROP_OLDEST;
+        if (refused) return c3d::UNSUPPORTED~;
+    $endif
 }
 
 fn void? check_particle_collision(ParticleCollision* collision) @private {

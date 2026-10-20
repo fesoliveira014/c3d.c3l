@@ -20,6 +20,8 @@ const char[*] PARTICLE_V6_BINARY @private = $embed("fixtures/particle_v6.bin");
 const char[*] PARTICLE_V6_TEXT @private = $embed("fixtures/particle_v6.json");
 const char[*] PARTICLE_V7_BINARY @private = $embed("fixtures/particle_v7.bin");
 const char[*] PARTICLE_V7_TEXT @private = $embed("fixtures/particle_v7.json");
+const char[*] PARTICLE_V8_BINARY @private = $embed("fixtures/particle_v8.bin");
+const char[*] PARTICLE_V8_TEXT @private = $embed("fixtures/particle_v8.json");
 
 fn void test_particle_v1_fixtures_read_as_refuse() @test {
     foreach (text_mode : (bool[2]){ false, true }) {
@@ -145,6 +147,23 @@ fn void test_particle_v7_fixtures_read_without_mesh_flags() @test {
             ParticleSystem* system = fixture.destination.get(restored, ParticleSystem);
             assert(system.desc.render_mode == MESH && system.desc.trail.max_points == 5);
             assert(!system.desc.mesh_cast_shadow && !system.desc.mesh_trace);
+        };
+    }
+}
+
+fn void test_particle_v8_fixtures_read_as_cpu_execution() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture, MESH);
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? PARTICLE_V8_TEXT[..] : PARTICLE_V8_BINARY[..];
+            Node* restored = decode(&fixture, bytes, text_mode)!!;
+            ParticleSystem* system = fixture.destination.get(restored, ParticleSystem);
+            assert(system.desc.render_mode == MESH && system.desc.trail.max_points == 5);
+            assert(system.desc.mesh_cast_shadow && system.desc.mesh_trace);
+            assert(system.desc.execution == ParticleExecution.CPU);
         };
     }
 }

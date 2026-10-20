@@ -4,6 +4,12 @@
   "flags": ["WEIGHTED_BLEND"],
   "entries": [
     {"shader": "particle_fragment", "source": "particle.frag.glsl", "stage": "frag", "defines": []},
-    {"shader": "particle_fragment", "source": "particle.frag.glsl", "stage": "frag", "defines": ["WEIGHTED_BLEND"]}
+    {"shader": "particle_fragment", "source": "particle.frag.glsl", "stage": "frag", "defines": ["WEIGHTED_BLEND"]},
+    {"shader": "particle_shift", "source": "particle_shift.comp.glsl", "stage": "comp", "defines": []},
+    {"shader": "particle_expire", "source": "particle_expire.comp.glsl", "stage": "comp", "defines": []},
+    {"shader": "particle_scan", "source": "particle_scan.comp.glsl", "stage": "comp", "defines": []},
+    {"shader": "particle_admit", "source": "particle_admit.comp.glsl", "stage": "comp", "defines": []},
+    {"shader": "particle_advance", "source": "particle_advance.comp.glsl", "stage": "comp", "defines": []},
+    {"shader": "particle_publish", "source": "particle_publish.comp.glsl", "stage": "comp", "defines": []}
   ]
 }

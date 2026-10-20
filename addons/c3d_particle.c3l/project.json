@@ -28,13 +28,21 @@
         "test/flipbook_test.c3",
         "test/turbulence_test.c3",
         "test/trail_test.c3",
-        "test/parallel_test.c3"
+        "test/parallel_test.c3",
+        "test/execution_test.c3",
+        "test/reach_test.c3"
       ]
     },
     "particles": {
       "type": "executable",
-      "sources": ["examples/**"],
+      "sources": ["examples/particles.c3", "examples/particle_execution_cpu.c3"],
       "features": ["C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
+      "dependencies": ["c3d_particle", "c3d_physics", "c3d_job", "c3d_profile", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc"]
+    },
+    "particles_gpu": {
+      "type": "executable",
+      "sources": ["examples/particles.c3", "examples/particle_execution_gpu.c3"],
+      "features": ["C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL", "C3D_PARTICLE_GPU"],
       "dependencies": ["c3d_particle", "c3d_physics", "c3d_job", "c3d_profile", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc"]
     }
   }

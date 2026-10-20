@@ -24,7 +24,7 @@ struct MeshJob @private {
 }
 
 <*
- Advance prepared particles, run their sub-emitters and publish child draws; skip pending systems.
+ Advance prepared CPU particles and publish child draws; skip pending and GPU systems.
  @param [&inout] scene : "Registered; matrices current; no active component iteration."
  @param dt : "Finite nonnegative seconds."
  @param wind : "Finite world-space air velocity in metres per second."
@@ -45,21 +45,23 @@ fn void update(
             Node* child = scene.node(system.draw_node);
             child.layers = emitter.layers;
             if (system.desc.trail.max_points) scene.node(system.trail_node).layers = emitter.layers;
-            particle::step(
-                system: system,
-                emitter_world: emitter.world,
-                dt: dt,
-                wind: wind,
-                world_shift: scene.world_shift,
-                parallel: parallel,
-            );
+            if (system.desc.execution == ParticleExecution.CPU) {
+                particle::step(
+                    system: system,
+                    emitter_world: emitter.world,
+                    dt: dt,
+                    wind: wind,
+                    world_shift: scene.world_shift,
+                    parallel: parallel,
+                );
+            }
         }
     };
     scene.@each(ParticleSystem; Entity entity, ParticleSystem* system) {
-        if (system.is_prepared()) process_events(scene, system);
+        if (system.is_prepared() && system.desc.execution == ParticleExecution.CPU) process_events(scene, system);
     };
     scene.@each(ParticleSystem; Entity entity, ParticleSystem* system) {
-        if (system.is_prepared()) {
+        if (system.is_prepared() && system.desc.execution == ParticleExecution.CPU) {
             Node* child = scene.node(system.draw_node);
             if (system.desc.render_mode == ParticleRenderMode.MESH) {
                 publish_meshes(scene, child, system, parallel);

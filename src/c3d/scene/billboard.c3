@@ -156,6 +156,7 @@ fn Node*? Scene.add_billboards(
  @require self.has(node, BillboardBatch)
  @require self.get(node, BillboardBatch).source == BillboardSource.DEVICE
  @require device.capacity == self.get(node, BillboardBatch).capacity()
+ @require device.records_offset % 16 == 0 && device.count_offset % 4 == 0
 *>
 fn void Scene.set_billboard_device(
     &self,

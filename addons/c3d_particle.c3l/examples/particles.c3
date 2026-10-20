@@ -16,6 +16,7 @@ import c3d::render;
 import c3d::scene;
 import c3d::spatial;
 import imgui;
+import particle_execution;
 import std::io;
 import std::io::file;
 import std::math;
@@ -98,6 +99,7 @@ struct Options @local {
     bool debris_shadows;
     bool collide;
     bool drop_oldest;
+    bool gpu;
     bool limit_frames;
     bool single_lighting;
     uint frames;
@@ -143,9 +145,11 @@ struct Metrics @local {
     ulong upload_bytes;
     double gpu_sort_ms;
     double gpu_transparent_ms;
+    double gpu_compute_ms;
     uint gpu_samples;
     bool sorted;
     bool transparent;
+    bool computed;
 }
 
 fn ParticleTurbulence ember_turbulence() @local {
@@ -284,7 +288,8 @@ fn TextureId? add_smoke_sheet(AssetStore* assets) @local {
 fn void destroy_demo(Demo* demo) @local {
     destroy_workers(&demo.workers);
     if (demo.has_physics) {
-        demo.scene.get(demo.emitters[1], ParticleSystem).set_collision(null, null);
+        ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
+        if (sparks.desc.execution == ParticleExecution.CPU) sparks.set_collision(null, null);
         physics::destroy_physics_world(&demo.physics);
     }
     scene::destroy_scene(&demo.scene);
@@ -343,6 +348,25 @@ fn void? cycle_smoke_look(Demo* demo, Input* input) @local {
         changed = true;
     }
     if (changed) apply_smoke_params(demo)!;
+}
+
+fn Node*? add_system(
+    Demo* demo,
+    Options options,
+    ParticleSystemDesc desc,
+    String name,
+) @local {
+    if (options.gpu) {
+        desc.execution = ParticleExecution.GPU;
+        Node*? added = demo.scene.add_particle_system(desc, name: name);
+        if (catch excuse = added) {
+            if (excuse != c3d::UNSUPPORTED) return excuse~;
+        } else {
+            return added;
+        }
+        desc.execution = ParticleExecution.CPU;
+    }
+    return demo.scene.add_particle_system(desc, name: name);
 }
 
 fn Demo? create_demo(Options options) @local {
@@ -474,7 +498,12 @@ fn Demo? create_demo(Options options) @local {
     }
     float[8] opacity = { 0, 0.7f, 1, 1, 0.9f, 0.6f, 0.3f, 0 };
     foreach (index, alpha : opacity) smoke.color_over_life.values[index] = { 1, 1, 1, alpha };
-    demo.emitters[0] = demo.scene.add_particle_system(smoke, name: "smoke")!;
+    demo.emitters[0] = add_system(
+        demo: &demo,
+        options: options,
+        desc: smoke,
+        name: "smoke",
+    )!;
     demo.emitters[0].local.position = options.lit_smoke ? LIT_SMOKE_POSITION : (Vec3){ -3, 0.15f, 0 };
 
     if (options.sparks) {
@@ -492,6 +521,7 @@ fn Demo? create_demo(Options options) @local {
         puff.gravity_scale = -0.05f;
         puff.size_over_life.values = { 0.6f, 1, 1.5f, 2, 2.6f, 3, 3.4f, 3.8f };
         foreach (index, alpha : opacity) puff.color_over_life.values[index] = { 1, 1, 1, alpha };
+        // Deliveries write the target's CPU pool, so a sub-emitter target keeps CPU execution.
         demo.spark_puffs = demo.scene.add_particle_system(puff, name: "spark smoke")!;
     }
 
@@ -531,7 +561,12 @@ fn Demo? create_demo(Options options) @local {
         sparks.collision.ground_plane = true;
         sparks.collision.max_queries = options.capacity; // one ray per spark, so none wait
     }
-    demo.emitters[1] = demo.scene.add_particle_system(sparks, name: "sparks")!;
+    demo.emitters[1] = add_system(
+        demo: &demo,
+        options: options,
+        desc: sparks,
+        name: "sparks",
+    )!;
     demo.emitters[1].local.position = { 0, 0.2f, 0 };
 
     ParticleSystemDesc debris = particle::default_particle_system_desc();
@@ -574,7 +609,12 @@ fn Demo? create_demo(Options options) @local {
         embers.turbulence = ember_turbulence();
         float[8] glow = { 0, 1, 1, 0.9f, 0.7f, 0.5f, 0.25f, 0 };
         foreach (index, alpha : glow) embers.color_over_life.values[index] = { 1, 1, 1, alpha };
-        demo.embers = demo.scene.add_particle_system(embers, name: "embers")!;
+        demo.embers = add_system(
+            demo: &demo,
+            options: options,
+            desc: embers,
+            name: "embers",
+        )!;
         demo.embers.local.position = EMBER_POSITION;
     }
 
@@ -659,7 +699,8 @@ fn void? add_collision_world(Demo* demo) @local {
             material: material,
         )!;
     }
-    demo.scene.get(demo.emitters[1], ParticleSystem).set_collision(&cast_physics, &demo.physics);
+    ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
+    if (sparks.desc.execution == ParticleExecution.CPU) sparks.set_collision(&cast_physics, &demo.physics);
 }
 
 fn void advance_physics(Demo* demo, float dt) @local {
@@ -683,6 +724,11 @@ fn void report_metrics(String segment, Metrics totals, uint frames) @local {
     io::printfn("%s,upload_bytes,%.1f", segment, (double)totals.upload_bytes / frames);
     io::printfn("%s,gpu_samples,%d", segment, totals.gpu_samples);
     if (totals.gpu_samples) {
+        if (totals.computed) {
+            io::printfn("%s,gpu_particle_ms,%.6f", segment, totals.gpu_compute_ms / totals.gpu_samples);
+        } else {
+            io::printfn("%s,gpu_particle_ms,not_recorded", segment);
+        }
         if (totals.sorted) {
             io::printfn("%s,gpu_sort_ms,%.6f", segment, totals.gpu_sort_ms / totals.gpu_samples);
         } else {
@@ -705,7 +751,15 @@ fn void? report_batch_costs(
     String segment,
     uint frames,
 ) @local {
-    Node* child = demo.scene.node(demo.scene.get(demo.emitters[1], ParticleSystem).draw_node);
+    ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
+    if (sparks.desc.execution == ParticleExecution.GPU) {
+        io::printfn("%s,sparks_live,%d", segment, sparks.alive);
+        io::printfn("%s,sparks_bounds_ms,not_applicable", segment);
+        io::printfn("%s,sparks_copy_ms,not_applicable", segment);
+        return;
+    }
+
+    Node* child = demo.scene.node(sparks.draw_node);
     BillboardBatch* batch = demo.scene.get(child, BillboardBatch);
     BillboardGpu[] records = mem::new_array(BillboardGpu, batch.capacity());
     defer free(records);
@@ -738,6 +792,9 @@ fn void? run_benchmark(Options options) @local {
     ViewDesc desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
     desc.post.anti_aliasing = AntiAliasing.NONE;
     ViewId view = render::create_view(&renderer, desc)!;
+    particle_execution::Context gpu;
+    particle_execution::create(&gpu, &demo.assets)!;
+    defer particle_execution::destroy(&gpu, &renderer);
     ViewId second_view;
     if (options.views > 1) {
         RenderTargetId second_target = render::create_render_target(
@@ -754,7 +811,7 @@ fn void? run_benchmark(Options options) @local {
     io::printn("validation,on");
     io::printfn("views,%d", options.views);
     io::printfn("spark_capacity,%d", options.capacity);
-    io::printfn("execution,%s", options.workers ? "workers" : "inline");
+    io::printfn("execution,%s", options.gpu ? "gpu" : options.workers ? "workers" : "inline");
     io::printfn("workers,%d", options.workers);
     uint segments = 2;
     if (options.lit_smoke) segments = options.single_lighting ? 1 : LIT_BENCHMARK_LIGHTING.len;
@@ -769,6 +826,18 @@ fn void? run_benchmark(Options options) @local {
             for (uint step = 0; step < PREWARM_STEPS; step++) {
                 advance_physics(&demo, STEP_SECONDS);
                 particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 }, demo.workers.parallel());
+                if (options.gpu) {
+                    renderer.begin_frame({ .time = (double)renderer.frame_index * STEP_SECONDS, .delta = STEP_SECONDS })!;
+                    defer catch render::abort_frame(&renderer);
+                    particle_execution::update(
+                        context: &gpu,
+                        renderer: &renderer,
+                        scene: &demo.scene,
+                        dt: STEP_SECONDS,
+                        wind: { 0.4f, 0, 0 },
+                    )!;
+                    renderer.end_frame()!;
+                }
             }
         }
         Metrics totals;
@@ -786,6 +855,15 @@ fn void? run_benchmark(Options options) @local {
             double update_ms = elapsed_ms(update_start);
             renderer.begin_frame({ .time = (double)renderer.frame_index * STEP_SECONDS, .delta = STEP_SECONDS })!;
             defer catch render::abort_frame(&renderer);
+            update_start = clock::now();
+            particle_execution::update(
+                context: &gpu,
+                renderer: &renderer,
+                scene: &demo.scene,
+                dt: STEP_SECONDS,
+                wind: { 0.4f, 0, 0 },
+            )!;
+            update_ms += elapsed_ms(update_start);
             renderer.render_view(&demo.scene, demo.cameras[0], view)!;
             renderer.finish_view(view)!;
             if (options.views > 1) {
@@ -807,6 +885,8 @@ fn void? run_benchmark(Options options) @local {
                 totals.gpu_samples++;
                 totals.gpu_sort_ms += stats.gpu_pass_ms[Pass.INSTANCE_SORT.ordinal];
                 totals.gpu_transparent_ms += stats.gpu_pass_ms[Pass.FORWARD_TRANSPARENT.ordinal];
+                totals.gpu_compute_ms += stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE.ordinal];
+                totals.computed = totals.computed || stats.gpu_pass_valid[Pass.CUSTOM_COMPUTE.ordinal];
                 totals.sorted = totals.sorted || stats.gpu_pass_valid[Pass.INSTANCE_SORT.ordinal];
                 totals.transparent = totals.transparent || stats.gpu_pass_valid[Pass.FORWARD_TRANSPARENT.ordinal];
                 last_gpu_frame = stats.gpu_frame_index;
@@ -1075,6 +1155,9 @@ fn void? run_interactive(Options options) @local {
         desc: { .validation = true, .gpu_timings = true },
     )!;
     defer render::destroy_renderer(&renderer);
+    particle_execution::Context gpu;
+    particle_execution::create(&gpu, &demo.assets)!;
+    defer particle_execution::destroy(&gpu, &renderer);
     ViewId second = render::create_view(&renderer, render::default_view_desc())!;
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -1118,6 +1201,15 @@ fn void? run_interactive(Options options) @local {
             elapsed += window.clock.delta;
             renderer.begin_frame({ .time = elapsed, .delta = window.clock.delta })!;
             defer catch render::abort_frame(&renderer);
+            started = clock::now();
+            particle_execution::update(
+                context: &gpu,
+                renderer: &renderer,
+                scene: &demo.scene,
+                dt: window.clock.delta,
+                wind: { wind, 0, 0 },
+            )!;
+            update_ms += elapsed_ms(started);
             if (renderer.has_output) {
                 renderer.render_view(&demo.scene, demo.cameras[0], renderer.default_view)!;
                 renderer.finish_view(renderer.default_view)!;
@@ -1179,6 +1271,7 @@ fn Options? parse_options(String[] args) @local {
             case "--debris-shadows": options.debris_shadows = true;
             case "--collide": options.collide = true;
             case "--drop-oldest": options.drop_oldest = true;
+            case "--gpu": options.gpu = true;
             case "--frames":
                 options.frames = option_value(args, &index)!.to_uint()!;
                 options.limit_frames = true;
@@ -1189,6 +1282,8 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
+    if (options.gpu && !particle_execution::ENABLED) return c3d::UNSUPPORTED~;
+
     bool scene_effect = options.sparks || options.smoke || options.collide || options.lit_smoke
         || options.debris_shadows;
     bool lit_option = options.single_lighting || options.normal != ParticleNormal.SPHERICAL;
@@ -1196,7 +1291,7 @@ fn Options? parse_options(String[] args) @local {
         || (options.lit_smoke && (options.sparks || options.smoke || options.embers || options.trails
             || options.collide || options.debris_shadows))
         || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
-        || (options.capture_rgba.len && !options.benchmark)
+        || (options.capture_rgba.len && !options.benchmark) || (options.gpu && options.stress)
         || !options.views || options.views > MAX_VIEWS || !options.capacity
         || ((options.views > 1 || options.capacity != SPARK_CAPACITY) && !options.benchmark)) {
         return c3d::INVALID_ARGUMENT~;
@@ -1210,11 +1305,15 @@ fn Options? parse_options(String[] args) @local {
 fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
+        if (excuse == c3d::UNSUPPORTED) {
+            io::eprintn("--gpu needs the particles_gpu build, which enables C3D_PARTICLE_GPU.");
+            return 1;
+        }
         io::eprintfn("Invalid options: %s", excuse);
         io::eprintn("Use [--benchmark [--views 1|2] [--capacity sparks] | --stress [--drop-oldest]] [--sparks]");
         io::eprintn("    [--smoke] [--embers] [--trails] [--collide] [--debris-shadows]");
         io::eprintn("    [--lit-smoke [--lighting name] [--normal name]] [--workers count]");
-        io::eprintn("    [--frames count] [--capture-rgba path].");
+        io::eprintn("    [--frames count] [--capture-rgba path] [--gpu].");
         return 1;
     }
     Options options = parsed;
