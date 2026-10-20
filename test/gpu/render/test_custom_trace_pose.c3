@@ -495,6 +495,12 @@ fn void test_swaying_row_with_a_reclaimed_slot_poses_again_under_an_unchanged_ke
         assert(renderer.stats.trace_sway_at_rest == 0);
         assert(renderer.stats.blas_builds == (ray_queries ? 1 : 0) && renderer.stats.blas_updates == 0);
         assert(renderer.stats.trace_refits == (ray_queries ? 0 : 1));
+
+        ulong revision = renderer.scene_trace.revision;
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        report_pose_counts(renderer, "swaying batch, still");
+        assert(renderer.stats.trace_poses == 0 && renderer.stats.trace_refits == 0 && renderer.stats.blas_updates == 0);
+        assert(renderer.scene_trace.revision == revision);
         check_validation(renderer);
     }
 }
