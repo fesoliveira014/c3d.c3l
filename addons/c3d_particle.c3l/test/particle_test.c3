@@ -52,7 +52,7 @@ fn void test_initial_colors_share_one_fraction_between_palette_endpoints() @test
             for (uint index = 0; index < system.alive; index++) {
                 Vec4 color = mode == ParticleRenderMode.MESH
                     ? scene.get(draw, InstancedMesh).colors[index]
-                    : scene.get(draw, BillboardBatch).billboards[index].color;
+                    : scene.get(draw, BillboardBatch).billboard(index).color;
                 float fraction = color.b;
                 assert(fraction >= 0 && fraction <= 1);
                 Vec4 expected = first[palette] * (1 - fraction) + last[palette] * fraction;
@@ -61,6 +61,42 @@ fn void test_initial_colors_share_one_fraction_between_palette_endpoints() @test
                 }
             }
         }
+    }
+}
+
+fn void test_spawn_ordinal_alone_selects_particle_draws() @test {
+    Scene scene = make_scene();
+    defer scene::destroy_scene(&scene);
+    ParticleSystemDesc desc = quiet_desc(16);
+    desc.seed = 7;
+    desc.shape = EmitterShape.BOX;
+    desc.half_extents = { 2, 3, 4 };
+    desc.lifetime = { .min = 4, .max = 8 };
+    desc.speed = { .min = 1, .max = 3 };
+    desc.size = { .min = 0.5f, .max = 1.5f };
+    desc.rotation = { .min = -1, .max = 1 };
+    desc.spin = { .min = -2, .max = 2 };
+    ParticleSystem* whole = scene.get(scene.add_particle_system(desc)!!, ParticleSystem);
+    ParticleSystem* split = scene.get(scene.add_particle_system(desc)!!, ParticleSystem);
+    scene.update_world();
+
+    whole.emit_burst(8);
+    split.emit_burst(3);
+    particle::update(&scene, 0);
+    split.emit_burst(5);
+    particle::update(&scene, 0);
+
+    assert(whole.alive == 8 && split.alive == 8);
+    foreach (index, spawn : split.spawn[:split.alive]) {
+        uint match = uint::max;
+        foreach (candidate, other : whole.spawn[:whole.alive]) {
+            if (other == spawn) match = (uint)candidate;
+        }
+        assert(match != uint::max);
+        assert(split.position[index] == whole.position[match] && split.velocity[index] == whole.velocity[match]);
+        assert(split.lifetime[index] == whole.lifetime[match] && split.size[index] == whole.size[match]);
+        assert(split.rotation[index] == whole.rotation[match] && split.spin[index] == whole.spin[match]);
+        assert(split.seed[index] == whole.seed[match]);
     }
 }
 
@@ -388,8 +424,8 @@ fn void test_world_particles_ignore_later_emitter_motion_and_copy_layers() @test
     BillboardBatch* batch = scene.get(child, BillboardBatch);
     assert(system.position[0] == (Vec3){});
     assert(system.position[1] == (Vec3){ 10, 2, -3 });
-    assert(batch.billboards[0].position == (Vec3){});
-    assert(batch.billboards[1].position == (Vec3){ 10, 2, -3 });
+    assert(batch.billboard(0).position == (Vec3){});
+    assert(batch.billboard(1).position == (Vec3){ 10, 2, -3 });
     assert(child.transform_space == TransformSpace.WORLD && child.layers == 4);
     assert(!child.visible_effective && system.age[0] > 0);
 }
@@ -414,8 +450,8 @@ fn void test_stretch_and_zero_size_mesh_output_follow_simulation() @test {
     particle::update(&scene, 0);
     BillboardBatch* batch = scene.get(scene.node(spark_system.draw_node), BillboardBatch);
     assert(batch.facing == BillboardFacing.DIRECTIONAL && batch.count == 1);
-    assert((batch.billboards[0].size - (Vec2){ 1, 2 }).length() < TOLERANCE);
-    assert(batch.billboards[0].direction == spark_system.velocity[0]);
+    assert((batch.billboard(0).size - (Vec2){ 1, 2 }).length() < TOLERANCE);
+    assert((batch.billboard(0).direction - spark_system.velocity[0].normalize()).length() < TOLERANCE);
     assert(mesh_system.alive == 1);
     assert(scene.get(scene.node(mesh_system.draw_node), InstancedMesh).count == 0);
 }
@@ -521,7 +557,7 @@ fn void test_emitter_scale_changes_volume_without_changing_world_speed() @test {
     assert(system.position[0] == (Vec3){ 3, 4, 5 });
     assert((system.velocity[0] - (Vec3){ -2, 0, 0 }).length() < TOLERANCE);
     BillboardBatch* batch = scene.get(scene.node(system.draw_node), BillboardBatch);
-    assert(batch.billboards[0].size == (Vec2){ 1, 1 });
+    assert(batch.billboard(0).size == (Vec2){ 1, 1 });
 }
 
 fn void test_pending_particles_skip_updates_and_prepare_independently() @test {

@@ -33,7 +33,7 @@ fn ParticleSystemDesc flipbook_desc(FlipbookMode mode, bool blend = true) @local
 
 fn float published_frame(Scene* scene, ParticleSystem* system, uint index = 0) @local {
     particle::update(scene, 0);
-    return scene.get(scene.node(system.draw_node), BillboardBatch).billboards[index].frame;
+    return scene.get(scene.node(system.draw_node), BillboardBatch).billboard(index).frame;
 }
 
 fn void test_flipbook_over_life_spans_first_to_last_frame() @test {
@@ -102,9 +102,9 @@ fn void test_flipbook_random_start_is_seeded() @test {
     BillboardBatch* repeat = scene.get(scene.node(second.draw_node), BillboardBatch);
     assert(first.alive == desc.capacity);
     for (uint index = 0; index < first.alive; index++) {
-        float frame = batch.billboards[index].frame;
-        assert(frame == repeat.billboards[index].frame && frame >= 0 && frame < SHEET_FRAMES);
-        varied = varied || frame != batch.billboards[0].frame;
+        float frame = batch.billboard(index).frame;
+        assert(frame == repeat.billboard(index).frame && frame >= 0 && frame < SHEET_FRAMES);
+        varied = varied || frame != batch.billboard(0).frame;
         assert(first.position[index] == unanimated.position[index]);
         assert(first.velocity[index] == unanimated.velocity[index]);
     }

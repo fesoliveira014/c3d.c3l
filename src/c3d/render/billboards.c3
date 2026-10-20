@@ -14,12 +14,21 @@ $assert BILLBOARD_ATLAS_BYTES % STREAM_ALIGNMENT == 0;
 $assert BillboardFacing.CAMERA.ordinal == shader::BILLBOARD_CAMERA;
 $assert BillboardFacing.DIRECTIONAL.ordinal == shader::BILLBOARD_DIRECTIONAL;
 
+$assert BillboardRecord::size == BillboardGpu::size;
+$assert $reflect(BillboardRecord.position_width).offset == $reflect(BillboardGpu.position_width).offset;
+$assert $reflect(BillboardRecord.direction_height).offset == $reflect(BillboardGpu.direction_height).offset;
+$assert $reflect(BillboardRecord.color).offset == $reflect(BillboardGpu.color).offset;
+$assert $reflect(BillboardRecord.rotation).offset == $reflect(BillboardGpu.rotation).offset;
+$assert $reflect(BillboardRecord.facing).offset == $reflect(BillboardGpu.facing).offset;
+$assert $reflect(BillboardRecord.frame).offset == $reflect(BillboardGpu.frame).offset;
+
 <*
  Pack world-space billboard records in source-array order.
  @param [out] records : "At least batch.count records."
  @param node_world : "Published affine node transform."
- @param [&in] batch : "Valid billboard records."
+ @param [&in] batch : "A BILLBOARDS batch with valid records."
  @require records.len >= batch.count
+ @require batch.source == BillboardSource.BILLBOARDS
 *>
 fn void pack_billboard_records(BillboardGpu[] records, Mat4 node_world, BillboardBatch* batch) {
     foreach (index, billboard : batch.billboards[:batch.count]) {
@@ -31,6 +40,27 @@ fn void pack_billboard_records(BillboardGpu[] records, Mat4 node_world, Billboar
             .rotation = world.rotation,
             .facing = (uint)batch.facing.ordinal,
             .frame = world.frame,
+        };
+    }
+}
+
+<*
+ Copy a RECORDS batch's live records relative to the frame origin.
+ @param [out] records : "At least batch.count records."
+ @param [&in] batch : "A RECORDS batch."
+ @require records.len >= batch.count
+ @require batch.source == BillboardSource.RECORDS
+*>
+fn void copy_billboard_records(BillboardGpu[] records, BillboardBatch* batch, Vec3 origin) {
+    foreach (index, &record : batch.records[:batch.count]) {
+        Vec4 position = record.position_width;
+        records[index] = {
+            .position_width = { position.x - origin.x, position.y - origin.y, position.z - origin.z, position.w },
+            .direction_height = record.direction_height,
+            .color = record.color,
+            .rotation = record.rotation,
+            .facing = record.facing,
+            .frame = record.frame,
         };
     }
 }
@@ -129,7 +159,7 @@ fn void? upload_billboard_records(
     acquire_instance_records(
         renderer: renderer,
         slot: slot,
-        capacity: (uint)batch.billboards.len,
+        capacity: batch.capacity(),
         record_size: BillboardGpu::size,
         header_size: BILLBOARD_ATLAS_BYTES,
     )!;
@@ -138,7 +168,11 @@ fn void? upload_billboard_records(
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     *(BillboardAtlasGpu*)staging.bytes.ptr = pack_billboard_atlas(batch.atlas);
     BillboardGpu[] records = ((BillboardGpu*)(staging.bytes.ptr + BILLBOARD_ATLAS_BYTES))[:batch.count];
-    pack_billboard_records(records, maths::rebase(world, renderer.frame_origin), batch);
+    if (batch.source == BillboardSource.RECORDS) {
+        copy_billboard_records(records, batch, renderer.frame_origin);
+    } else {
+        pack_billboard_records(records, maths::rebase(world, renderer.frame_origin), batch);
+    }
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });
     renderer.pending_instance_uploads.push(index);

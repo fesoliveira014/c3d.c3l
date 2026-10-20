@@ -86,7 +86,8 @@ particle::update(&scene, delta_seconds, wind_velocity);
 ```
 
 Update steps every system, runs the [sub-emitters](#events-and-sub-emitters), then publishes the
-draws and trails, so particles spawned by events are drawn in the same update.
+draws and trails, so particles spawned by events are drawn in the same update. A trailing
+`ParallelFor` runs the [range kernels](#parallel-update) on worker threads.
 Render every camera afterward. Rendering does not advance the simulation.
 `wind_velocity` is application-owned world-space air velocity in metres/second.
 Hidden emitters continue simulating. Their WORLD/identity draw child inherits
@@ -102,7 +103,7 @@ are `ParticleSystem.emitting`, `emit_burst(count)`, emitter transforms and wind.
 Material values use the ordinary asset revision API. Recreate a system to change
 its capacity, emission configuration, render mode or asset references.
 
-The library owns the pool arrays, counters, PRNG state and draw child. Inspect
+The library owns the pool arrays, counters and draw child. Inspect
 them as short-lived component borrows; do not resize/edit the arrays or remove,
 reparent or replace the owned child independently. Removing the emitter or scene
 releases pool and draw storage immediately. Removing only ParticleSystem frees
@@ -124,8 +125,8 @@ emitter motion does not carry existing particles.
 Rate emission retains a fractional accumulator. Bursts are queued and remain
 effective while `emitting` is false. A request past the free capacity follows the
 [saturation policy](#saturation). Refused requests accumulate in `dropped`; the
-counters saturate instead of wrapping. Refused requests do not consume PRNG
-draws and never cause work proportional to their count.
+counters saturate instead of wrapping. Refused requests take no spawn ordinal
+and never cause work proportional to their count.
 
 Each update clamps simulated time to 0.1 seconds, expiring existing particles
 before accepting emission. Accepted newborns participate in that step's
@@ -138,14 +139,36 @@ Velocity receives gravity, then drag toward the air velocity, which is wind plus
 and identical emitter-pose, delta and wind sequences replay identically within
 the same build. There is no cross-compiler/version bitwise guarantee.
 
-The seed is encoded as four little-endian bytes for Sfc32Random. Unit samples
-use the high 24 bits of its integer output. Shape draws precede lifetime, speed,
-size, rotation, spin and the particle's colour seed. Equal scalar endpoints still
-consume a draw. One fixed integer hash of the stored seed supplies a single
-fraction for the RGBA lerp between `color_min` and `color_max`, then the result
-is multiplied by the eight-sample colour table. Colour endpoints may descend
-in any channel; each endpoint still requires nonnegative finite RGB and alpha
-in [0,1]. Scalar and colour tables linearly interpolate normalized age/lifetime.
+Emission keeps no generator state. Every value a particle draws is `spawn_hash(stream, ordinal, draw)`: three
+rounds of the PCG output hash over the system `seed` (the stream), the particle's spawn ordinal (the value stored in
+`spawn[]`) and the `ParticleDraw` being drawn. The draws are the shape's position and direction, then lifetime, speed,
+size, rotation, spin and the particle's colour seed. Unit samples use the high 24 bits of the hash. A particle's values
+depend on its ordinal alone, not on how many particles a step admits, the order they are emitted in or the requests
+that were refused. Equal scalar endpoints still compute a draw.
+
+One fixed integer hash of the stored seed supplies a single fraction for the RGBA lerp between `color_min` and
+`color_max`, then the result is multiplied by the eight-sample colour table. Colour endpoints may descend in any
+channel; each endpoint still requires nonnegative finite RGB and alpha in [0,1]. Scalar and colour tables linearly
+interpolate normalized age/lifetime.
+
+## Parallel update
+
+`particle::update` and `step` take a trailing `ParallelFor`, the neutral fork-join hook declared by core and shared
+with the physics package. A zero value runs every range inline on the calling thread.
+
+The pool splits into blocks of 1,024 particles, and each fork runs one block per range:
+
+- integration of velocity, position and rotation, including drag and turbulence;
+- ground-plane collision, for a system with no collision callback and no sub-emitters;
+- trail recording;
+- publication of billboard records and mesh instances, with colour and flipbook frame.
+
+Collision raises events in visit order, so a callback or a sub-emitter keeps collision serial. Publication counts the
+particles each block draws, prefixes the counts serially, then writes each block into its own range of the draw
+array, which keeps the compaction and order of a serial pass. Expiry, admission, emission, events, sub-emitter
+deliveries and trail publication stay serial, as does everything outside `update`. A range reads and writes only
+its own blocks, so every hook, partition and range order produces the same pools, counters and draw arrays byte for byte. The
+hook must return only after every range has finished, and the data it hands to each range lives until it returns.
 
 ## Saturation
 
@@ -212,8 +235,9 @@ supplies the orientation and scale; its translation is replaced by the event pos
 its emitted velocity plus the parent's velocity times `inherit_velocity`. Children start at age zero and are first
 integrated by the next update.
 
-The children draw from a generator seeded by a hash of the parent particle's seed, the event index and the
-sub-emitter index. They consume none of the target's own random stream, and equal inputs replay equal children.
+The children draw `spawn_hash` with a stream hashed from the parent particle's seed, the event index and the
+sub-emitter index, and with their index in the delivery as the ordinal. They use none of the target's own `seed`,
+and equal inputs replay equal children.
 
 A target that is not alive, is not a particle system, or is not prepared is skipped, and each skipped delivery is
 counted in the source system's `skipped_events`. Update adds and removes no nodes, so targets must exist and be
@@ -335,16 +359,18 @@ applies to every hit, and a `DIE` hit raises its `DEATH` event whatever its spee
 
 A particle pressed against a surface still hits it on every step, so it spends one callback query per step.
 
-Collision draws nothing from the system's random stream, and its results follow the cast's answers in pool order.
+Collision takes no spawn draws, and its results follow the cast's answers in pool order.
 A descriptor with `restitution` or `friction` outside [0, 1], a negative or non-finite `radius_scale` or
 `impact_speed`, a non-finite `ground_height`, or a response other than `NONE` with no plane and `max_queries` of
 zero fails `INVALID_ARGUMENT`.
 
 ## Draw modes and materials
 
-BILLBOARD uses square camera-facing quads. STRETCHED supplies core with world
-velocity as direction and full dimensions `(size, size + speed * stretch)`;
-core handles per-camera projection and the zero/parallel-direction fallback.
+BILLBOARD uses square camera-facing quads. STRETCHED supplies core with the unit
+world velocity as direction and full dimensions `(size, size + speed * stretch)`;
+core handles per-camera projection and the zero/parallel-direction fallback. Both
+write world-space `BillboardRecord` values into a `RECORDS` [batch](billboards.md#sources)
+that core copies relative to the frame origin, so no per-particle conversion runs in the renderer.
 Rotation is an extra in-plane turn. MESH publishes the supplied geometry/material
 with uniform scale and rotation about world +Y. Mesh particles inherit that
 material's alpha/depth behaviour. Zero-area/zero-scale output is omitted without removing the simulated
@@ -441,6 +467,14 @@ streams; core separately owns draw arrays and persistent GPU records. GPU simula
 and parallel execution are outside this delivery. Core
 billboard material restrictions are documented separately.
 
+### Mixed transparency
+
+Core sorts the instances of a blended batch within that batch, not across batches, so overlapping smoke and
+sparks systems draw in scene order. A view with `transparency = WEIGHTED` records source-over particle batches in the
+[weighted pass](materials.md#weighted-transparency) and skips their sort, because the particle shader has a weighted
+form; additive batches, such as sparks and embers, keep their sort in that view. There is no global sort across
+batches.
+
 ## Flipbooks
 
 `ParticleSystemDesc.flipbook` plays a sprite sheet on BILLBOARD and STRETCHED particles. It is off while `columns`
@@ -470,8 +504,8 @@ The value is written modulo n, so floats stay small. A fractional frame blends t
 frame blends toward frame 0. Under `OVER_LIFE` a particle with a start frame plays n - 1 frames on from it, wrapping
 past the last frame.
 
-The start frame is the fraction of a second hash of the particle's seed, times n, rounded down. It takes no draw from
-the system's random stream, so equal seeds emit equal particles with or without a flipbook.
+The start frame is the fraction of a second hash of the particle's seed, times n, rounded down. It takes no spawn
+draw, so equal seeds emit equal particles with or without a flipbook.
 
 `add_particle_shader` samples slot 0 at the current cell through UV0. On a draw with a sprite sheet it also samples the
 next cell through UV1 and mixes the two by `v_billboard.z`, the fraction of `frame`, whichever UV set the slot names.
@@ -517,7 +551,7 @@ Drag blends the velocity toward `wind` + the turbulence velocity, by the same `m
 **A system with zero drag ignores turbulence** and wind alike. A higher drag follows the swirl more closely.
 The blend is convex, so turbulence alone never takes a particle faster than the air.
 
-The field takes no draw from the system's random stream and depends only on position and time, so equal seeds emit
+The field takes no spawn draw and depends only on position and time, so equal seeds emit
 equal particles with or without turbulence, and replays repeat.
 
 `add_particle_system` and `attach_particle_system` fault `INVALID_ARGUMENT` for a `strength`, `frequency` or `scroll`
@@ -546,7 +580,7 @@ reduction runs once per particle in double. A system with zero strength, or with
 | `tile_length` | Metres of path per texture coordinate unit under `TILE`; above 0 there. |
 | `material` | Blended material of the trail batch, as for [ribbons](ribbons.md#materials-and-supported-paths). |
 
-The trail does not change the simulation or draw anything from the system's random stream, so equal seeds emit equal
+The trail does not change the simulation or take any spawn draw, so equal seeds emit equal
 particles with or without a trail.
 
 ### Recording
@@ -654,6 +688,14 @@ ray cast, on a canopy and two crates that are static physics bodies. It applies
 to the window and to `--benchmark`, and `--benchmark` prints `collision_skips`.
 The `particles` target selects `c3d_physics` for this; the particle package never imports physics.
 
+`--workers N` runs the [range kernels](#parallel-update) on a `c3d_job` pool of N workers; the `particles` target
+selects `c3d_job` for this, and the particle package never imports it. It applies to the window, `--benchmark` and
+`--stress`, which prints the worker count of each segment. `--views 2` and `--capacity N` apply to `--benchmark`: the
+first renders the second camera into its own target, and the second sets the spark pool, with the emission rate
+scaled to keep it full. The benchmark prints `upload_bytes`, the mean bytes uploaded per frame, which do not depend
+on the number of views, and `sparks_bounds_ms` and `sparks_copy_ms`, the CPU cost of the spark batch's bounds and
+record copy over the final pool.
+
 The example reads `Renderer.adapter_name`, borrowed until renderer destruction,
 and calls `renderer.log.check_validation()` through core. The latter reports a
 backend validation error retained in the recent diagnostic ring; overwritten
@@ -662,10 +704,11 @@ entries are no longer checked. Neither operation requires importing gpu.c3l.
 `--stress` runs only CPU work: one seeded system with 100,000 stretched
 billboards, emitted before timing, 60 warm-up updates and the requested number
 of measured updates. It reports simulation/publication, uncached
-`billboard_world_bounds` and `pack_billboard_records` separately. Every update
-advances the batch revision, so the bounds measurement rebuilds it. Packing
+`billboard_world_bounds` and `copy_billboard_records` separately, the latter
+printed as `billboard_pack_ms`. Every update
+advances the batch revision, so the bounds measurement rebuilds it. The copy
 writes a preallocated CPU array; upload and GPU execution are excluded. The
-printed checksum consumes bounds and packed output. `--stress` and
+printed checksum consumes bounds and copied output. `--stress` and
 `--benchmark` are separate modes.
 
 `--stress` prints two segments. `stress` is the full pool with no emission;
@@ -696,8 +739,8 @@ Baseline measured before the palette interpolation correction on September 30,
 | Live debris, mean / capacity | 0 / 1024 | 1020.9 / 1024 |
 
 These are this scene's measurements, not a general performance guarantee. The
-measured CPU update is below the 1 ms executor follow-up threshold; parallel
-execution was not implemented or measured.
+measured CPU update is below the 1 ms executor follow-up threshold. The stress
+measurements further down time the range kernels.
 
 The 100,000-particle CPU stress baseline at `0e9cd0d` on an Intel Core i9-14900K, Windows x64,
 C3 0.8.3 `-O3`, produced the following medians of three runs. Each run measured
@@ -715,6 +758,25 @@ convert every record to world space after a revision change; unchanged bounds
 are cached. This records the cost of that shared conversion without adding a
 second representation or an executor. It excludes emission, upload, sorting
 and rendering, and does not replace the default-scene measurement above.
+
+The same stress case with the [range kernels](#parallel-update), on an Intel Core i9-14900K (32 logical CPUs) under
+WSL2, C3 0.8.3 `-O3`, as medians of three runs of 300 updates after 60 warm-up updates. "Before" is the build before the
+range kernels and the counter draws; the other columns run the kernels inline or on a `c3d_job` pool.
+
+| CPU operation | Before | Inline | 4 workers | 8 workers |
+| --- | ---: | ---: | ---: | ---: |
+| Simulation and draw publication | 0.632 ms | 0.888 ms | 0.409 ms | 0.428 ms |
+| Uncached billboard bounds | 2.636 ms | 2.664 ms | 2.642 ms | 2.630 ms |
+| Billboard packing (before), record copy (after) | 0.855 ms | 0.400 ms | 0.390 ms | 0.377 ms |
+| Update plus packing or copy | 1.487 ms | 1.288 ms | 0.799 ms | 0.805 ms |
+
+Inline, the update costs more than before. Publication now counts the drawn particles in a first pass and writes
+64-byte records directly, and the record copy that follows costs less than the packing it replaces. The update stops
+improving between four and eight workers; the serial passes (expiry and admission) and the cost of each fork bound it,
+and were not measured separately. Bounds are not forked. At 100,000 particles (98 blocks) a hook halves the update.
+In the default `--benchmark` scene, whose largest pool holds eight blocks, `--workers 8` raised the update from
+0.13 ms to 0.44 ms. The example checksum is identical for 0, 4 and 8 workers. The counter draws changed it from
+1710.039694 to 1706.511658, and serialized data is unaffected.
 
 Windows acceptance passed all 17 particle CPU tests and six Vulkan cases, with
 validation. Native Linux compilation and the earlier 16 CPU tests passed in WSL

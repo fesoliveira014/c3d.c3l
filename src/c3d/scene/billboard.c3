@@ -23,6 +23,14 @@ enum BillboardFacing {
 }
 
 <*
+ Where a billboard batch's draw data lives.
+*>
+enum BillboardSource {
+    BILLBOARDS, // Billboard values that core packs once per revision
+    RECORDS,    // world-space records the owner writes; core copies them
+}
+
+<*
  Sprite-sheet layout of a billboard batch; zero columns disables it.
 *>
 struct BillboardAtlas {
@@ -45,6 +53,20 @@ struct Billboard {
 }
 
 <*
+ World-space draw record of one billboard in the renderer's layout.
+*>
+struct BillboardRecord {
+    Vec4 position_width;
+    Vec4 direction_height;
+    Vec4 color;
+    float rotation;
+    uint facing; // the batch's BillboardFacing ordinal
+    float frame;
+    uint _pad0;
+}
+$assert BillboardRecord::size == 64;
+
+<*
  Library-owned world bounds of a billboard batch.
 *>
 struct BillboardAggregate {
@@ -54,21 +76,23 @@ struct BillboardAggregate {
 }
 
 <*
- Fixed scene-owned array of billboards sharing one material.
+ Fixed-capacity billboards sharing one material, drawn from one source.
 *>
 struct BillboardBatch {
     MaterialId material;
     BillboardFacing facing;
-    Billboard[] billboards;
+    Billboard[] billboards; // BILLBOARDS only
     uint count;
     uint revision;
     BillboardAggregate aggregate;
     BillboardAtlas atlas;
+    BillboardSource source;
+    BillboardRecord[] records; // RECORDS only: capacity records, the first count live
 }
 
 <*
  Add a node carrying a scene-owned billboard batch.
- @param billboards : "Copied; determines the live count."
+ @param billboards : "Copied; sets the live count; empty unless BILLBOARDS."
  @param [in] parent : "Null selects the root."
  @param name : "Copied into the scene allocator."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
@@ -83,7 +107,9 @@ fn Node*? Scene.add_billboards(
     Node* parent = null,
     String name = "",
     BillboardAtlas atlas = {},
+    BillboardSource source = BillboardSource.BILLBOARDS,
 ) {
+    if (source != BillboardSource.BILLBOARDS && billboards.len) return c3d::INVALID_ARGUMENT~;
     if (billboards.len > capacity) return c3d::CAPACITY_EXCEEDED~;
     check_billboards(billboards)!;
     check_billboard_atlas(atlas)!;
@@ -91,12 +117,18 @@ fn Node*? Scene.add_billboards(
     BillboardBatch batch = {
         .material = material,
         .facing = facing,
-        .billboards = alloc::new_array(self.allocator, Billboard, (sz)capacity),
         .count = (uint)billboards.len,
         .revision = 1,
         .atlas = atlas,
+        .source = source,
     };
-    batch.billboards[:billboards.len] = billboards[..];
+    switch (source) {
+        case BILLBOARDS:
+            batch.billboards = alloc::new_array(self.allocator, Billboard, (sz)capacity);
+            batch.billboards[:billboards.len] = billboards[..];
+        case RECORDS:
+            batch.records = alloc::new_array(self.allocator, BillboardRecord, (sz)capacity);
+    }
     self.world.add(node.id, batch);
     return node;
 }
@@ -107,6 +139,7 @@ fn Node*? Scene.add_billboards(
  @param billboards : "Copied into scene-owned storage."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require self.has(node, BillboardBatch)
+ @require self.get(node, BillboardBatch).source == BillboardSource.BILLBOARDS
 *>
 fn void? Scene.set_billboards(&self, Node* node, Billboard[] billboards) {
     BillboardBatch* batch = self.get(node, BillboardBatch);
@@ -134,6 +167,7 @@ fn void? Scene.set_billboard_atlas(&self, Node* node, BillboardAtlas atlas) {
  @param [&in] node : "Carries BillboardBatch."
  @return? c3d::CAPACITY_EXCEEDED
  @require self.has(node, BillboardBatch)
+ @require self.get(node, BillboardBatch).source == BillboardSource.BILLBOARDS
 *>
 fn void? Scene.resize_billboards(&self, Node* node, uint count) {
     BillboardBatch* batch = self.get(node, BillboardBatch);
@@ -151,6 +185,31 @@ fn void? Scene.resize_billboards(&self, Node* node, uint count) {
 fn void Scene.mark_billboards_dirty(&self, Node* node) {
     BillboardBatch* batch = self.get(node, BillboardBatch);
     batch.revision = batch.revision == uint::max ? 1 : batch.revision + 1;
+}
+
+<*
+ Records the batch can hold.
+*>
+fn uint BillboardBatch.capacity(&self) {
+    return (uint)(self.source == BillboardSource.RECORDS ? self.records.len : self.billboards.len);
+}
+
+<*
+ Billboard at an index of the live prefix, whatever the source.
+ @require index < self.count
+*>
+fn Billboard BillboardBatch.billboard(&self, uint index) {
+    if (self.source == BillboardSource.BILLBOARDS) return self.billboards[index];
+
+    BillboardRecord* record = &self.records[index];
+    return {
+        .position = record.position_width.xyz,
+        .size = { record.position_width.w, record.direction_height.w },
+        .direction = record.direction_height.xyz,
+        .rotation = record.rotation,
+        .color = record.color,
+        .frame = record.frame,
+    };
 }
 
 <*
@@ -218,5 +277,9 @@ fn void? check_billboard_atlas(BillboardAtlas atlas) @local {
 
 fn void free_billboards(Entity entity, void* component, void* user) @private {
     BillboardBatch* batch = (BillboardBatch*)component;
-    alloc::free(*(Allocator*)user, batch.billboards.ptr);
+    Allocator allocator = *(Allocator*)user;
+    switch (batch.source) {
+        case BILLBOARDS: alloc::free(allocator, batch.billboards.ptr);
+        case RECORDS: alloc::free(allocator, batch.records.ptr);
+    }
 }

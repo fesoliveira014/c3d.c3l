@@ -48,9 +48,9 @@ fn Aabb billboard_world_bounds(Node* node, BillboardBatch* batch, Vec3 origin = 
     BillboardAggregate* aggregate = &batch.aggregate;
     Mat4 world = maths::rebase(node.world, origin);
     if (aggregate.revision == batch.revision && aggregate.world == world) return aggregate.bounds;
-    Aabb bounds = billboard_bounds(world, batch.billboards[0]);
-    foreach (billboard : batch.billboards[1:batch.count - 1]) {
-        bounds = maths::aabb_merge(bounds, billboard_bounds(world, billboard));
+    Aabb bounds = billboard_bounds(world, batch.billboard(0));
+    for (uint index = 1; index < batch.count; index++) {
+        bounds = maths::aabb_merge(bounds, billboard_bounds(world, batch.billboard(index)));
     }
     *aggregate = { .world = world, .bounds = bounds, .revision = batch.revision };
     return bounds;

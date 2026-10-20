@@ -413,10 +413,10 @@ fn bool store_billboard_batch(
         index.batch_keys[first] = key;
     }
     bool changed;
-    foreach (uint instance, billboard : batch.billboards[:batch.count]) {
+    for (uint instance = 0; instance < batch.count; instance++) {
         usz slot = first + instance;
         if (slot >= index.entries.len) break;
-        changed |= store_entry(&index.entries[slot], billboard_entry(node, instance, billboard));
+        changed |= store_entry(&index.entries[slot], billboard_entry(node, instance, batch.billboard(instance)));
     }
     return changed;
 }

@@ -362,6 +362,7 @@ fn void? project_instances(void* component, void* value, WriteContext* context) 
 
 fn void? project_billboards(void* component, void* value, WriteContext* context) @local {
     BillboardBatch* batch = component;
+    if (batch.source != BillboardSource.BILLBOARDS) return c3d::UNSUPPORTED~;
     if (!scene::billboards_valid(batch.billboards[:batch.count])) return c3d::INVALID_ARGUMENT~;
     if (!scene::billboard_atlas_valid(batch.atlas)) return c3d::INVALID_ARGUMENT~;
 

@@ -171,8 +171,8 @@ fn PickHit[] pick(
         Node* node = scene.node(entity);
         if (batch.count && node.visible_effective && (options.layers & node.layers)
             && billboard_batch_is_live(assets, batch)) {
-            foreach (uint index, billboard : batch.billboards[:batch.count]) {
-                SceneEntry entry = billboard_entry(node, index, billboard);
+            for (uint index = 0; index < batch.count; index++) {
+                SceneEntry entry = billboard_entry(node, index, batch.billboard(index));
                 if (hit_entry(
                     assets: assets,
                     scene: scene,
