@@ -254,6 +254,15 @@ tell a submitted frame from one that faulted or recorded nothing. The answer is 
 that faulted or was discarded, and for a frame more than `FRAMES_IN_FLIGHT` indices behind `frame_index`. CPU state that
 mirrors GPU work should commit only when this is true.
 
+`Renderer.view_depth_frame(view)` returns the index of the last submitted frame whose rendering of the view wrote its depth
+image. `end_frame` publishes it for every view that `render_view` recorded as a raster view in a submitted frame, so a
+frame that faults or is discarded leaves the previous answer. It faults `render::NOT_READY` before the first such frame,
+after a `configure_view` that recreates the images (a changed output or working extent), and always for a path-traced
+view, which writes no depth; `INVALID_ID` for a dead view. A dispatch that names `read_view_depth(view)` before the
+view's `render_view` of the open frame reads the depth of the frame this reports, so a reader that kept the camera of
+that frame knows the two belong together. A view that the application does not render every frame reports an older
+frame, and the reader decides whether that depth still serves.
+
 `render_view(scene, camera_node, view, debug = null, shadow_camera = null)`: `shadow_camera` is the camera the view's
 shadow set is fitted to; null uses `camera_node`. A view binds an earlier view's set instead of recording one when
 their keys match ([shadow sets](shadows.md#shadow-sets)). A `shadow_camera` without a `Camera` faults
