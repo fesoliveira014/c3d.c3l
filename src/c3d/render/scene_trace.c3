@@ -216,14 +216,17 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
         bool requested = hardware ? trace.hardware_requested : trace.software_requested;
         if (same_frame && requested) return trace.root;
 
+        time::Clock prepare_started = clock::now();
         if (hardware) {
             trace.hardware_requested = true;
         } else {
             trace.software_requested = true;
         }
+        time::Clock gather_started = clock::now();
         @pool() {
             record_scene_trace(self, scene)!;
         };
+        sway_measure_stop(SwayStage.GATHER, gather_started);
         trace.prepared_frame = self.frame_index + 1;
         // The trace claims posed bindings, whose dispatches must precede every reader of the slots' streams.
         if (trace.hardware_requested || self.posed_trace.dispatches.len() || self.compute_skin.dispatches.len()) {
@@ -231,6 +234,7 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
             record_trace_poses(self, &self.commands)!;
         }
         if (trace.hardware_requested) record_acceleration_builds(self, &self.commands)!;
+        sway_measure_stop(SwayStage.TRACE_PREPARE, prepare_started);
         return trace.root;
     }
 
@@ -699,19 +703,24 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     acquire_scene_trace(renderer)!;
     renderer.posed_trace.begin_epoch(renderer.frame_open ? renderer.frame_index + 1 : 0);
 
+    time::Clock collect_started = clock::now();
     TraceCollection collection = collect_trace_instances(
         allocator: tmem,
         scene: scene,
         assets: renderer.assets,
         origin: renderer.frame_origin,
     );
+    sway_measure_stop(SwayStage.COLLECT, collect_started);
     renderer.stats.dangling_refs += collection.dangling;
     renderer.stats.trace_sway_at_rest = collection.sway_at_rest;
+    time::Clock rows_started = clock::now();
     TraceInstance[] records = resolve_trace_instances(renderer, &collection, scene.identity)!;
+    sway_measure_stop(SwayStage.ROWS, rows_started);
     if (records.len > renderer.max_trace_instances) return c3d::CAPACITY_EXCEEDED~;
 
     SceneTrace* trace = &renderer.scene_trace;
     RtContext* rt = &renderer.rt;
+    time::Clock compare_started = clock::now();
     bool same_set = trace.scene == scene.identity && trace.baseline_count == records.len
       && trace.origin == renderer.frame_origin;
     bool rows_unchanged = same_set && records_equal(trace.baseline[:records.len], records, TraceInstance::size);
@@ -722,6 +731,7 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
         scene:   scene.identity,
         origin:  renderer.frame_origin,
     );
+    sway_measure_stop(SwayStage.ROW_COMPARE, compare_started);
 
     uint tlas_index;
     if (trace.hardware_requested && records.len) {
@@ -740,7 +750,9 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     }
 
     if (!rows_unchanged) {
+        time::Clock top_started = clock::now();
         write_top_level(renderer, scene, records, tlas_index)!;
+        sway_measure_stop(SwayStage.TOP_BVH, top_started);
     } else if (tlas_index != trace.tlas_index) {
         write_trace_root(renderer, tlas_index)!;
     }
@@ -1085,9 +1097,11 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
     GeometryId[] pending = rt.pending_blas.array_view()[rt.recorded_blas..];
     if (!pending.len && !renderer.posed_trace.builds.len() && !rt.build_pending) return;
 
+    time::Clock builds_started = clock::now();
     bool profiled = renderer.frame_open;
     if (profiled) begin_profile_pass(renderer, Pass.ACCELERATION_BUILD)!;
     usz scratch_alignment = renderer.caps.acceleration_structures.scratch_alignment;
+    time::Clock sizing_started = clock::now();
     BuildBatch sizing = { .alignment = scratch_alignment };
     foreach (geometry : pending) {
         sizing.place(renderer.geometries[geometry.index].blas.scratch_size);
@@ -1095,6 +1109,7 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
     foreach (&build : renderer.posed_trace.builds) {
         sizing.place(posed_build_scratch_size(&renderer.posed_trace, build));
     }
+    sway_measure_stop(SwayStage.BUILD_SIZING, sizing_started);
     usz scratch_size = sizing.largest;
     if (rt.build_pending) scratch_size = math::max(scratch_size, rt.top_level_scratch_size);
     RtScratch* scratch = &rt.scratch[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -1142,7 +1157,9 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
             };
             gpu::cmd_barrier(commands, &reads_done)!;
         }
+        time::Clock tlas_started = clock::now();
         record_top_level_build(renderer, commands, scratch.span)!;
+        sway_measure_stop(SwayStage.TLAS, tlas_started);
         rt.current = rt.build_target;
         rt.current_holds_set = true;
         rt.build_pending = false;
@@ -1156,6 +1173,7 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
     gpu::cmd_barrier(commands, &built)!;
     renderer.work_recorded = true;
     if (profiled) end_profile_pass(renderer, Pass.ACCELERATION_BUILD)!;
+    sway_measure_stop(SwayStage.BUILDS_TOTAL, builds_started);
 }
 
 fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, gpu::GpuSpan scratch) @local {
@@ -1163,6 +1181,8 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
     RtContext* rt = &renderer.rt;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     usz bytes = trace.baseline_count * gpu::AccelerationStructureInstance::size;
+    time::Clock pack_started = clock::now();
+    sway_measure.tlas_rows += trace.baseline_count;
     gpu::MappedGpuSpan instances = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     gpu::AccelerationStructureInstance* packed = (gpu::AccelerationStructureInstance*)instances.bytes.ptr;
     for (uint row = 0; row < trace.baseline_count; row++) {
@@ -1173,13 +1193,16 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
         );
         packed[row] = gpu::make_acceleration_structure_instance(&renderer.device, &desc)!;
     }
+    sway_measure_stop(SwayStage.TLAS_PACK, pack_started);
     gpu::AccelerationStructureBuildDesc build = {
         .destination    = rt.top_levels[rt.build_target].tlas,
         .instances      = instances.span,
         .instance_count = trace.baseline_count,
         .scratch        = scratch,
     };
+    time::Clock tlas_cmd_started = clock::now();
     gpu::cmd_build_acceleration_structure(commands, &build)!;
+    sway_measure_stop(SwayStage.TLAS_CMD, tlas_cmd_started);
 }
 
 fn void? upload_trace_geometry(

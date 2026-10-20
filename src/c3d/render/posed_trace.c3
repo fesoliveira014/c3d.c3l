@@ -12,6 +12,8 @@ import std::collections::list;
 import std::collections::map;
 import std::hash::fnv32a;
 import std::math;
+import std::time;
+import std::time::clock;
 
 <*
  Posed trace slots a renderer holds when RendererDesc leaves the count at zero.
@@ -520,7 +522,9 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
             mem::copy(inputs.ptr, &custom, CustomPoseInputs::size);
             return inputs;
         case SWAY:
+            time::Clock root_started = clock::now();
             TraceSwayPoseRoot sway = sway_pose_root(renderer, source, record);
+            sway_measure_stop(SwayStage.ROOT_BUILD_INPUTS, root_started);
             mem::copy(inputs.ptr, &sway, TraceSwayPoseRoot::size);
             return inputs;
         case MESH:
@@ -739,6 +743,7 @@ fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @pri
     PosedTraceTable* table = &renderer.posed_trace;
     record_vertex_motion_copies(renderer, commands)!;
     if (!table.dispatches.len()) return;
+    time::Clock poses_started = clock::now();
     acquire_trace_pose_pipelines(renderer)!;
     bool profiled = renderer.frame_open;
     if (profiled) begin_profile_pass(renderer, Pass.TRACE_POSE)!;
@@ -747,6 +752,7 @@ fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @pri
     // consumer_stages names the acceleration-structure stage only on renderers with ray queries.
     gpu::Barrier readers_done = { .before = renderer.consumer_stages, .after = { .compute } };
     gpu::cmd_barrier(commands, &readers_done)!;
+    time::Clock pose_loop_started = clock::now();
     foreach (&dispatch : table.dispatches) {
         if (!dispatch.pose_root) continue;
         gpu::PipelineHandle skin_pipeline = dispatch.joints_u16 ? table.pose_u16_pipeline : table.pose_pipeline;
@@ -754,19 +760,23 @@ fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @pri
         gpu::cmd_dispatch(commands, dispatch.pose_root, pose_grid(renderer, dispatch.vertex_count))!;
         renderer.stats.trace_poses++;
     }
+    sway_measure_stop(SwayStage.POSE_RECORD, pose_loop_started);
     gpu::Barrier posed = { .before = { .compute }, .after = { .compute } };
     gpu::cmd_barrier(commands, &posed)!;
+    time::Clock refit_loop_started = clock::now();
     gpu::cmd_bind_pipeline(commands, table.refit_pipeline)!;
     foreach (&dispatch : table.dispatches) {
         if (!dispatch.refit_root) continue;
         gpu::cmd_dispatch(commands, dispatch.refit_root, { 1, 1, 1 })!;
         renderer.stats.trace_refits++;
     }
+    sway_measure_stop(SwayStage.REFIT_RECORD, refit_loop_started);
     gpu::Barrier written = { .before = { .compute }, .after = renderer.consumer_stages };
     gpu::cmd_barrier(commands, &written)!;
     table.dispatches.clear();
     renderer.work_recorded = true;
     if (profiled) end_profile_pass(renderer, Pass.TRACE_POSE)!;
+    sway_measure_stop(SwayStage.POSES_TOTAL, poses_started);
 }
 
 // A slot follows one geometry revision: a new revision, a moved rest block or another geometry rebuild it.
@@ -934,6 +944,7 @@ fn void? resolve_posed_instance(
     ulong scene,
     char[] inputs,
 ) @private {
+    time::Clock resolve_started = clock::now();
     PosedTraceTable* table = &renderer.posed_trace;
     bool software = renderer.scene_trace.software_requested;
     bool hardware = renderer.scene_trace.hardware_requested;
@@ -972,11 +983,17 @@ fn void? resolve_posed_instance(
         }
     } else if (slot.compared_epoch != table.epoch) {
         slot.compared_epoch = table.epoch;
-        bool changed = slot.update_pose(inputs.len ? inputs : pose_inputs(renderer, source, record));
+        time::Clock inputs_started = clock::now();
+        char[] pose_bytes = inputs.len ? inputs : pose_inputs(renderer, source, record);
+        sway_measure_stop(SwayStage.POSE_INPUTS, inputs_started);
+        time::Clock compare_started = clock::now();
+        bool changed = slot.update_pose(pose_bytes);
+        sway_measure_stop(SwayStage.POSE_COMPARE, compare_started);
         if (posed.active) {
             alias_posed_pose(renderer, slot, &posed, mirror, source, record)!;
             if (changed) renderer.stats.trace_poses_reused++;
         } else if (changed) {
+            time::Clock write_started = clock::now();
             dispatch.pose_root = write_pose_root(
                 renderer: renderer,
                 source:   source,
@@ -985,10 +1002,13 @@ fn void? resolve_posed_instance(
                 slot:     slot,
                 scene:    scene,
             )!;
+            sway_measure_stop(SwayStage.POSE_WRITE, write_started);
         }
     }
     if (software && slot.refit_serial != slot.pose_serial) {
+        time::Clock refit_started = clock::now();
         dispatch.refit_root = write_refit_root(renderer, mirror, slot)!;
+        sway_measure_stop(SwayStage.REFIT_ROOT, refit_started);
         slot.refit_serial = slot.pose_serial;
     }
     if (dispatch.pose_root || dispatch.refit_root) {
@@ -1005,6 +1025,7 @@ fn void? resolve_posed_instance(
     }
 
     point_at_posed_slot(record, slot, mirror);
+    sway_measure_stop(SwayStage.RESOLVE, resolve_started);
 }
 
 // A mesh or crowd part compute skinning poses this frame answers its posed binding, which the slot then follows.
@@ -1102,10 +1123,15 @@ fn gpu::GpuAddress? write_pose_root(
             }
             return upload_bytes(renderer, &custom_root, TraceCustomPoseRoot::size)!;
         case SWAY:
+            time::Clock root_started = clock::now();
             TraceSwayPoseRoot sway_root = sway_pose_root(renderer, source, record);
+            sway_measure_stop(SwayStage.ROOT_BUILD_WRITE, root_started);
             sway_root.source = mirror.root;
             sway_root.posed = slot.root;
-            return upload_bytes(renderer, &sway_root, TraceSwayPoseRoot::size)!;
+            time::Clock upload_started = clock::now();
+            gpu::GpuAddress sway_address = upload_bytes(renderer, &sway_root, TraceSwayPoseRoot::size)!;
+            sway_measure_stop(SwayStage.POSE_UPLOAD, upload_started);
+            return sway_address;
         case MESH:
             if (source.skin) palette = resolve_palette(renderer, source.node, source.skin)!;
             if (mesh_morphs(renderer.assets, source.mesh)) {
@@ -1183,6 +1209,7 @@ fn void? record_posed_builds(
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     if (!table.builds.len()) return;
+    time::Clock builds_started = clock::now();
     // Ray queries and top-level builds of earlier frames still read the bottom levels updated in place.
     gpu::Barrier readers_done = { .before = renderer.trace_stages, .after = { .acceleration_structure_build } };
     gpu::cmd_barrier(commands, &readers_done)!;
@@ -1207,6 +1234,7 @@ fn void? record_posed_builds(
             .geometries  = geometries[..],
             .scratch     = scratch.checked_subspan(range.offset, scratch_size)!,
         };
+        time::Clock cmd_started = clock::now();
         if (build.update) {
             gpu::cmd_update_acceleration_structure(commands, &desc)!;
             renderer.stats.blas_updates++;
@@ -1214,8 +1242,10 @@ fn void? record_posed_builds(
             gpu::cmd_build_acceleration_structure(commands, &desc)!;
             renderer.stats.blas_builds++;
         }
+        sway_measure_stop(SwayStage.BUILD_CMD, cmd_started);
     }
     table.builds.clear();
+    sway_measure_stop(SwayStage.BUILD_LOOP, builds_started);
 }
 
 fn usz posed_build_scratch_size(PosedTraceTable* table, PosedBuild* build) @private {

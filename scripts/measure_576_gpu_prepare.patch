@@ -1,0 +1,50 @@
+--- a/gpu/gpu.c3
++++ b/gpu/gpu.c3
+@@ -5,6 +5,10 @@
+ import std::atomic;
+ import std::atomic::types;
+ 
++long measure_prepare_ns;
++long measure_emit_ns;
++long measure_calls;
++
+ // ---- Handle predicates ----
+ 
+ <* Test whether the device handle differs from the invalid zero sentinel.
+--- a/gpu/internal/vk/acceleration_structure.c3
++++ b/gpu/internal/vk/acceleration_structure.c3
+@@ -6,6 +6,8 @@
+ import vma;
+ import std::core::mem;
+ import std::core::mem::alloc;
++import std::time;
++import std::time::clock;
+ 
+ const usz MAX_ACCELERATION_STRUCTURES = 4096;
+ const uint ACCELERATION_STRUCTURE_FREE_NONE = 0;
+@@ -210,14 +212,25 @@
+     bool update,
+     AccelerationStructureBuildCommandOps* ops,
+ ) {
++    $if $feat(MEASURE_GPU_PREPARE):
++        std::time::Clock measure_prepare_started = std::time::clock::now();
++    $endif
+     PreparedAccelerationStructureBuild prepared =
+         prepare_acceleration_structure_build(
+             record,
+             desc,
+             update,
+         )!;
++    $if $feat(MEASURE_GPU_PREPARE):
++        gpu::measure_prepare_ns += (long)measure_prepare_started.to_now();
++        std::time::Clock measure_emit_started = std::time::clock::now();
++    $endif
+ 
+     emit_acceleration_structure_build(record, &prepared, ops);
++    $if $feat(MEASURE_GPU_PREPARE):
++        gpu::measure_emit_ns += (long)measure_emit_started.to_now();
++        gpu::measure_calls++;
++    $endif
+ }
+ 
+ fn ResolvedSpan? lower_acceleration_structure_indirect_ranges(

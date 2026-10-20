@@ -128,6 +128,7 @@ struct Options @local {
     ShadingPath   shading;
     bool          traced_shadows;
     bool          trace_sway;
+    bool          software_trace; // measurement: no ray queries, so traced shadows take the software kind
     String        capture;
     bool          sky;
     bool          volumetric_fog;
@@ -183,6 +184,7 @@ struct FrameRecord @local {
     uint                      instances_tested;
     uint                      instances_visible;
     TraceCounts               trace;
+    render::SwayMeasure       sway;
     uint                      placed_cells;
     bool                      cells_revised;
     bool                      stamped;
@@ -376,7 +378,7 @@ fn RendererDesc renderer_desc(Options options, bool validation, ZString applicat
         .validation                = validation,
         .gpu_timings               = options.gpu_timings,
         .application_name          = application_name,
-        .ray_queries               = options.traced_shadows,
+        .ray_queries               = options.traced_shadows && !options.software_trace,
         .max_trace_instances       = options.traced_shadows ? TRACE_INSTANCE_CAPACITY : 0,
         .max_posed_trace_instances = options.trace_sway ? POSED_INSTANCE_CAPACITY : 0,
         .max_instance_batches      = scene_node_budget(options, extent) - FIXED_NODES + 1,
@@ -483,6 +485,7 @@ fn Options? parse_options(String[] args) @local {
                     default: return c3d::INVALID_ARGUMENT~;
                 }
             case "--trace-sway": options.trace_sway = true;
+            case "--trace-software": options.software_trace = true;
             case "--capture": options.capture = option_value(args, &index)!;
             case "--size":
                 options.size = option_value(args, &index)!.to_uint()!;
@@ -509,6 +512,7 @@ fn Options? parse_options(String[] args) @local {
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.scatter_jobs && !options.benchmark) return c3d::INVALID_ARGUMENT~;
+    if (options.software_trace && !options.traced_shadows) return c3d::INVALID_ARGUMENT~;
     if (options.trace_sway && (!options.traced_shadows || options.foliage != FoliageChoice.BOTH)) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -899,6 +903,7 @@ fn void? run_segments(
         time::Clock update_started = clock::now();
         foliage::update(demo.scene, demo.assets, wind)!;
         double update_us = (double)(long)update_started.to_now() / NANOSECONDS_PER_MICROSECOND;
+        render::sway_measure_reset();
         render_offscreen(
             renderer:    renderer,
             scene:       demo.scene,
@@ -907,6 +912,8 @@ fn void? run_segments(
             frame:       frame,
         )!;
         double frame_ms = elapsed_ms(frame_started);
+        render::sway_measure_collect_gpu();
+        render::SwayMeasure sway = render::sway_measure;
         if (frame == 0) result.first_pack_ms = renderer.stats.cpu_record_ms;
 
         if (timed) {
@@ -919,6 +926,7 @@ fn void? run_segments(
                 .instances_tested  = renderer.stats.instances_tested,
                 .instances_visible = renderer.stats.instances_visible,
                 .trace             = trace_counts(&renderer.stats),
+                .sway              = sway,
                 .placed_cells      = placed_cells(demo),
                 .cells_revised     = cell_revision_sum(demo) != revisions,
                 .stamped           = stamped,
@@ -983,6 +991,61 @@ fn void print_trace_counts(String segment_name, FrameRecord[] records, double[] 
     );
 }
 
+// Median over the frames of one stage; unit is milliseconds, or microseconds per posed slot.
+fn double sway_stage_median(FrameRecord[] records, render::SwayStage stage, double[] scratch, bool per_slot) @local {
+    usz count;
+    foreach (&record : records) {
+        long slots = record.sway.calls[render::SwayStage.RESOLVE.ordinal];
+        double net = (double)render::sway_net_ns(&record.sway, stage);
+        if (per_slot) {
+            if (!slots) continue;
+            scratch[count++] = net / (double)slots / NANOSECONDS_PER_MICROSECOND;
+        } else {
+            scratch[count++] = net / NANOSECONDS_PER_MILLISECOND;
+        }
+    }
+    return percentile(scratch[:count], 0.5f);
+}
+
+fn double sway_raw_median(FrameRecord[] records, render::SwayStage stage, double[] scratch) @local {
+    foreach (index, &record : records) scratch[index] = (double)record.sway.ns[stage.ordinal] / NANOSECONDS_PER_MILLISECOND;
+    return percentile(scratch[:records.len], 0.5f);
+}
+
+fn double sway_calls_median(FrameRecord[] records, render::SwayStage stage, double[] scratch) @local {
+    foreach (index, &record : records) scratch[index] = (double)record.sway.calls[stage.ordinal];
+    return percentile(scratch[:records.len], 0.5f);
+}
+
+fn void print_sway_stages(String segment_name, FrameRecord[] records, double[] scratch) @local {
+    foreach (index, &record : records) scratch[index] = (double)record.sway.tlas_rows;
+    double tlas_rows = percentile(scratch[:records.len], 0.5f);
+    io::printfn(
+        "sway_clock segment=%s pair_ns=%d empty_ns=%d tlas_rows_median=%.0f",
+        segment_name,
+        render::sway_pair_ns,
+        render::sway_empty_ns,
+        tlas_rows,
+    );
+    double[] net_scratch = alloc::new_array(mem, double, (sz)records.len);
+    defer alloc::free(mem, net_scratch.ptr);
+    foreach (stage : render::SwayStage::values) {
+        double raw_ms = sway_raw_median(records, stage, scratch);
+        double calls = sway_calls_median(records, stage, scratch);
+        double net_ms = sway_stage_median(records, stage, net_scratch, false);
+        double net_us_per_slot = sway_stage_median(records, stage, net_scratch, true);
+        io::printfn(
+            "sway_stage segment=%s stage=%s raw_ms=%.4f net_ms=%.4f net_us_per_slot=%.4f calls_median=%.0f",
+            segment_name,
+            render::SWAY_STAGE_NAMES[stage.ordinal],
+            raw_ms,
+            net_ms,
+            net_us_per_slot,
+            calls,
+        );
+    }
+}
+
 fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     uint frames = demo.options.segment_frames;
     io::printfn("rescatter_ms %.4f", result.rescatter_ms);
@@ -1024,6 +1087,7 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
             if (revised_frames) steady_gate = false;
         }
         if (demo.options.traced_shadows) print_trace_counts(name, records, result.scratch);
+        if (demo.options.trace_sway) print_sway_stages(name, records, result.scratch);
         double tested = percentile(gather(records, INSTANCES_TESTED, result.scratch), 0.5f);
         double visible = percentile(gather(records, INSTANCES_VISIBLE, result.scratch), 0.5f);
         io::printfn("instances segment=%s tested_median=%.0f visible_median=%.0f", name, tested, visible);
@@ -1060,7 +1124,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
     uint tree_cells = options.foliage == BOTH ? grid_cells(demo.ground.extent, landscape_foliage::TREE_CELL_SIZE) : 0;
     io::printfn(
         "# vegetation size=%d shading=%s shadows=%s foliage=%s tree_fade_end=%g extent=%dx%d frames=%d "
-          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s volumetric_fog=%s trace_sway=%s",
+          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s volumetric_fog=%s trace_sway=%s trace_kind=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
@@ -1076,6 +1140,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
         options.sky ? "on" : "off",
         options.volumetric_fog ? "on" : "off",
         options.trace_sway ? "on" : "off",
+        options.software_trace ? "software" : "hardware",
     );
     foreach (&layer : active_layers(demo)) {
         FoliageRuntime* runtime = demo.scene.get(layer.node, FoliageRuntime);
@@ -1116,6 +1181,7 @@ fn bool? run_benchmark(Options options) @local {
     foliage::register_foliage(&scene)!;
 
     Demo demo = build_demo(options, &assets, &scene)!;
+    render::sway_measure_calibrate();
     print_header(&demo, desc.max_instance_batches);
     bool scatter_gate = true;
     if (options.scatter_jobs) {
@@ -1266,7 +1332,7 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--trace-sway] [--size 1025|2049|4097] [--foliage both|grass|none] "
+              "[--shadows atlas|traced] [--trace-sway] [--trace-software] [--size 1025|2049|4097] [--foliage both|grass|none] "
               "[--tree-fade-end METRES] [--width W] [--height H] [--capture FILE.png] [--sky] [--volumetric-fog] "
               "[--workers N, with --benchmark].");
         }
