@@ -226,7 +226,8 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
         };
         trace.prepared_frame = self.frame_index + 1;
         // The trace claims posed bindings, whose dispatches must precede every reader of the slots' streams.
-        if (trace.hardware_requested || self.posed_trace.dispatches.len() || self.compute_skin.dispatches.len()) {
+        if (trace.hardware_requested || self.posed_trace.dispatches.len() || self.posed_trace.refits.len()
+            || self.compute_skin.dispatches.len()) {
             record_pending_copies(self, &self.commands)!;
             record_trace_poses(self, &self.commands)!;
         }
@@ -808,6 +809,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
     renderer.stats.trace_posed_shared = 0;
     renderer.stats.trace_posed_overflow = 0;
     renderer.stats.trace_deform_overflow = 0;
+    PosedSwayBatch sway_batch;
     usz kept;
     Entity sway_rest_node;
     foreach (index, &record : records) {
@@ -956,6 +958,17 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             point_at_posed_slot(record, &posed.slots[slot], mirror);
             renderer.stats.trace_posed_instances++;
             renderer.stats.trace_posed_shared++;
+        } else if (pose.kind == TracePose.SWAY) {
+            if (!sway_batch.holds(pose)) sway_batch.close(renderer, records)!;
+            sway_batch.join(
+                renderer:     renderer,
+                slot_index:   slot,
+                source:       pose,
+                record:       record,
+                mirror:       mirror,
+                record_index: (uint)kept,
+            )!;
+            renderer.stats.trace_posed_instances++;
         } else {
             resolve_posed_instance(
                 renderer: renderer,
@@ -970,6 +983,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
         }
         records[kept++] = *record;
     }
+    sway_batch.close(renderer, records)!;
     return records[:kept];
 }
 

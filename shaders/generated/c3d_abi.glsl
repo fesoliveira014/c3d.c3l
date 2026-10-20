@@ -683,20 +683,26 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceEff
     uint64_t instance_depths;
 };
 
-layout(buffer_reference, std430, buffer_reference_align = 16) buffer TraceSwayPoseRoot {
-    uint64_t source;
+struct TraceSwayRowGpu {
+    InstanceGpu instance;
+    mat4 part_local;
+    vec4 inverse_model_0;
+    vec4 inverse_model_1;
+    vec4 inverse_model_2;
     uint64_t posed;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer TraceSwayBatchRoot {
+    uint64_t source;
+    uint64_t rows;
     uint vertex_count;
     uint flags;
     uint _pad0;
     uint _pad1;
-    InstanceGpu instance;
-    mat4 part_local;
     SwayGpu sway;
     vec4 anchor;
-    vec4 inverse_model_0;
-    vec4 inverse_model_1;
-    vec4 inverse_model_2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer MorphWeightsGpu {

@@ -1047,35 +1047,45 @@ $assert $reflect(InstanceEffectsGpu._pad0).offset == 108;
 $assert $reflect(InstanceEffectsGpu.instance_quadtree).offset == 112;
 $assert $reflect(InstanceEffectsGpu.instance_depths).offset == 120;
 
-struct TraceSwayPoseRoot {
-    GpuAddress  source;
-    GpuAddress  posed;
-    uint        vertex_count;
-    uint        flags;
-    uint        _pad0;
-    uint        _pad1;
+struct TraceSwayRowGpu {
     InstanceGpu instance;
     Mat4f       part_local;
-    SwayGpu     sway;
-    Vec4f       anchor;
     Vec4f       inverse_model_0;
     Vec4f       inverse_model_1;
     Vec4f       inverse_model_2;
+    GpuAddress  posed;
+    uint        _pad0;
+    uint        _pad1;
 }
-$assert TraceSwayPoseRoot::size == 320;
-$assert $reflect(TraceSwayPoseRoot.source).offset == 0;
-$assert $reflect(TraceSwayPoseRoot.posed).offset == 8;
-$assert $reflect(TraceSwayPoseRoot.vertex_count).offset == 16;
-$assert $reflect(TraceSwayPoseRoot.flags).offset == 20;
-$assert $reflect(TraceSwayPoseRoot._pad0).offset == 24;
-$assert $reflect(TraceSwayPoseRoot._pad1).offset == 28;
-$assert $reflect(TraceSwayPoseRoot.instance).offset == 32;
-$assert $reflect(TraceSwayPoseRoot.part_local).offset == 160;
-$assert $reflect(TraceSwayPoseRoot.sway).offset == 224;
-$assert $reflect(TraceSwayPoseRoot.anchor).offset == 256;
-$assert $reflect(TraceSwayPoseRoot.inverse_model_0).offset == 272;
-$assert $reflect(TraceSwayPoseRoot.inverse_model_1).offset == 288;
-$assert $reflect(TraceSwayPoseRoot.inverse_model_2).offset == 304;
+$assert TraceSwayRowGpu::size == 256;
+$assert $reflect(TraceSwayRowGpu.instance).offset == 0;
+$assert $reflect(TraceSwayRowGpu.part_local).offset == 128;
+$assert $reflect(TraceSwayRowGpu.inverse_model_0).offset == 192;
+$assert $reflect(TraceSwayRowGpu.inverse_model_1).offset == 208;
+$assert $reflect(TraceSwayRowGpu.inverse_model_2).offset == 224;
+$assert $reflect(TraceSwayRowGpu.posed).offset == 240;
+$assert $reflect(TraceSwayRowGpu._pad0).offset == 248;
+$assert $reflect(TraceSwayRowGpu._pad1).offset == 252;
+
+struct TraceSwayBatchRoot {
+    GpuAddress source;
+    GpuAddress rows;
+    uint       vertex_count;
+    uint       flags;
+    uint       _pad0;
+    uint       _pad1;
+    SwayGpu    sway;
+    Vec4f      anchor;
+}
+$assert TraceSwayBatchRoot::size == 80;
+$assert $reflect(TraceSwayBatchRoot.source).offset == 0;
+$assert $reflect(TraceSwayBatchRoot.rows).offset == 8;
+$assert $reflect(TraceSwayBatchRoot.vertex_count).offset == 16;
+$assert $reflect(TraceSwayBatchRoot.flags).offset == 20;
+$assert $reflect(TraceSwayBatchRoot._pad0).offset == 24;
+$assert $reflect(TraceSwayBatchRoot._pad1).offset == 28;
+$assert $reflect(TraceSwayBatchRoot.sway).offset == 32;
+$assert $reflect(TraceSwayBatchRoot.anchor).offset == 64;
 
 struct MorphWeightsGpu {
     uint[8]  indices;
