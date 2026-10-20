@@ -524,7 +524,7 @@ version 3 payloads tracing off. The Foliage payload is version 3, which adds
 `trace_sway`. Version 2 added `rules.slope_normal`; version 1 payloads in both
 encodings read `FACE` and no swayed tracing, and version 2 payloads read no swayed tracing.
 The Water payload is version 5, which adds `wave_model`, `simulation`, `spectrum` and `ground`; version 4
-added `mode` and `depth`. Versions 1 to 4 read as `GERSTNER` with the default `simulation`, an empty `spectrum` and no
+added `mode` and `depth`. Versions 1 to 4 read as `GERSTNER` with the default `simulation` and `spectrum` and no
 `ground`; versions 1, 2 and 3 also read as a `BODY` with the default depth, and a body's `trace` and mirror fields as
 before. A `ground` is a node reference: it must name a Terrain node of the exported subtree, or the write faults. An ocean's
 generated `InstancedMesh` is omitted like a body's `Mesh`, and a prepared body's medium node, with its `MediumVolume`,

@@ -2,6 +2,7 @@ module c3d::landscape::foliage;
 
 import c3d;
 import c3d::asset;
+import c3d::landscape @public;
 import c3d::landscape::terrain;
 import c3d::maths;
 import c3d::scene;
@@ -122,13 +123,6 @@ fn void? check_density_map(TextureAsset* texture) @private {
     if (texture.pixels.len != (usz)desc.width * desc.height * RGBA8_BYTES) return c3d::INVALID_ARGUMENT~;
 }
 
-// Jarzynski and Olano 2020, the permutation of noise.glsl's pcg_hash.
-fn uint pcg_hash(uint value) @private {
-    uint state = value * 747796405u + 2891336453u;
-    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-    return (word >> 22u) ^ word;
-}
-
 // Stateless per candidate, so a cell places the same instances in any order and on any thread.
 fn uint candidate_key(
     uint seed,
@@ -136,11 +130,14 @@ fn uint candidate_key(
     uint row,
     uint candidate,
 ) @private {
-    return pcg_hash(pcg_hash(pcg_hash(pcg_hash(seed) ^ column) ^ row) ^ candidate);
+    uint key = landscape::pcg_hash(seed);
+    key = landscape::pcg_hash(key ^ column);
+    key = landscape::pcg_hash(key ^ row);
+    return landscape::pcg_hash(key ^ candidate);
 }
 
 fn float channel_unit(uint key, Channel channel) @private {
-    return (float)(pcg_hash(key + (uint)channel.ordinal) >> 8) * HASH_UNIT_SCALE;
+    return (float)(landscape::pcg_hash(key + (uint)channel.ordinal) >> 8) * HASH_UNIT_SCALE;
 }
 
 fn Candidate candidate_at(
