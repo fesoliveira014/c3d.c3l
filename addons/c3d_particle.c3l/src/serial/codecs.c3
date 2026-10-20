@@ -13,16 +13,19 @@ const ulong COLOR_TABLE_LAYOUT @private = 0x4eacd1a988dfc1b2;
 const ulong SUB_EMITTER_LAYOUT @private = 0xbc17df2b03f79e67;
 const ulong COLLISION_LAYOUT @private = 0xb3c1e7574d47f9eb;
 const ulong FLIPBOOK_LAYOUT @private = 0x3ff56ab69bece737;
+const ulong TURBULENCE_LAYOUT @private = 0x3a1f2d4e38ebc210;
 const ulong DESC_V1_LAYOUT @private = 0x1a366da2bd207420;
 const ulong DESC_V2_LAYOUT @private = 0x63291d71ce5d82d3;
 const ulong DESC_V3_LAYOUT @private = 0x09ff25e64a1b07c9;
 const ulong DESC_V4_LAYOUT @private = 0x2bcd644f0dae365e;
-const ulong DESC_LAYOUT @private = 0x9112174200c2df34;
+const ulong DESC_V5_LAYOUT @private = 0x9112174200c2df34;
+const ulong DESC_LAYOUT @private = 0x07763ae500c62112;
 const ulong AUTHORING_V1_LAYOUT @private = 0xea58cb75a4a73416;
 const ulong AUTHORING_V2_LAYOUT @private = 0x2bb779bddc9e4271;
 const ulong AUTHORING_V3_LAYOUT @private = 0xfce463fdcc2f5ec7;
 const ulong AUTHORING_V4_LAYOUT @private = 0xbc9869b807205e38;
-const ulong AUTHORING_LAYOUT @private = 0x35b8ed9f357f1cbe;
+const ulong AUTHORING_V5_LAYOUT @private = 0x35b8ed9f357f1cbe;
+const ulong AUTHORING_LAYOUT @private = 0x5cdb9677e6a87b8c;
 
 struct ParticleSystemDescV1 @private {
     uint capacity;
@@ -134,6 +137,37 @@ struct ParticleSystemDescV4 @private {
     ParticleCollision collision;
 }
 
+struct ParticleSystemDescV5 @private {
+    uint capacity;
+    ParticleSaturation saturation;
+    uint seed;
+    ParticleRenderMode render_mode;
+    MaterialId material;
+    GeometryId geometry;
+    EmitterShape shape;
+    float radius;
+    Vec3 half_extents;
+    float cone_angle;
+    float rate;
+    ParticleRange lifetime;
+    ParticleRange speed;
+    ParticleRange size;
+    ParticleRange rotation;
+    ParticleRange spin;
+    Vec4 color_min;
+    Vec4 color_max;
+    LifetimeTable size_over_life;
+    LifetimeColorTable color_over_life;
+    float gravity_scale;
+    float drag;
+    float stretch;
+    SubEmitter[MAX_SUB_EMITTERS] sub_emitters;
+    uint sub_emitter_count;
+    uint max_events;
+    ParticleCollision collision;
+    ParticleFlipbook flipbook;
+}
+
 struct ParticleAuthoringV1 @private {
     ParticleSystemDescV1 desc;
     bool emitting;
@@ -154,18 +188,24 @@ struct ParticleAuthoringV4 @private {
     bool emitting;
 }
 
+struct ParticleAuthoringV5 @private {
+    ParticleSystemDescV5 desc;
+    bool emitting;
+}
+
 struct ParticleAuthoring @private {
     ParticleSystemDesc desc;
     bool emitting;
 }
 
-serial::BinaryCompatibility[4] particle_binary_compatibility @local = {
+serial::BinaryCompatibility[5] particle_binary_compatibility @local = {
     { .version = 1, .read = &read_system_v1 },
     { .version = 2, .read = &read_system_v2 },
     { .version = 3, .read = &read_system_v3 },
     { .version = 4, .read = &read_system_v4 },
+    { .version = 5, .read = &read_system_v5 },
 };
-uint[4] particle_text_default_versions @local = { 1, 2, 3, 4 };
+uint[5] particle_text_default_versions @local = { 1, 2, 3, 4, 5 };
 
 <*
  Register particle authoring codecs and generated draw ownership.
@@ -180,6 +220,7 @@ fn void? register_serial_codecs() {
     register_value(SubEmitter, SUB_EMITTER_LAYOUT, &defaults_sub_emitter)!;
     register_value(ParticleCollision, COLLISION_LAYOUT, &defaults_collision)!;
     register_value(ParticleFlipbook, FLIPBOOK_LAYOUT, &defaults_flipbook)!;
+    register_value(ParticleTurbulence, TURBULENCE_LAYOUT, &defaults_turbulence)!;
     register_value(ParticleSystemDescV1, DESC_V1_LAYOUT, &defaults_desc_v1)!;
     register_value(
         $Type: ParticleSystemDescV2,
@@ -199,10 +240,16 @@ fn void? register_serial_codecs() {
         defaults: &defaults_desc_v4,
         version: 4,
     )!;
+    register_value(
+        $Type: ParticleSystemDescV5,
+        layout: DESC_V5_LAYOUT,
+        defaults: &defaults_desc_v5,
+        version: 5,
+    )!;
     describe::register_reflected(ParticleSystemDesc)!;
     serial::register_described_type(
         $Type: ParticleSystemDesc,
-        version: 5,
+        version: 6,
         layout: DESC_LAYOUT,
         defaults: &defaults_desc,
     )!;
@@ -225,10 +272,16 @@ fn void? register_serial_codecs() {
         defaults: &defaults_authoring_v4,
         version: 4,
     )!;
+    register_value(
+        $Type: ParticleAuthoringV5,
+        layout: AUTHORING_V5_LAYOUT,
+        defaults: &defaults_authoring_v5,
+        version: 5,
+    )!;
     describe::register_reflected(ParticleAuthoring)!;
     serial::register_described_type(
         $Type: ParticleAuthoring,
-        version: 5,
+        version: 6,
         layout: AUTHORING_LAYOUT,
         defaults: &defaults_authoring,
     )!;
@@ -263,7 +316,13 @@ fn void defaults_collision(void* value) @private {
     *(ParticleCollision*)value = default_particle_system_desc().collision;
 }
 fn void defaults_flipbook(void* value) @private => *(ParticleFlipbook*)value = default_particle_system_desc().flipbook;
+fn void defaults_turbulence(void* value) @private {
+    *(ParticleTurbulence*)value = default_particle_system_desc().turbulence;
+}
 fn void defaults_desc(void* value) @private => *(ParticleSystemDesc*)value = default_particle_system_desc();
+fn void defaults_desc_v5(void* value) @private {
+    *(ParticleSystemDescV5*)value = particle_desc_v5(default_particle_system_desc());
+}
 fn void defaults_desc_v4(void* value) @private {
     *(ParticleSystemDescV4*)value = particle_desc_v4(default_particle_system_desc());
 }
@@ -279,6 +338,9 @@ fn void defaults_desc_v1(void* value) @private {
 fn void defaults_authoring(void* value) @private {
     *(ParticleAuthoring*)value = { .desc = default_particle_system_desc(), .emitting = true };
 }
+fn void defaults_authoring_v5(void* value) @private {
+    *(ParticleAuthoringV5*)value = { .desc = particle_desc_v5(default_particle_system_desc()), .emitting = true };
+}
 fn void defaults_authoring_v4(void* value) @private {
     *(ParticleAuthoringV4*)value = { .desc = particle_desc_v4(default_particle_system_desc()), .emitting = true };
 }
@@ -290,6 +352,39 @@ fn void defaults_authoring_v2(void* value) @private {
 }
 fn void defaults_authoring_v1(void* value) @private {
     *(ParticleAuthoringV1*)value = { .desc = particle_desc_v1(default_particle_system_desc()), .emitting = true };
+}
+
+fn ParticleSystemDescV5 particle_desc_v5(ParticleSystemDesc desc) @private {
+    return {
+        .capacity = desc.capacity,
+        .saturation = desc.saturation,
+        .seed = desc.seed,
+        .render_mode = desc.render_mode,
+        .material = desc.material,
+        .geometry = desc.geometry,
+        .shape = desc.shape,
+        .radius = desc.radius,
+        .half_extents = desc.half_extents,
+        .cone_angle = desc.cone_angle,
+        .rate = desc.rate,
+        .lifetime = desc.lifetime,
+        .speed = desc.speed,
+        .size = desc.size,
+        .rotation = desc.rotation,
+        .spin = desc.spin,
+        .color_min = desc.color_min,
+        .color_max = desc.color_max,
+        .size_over_life = desc.size_over_life,
+        .color_over_life = desc.color_over_life,
+        .gravity_scale = desc.gravity_scale,
+        .drag = desc.drag,
+        .stretch = desc.stretch,
+        .sub_emitters = desc.sub_emitters,
+        .sub_emitter_count = desc.sub_emitter_count,
+        .max_events = desc.max_events,
+        .collision = desc.collision,
+        .flipbook = desc.flipbook,
+    };
 }
 
 fn ParticleSystemDescV4 particle_desc_v4(ParticleSystemDesc desc) @private {
@@ -528,6 +623,39 @@ fn ParticleSystemDesc particle_desc_from_v4(ParticleSystemDescV4 legacy) @privat
     return desc;
 }
 
+fn ParticleSystemDesc particle_desc_from_v5(ParticleSystemDescV5 legacy) @private {
+    ParticleSystemDesc desc = default_particle_system_desc();
+    desc.capacity = legacy.capacity;
+    desc.saturation = legacy.saturation;
+    desc.seed = legacy.seed;
+    desc.render_mode = legacy.render_mode;
+    desc.material = legacy.material;
+    desc.geometry = legacy.geometry;
+    desc.shape = legacy.shape;
+    desc.radius = legacy.radius;
+    desc.half_extents = legacy.half_extents;
+    desc.cone_angle = legacy.cone_angle;
+    desc.rate = legacy.rate;
+    desc.lifetime = legacy.lifetime;
+    desc.speed = legacy.speed;
+    desc.size = legacy.size;
+    desc.rotation = legacy.rotation;
+    desc.spin = legacy.spin;
+    desc.color_min = legacy.color_min;
+    desc.color_max = legacy.color_max;
+    desc.size_over_life = legacy.size_over_life;
+    desc.color_over_life = legacy.color_over_life;
+    desc.gravity_scale = legacy.gravity_scale;
+    desc.drag = legacy.drag;
+    desc.stretch = legacy.stretch;
+    desc.sub_emitters = legacy.sub_emitters;
+    desc.sub_emitter_count = legacy.sub_emitter_count;
+    desc.max_events = legacy.max_events;
+    desc.collision = legacy.collision;
+    desc.flipbook = legacy.flipbook;
+    return desc;
+}
+
 fn void? project_system(void* component, void* value, serial::WriteContext* context) @private {
     ParticleSystem* system = component;
     check_particle_desc(&system.desc)!;
@@ -583,6 +711,17 @@ fn void? read_system_v4(serial::Reader* reader, serial::ReadContext* context) @p
     ParticleAuthoringV4* legacy = context.read_value(ParticleAuthoringV4, reader)!;
     ParticleAuthoring authoring = {
         .desc = particle_desc_from_v4(legacy.desc),
+        .emitting = legacy.emitting,
+    };
+
+    validate_system(&authoring, context)!;
+    attach_system(&authoring, context)!;
+}
+
+fn void? read_system_v5(serial::Reader* reader, serial::ReadContext* context) @private {
+    ParticleAuthoringV5* legacy = context.read_value(ParticleAuthoringV5, reader)!;
+    ParticleAuthoring authoring = {
+        .desc = particle_desc_from_v5(legacy.desc),
         .emitting = legacy.emitting,
     };
 

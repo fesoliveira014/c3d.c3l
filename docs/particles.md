@@ -133,8 +133,8 @@ integration and leave it with age equal to the clamped duration. Newborns with
 already-exhausted lifetime expire without a replacement in the same step. A
 zero-duration update consumes bursts and publishes age-zero particles.
 
-Velocity receives gravity, then drag toward wind; position uses that updated
-velocity. Expiry swap-removes every stream together. Equal seeds/configuration
+Velocity receives gravity, then drag toward the air velocity, which is wind plus
+[turbulence](#turbulence); position uses that updated velocity. Expiry swap-removes every stream together. Equal seeds/configuration
 and identical emitter-pose, delta and wind sequences replay identically within
 the same build. There is no cross-compiler/version bitwise guarantee.
 
@@ -419,6 +419,48 @@ Neighbouring cells meet at a texel boundary, so filtering can mix their colours.
 [edge rules](billboards.md#edges-and-mipmaps) apply: set `inset` to half a texel of the sheet, pad each cell of a
 mipmapped sheet with 2^(m-1) texels for m sampled levels, and expect no guarantee under anisotropic filtering.
 
+## Turbulence
+
+`ParticleSystemDesc.turbulence` adds a swirling, divergence-free air motion to the air that drag pulls particles
+toward. It is off while `strength` is 0. A `ParticleTurbulence` has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `strength` | Metres per second of air velocity at the first octave; 0 disables turbulence. |
+| `frequency` | Lattice cells per metre. |
+| `octaves` | 1 to `MAX_TURBULENCE_OCTAVES`. Each octave doubles the frequency and halves the speed. |
+| `period` | Lattice cells per tile, 1 to `MAX_TURBULENCE_PERIOD`. |
+| `scroll` | Metres per second that the pattern drifts; the pattern moves with `scroll`. |
+
+The field is the curl of three tiled 3D gradient (Perlin) potentials with a quintic fade and analytic derivatives, so
+it has no sources or sinks. The potentials read disjoint bits of one lattice hash. Octave k uses `period` x 2^k cells
+over the same length as the first, so every octave tiles. The first octave's root-mean-square speed is about
+`strength`; the sum of octaves is somewhat faster. Because the field is periodic, it repeats every
+`period` / `frequency` metres along each axis. Choose a period length that exceeds the extent of the effect, or the
+repeat shows.
+
+The sample point is `position` + `Scene.world_shift` - `scroll` x t, in double, where t is
+`ParticleSystem.turbulence_time`: the seconds the system has stepped, restarting at 0 whenever the system is created
+or read. The point is reduced modulo the period length in double and then evaluated in float. A particle at the same
+world point therefore sees the same air velocity before and after an origin rebase, up to the float rounding of its
+shifted position. `Scene.shift_particles` needs no further call.
+
+Drag blends the velocity toward `wind` + the turbulence velocity, by the same `min(1, drag x dt)` share as before.
+**A system with zero drag ignores turbulence** and wind alike. A higher drag follows the swirl more closely.
+The blend is convex, so turbulence alone never takes a particle faster than the air.
+
+The field takes no draw from the system's random stream and depends only on position and time, so equal seeds emit
+equal particles with or without turbulence, and replays repeat.
+
+`add_particle_system` and `attach_particle_system` fault `INVALID_ARGUMENT` for a `strength`, `frequency` or `scroll`
+value that is not finite, a negative `strength`, and, while `strength` is above 0, a `frequency` of 0 or less, an
+`octaves` outside 1 to `MAX_TURBULENCE_OCTAVES` and a `period` of 0 or above `MAX_TURBULENCE_PERIOD`. A disabled
+turbulence reads only the finiteness rules.
+
+Cost falls on `particle::update`, not on rendering, and grows linearly with the live particles and the octaves. Each
+octave is one curl evaluation per particle per step: eight lattice hashes and three analytic gradients. The tile
+reduction runs once per particle in double. A system with zero strength, or with zero drag, evaluates nothing.
+
 ## Example and measurements
 
 ```powershell
@@ -442,6 +484,11 @@ Each 64-texel cell holds one puff inside an 8-texel border at zero alpha, and th
 sheet follows the edge rules for four sampled mip levels. It applies to the window and to `--benchmark`, which can
 save the image with `--capture-rgba`. The inspector's smoke controls drive both smoke materials. The flag does not
 combine with `--stress`.
+
+`--embers` adds a system of rising additive embers whose drag follows a three-octave turbulence field that scrolls
+upward. It applies to the window, which shows the live count, and to `--benchmark`, which prints `embers,alive`. With
+`--stress` it gives the stress system the same turbulence, and each segment prints `turbulence_octaves`; run `--stress`
+with and without `--embers` to compare the update cost.
 
 `--collide` makes the sparks bounce on the ground plane and, through a physics
 ray cast, on a canopy and two crates that are static physics bodies. It applies
@@ -520,4 +567,4 @@ Windows.
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 5. Version 2 added `saturation`, version 3 added `sub_emitters`, `sub_emitter_count` and `max_events`, version 4 added `collision`, and version 5 adds `flipbook`; older payloads in both encodings read the defaults, which is no collision and no flipbook. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
+Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 6. Version 2 added `saturation`, version 3 added `sub_emitters`, `sub_emitter_count` and `max_events`, version 4 added `collision`, version 5 added `flipbook`, and version 6 adds `turbulence`; older payloads in both encodings read the defaults, which is no collision, no flipbook and no turbulence. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.

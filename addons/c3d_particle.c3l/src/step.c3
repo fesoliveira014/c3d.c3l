@@ -21,6 +21,7 @@ const uint SEED_BYTE_BITS @private = 8;
  @param emitter_world : "Published affine emitter matrix."
  @param dt : "Finite nonnegative seconds; capped at the maximum step."
  @param wind : "Finite world-space air velocity in metres per second."
+ @param world_shift : "Total origin shift; keeps turbulence fixed to world points."
  @require system.is_prepared()
  @require dt >= 0 && math::is_finite(dt)
  @require math::is_finite(wind.x) && math::is_finite(wind.y) && math::is_finite(wind.z)
@@ -30,8 +31,10 @@ fn void step(
     Mat4 emitter_world,
     float dt,
     Vec3 wind,
+    double[<3>] world_shift = {},
 ) {
     float seconds = math::min(dt, MAX_PARTICLE_STEP_SECONDS);
+    system.turbulence_time += seconds;
     uint index;
     while (index < system.alive) {
         system.age[index] += seconds;
@@ -61,9 +64,21 @@ fn void step(
 
     Vec3 acceleration_step = PARTICLE_GRAVITY * (system.desc.gravity_scale * seconds);
     float drag = math::min(1.0f, system.desc.drag * seconds);
+    bool turbulent = system.desc.turbulence.strength > 0 && drag > 0;
+    TurbulenceField field;
+    if (turbulent) {
+        field = turbulence_field(
+            turbulence: &system.desc.turbulence,
+            world_shift: world_shift,
+            time: system.turbulence_time,
+        );
+    }
+
     for (index = 0; index < system.alive; index++) {
         Vec3 velocity = system.velocity[index] + acceleration_step;
-        velocity = velocity * (1 - drag) + wind * drag;
+        Vec3 air = wind;
+        if (turbulent) air += turbulence_air_velocity(&field, system.position[index]);
+        velocity = velocity * (1 - drag) + air * drag;
         system.velocity[index] = velocity;
         system.position[index] += velocity * seconds;
         system.rotation[index] += system.spin[index] * seconds;
