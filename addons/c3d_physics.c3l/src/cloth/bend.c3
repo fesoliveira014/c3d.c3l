@@ -4,6 +4,8 @@ import c3d;
 import c3d::maths;
 import c3d::physics @public;
 import std::math;
+import std::time;
+import std::time::clock;
 
 const double MIN_HINGE_EDGE @local = 1e-8; // metres; a shorter hinge axis has no stable unit direction
 const double MIN_HINGE_GRADIENT @local = 1e-12; // rad^2/m^2 floor before XPBD scalar division
@@ -191,11 +193,21 @@ fn float? certify_hinge_path(
     Vec3[4] end_points,
     float last_angle,
 ) @private {
+    usz steps;
+    usz bisections;
+    uint phase = measure.path_phase;
+    bool moved;
+    defer {
+        measure.path_calls[phase]++;
+        measure.path_intervals[phase] += (long)steps;
+        measure.path_bisections[phase] += (long)bisections;
+        if (!moved) measure.path_unmoved[phase]++;
+    }
+
     double start_angle = evaluate_hinge_angle(start_points)!;
     double initial_offset = wrap_dihedral_angle(start_angle - (double)last_angle);
     if (math::abs(initial_offset) >= MAX_HINGE_START_OFFSET) return BEND_UNRESOLVED~;
 
-    bool moved;
     for (uint index = 0; index < 4; index++) {
         moved |= start_points[index] != end_points[index];
     }
@@ -204,7 +216,6 @@ fn float? certify_hinge_path(
     ContactInterval[MAX_HINGE_SUBDIVISIONS] stack;
     stack[0] = { .min = 0.0, .max = 1.0 };
     usz pending = 1;
-    usz steps;
     double previous_angle = start_angle;
     double total_turn;
     double min_area_squared = 4.0 * (double)MIN_TRIANGLE_AREA * (double)MIN_TRIANGLE_AREA;
@@ -257,6 +268,7 @@ fn float? certify_hinge_path(
 
         double midpoint = 0.5 * (span.min + span.max);
         if (midpoint <= span.min || midpoint >= span.max || pending + 2 > stack.len) return BEND_UNRESOLVED~;
+        bisections++;
         stack[pending++] = { .min = midpoint, .max = span.max };
         stack[pending++] = { .min = span.min, .max = midpoint };
     }
@@ -268,6 +280,7 @@ fn float? certify_hinge_path(
 
 fn void? project_dihedral_bends(ClothState* state, float dt) @private {
     if (!state.hinges.len) return;
+    measure.bend_passes++;
     double step_squared = (double)dt * (double)dt;
     double alpha_h = state.desc.bend_compliance > 0 ? (double)state.desc.bend_compliance / step_squared : 0.0;
 
@@ -336,10 +349,13 @@ fn void? project_dihedral_bends(ClothState* state, float dt) @private {
             end_points[corner] = rounded;
         }
 
+        time::Clock certify_started = clock::now();
+        measure.path_phase = MEASURE_PHASE_BENDS;
         if (catch certify_hinge_path(start_points, end_points, (float)unwrapped_angle)) {
             state.contact_result.stage = ClothContactStage.BEND;
             return BEND_UNRESOLVED~;
         }
+        measure_add(BEND_CERTIFY, certify_started);
 
         hinge.lambda = (float)next_lambda;
         for (uint corner = 0; corner < 4; corner++) {

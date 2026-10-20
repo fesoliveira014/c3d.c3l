@@ -1179,7 +1179,11 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
     prepare_publication(world, &staged, steps != 0)!;
 
     staged.contact_result.stage = ClothContactStage.PUBLICATION;
+    time::Clock local_started = clock::now();
     bool changed = stage_local_positions(&staged, owner.world, reseeded || staged.cut_applied_this_update)!;
+    measure_add(PUBLISH_LOCAL, local_started);
+    time::Clock roundtrip_started = clock::now();
+    measure.contact_scope = MEASURE_SCOPE_OTHER;
     usz unresolved = contact_pass(
         world:     world,
         state:     &staged,
@@ -1190,9 +1194,12 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
         staged.contact_result.stage = ClothContactStage.PUBLICATION;
         return CONTACT_PRECISION_EXCEEDED~;
     }
+    measure_add(PUBLISH_ROUNDTRIP, roundtrip_started);
 
     staged.contact_result.stage = ClothContactStage.MATERIAL;
+    time::Clock material_started = clock::now();
     stage_material_frames(&staged, changed)!;
+    measure_add(PUBLISH_MATERIAL, material_started);
     note_settling(
         world: world,
         state: &staged,
@@ -1204,7 +1211,9 @@ fn ClothUpdateKind? stage_crowd_slot(PhysicsWorld* world, ClothState* state, uin
     work.changed = changed;
     work.colors_changed = colors_changed;
 
+    time::Clock commit_started = clock::now();
     commit_cloth(state, &staged);
+    measure_add(PUBLISH_COMMIT, commit_started);
     state.local_bounds = staged.local_bounds;
     state.spans = staged.spans;
 

@@ -4,6 +4,8 @@ import c3d;
 import c3d::maths;
 import c3d::physics @public;
 import std::math;
+import std::time;
+import std::time::clock;
 
 <* Maximum accepted contact separation deficit, in metres. *>
 const float DEFAULT_CONTACT_TOLERANCE = 0.0001f;
@@ -143,9 +145,16 @@ fn usz? contact_pass(
     bool apply,
 ) @private {
     ClothContactResult* result = &state.contact_result;
+    ContactScopeMeasure* scope_measure = &measure.contact[measure.contact_scope];
+    scope_measure.passes++;
+    if (apply) scope_measure.applied_passes++;
+    time::Clock gather_started = clock::now();
     result.stage = ClothContactStage.CANDIDATES;
     usz candidates = physics::gather_cloth_candidates(world, state, positions)!;
     candidates = gather_self_candidates(state, positions, candidates)!;
+    scope_measure.gather_ns += (long)gather_started.to_now();
+    scope_measure.candidates += (long)candidates;
+    measure.timer_pairs++;
 
     result.stage = ClothContactStage.CONTACTS;
     result.max_residual = 0;
@@ -158,6 +167,7 @@ fn usz? contact_pass(
         result.peak_contacts = math::max(result.peak_contacts, (uint)count);
     }
 
+    time::Clock evaluate_started = clock::now();
     foreach (index, &candidate : state.candidates[:candidates]) {
         if (candidate.kind == SELF_VERTEX_FACE || candidate.kind == SELF_EDGE_EDGE) {
             double residual = self_contact_residual(state, candidate, positions)!;
@@ -193,8 +203,16 @@ fn usz? contact_pass(
             .corrected = projection.corrected,
         };
     }
+    scope_measure.evaluate_ns += (long)evaluate_started.to_now();
+    scope_measure.contacts += (long)count;
+    measure.timer_pairs++;
     if (!apply) return count;
 
+    time::Clock apply_started = clock::now();
+    defer {
+        scope_measure.apply_ns += (long)apply_started.to_now();
+        measure.timer_pairs++;
+    }
     if (state.desc.collisions.continuous) state.sweep_start[..] = positions[..];
     foreach (&contact : state.contacts[:count]) {
         ClothCandidate* candidate = &state.candidates[contact.candidate];

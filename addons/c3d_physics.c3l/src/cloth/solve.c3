@@ -5,6 +5,8 @@ import c3d::asset;
 import c3d::maths;
 import c3d::physics @public;
 import std::math;
+import std::time;
+import std::time::clock;
 
 const float MIN_CONSTRAINT_LENGTH @private = 1e-7f; // metres; a shorter pair separates along its rest direction
 
@@ -61,6 +63,10 @@ fn void? solve_cloth(
     float step_dt,
     uint steps,
 ) @private {
+    time::Clock solve_started = clock::now();
+    defer measure_add(SOLVE, solve_started);
+    measure.solves++;
+
     ClothDesc* desc = &state.desc;
     uint total = steps * desc.substeps;
     float dt = step_dt / (float)desc.substeps;
@@ -71,9 +77,15 @@ fn void? solve_cloth(
     prepare_body_motions(state, false)!;
 
     for (uint substep = 1; substep <= total; substep++) {
+        measure.substeps++;
         float previous_progress = (float)(substep - 1) / (float)total;
         float progress = (float)substep / (float)total;
+
+        time::Clock stage_started = clock::now();
         accumulate_wind(state, wind);
+        measure_add(WIND, stage_started);
+
+        stage_started = clock::now();
         foreach (index, position : state.positions) {
             if (state.inverse_masses[index] == 0) continue;
             Vec3 transport = substep_transport(
@@ -97,6 +109,9 @@ fn void? solve_cloth(
               ? state.pin_targets[slot]
               : state.pin_anchors[slot] + (state.pin_targets[slot] - state.pin_anchors[slot]) * progress;
         }
+        measure_add(PREDICT, stage_started);
+
+        stage_started = clock::now();
         filter_displacement(
             world: world,
             state: state,
@@ -105,16 +120,26 @@ fn void? solve_cloth(
             begin: (double)(substep - 1) / total,
             end: (double)substep / total,
         )!;
+        measure_add(FILTER_PRE, stage_started);
+
+        stage_started = clock::now();
+        measure.path_phase = MEASURE_PHASE_PRE;
         certify_hinge_step(
             state:           state,
             start_positions: state.positions,
             end_positions:   state.predicted,
             commit_angle:    false,
         )!;
+        measure_add(CERTIFY_PRE, stage_started);
+
+        stage_started = clock::now();
         place_shapes(state, (double)substep / total)!;
+        measure_add(PLACE_SHAPES, stage_started);
 
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
+            measure.iterations++;
             if (state.soft_attachments.len) {
+                stage_started = clock::now();
                 if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
                 project_soft_attachments(
                     state:         state,
@@ -130,8 +155,10 @@ fn void? solve_cloth(
                     begin:    (double)substep / total,
                     end:      (double)substep / total,
                 )!;
+                measure_add(SOFT, stage_started);
             }
 
+            stage_started = clock::now();
             if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
             project_constraints(state, state.edges, stretch);
             filter_displacement(
@@ -142,7 +169,9 @@ fn void? solve_cloth(
                 begin: (double)substep / total,
                 end: (double)substep / total,
             )!;
+            measure_add(EDGES, stage_started);
 
+            stage_started = clock::now();
             if (desc.collisions.continuous) state.sweep_start[..] = state.predicted[..];
             if (desc.bend_mode == DISTANCE) {
                 project_constraints(state, state.bends, bend);
@@ -157,12 +186,27 @@ fn void? solve_cloth(
                 begin: (double)substep / total,
                 end: (double)substep / total,
             )!;
+            measure_add(BENDS, stage_started);
 
+            stage_started = clock::now();
+            measure.contact_scope = MEASURE_SCOPE_ITERATION;
             (void)contact_pass(world: world, state: state, positions: state.predicted, apply: true)!;
+            measure_add(CONTACT_ITERATION, stage_started);
         }
 
+        stage_started = clock::now();
+        measure.contact_scope = MEASURE_SCOPE_RESOLVE;
         resolve_contacts(world, state, state.predicted)!;
+        measure.contact_scope = MEASURE_SCOPE_OTHER;
+        measure_add(RESOLVE, stage_started);
+
+        stage_started = clock::now();
+        measure.path_phase = MEASURE_PHASE_COMMIT;
         certify_hinge_step(state, state.positions, state.predicted)!;
+        measure.path_phase = MEASURE_PHASE_OTHER;
+        measure_add(CERTIFY_COMMIT, stage_started);
+
+        stage_started = clock::now();
         foreach (index, &position : state.positions) {
             Vec3 transport = substep_transport(
                 state:             state,
@@ -175,22 +219,29 @@ fn void? solve_cloth(
             state.velocities[index] = (state.predicted[index] - *position - transport) / dt;
             *position = state.predicted[index];
         }
+        measure_add(VELOCITY, stage_started);
 
+        stage_started = clock::now();
         evaluate_substep_cuts(
             world:   world,
             state:   state,
             substep: substep,
             total:   total,
         )!;
+        measure_add(CUTS, stage_started);
     }
 
+    time::Clock finish_started = clock::now();
     state.solved_reference[..] = state.current_reference[..];
     state.pin_anchors[..] = state.pin_targets[..];
     state.soft_anchors[..] = state.soft_targets[..];
     finish_body_poses(state);
+    measure_add(FINISH, finish_started);
 }
 
 fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved) @private {
+    time::Clock prepare_started = clock::now();
+    defer measure_add(PUBLISH_PREPARE, prepare_started);
     if (state.desc.collisions.continuous) {
         state.sweep_start[..] = (solved ? state.positions : state.published)[..];
         prepare_body_motions(state, !solved)!;
@@ -212,14 +263,24 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
         begin: solved ? 1 : 0,
         end: 1,
     )!;
+    time::Clock stage_started = clock::now();
     place_shapes(state, 1)!;
+    measure_add(PUBLISH_PLACE, stage_started);
+
+    stage_started = clock::now();
+    measure.contact_scope = MEASURE_SCOPE_OTHER;
     resolve_contacts(world, state, state.published)!;
+    measure_add(PUBLISH_RESOLVE, stage_started);
+
+    stage_started = clock::now();
+    measure.path_phase = MEASURE_PHASE_OTHER;
     certify_hinge_step(
         state:           state,
         start_positions: state.positions,
         end_positions:   state.published,
         commit_angle:    solved,
     )!;
+    measure_add(PUBLISH_CERTIFY, stage_started);
     foreach (&body : state.bodies) {
         if (!body.live) continue;
         body.published = body.current;

@@ -304,14 +304,21 @@ fn ClothUpdateKind? stage_ordinary_cloth(PhysicsWorld* world, ClothState* state,
     prepare_publication(world, &staged, steps != 0)!;
 
     staged.contact_result.stage = ClothContactStage.PUBLICATION;
+    time::Clock local_started = clock::now();
     bool changed = stage_local_positions(&staged, node.world, staged.cut_applied_this_update)!;
+    measure_add(PUBLISH_LOCAL, local_started);
+    time::Clock roundtrip_started = clock::now();
+    measure.contact_scope = MEASURE_SCOPE_OTHER;
     if (contact_pass(world: world, state: &staged, positions: staged.publication_roundtrip, apply: false)! != 0) {
         staged.contact_result.stage = ClothContactStage.PUBLICATION;
         return CONTACT_PRECISION_EXCEEDED~;
     }
+    measure_add(PUBLISH_ROUNDTRIP, roundtrip_started);
 
     staged.contact_result.stage = ClothContactStage.MATERIAL;
+    time::Clock material_started = clock::now();
     stage_material_frames(&staged, changed)!;
+    measure_add(PUBLISH_MATERIAL, material_started);
     note_settling(
         world: world,
         state: &staged,
@@ -322,7 +329,9 @@ fn ClothUpdateKind? stage_ordinary_cloth(PhysicsWorld* world, ClothState* state,
     work.changed = changed;
     work.reset_history = staged.cut_applied_this_update;
 
+    time::Clock commit_started = clock::now();
     commit_cloth(state, &staged);
+    measure_add(PUBLISH_COMMIT, commit_started);
     state.local_bounds = staged.local_bounds;
     state.spans = staged.spans;
 

@@ -1527,6 +1527,86 @@ fn void print_update_timings(
     io::printfn("state_bytes,%d,state_checksum,%x", totals.bytes, totals.checksum);
 }
 
+fn double measure_ms(long nanoseconds) @local => (double)nanoseconds / NANOSECONDS_PER_MILLISECOND / MEASURED_FRAMES;
+
+fn double measure_per_frame(long count) @local => (double)count / MEASURED_FRAMES;
+
+fn void print_measure(long pair_ns, double solve_stat_ms, double publish_stat_ms) @local {
+    cloth::ClothMeasure* m = &cloth::measure;
+    double solve_ms = measure_ms(m.ns[cloth::MeasureStage.SOLVE.ordinal]);
+    io::printfn("measure|frames|%d", MEASURED_FRAMES);
+    io::printfn("measure|clock_pair_ns|%d", pair_ns);
+    io::printfn("measure|query_bounds_ns|%d", physics::measure_query_bounds_cost());
+    io::printfn("measure|solve_stat_ms|%.4f|solve_timer_ms|%.4f|publish_stat_ms|%.4f", solve_stat_ms, solve_ms, publish_stat_ms);
+
+    cloth::MeasureStage[14] exclusive = {
+        WIND, PREDICT, FILTER_PRE, CERTIFY_PRE, PLACE_SHAPES, SOFT, EDGES, BENDS,
+        CONTACT_ITERATION, RESOLVE, CERTIFY_COMMIT, VELOCITY, CUTS, FINISH,
+    };
+    long exclusive_ns;
+    foreach (stage : exclusive) exclusive_ns += m.ns[stage.ordinal];
+
+    foreach (index, name : cloth::MEASURE_STAGE_NAMES) {
+        long nanoseconds = m.ns[index];
+        long calls = m.calls[index];
+        bool publish = index >= cloth::MeasureStage.PUBLISH_PREPARE.ordinal;
+        double reference_ms = publish ? publish_stat_ms : solve_ms;
+        double share = reference_ms > 0 ? measure_ms(nanoseconds) / reference_ms * 100 : 0;
+        io::printfn(
+            "measure|stage|%s|%.4f|%.2f|%.1f|%.4f",
+            name,
+            measure_ms(nanoseconds),
+            share,
+            measure_per_frame(calls),
+            measure_ms(calls * pair_ns),
+        );
+    }
+    double unaccounted_ms = solve_ms - measure_ms(exclusive_ns);
+    io::printfn("measure|stage|unaccounted in solve_cloth|%.4f|%.2f|0.0|0.0000", unaccounted_ms, unaccounted_ms / solve_ms * 100);
+
+    foreach (scope, c : m.contact) {
+        io::printfn(
+            "measure|contact|%s|gather_ms|%.4f|evaluate_ms|%.4f|apply_ms|%.4f|finite_ms|%.4f|ground_ms|%.4f|shape_setup_ms|%.4f|shape_loop_ms|%.4f|passes|%.1f|applied|%.1f|candidates|%.1f|contacts|%.1f|shape_tests|%.0f|ground_tests|%.0f",
+            cloth::MEASURE_SCOPE_NAMES[scope],
+            measure_ms(c.gather_ns),
+            measure_ms(c.evaluate_ns),
+            measure_ms(c.apply_ns),
+            measure_ms(c.finite_ns),
+            measure_ms(c.ground_ns),
+            measure_ms(c.setup_ns),
+            measure_ms(c.loop_ns),
+            measure_per_frame(c.passes),
+            measure_per_frame(c.applied_passes),
+            measure_per_frame(c.candidates),
+            measure_per_frame(c.contacts),
+            measure_per_frame(c.shape_tests),
+            measure_per_frame(c.ground_tests),
+        );
+    }
+    foreach (phase, name : cloth::MEASURE_PHASE_NAMES) {
+        double calls = measure_per_frame(m.path_calls[phase]);
+        io::printfn(
+            "measure|path|%s|calls|%.1f|unmoved|%.1f|intervals|%.1f|bisections|%.1f|intervals_per_moved_call|%.3f|bisections_per_moved_call|%.3f",
+            name,
+            calls,
+            measure_per_frame(m.path_unmoved[phase]),
+            measure_per_frame(m.path_intervals[phase]),
+            measure_per_frame(m.path_bisections[phase]),
+            (double)m.path_intervals[phase] / (double)math::max(1L, m.path_calls[phase] - m.path_unmoved[phase]),
+            (double)m.path_bisections[phase] / (double)math::max(1L, m.path_calls[phase] - m.path_unmoved[phase]),
+        );
+    }
+    io::printfn(
+        "measure|counts|solves|%.1f|substeps|%.1f|iterations|%.1f|bend_passes|%.1f|timer_pairs|%.1f|timer_overhead_ms|%.4f",
+        measure_per_frame(m.solves),
+        measure_per_frame(m.substeps),
+        measure_per_frame(m.iterations),
+        measure_per_frame(m.bend_passes),
+        measure_per_frame(m.timer_pairs),
+        measure_ms(m.timer_pairs * pair_ns),
+    );
+}
+
 // Steps the scene without a renderer, so rasteriser threads do not compete with the job pool.
 fn void? run_cpu_benchmark(Options options) @local {
     Demo demo;
@@ -1548,7 +1628,9 @@ fn void? run_cpu_benchmark(Options options) @local {
     double[MEASURED_FRAMES] publish_ms;
     double[MEASURED_FRAMES] stage_ms;
     double[MEASURED_FRAMES] commit_ms;
+    long pair_ns = cloth::measure_clock_pair_cost();
     for (uint frame = 0; frame < WARMUP_FRAMES + MEASURED_FRAMES; frame++) {
+        if (frame == WARMUP_FRAMES) cloth::measure = {};
         step_demo(&demo, STEP_SECONDS, (double)frame * STEP_SECONDS);
         if (frame < WARMUP_FRAMES) continue;
 
@@ -1576,6 +1658,7 @@ fn void? run_cpu_benchmark(Options options) @local {
         stage_ms:   stage_ms[..],
         commit_ms:  commit_ms[..],
     );
+    print_measure(pair_ns, mean(solve_ms[..]), mean(publish_ms[..]));
 }
 
 fn void? run_benchmark(Options options) @local {

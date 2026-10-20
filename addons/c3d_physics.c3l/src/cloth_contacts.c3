@@ -6,6 +6,8 @@ import c3d::physics::cloth;
 import c3d::scene;
 import std::math;
 import b3;
+import std::time;
+import std::time::clock;
 
 const b3::Transform CLOTH_IDENTITY @local = { .q = { .v = { 0, 0, 0, 1 } } };
 const uint CLOTH_HULL_TRIANGLES @local = 2 * b3::MAX_HULL_VERTICES;
@@ -159,6 +161,23 @@ fn usz? capture_cloth_shapes(
     return count;
 }
 
+fn long measure_query_bounds_cost() {
+    maths::Transform pose = maths::TRANSFORM_IDENTITY;
+    pose.position = { 0.3f, 0.1f, -0.2f };
+    pose.rotation.v = { 0.1f, 0.2f, 0.3f, 0.9f };
+    ContactFrame frame = contact_frame(pose, maths::TRANSFORM_IDENTITY)!!;
+    const long ROUNDS = 2_000_000;
+    float sink;
+    time::Clock begin = clock::now();
+    for (long round = 0; round < ROUNDS; round++) {
+        Vec3 point = { 0.4f + (float)(round & 255) * 0.001f, 0.5f, 0.1f };
+        maths::Aabb bounds = contact_query_bounds(&frame, point, 0.0201)!!;
+        sink += bounds.min.x;
+    }
+    long total = (long)begin.to_now();
+    return total / ROUNDS + (sink > 1e30f ? 1 : 0);
+}
+
 fn bool cloth_bounds_overlap(maths::Aabb first, maths::Aabb second) @local {
     for (uint axis = 0; axis < 3; axis++) {
         if (first.max[axis] < second.min[axis] || first.min[axis] > second.max[axis]) return false;
@@ -248,12 +267,17 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
         state.contact_result.peak_candidates = math::max(state.contact_result.peak_candidates, (uint)count);
     }
 
+    cloth::ContactScopeMeasure* scope_measure = &cloth::measure.contact[cloth::measure.contact_scope];
+    time::Clock finite_started = clock::now();
     double reach = (double)state.desc.thickness + state.desc.collisions.contact_tolerance;
     foreach (position : positions) {
         if (!contact_finite(position)) return cloth::CONTACT_PRECISION_EXCEEDED~;
     }
+    scope_measure.finite_ns += (long)finite_started.to_now();
 
+    time::Clock ground_started = clock::now();
     if (state.desc.collide_ground) {
+        scope_measure.ground_tests += (long)positions.len;
         foreach (index, position : positions) {
             double height = state.sweep_active ? state.sweep_bounds[index].min.y : position.y;
             if (height - state.desc.ground_height > reach) continue;
@@ -261,9 +285,11 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
             state.candidates[count++] = { .particle = (uint)index, .kind = ClothCandidateKind.GROUND };
         }
     }
+    scope_measure.ground_ns += (long)ground_started.to_now();
 
     foreach (shape_index, &shape : state.shapes) {
         if (!state.bodies[shape.body].live) continue;
+        time::Clock setup_started = clock::now();
 
         RigidBody* body = world.scene.get(world.scene.node(state.bodies[shape.body].owner), RigidBody);
         Collider* collider = &body.colliders[shape.collider];
@@ -281,6 +307,10 @@ fn usz? gather_cloth_candidates(PhysicsWorld* world, cloth::ClothState* state, V
         }
         if (shape.kind == HEIGHT_FIELD) height_field = collider.shape.height_field()!;
 
+        scope_measure.shape_tests += (long)positions.len;
+        time::Clock loop_started = clock::now();
+        scope_measure.setup_ns += (long)loop_started - (long)setup_started;
+        defer scope_measure.loop_ns += (long)loop_started.to_now();
         foreach (particle, position : positions) {
             maths::Aabb query = state.sweep_active
               ? cloth_swept_query_bounds(

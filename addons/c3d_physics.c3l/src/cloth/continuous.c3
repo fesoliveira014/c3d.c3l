@@ -4,6 +4,8 @@ import c3d;
 import c3d::maths;
 import c3d::physics @public;
 import std::math;
+import std::time;
+import std::time::clock;
 
 const double CLOTH_ADVANCE_FRACTION @local = 0.9;
 const double MIN_RESPONSE_SHARE @local = 0.25; // torn seams only; coincident seam halves stall on near-zero barycentric weights
@@ -609,6 +611,8 @@ fn void? filter_displacement(
     double end,
 ) @private {
     if (!state.desc.collisions.continuous) return;
+    time::Clock filter_started = clock::now();
+    defer measure_add(FILTER_ALL, filter_started);
     start_paths(
         state: state,
         start: start,
