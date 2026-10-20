@@ -600,9 +600,10 @@ spectrum reports 0.
 `Mesh.local_bounds` and of an ocean's node boxes (with its choppiness times it in x and z), and the reach that sets the
 [medium](#underwater)'s offset and the mirror's clip plane. It follows the spectrum the way the sea state does: while a
 blend runs it spans the larger of the two sides, and when the blend ends it falls to the new sea's, so a calm sea after
-a storm leaves the medium's top `MEDIUM_SKIN` under the rest plane and not under the storm's troughs. A crest above the
-envelope is possible but rare: the heights of the field are close to Gaussian, and five deviations is exceeded once in
-about 1.7 million points; the `Mesh.local_bounds` are what culling and shadows read.
+a storm leaves the medium's top `MEDIUM_SKIN` under the rest plane and not under the storm's troughs. The field repeats,
+so its 65,536 texels are every height the body draws (a bilinear sample stays between them), and the deepest of that many
+Gaussian samples is about `√(2 ln 65,536)` = 4.7 deviations: five spans it, though a seed whose deepest texel lies past
+five can pass the envelope. `Mesh.local_bounds` are what culling and shadows read.
 
 ## Ocean
 
@@ -979,7 +980,7 @@ store.
 | `set_sea_state` | `c3d::INVALID_ARGUMENT` | A non-finite wind, a negative or non-finite transition |
 | `set_sea_state` | `c3d::UNSUPPORTED` | A `SIMULATED` body, or `SPECTRAL` water that is still pending |
 | `water_gpu::update` | `c3d::CAPACITY_EXCEEDED` | The store has no room for the three compute stages |
-| `water_gpu::update` | the renderer's faults | Those of `Renderer.dispatch`, unchanged (`gpu::` faults among them, which the module does not name) |
+| `water_gpu::update` | those of `AssetStore.add_compute_shader` and `Renderer.dispatch` | Inherited unchanged, the `gpu::` faults among them |
 | `surface_view` | `c3d::INVALID_ID` | Dead entity, no water body, the owned material removed |
 | `sample_surface`, `sample_surface_detail`, `fluid_sample` | `NOT_FOUND` | The point's rest position lies outside the rest rectangle |
 

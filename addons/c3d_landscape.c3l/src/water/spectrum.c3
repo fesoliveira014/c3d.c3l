@@ -20,7 +20,7 @@ const uint SPECTRAL_TWIN_WAVES = 64; // 32 B and one sine each per query and vie
 <*
  Standard deviations of height a spectral surface's bounds and medium offset span.
 *>
-const float SPECTRAL_ENVELOPE_SIGMAS = 5; // the extremes of a Gaussian field rarely pass it; a lower value clips crests
+const float SPECTRAL_ENVELOPE_SIGMAS = 5; // the deepest of 65,536 Gaussian texels is about 4.7 sigma
 
 <*
  Standard deviations of the omitted components' height the twin's bound spans.
