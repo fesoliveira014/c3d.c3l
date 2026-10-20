@@ -12,7 +12,7 @@ import std::math;
 <*
  Gerstner waves one water body sums, at most.
 *>
-const uint MAX_WAVES = 4; // 32 B and one vertex term each; mirrored as WATER_MAX_WAVES in landscape/water_waves.glsl
+const uint MAX_WAVES = 8; // 32 B and one vertex term each; mirrored as WATER_MAX_WAVES in landscape/water_waves.glsl
 
 <*
  Horizontal step in metres under which a query's inversion stops.

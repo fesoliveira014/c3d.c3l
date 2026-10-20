@@ -3,7 +3,7 @@
 
 #include "constants.glsl"
 
-const uint WATER_MAX_WAVES = 4u; // mirrored as MAX_WAVES in water/water.c3
+const uint WATER_MAX_WAVES = 8u; // mirrored as MAX_WAVES in water/water.c3
 const uint WATER_MARCH = 1u; // mirrored as MARCH_FLAG in water/waves.c3
 const uint WATER_SIMULATED = 2u; // mirrored as SIMULATED_FLAG in water/waves.c3
 const uint WATER_SPECTRAL = 4u; // mirrored as SPECTRAL_FLAG in water/waves.c3

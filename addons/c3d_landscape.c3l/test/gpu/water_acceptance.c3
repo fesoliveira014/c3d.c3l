@@ -140,17 +140,25 @@ const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with default_wa
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
     { .amplitude = 0.07f, .wavelength = 3.5f, .speed = 0.9f, .direction = { 0.6f, 0.8f }, .steepness = 0.5f },
 };
-const Wave[4] CHOPPY_WAVES @local = {
+const Wave[8] CHOPPY_WAVES @local = {
     { .amplitude = 0.35f, .wavelength = 12, .speed = 2.5f, .direction = { 1, 0 }, .steepness = 0.8f },
     { .amplitude = 0.2f, .wavelength = 7, .speed = 1.9f, .direction = { 0.8f, 0.6f }, .steepness = 0.8f },
     { .amplitude = 0.12f, .wavelength = 4, .speed = 1.4f, .direction = { 0.28f, 0.96f }, .steepness = 0.8f },
     { .amplitude = 0.06f, .wavelength = 2, .speed = 1.0f, .direction = { -0.6f, 0.8f }, .steepness = 0.8f },
+    { .amplitude = 0.25f, .wavelength = 9.3f, .speed = 2.2f, .direction = { 0.9511f, -0.309f }, .steepness = 0.8f },
+    { .amplitude = 0.16f, .wavelength = 5.3f, .speed = 1.7f, .direction = { 0.342f, 0.9397f }, .steepness = 0.8f },
+    { .amplitude = 0.09f, .wavelength = 3.1f, .speed = 1.3f, .direction = { -0.9397f, 0.342f }, .steepness = 0.8f },
+    { .amplitude = 0.045f, .wavelength = 2.6f, .speed = 1.1f, .direction = { 0.866f, -0.5f }, .steepness = 0.8f },
 };
-const Wave[4] SWIFT_WAVES @local = { // fast enough that each frame moves the crest shift by several pixels
+const Wave[8] SWIFT_WAVES @local = { // fast enough that each frame moves the crest shift by several pixels
     { .amplitude = 0.3f, .wavelength = 8, .speed = 10, .direction = { 1, 0 }, .steepness = 0.5f },
     { .amplitude = 0.2f, .wavelength = 6, .speed = 8, .direction = { 0.8f, 0.6f }, .steepness = 0.5f },
     { .amplitude = 0.12f, .wavelength = 5, .speed = 7, .direction = { 0.28f, 0.96f }, .steepness = 0.5f },
     { .amplitude = 0.06f, .wavelength = 4, .speed = 6, .direction = { -0.6f, 0.8f }, .steepness = 0.5f },
+    { .amplitude = 0.22f, .wavelength = 7, .speed = 9, .direction = { 0.9511f, -0.309f }, .steepness = 0.5f },
+    { .amplitude = 0.15f, .wavelength = 5.5f, .speed = 7.5f, .direction = { 0.342f, 0.9397f }, .steepness = 0.5f },
+    { .amplitude = 0.09f, .wavelength = 4.5f, .speed = 6.5f, .direction = { -0.9397f, 0.342f }, .steepness = 0.5f },
+    { .amplitude = 0.05f, .wavelength = 3.5f, .speed = 5.5f, .direction = { 0.866f, -0.5f }, .steepness = 0.5f },
 };
 const Wave RUNNING_WAVE @local = {
     .amplitude  = 0.3f,
@@ -477,6 +485,7 @@ fn void check_twin(
     Wave[] waves,
     bool sea_state = false,
     bool ocean = false,
+    Vec2 sea_wind = {},
 ) @local {
     WaterDesc desc = surface_desc(waves, TWIN_EXTENT, TWIN_CELL_SIZE);
     if (ocean) desc.mode = OCEAN;
@@ -503,6 +512,17 @@ fn void check_twin(
         update_water(fixture, TWIN_TIMES[0]); // the switch, then the update that settles it
         update_water(fixture, TWIN_TIMES[0]);
     }
+    if (sea_wind.x != 0 || sea_wind.y != 0) {
+        water::set_sea_state(
+            scene:              &fixture.scene,
+            assets:             &fixture.assets,
+            node:               water_node.id,
+            wind_velocity:      sea_wind,
+            transition_seconds: 0,
+        )!!;
+        update_water(fixture, TWIN_TIMES[0]);
+        update_water(fixture, TWIN_TIMES[0]);
+    }
     SurfaceView surface = water::surface_view(&fixture.scene, &fixture.assets, water_node.id)!!;
 
     int[<2>][TWIN_GRID * TWIN_GRID + 1] pixels;
@@ -514,6 +534,8 @@ fn void check_twin(
     }
     pixels[TWIN_GRID * TWIN_GRID] = { centre, centre };
 
+    float twin_worst;
+    uint twin_samples;
     foreach (time : TWIN_TIMES) {
         float resting = water::sample_surface(view: &surface, world_x: 0, world_z: 0, time: time)!!;
         float bottom = resting - POST_SUBMERSION;
@@ -548,6 +570,8 @@ fn void check_twin(
                 time:    time,
             )!!;
             assert(math::abs(drawn.y - twin) <= SURFACE_TOLERANCE, "drawn %f, twin %f at %f s", drawn.y, twin, time);
+            twin_worst = math::max(twin_worst, math::abs(drawn.y - twin));
+            twin_samples++;
         }
         // The centre ray meets the surface at the post's axis: the waterline its fraction implies.
         Vec3 axis = unproject(
@@ -559,6 +583,7 @@ fn void check_twin(
         float waterline = bottom + fraction * 2 * POST_HALF_EXTENTS.y;
         assert(math::abs(axis.y - waterline) <= SURFACE_TOLERANCE, "drawn %f, waterline %f", axis.y, waterline);
     }
+    io::printfn("twin: %d waves, ocean %s, %d samples, worst |drawn - twin| %.6f m", (int)waves.len, ocean, (int)twin_samples, twin_worst);
     check_validation(&fixture.renderer);
 }
 
@@ -569,6 +594,14 @@ fn void test_drawn_surface_matches_the_cpu_twin() @test {
     check_twin(&fixture, EXAMPLE_WAVES[..]);
     check_twin(&fixture, CHOPPY_WAVES[..]);
     check_twin(&fixture, EXAMPLE_WAVES[..], sea_state: true);
+}
+
+fn void test_eight_wave_sea_state_matches_the_cpu_twin() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    check_twin(&fixture, EXAMPLE_WAVES[..], sea_wind: { 6, 10.4f });
+    check_twin(&fixture, EXAMPLE_WAVES[..], ocean: true, sea_wind: { 6, 10.4f });
 }
 
 fn void test_drawn_ocean_matches_the_cpu_twin() @test {

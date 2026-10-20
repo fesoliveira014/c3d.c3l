@@ -78,7 +78,13 @@ const SeaBand[MAX_WAVES] SEA_BANDS @private = {
     { .wavelength_share = 0.5f, .amplitude_share = 0.18f, .spread_degrees = 20 },
     { .wavelength_share = 0.25f, .amplitude_share = 0.12f, .spread_degrees = -30 },
     { .wavelength_share = 0.125f, .amplitude_share = 0.08f, .spread_degrees = 45 },
+    { .wavelength_share = 0.76f, .amplitude_share = 0.13f, .spread_degrees = -11 },
+    { .wavelength_share = 0.39f, .amplitude_share = 0.09f, .spread_degrees = 33 },
+    { .wavelength_share = 0.31f, .amplitude_share = 0.08f, .spread_degrees = -48 },
+    { .wavelength_share = 0.22f, .amplitude_share = 0.06f, .spread_degrees = 60 },
 };
+
+const uint SEA_ORIGINAL_BANDS @private = 4; // the bands before the extra four; their crest shift is held
 
 <*
  Set a water body's waves to the sea the wind raises, blended over a time.
@@ -239,8 +245,9 @@ fn Wave[MAX_WAVES] sea_waves(
 
     float lift = 1;
     if (sea_debug.ratio_floor && peak_wavelength > 0) {
-        float shortest_band = SEA_BANDS[MAX_WAVES - 1].wavelength_share * peak_wavelength / horizontal_scale;
-        lift = max(1.0f, shortest / shortest_band);
+        float shortest_share = 1;
+        foreach (band : SEA_BANDS) shortest_share = min(shortest_share, band.wavelength_share);
+        lift = max(1.0f, shortest / (shortest_share * peak_wavelength / horizontal_scale));
     }
 
     Wave[MAX_WAVES] waves;
@@ -254,8 +261,25 @@ fn Wave[MAX_WAVES] sea_waves(
         wave.speed = math::sqrt(SEA_GRAVITY * wave.wavelength / (2 * (float)math::PI * horizontal_scale));
         wave.direction = { math::cos(angle), math::sin(angle) };
         wave.steepness = SEA_CHOP * 2 * (float)math::PI * MAX_WAVES * wave.amplitude / wave.wavelength;
-        wave.steepness = min(wave.steepness, SEA_STEEPNESS_LIMIT);
+        wave.steepness = min(wave.steepness, SEA_STEEPNESS_LIMIT * MAX_WAVES / SEA_ORIGINAL_BANDS);
         if (sea_debug.no_chop) wave.steepness = 0;
+    }
+
+    // The mean over the waves stays below the cusp: the extra bands take what the original four leave.
+    float original_sum;
+    float extra_sum;
+    foreach (index, &wave : waves) {
+        if (index < SEA_ORIGINAL_BANDS) {
+            original_sum += wave.steepness;
+        } else {
+            extra_sum += wave.steepness;
+        }
+    }
+    float room = max(SEA_STEEPNESS_LIMIT * MAX_WAVES - original_sum, 0.0f);
+    if (extra_sum > room) {
+        foreach (index, &wave : waves) {
+            if (index >= SEA_ORIGINAL_BANDS) wave.steepness *= room / extra_sum;
+        }
     }
     return waves;
 }

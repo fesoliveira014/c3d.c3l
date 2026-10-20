@@ -50,7 +50,7 @@ struct WaterParams @private {
     Vec2               _pad0;
 }
 
-$assert WaterParams::size == 352;
+$assert WaterParams::size == 608;
 
 <*
  World-space copy of one water body's waves and pose at the moment it was taken.

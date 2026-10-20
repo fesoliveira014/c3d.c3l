@@ -111,12 +111,13 @@ fn WaterDesc sea_desc(float extent) @local {
 
 fn WaterDesc choppy_desc(float steepness) @local {
     WaterDesc desc = calm_desc();
-    desc.waves = {
+    Wave[4] choppy = {
         { .amplitude = 0.35f, .wavelength = 12, .speed = 2.5f, .direction = { 1, 0 }, .steepness = steepness },
         { .amplitude = 0.2f, .wavelength = 7, .speed = 1.9f, .direction = { 0.8f, 0.6f }, .steepness = steepness },
         { .amplitude = 0.12f, .wavelength = 4, .speed = 1.4f, .direction = { 0.28f, 0.96f }, .steepness = steepness },
         { .amplitude = 0.06f, .wavelength = 2, .speed = 1.0f, .direction = { -0.6f, 0.8f }, .steepness = steepness },
     };
+    desc.waves[:4] = choppy[..];
     desc.wave_count = 4;
     return desc;
 }
