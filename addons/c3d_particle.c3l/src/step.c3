@@ -77,6 +77,7 @@ fn void step(
             index++;
         }
     }
+    collide(system, seconds);
     system.event_due = system.event_count;
 }
 
