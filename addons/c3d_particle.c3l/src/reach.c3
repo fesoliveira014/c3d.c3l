@@ -163,11 +163,7 @@ fn Aabb ParticleReach.trail_bound(&self, ParticleSystemDesc* desc) {
     return { .min = bound.min - margin, .max = bound.max + margin };
 }
 
-<*
- Distance from the origin to the farthest corner of the bound.
- @pure
-*>
-fn float bound_radius(Aabb bounds) {
+fn float bound_radius(Aabb bounds) @private {
     return math::max(math::abs(bounds.min), math::abs(bounds.max)).length();
 }
 

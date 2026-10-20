@@ -122,7 +122,8 @@ fn void test_mesh_bound_holds_the_corners_of_every_instance() @test {
     );
     particle::update(&scene, REACH_STEP_SECONDS);
 
-    Aabb bound = reach.bound(&desc, particle::bound_radius(geometry_bounds));
+    float radius = geometry_bounds.max.length(); // the bounds are symmetric about the origin
+    Aabb bound = reach.bound(&desc, radius);
     InstancedMesh* batch = scene.get(scene.node(system.draw_node), InstancedMesh);
     assert(batch.count == desc.capacity);
     foreach (transform : batch.transforms[:batch.count]) {
