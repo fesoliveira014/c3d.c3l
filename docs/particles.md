@@ -120,9 +120,10 @@ emitter motion does not carry existing particles.
 - CONE samples a disk at local Y=0 and a uniform solid angle about +Y.
 
 Rate emission retains a fractional accumulator. Bursts are queued and remain
-effective while `emitting` is false. Full pools skip requests and accumulate
-`dropped`; the counters saturate instead of wrapping. Dropped requests do not
-consume PRNG draws and never cause work proportional to their count.
+effective while `emitting` is false. A request past the free capacity follows the
+[saturation policy](#saturation). Refused requests accumulate in `dropped`; the
+counters saturate instead of wrapping. Refused requests do not consume PRNG
+draws and never cause work proportional to their count.
 
 Each update clamps simulated time to 0.1 seconds, expiring existing particles
 before accepting emission. Accepted newborns participate in that step's
@@ -143,6 +144,37 @@ fraction for the RGBA lerp between `color_min` and `color_max`, then the result
 is multiplied by the eight-sample colour table. Colour endpoints may descend
 in any channel; each endpoint still requires nonnegative finite RGB and alpha
 in [0,1]. Scalar and colour tables linearly interpolate normalized age/lifetime.
+
+## Saturation
+
+`ParticleSystemDesc.saturation` selects what a step does when the burst and rate
+requests exceed the free capacity.
+
+- `REFUSE`, the default, emits what fits. The rest is refused and counted in
+  `dropped`.
+- `DROP_OLDEST` evicts the oldest live particles to make room, then emits.
+
+A step runs in this order: expire, compute the request (queued bursts plus rate
+credit), evict, emit. Under `DROP_OLDEST` with `alive + request > capacity`, the
+step evicts `min(alive, alive + request - capacity)` particles with the smallest
+`ParticleSystem.spawn` values. Each particle takes its spawn value from the
+system's `next_spawn` counter at birth, so values are unique and "oldest" has no
+ties. Particles born in the step do not exist yet when eviction runs, so same-step
+births are never evicted. A request larger than the capacity still emits
+`capacity` particles and refuses the excess into `dropped`.
+
+`dropped` counts requested particles that were refused for lack of room.
+`evicted` counts live particles removed to make room. Both are cumulative, start
+at zero, saturate instead of wrapping, and restart when a system is read from
+serialized data. Neither eviction nor refusal consumes PRNG draws, so emission
+draws are the same under both policies.
+
+Eviction runs only on a saturated step and selects the victims in one pass over
+the pool. The pivot is the median of three fixed slots, never random, so equal
+seeds and call sequences evict the same particles and leave the same pool. The
+selection reorders the pool in place; pool order carries no meaning, as expiry
+already swap-removes. The `spawn` stream adds 8 bytes per particle to the pool
+under either policy.
 
 ## Draw modes and materials
 
@@ -172,7 +204,7 @@ volume. Fog uses `apply_material_fog` before coverage is premultiplied exactly
 once. ADDITIVE adds coverage-scaled RGB and preserves destination alpha.
 
 Simulation is inline, with no allocation during normal step/update. The pool is
-one aligned allocation of eight capacity-sized streams; core separately owns
+one aligned allocation of nine capacity-sized streams; core separately owns
 draw arrays and persistent GPU records. GPU simulation, collision, ribbons,
 flipbooks, sub-emitters, serialization and parallel execution are outside this
 delivery. Core billboard material restrictions are documented separately.
@@ -204,6 +236,12 @@ advances the batch revision, so the bounds measurement rebuilds it. Packing
 writes a preallocated CPU array; upload and GPU execution are excluded. The
 printed checksum consumes bounds and packed output. `--stress` and
 `--benchmark` are separate modes.
+
+`--stress` prints two segments. `stress` is the full pool with no emission;
+`saturated` is the same pool with a rate that requests a tenth of the capacity
+every step. Each segment reports `refused` (the system's `dropped`) and `evicted`.
+`--drop-oldest` selects `DROP_OLDEST` for both segments; the default is `REFUSE`.
+Only the `saturated` segment differs between the two policies.
 
 The headless benchmark uses one 1920x1080 display-output view without AA, 60
 rendered warm-up frames and 300 measured frames per segment. Active simulation
@@ -257,4 +295,4 @@ Windows.
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
+Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 2, which adds `saturation`; version 1 payloads in both encodings read `REFUSE`. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.

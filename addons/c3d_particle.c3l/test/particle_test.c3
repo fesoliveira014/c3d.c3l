@@ -22,6 +22,14 @@ fn ParticleSystemDesc quiet_desc(uint capacity = 16) @local {
     return desc;
 }
 
+const usz SPAWN_RANGE @local = 64;
+
+fn bool[SPAWN_RANGE] live_spawn_indices(ParticleSystem* system) @local {
+    bool[SPAWN_RANGE] live;
+    foreach (spawn : system.spawn[:system.alive]) live[spawn] = true;
+    return live;
+}
+
 fn void test_initial_colors_share_one_fraction_between_palette_endpoints() @test {
     Vec4[2] first = { { 1, 0, 0, 1 }, { 1, 0.2f, 0, 0.25f } };
     Vec4[2] last = { { 0, 0, 1, 1 }, { 0.1f, 0.8f, 1, 0.9f } };
@@ -98,6 +106,86 @@ fn void test_capacity_overflow_does_not_wrap_or_iterate_dropped_requests() @test
     ParticleSystem* saturated = scene.get(fast, ParticleSystem);
     assert(saturated.alive == 2 && saturated.dropped == ulong::max);
     assert(saturated.emit_accumulator >= 0 && saturated.emit_accumulator < 1);
+}
+
+fn void test_drop_oldest_evicts_the_k_oldest() @test {
+    Scene scene = make_scene();
+    defer scene::destroy_scene(&scene);
+    ParticleSystemDesc desc = quiet_desc(16);
+    desc.saturation = DROP_OLDEST;
+    Node* emitter = scene.add_particle_system(desc)!!;
+    scene.update_world();
+    ParticleSystem* system = scene.get(emitter, ParticleSystem);
+
+    system.emit_burst(16);
+    particle::update(&scene, 0.01f);
+    assert(system.alive == 16 && system.evicted == 0);
+
+    system.emit_burst(6);
+    particle::update(&scene, 0.01f);
+    bool[SPAWN_RANGE] live = live_spawn_indices(system);
+    assert(system.alive == 16 && system.evicted == 6 && system.dropped == 0);
+    for (usz spawn = 0; spawn < SPAWN_RANGE; spawn++) assert(live[spawn] == (spawn >= 6 && spawn < 22));
+
+    system.emit_burst(5);
+    particle::update(&scene, 0.01f);
+    live = live_spawn_indices(system);
+    assert(system.alive == 16 && system.evicted == 11 && system.dropped == 0);
+    for (usz spawn = 0; spawn < SPAWN_RANGE; spawn++) assert(live[spawn] == (spawn >= 11 && spawn < 27));
+}
+
+fn void test_drop_oldest_keeps_same_step_births() @test {
+    Scene scene = make_scene();
+    defer scene::destroy_scene(&scene);
+    ParticleSystemDesc desc = quiet_desc(8);
+    desc.saturation = DROP_OLDEST;
+    Node* emitter = scene.add_particle_system(desc)!!;
+    scene.update_world();
+    ParticleSystem* system = scene.get(emitter, ParticleSystem);
+
+    system.emit_burst(8);
+    particle::update(&scene, 0.01f);
+    system.emit_burst(20);
+    particle::update(&scene, 0.01f);
+
+    bool[SPAWN_RANGE] live = live_spawn_indices(system);
+    assert(system.alive == 8 && system.evicted == 8 && system.dropped == 12);
+    for (usz spawn = 0; spawn < SPAWN_RANGE; spawn++) assert(live[spawn] == (spawn >= 8 && spawn < 16));
+    foreach (age : system.age[:system.alive]) assert(math::abs(age - 0.01f) < TOLERANCE);
+}
+
+fn void test_drop_oldest_is_deterministic() @test {
+    Scene scene = make_scene();
+    defer scene::destroy_scene(&scene);
+    ParticleSystemDesc desc = quiet_desc(32);
+    desc.saturation = DROP_OLDEST;
+    desc.seed = 9;
+    desc.shape = EmitterShape.SPHERE;
+    desc.rate = 900;
+    desc.lifetime = { .min = 0.05f, .max = 0.4f };
+    desc.speed = { .min = 1, .max = 3 };
+    Node* first = scene.add_particle_system(desc)!!;
+    Node* second = scene.add_particle_system(desc)!!;
+    ParticleSystem* one = scene.get(first, ParticleSystem);
+    ParticleSystem* two = scene.get(second, ParticleSystem);
+    scene.update_world();
+
+    for (uint frame = 0; frame < 60; frame++) {
+        if (frame % 7 == 0) {
+            one.emit_burst(40);
+            two.emit_burst(40);
+        }
+        particle::update(&scene, 0.01f);
+    }
+
+    assert(one.evicted > 0 && one.dropped > 0);
+    assert(one.alive == two.alive && one.evicted == two.evicted && one.dropped == two.dropped);
+    assert(one.next_spawn == two.next_spawn);
+    for (uint index = 0; index < one.alive; index++) {
+        assert(one.position[index] == two.position[index] && one.velocity[index] == two.velocity[index]);
+        assert(one.age[index] == two.age[index] && one.lifetime[index] == two.lifetime[index]);
+        assert(one.seed[index] == two.seed[index] && one.spawn[index] == two.spawn[index]);
+    }
 }
 
 fn void test_expiry_reuses_slots_before_accepting_a_burst() @test {

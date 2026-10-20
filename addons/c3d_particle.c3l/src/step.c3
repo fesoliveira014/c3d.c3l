@@ -40,13 +40,15 @@ fn void step(
             index++;
         }
     }
-    uint survivors = system.alive;
     if (system.emitting) system.emit_accumulator += (double)system.desc.rate * seconds;
     double whole = math::floor(system.emit_accumulator);
     system.emit_accumulator -= whole;
     // A finite float rate over a clamped step fits uint128 before telemetry saturates.
     uint128 requested = (uint128)whole + system.pending_burst;
     system.pending_burst = 0;
+
+    if (system.desc.saturation == ParticleSaturation.DROP_OLDEST) evict_oldest(system, requested);
+    uint survivors = system.alive;
     uint emitted = (uint)math::min(requested, (uint128)(system.desc.capacity - system.alive));
     uint128 dropped = (uint128)system.dropped + requested - emitted;
     system.dropped = dropped > ulong::max ? ulong::max : (ulong)dropped;
@@ -125,6 +127,7 @@ fn void emit_particle(ParticleSystem* system, Mat4 emitter_world) @private {
     system.rotation[index] = sample_range(random, desc.rotation);
     system.spin[index] = sample_range(random, desc.spin);
     system.seed[index] = random.next_int();
+    system.spawn[index] = system.next_spawn++;
 }
 
 fn void remove_particle(ParticleSystem* system, uint index) @private {
@@ -137,6 +140,72 @@ fn void remove_particle(ParticleSystem* system, uint index) @private {
     system.rotation[index] = system.rotation[last];
     system.spin[index] = system.spin[last];
     system.seed[index] = system.seed[last];
+    system.spawn[index] = system.spawn[last];
+}
+
+fn void swap_particles(ParticleSystem* system, uint first, uint second) @private {
+    @swap(system.position[first], system.position[second]);
+    @swap(system.velocity[first], system.velocity[second]);
+    @swap(system.age[first], system.age[second]);
+    @swap(system.lifetime[first], system.lifetime[second]);
+    @swap(system.size[first], system.size[second]);
+    @swap(system.rotation[first], system.rotation[second]);
+    @swap(system.spin[first], system.spin[second]);
+    @swap(system.seed[first], system.seed[second]);
+    @swap(system.spawn[first], system.spawn[second]);
+}
+
+fn uint median_spawn_index(ParticleSystem* system, uint low, uint high) @private {
+    uint middle = low + (high - low) / 2;
+    ulong first = system.spawn[low];
+    ulong second = system.spawn[middle];
+    ulong third = system.spawn[high];
+    if (first < second) {
+        if (second < third) return middle;
+        return first < third ? high : low;
+    }
+    if (first < third) return low;
+    return second < third ? high : middle;
+}
+
+// The pool has no scratch stream, so the selection permutes the pool; order carries no meaning.
+// The pivot is the median of three fixed slots, never random, so equal inputs leave equal pools.
+fn void gather_oldest(ParticleSystem* system, uint count) @private {
+    uint target = count - 1;
+    uint low;
+    uint high = system.alive - 1;
+
+    while (low < high) {
+        swap_particles(system, median_spawn_index(system, low, high), high);
+        ulong pivot = system.spawn[high];
+        uint boundary = low;
+
+        for (uint index = low; index < high; index++) {
+            if (system.spawn[index] < pivot) {
+                swap_particles(system, index, boundary);
+                boundary++;
+            }
+        }
+        swap_particles(system, boundary, high);
+
+        if (boundary == target) return;
+        if (boundary < target) {
+            low = boundary + 1;
+        } else {
+            high = boundary - 1;
+        }
+    }
+}
+
+fn void evict_oldest(ParticleSystem* system, uint128 requested) @private {
+    uint free_slots = system.desc.capacity - system.alive;
+    if (requested <= free_slots) return;
+
+    uint count = (uint)math::min(requested - free_slots, (uint128)system.alive);
+    if (count < system.alive) gather_oldest(system, count);
+    for (uint index = count; index > 0; index--) remove_particle(system, index - 1);
+
+    system.evicted = system.evicted > ulong::max - count ? ulong::max : system.evicted + count;
 }
 
 fn uint color_hash(uint value) @private {
