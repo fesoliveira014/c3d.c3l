@@ -8,7 +8,49 @@ import c3d::physics::cloth @public;
 import c3d::scene;
 import c3d::serial;
 
+const ulong CLOTH_V9_LAYOUT @private = 0xa7a4b4ead690fe09;
+const ulong CLOTH_LAYOUT @private = 0x5a53ac770bf406a5;
+
 struct ClothSavedAuthoring @private {
+    uint substeps;
+    uint iterations;
+    float stretch_stiffness;
+    float bend_stiffness;
+    float damping;
+    float thickness;
+    float gravity_scale;
+    uint[] pins;
+    bool collide_ground;
+    float ground_height;
+    serial::NodeReference[] colliders;
+    float contact_tolerance;
+    uint contact_iterations;
+    uint max_shapes;
+    uint max_candidates;
+    uint max_contacts;
+    bool self_collision;
+    ClothSeam[] seams;
+    bool continuous;
+    uint max_ccd_iterations;
+    uint[] render_particles;
+    bool tangent_frame;
+    uint tangent_uv_set;
+    ClothAttachment[] attachments;
+    ClothBendMode bend_mode;
+    float bend_compliance;
+    ClothRestAngle[] rest_angles;
+    float[] transport;
+    ClothCutPath[] cuts;
+    ClothTearLimits tears;
+    float sleep_speed;
+    uint sleep_steps;
+    float density;
+    float drag_coefficient;
+    float lift_coefficient;
+    ClothExecution execution;
+}
+
+struct ClothSavedAuthoringV9 @private {
     uint substeps;
     uint iterations;
     float stretch_stiffness;
@@ -46,7 +88,10 @@ struct ClothSavedAuthoring @private {
     float lift_coefficient;
 }
 
-uint[8] cloth_text_default_versions @private = { 1, 2, 3, 4, 5, 6, 7, 8 };
+serial::BinaryCompatibility[1] cloth_binary_compatibility @private = {
+    { .version = 9, .read = &read_cloth_v9 },
+};
+uint[9] cloth_text_default_versions @private = { 1, 2, 3, 4, 5, 6, 7, 8, 9 };
 
 fn void? register_cloth_codec() @private {
     describe::register_reflected(ClothSeam)!;
@@ -54,6 +99,7 @@ fn void? register_cloth_codec() @private {
     describe::register_reflected(ClothRestAngle)!;
     describe::register_reflected(ClothCutPath)!;
     describe::register_reflected(ClothTearLimits)!;
+    describe::register_reflected(ClothSavedAuthoringV9)!;
     describe::register_reflected(ClothSavedAuthoring)!;
     serial::register_described_type(
         $Type: ClothSeam,
@@ -86,9 +132,15 @@ fn void? register_cloth_codec() @private {
         defaults: &defaults_cloth_tear_limits,
     )!;
     serial::register_described_type(
-        $Type: ClothSavedAuthoring,
+        $Type: ClothSavedAuthoringV9,
         version: 9,
-        layout: 0xa7a4b4ead690fe09,
+        layout: CLOTH_V9_LAYOUT,
+        defaults: &defaults_cloth_authoring_v9,
+    )!;
+    serial::register_described_type(
+        $Type: ClothSavedAuthoring,
+        version: 10,
+        layout: CLOTH_LAYOUT,
         defaults: &defaults_cloth_authoring,
     )!;
     serial::register_described_owner(Cloth, ClothSavedAuthoring, {
@@ -98,6 +150,7 @@ fn void? register_cloth_codec() @private {
         .project = &project_cloth,
         .validate = &validate_cloth,
         .attach = &attach_cloth,
+        .binary_compatibility = cloth_binary_compatibility[..],
         .text_default_versions = cloth_text_default_versions[..],
     })!;
     serial::register_transient(ClothOutput, &collect_cloth_output)!;
@@ -123,44 +176,12 @@ fn void defaults_cloth_tear_limits(void* value) @private {
     *(ClothTearLimits*)value = cloth::default_cloth_tear_limits();
 }
 
+fn void defaults_cloth_authoring_v9(void* value) @private {
+    *(ClothSavedAuthoringV9*)value = cloth_saved_v9(cloth::default_cloth_desc(), {});
+}
+
 fn void defaults_cloth_authoring(void* value) @private {
-    ClothDesc desc = cloth::default_cloth_desc();
-    ClothSavedAuthoring* authoring = value;
-    *authoring = {
-        .substeps = desc.substeps,
-        .iterations = desc.iterations,
-        .stretch_stiffness = desc.stretch_stiffness,
-        .bend_stiffness = desc.bend_stiffness,
-        .damping = desc.damping,
-        .thickness = desc.thickness,
-        .gravity_scale = desc.gravity_scale,
-        .collide_ground = desc.collide_ground,
-        .ground_height = desc.ground_height,
-        .contact_tolerance = desc.collisions.contact_tolerance,
-        .contact_iterations = desc.collisions.contact_iterations,
-        .max_shapes = desc.collisions.max_shapes,
-        .max_candidates = desc.collisions.max_candidates,
-        .max_contacts = desc.collisions.max_contacts,
-        .self_collision = desc.collisions.self_collision,
-        .seams = desc.seams,
-        .continuous = desc.collisions.continuous,
-        .max_ccd_iterations = desc.collisions.max_ccd_iterations,
-        .render_particles = desc.render_particles,
-        .tangent_frame = desc.tangent_frame,
-        .tangent_uv_set = desc.tangent_uv_set,
-        .attachments = desc.attachments,
-        .bend_mode = desc.bend_mode,
-        .bend_compliance = desc.bend_compliance,
-        .rest_angles = desc.rest_angles,
-        .transport = desc.transport,
-        .cuts = desc.cuts,
-        .tears = desc.tears,
-        .sleep_speed = desc.sleep_speed,
-        .sleep_steps = desc.sleep_steps,
-        .density = desc.density,
-        .drag_coefficient = desc.drag_coefficient,
-        .lift_coefficient = desc.lift_coefficient,
-    };
+    *(ClothSavedAuthoring*)value = cloth_saved(cloth::default_cloth_desc(), {});
 }
 
 fn void? collect_cloth_output(void* component, serial::WriteContext* context) @private {
@@ -250,11 +271,8 @@ fn void? collect_cloth(void* component, serial::WriteContext* context) @private 
     context.project_absent_component(context.node, projected)!;
 }
 
-fn void? project_cloth_recipe(ClothDesc desc, ClothSavedAuthoring* value, serial::WriteContext* context) @private {
-    serial::NodeReference[] colliders = alloc::new_array(tmem, serial::NodeReference, desc.colliders.len);
-    foreach (index, entity : desc.colliders) colliders[index] = context.make_entity_reference(entity, true)!;
-
-    *value = {
+fn ClothSavedAuthoringV9 cloth_saved_v9(ClothDesc desc, serial::NodeReference[] colliders) @private {
+    return {
         .substeps = desc.substeps,
         .iterations = desc.iterations,
         .stretch_stiffness = desc.stretch_stiffness,
@@ -293,12 +311,110 @@ fn void? project_cloth_recipe(ClothDesc desc, ClothSavedAuthoring* value, serial
     };
 }
 
+fn ClothSavedAuthoring cloth_saved(ClothDesc desc, serial::NodeReference[] colliders) @private {
+    return {
+        .substeps = desc.substeps,
+        .iterations = desc.iterations,
+        .stretch_stiffness = desc.stretch_stiffness,
+        .bend_stiffness = desc.bend_stiffness,
+        .damping = desc.damping,
+        .thickness = desc.thickness,
+        .gravity_scale = desc.gravity_scale,
+        .pins = desc.pins,
+        .collide_ground = desc.collide_ground,
+        .ground_height = desc.ground_height,
+        .colliders = colliders,
+        .contact_tolerance = desc.collisions.contact_tolerance,
+        .contact_iterations = desc.collisions.contact_iterations,
+        .max_shapes = desc.collisions.max_shapes,
+        .max_candidates = desc.collisions.max_candidates,
+        .max_contacts = desc.collisions.max_contacts,
+        .self_collision = desc.collisions.self_collision,
+        .seams = desc.seams,
+        .continuous = desc.collisions.continuous,
+        .max_ccd_iterations = desc.collisions.max_ccd_iterations,
+        .render_particles = desc.render_particles,
+        .tangent_frame = desc.tangent_frame,
+        .tangent_uv_set = desc.tangent_uv_set,
+        .attachments = desc.attachments,
+        .bend_mode = desc.bend_mode,
+        .bend_compliance = desc.bend_compliance,
+        .rest_angles = desc.rest_angles,
+        .transport = desc.transport,
+        .cuts = desc.cuts,
+        .tears = desc.tears,
+        .sleep_speed = desc.sleep_speed,
+        .sleep_steps = desc.sleep_steps,
+        .density = desc.density,
+        .drag_coefficient = desc.drag_coefficient,
+        .lift_coefficient = desc.lift_coefficient,
+        .execution = desc.execution,
+    };
+}
+
+fn serial::NodeReference[]? collider_references(ClothDesc desc, serial::WriteContext* context) @private {
+    serial::NodeReference[] colliders = alloc::new_array(tmem, serial::NodeReference, desc.colliders.len);
+    foreach (index, entity : desc.colliders) colliders[index] = context.make_entity_reference(entity, true)!;
+    return colliders;
+}
+
+fn void? project_cloth_recipe_v9(ClothDesc desc, ClothSavedAuthoringV9* value, serial::WriteContext* context) @private {
+    *value = cloth_saved_v9(desc, collider_references(desc, context)!);
+}
+
 fn void? project_cloth(void* component, void* value, serial::WriteContext* context) @private {
     Cloth* owner = component;
-    project_cloth_recipe(owner.authoring.desc, (ClothSavedAuthoring*)value, context)!;
+    ClothDesc desc = owner.authoring.desc;
+    *(ClothSavedAuthoring*)value = cloth_saved(desc, collider_references(desc, context)!);
 }
 
 fn ClothDesc? cloth_desc(ClothSavedAuthoring* source, serial::ReadContext* context) @private {
+    Entity[] colliders = alloc::new_array(tmem, Entity, source.colliders.len);
+    foreach (index, reference : source.colliders) colliders[index] = context.resolve_node_reference(reference, true)!.id;
+
+    return {
+        .substeps = source.substeps,
+        .iterations = source.iterations,
+        .stretch_stiffness = source.stretch_stiffness,
+        .bend_stiffness = source.bend_stiffness,
+        .damping = source.damping,
+        .thickness = source.thickness,
+        .gravity_scale = source.gravity_scale,
+        .pins = source.pins,
+        .collide_ground = source.collide_ground,
+        .ground_height = source.ground_height,
+        .colliders = colliders,
+        .collisions = {
+            .contact_tolerance = source.contact_tolerance,
+            .contact_iterations = source.contact_iterations,
+            .max_shapes = source.max_shapes,
+            .max_candidates = source.max_candidates,
+            .max_contacts = source.max_contacts,
+            .self_collision = source.self_collision,
+            .continuous = source.continuous,
+            .max_ccd_iterations = source.max_ccd_iterations,
+        },
+        .seams = source.seams,
+        .render_particles = source.render_particles,
+        .tangent_frame = source.tangent_frame,
+        .tangent_uv_set = source.tangent_uv_set,
+        .attachments = source.attachments,
+        .bend_mode = source.bend_mode,
+        .bend_compliance = source.bend_compliance,
+        .rest_angles = source.rest_angles,
+        .transport = source.transport,
+        .cuts = source.cuts,
+        .tears = source.tears,
+        .sleep_speed = source.sleep_speed,
+        .sleep_steps = source.sleep_steps,
+        .density = source.density,
+        .drag_coefficient = source.drag_coefficient,
+        .lift_coefficient = source.lift_coefficient,
+        .execution = source.execution,
+    };
+}
+
+fn ClothDesc? cloth_desc_v9(ClothSavedAuthoringV9* source, serial::ReadContext* context) @private {
     Entity[] colliders = alloc::new_array(tmem, Entity, source.colliders.len);
     foreach (index, reference : source.colliders) colliders[index] = context.resolve_node_reference(reference, true)!.id;
 
@@ -344,12 +460,15 @@ fn ClothDesc? cloth_desc(ClothSavedAuthoring* source, serial::ReadContext* conte
 }
 
 fn void? validate_cloth(void* value, serial::ReadContext* context) @private {
-    ClothSavedAuthoring* source = value;
+    ClothDesc desc = cloth_desc((ClothSavedAuthoring*)value, context)!;
+    return validate_cloth_desc(desc, context);
+}
+
+fn void? validate_cloth_desc(ClothDesc desc, serial::ReadContext* context) @private {
     Mesh* mesh = context.authored(Mesh, Mesh, context.node.id)!;
     if (!mesh) return cloth::NO_MESH~;
     if (context.has_component(LodGroup)) return c3d::UNSUPPORTED~;
 
-    ClothDesc desc = cloth_desc(source, context)!;
     cloth::check_cloth_desc(desc)!;
     GeometryAsset* geometry = context.assets.geometries.try_get(mesh.geometry)!;
 
@@ -387,7 +506,18 @@ fn void? validate_cloth(void* value, serial::ReadContext* context) @private {
 }
 
 fn void? attach_cloth(void* value, serial::ReadContext* context) @private {
-    ClothSavedAuthoring* source = value;
-    ClothDesc desc = cloth_desc(source, context)!;
+    ClothDesc desc = cloth_desc((ClothSavedAuthoring*)value, context)!;
+    return attach_cloth_desc(desc, context);
+}
+
+fn void? attach_cloth_desc(ClothDesc desc, serial::ReadContext* context) @private {
     context.scene.attach_cloth(assets: context.assets, node: context.node, desc: desc)!;
+}
+
+// Version-9 payloads lack execution and read CPU.
+fn void? read_cloth_v9(serial::Reader* reader, serial::ReadContext* context) @private {
+    ClothSavedAuthoringV9* legacy = context.read_value(ClothSavedAuthoringV9, reader)!;
+    ClothDesc desc = cloth_desc_v9(legacy, context)!;
+    validate_cloth_desc(desc, context)!;
+    attach_cloth_desc(desc, context)!;
 }

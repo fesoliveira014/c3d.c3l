@@ -421,12 +421,14 @@ The independent package inventory checks all ten normally registered types.
 
 Physics registration also installs the Cloth OWNER and CrowdCloth BINDINGS policies. Export projects
 ordinary Mesh records to retained source geometry and vertex-motion, preserving
-all other Mesh fields and leaving the source scene untouched. The Cloth payload (version 9) and
+all other Mesh fields and leaving the source scene untouched. The Cloth payload (version 10) and
 CrowdCloth payload (version 4) retain complete settings, requested pin order/duplicates, explicit `ClothSeam` pairs,
 required collider references, `render_particles`, `tangent_frame`, `tangent_uv_set`,
 `attachments`, `bend_mode`, `bend_compliance`, `rest_angles`, `transport`, `cuts` (`ClothCutPath`),
-`tears` (`ClothTearLimits`), `sleep_speed`, `sleep_steps`, `density`, `drag_coefficient` and
-`lift_coefficient`. Rest and hold state is runtime-only and is not written: a restored cloth starts awake.
+`tears` (`ClothTearLimits`), `sleep_speed`, `sleep_steps`, `density`, `drag_coefficient`,
+`lift_coefficient` and, for Cloth only, `execution`. CrowdCloth parts keep the version-9 cloth layout and always
+read CPU execution. Rest and hold state is runtime-only and is not written: a restored cloth starts awake.
+Version-9 binary and JSONC payloads read `execution` as `CPU`.
 Older JSONC versions default `density` to 0.2, `drag_coefficient` to 1.2 and `lift_coefficient` to 0.6,
 version-7 and older default `sleep_speed` to `0` and
 `sleep_steps` to 30, `tears` to `default_cloth_tear_limits()`

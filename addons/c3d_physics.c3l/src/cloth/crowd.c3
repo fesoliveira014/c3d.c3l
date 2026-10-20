@@ -151,6 +151,7 @@ fn void? Scene.attach_crowd_cloth(
     }
 
     check_cloth_desc(desc)!;
+    if (desc.execution == ClothExecution.GPU) return c3d::UNSUPPORTED~;
     check_collider_owners(self, desc.colliders)!;
 
     ModelAsset* model_record = assets.models.try_get(crowd.model)!;
