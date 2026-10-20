@@ -13,7 +13,8 @@ rest. Drawing is core's: cells are ordinary instanced batches with the built-in 
 they take part in every view, shadow layer, depth prepass and velocity pass, with per-instance GPU culling and
 the whole-batch fade skip. The module has no GLSL and no custom material.
 
-The module imports the standard library, core (`c3d`) and `c3d::landscape::terrain`; core never imports it.
+The module imports the standard library, core (`c3d`), `c3d::landscape::terrain` and the package's root module
+(for `STALE`); core never imports it.
 
 ```bash
 python3 scripts/build.py --example vegetation
@@ -285,6 +286,57 @@ prepared first, otherwise returning `terrain::NOT_PREPARED`. Ordinary updates sk
 produces no generated draws. See the [landscape preparation contract](../addons/c3d_landscape.c3l/README.md#pending-authoring-and-preparation).
 The copied authoring LOD pointer and its slices remain library-owned; do not replace or free them.
 
+## Detached scatter
+
+A layer's whole scatter can run as ranges on any scheduler: at load, for a layer attached but not prepared, or
+after a pose or density change, for a prepared layer. The owner thread takes a snapshot, any thread runs the
+ranges, and the owner thread publishes. `add_foliage`, `prepare` and `update` stay serial and unchanged; the
+library never imports `c3d_job`, and the [example](#the-example) drives the ranges with a `JobPool`.
+
+```c3
+ScatterJob job = foliage::scatter_job(&scene, &assets, layer.id, scratch)!;
+// count_range over disjoint ranges of [0, job.cell_count()), on any threads, joined
+job.reserve_output(transforms, colors)!; // each of job.instance_count() slots
+// place_range over disjoint ranges of the same cells, on any threads, joined
+foliage::commit_scatter(&scene, &assets, &job)!;
+```
+
+- **Snapshot.** `scatter_job` copies the rules, both poses, the grid and the strata, and flattens the cells to
+  scatter into a list in which each cell appears once, so overlapping changed regions never place a cell twice.
+  The height texels, the border ring and the density pixels are borrowed. A layer with nothing pending, or
+  only a ground or ring edit (`update` re-places those in place), faults `INVALID_ARGUMENT`. A ground that is
+  not prepared, or whose height map has a refresh pending, faults `terrain::NOT_PREPARED`: run
+  `terrain::update` first.
+- **Ranges.** `count_range` and `place_range` take positions in the job's cell list, in any order and on any
+  thread, as long as no two running ranges overlap. They write only their cells' entries. While a range runs,
+  nothing may edit, link, replace or remove the ground's height map, its border ring or the density map, nor
+  remove the ground or the layer; that is a programming error. The scene is never touched off the owner thread.
+- **Output.** `reserve_output` runs on the owner thread after every count range. It assigns each cell its slots
+  in two caller arrays of at least `instance_count()` entries, and faults `CAPACITY_EXCEEDED` for smaller ones.
+  Each cell holds its density-stage count, as the serial arrays do. The arrays must outlive `commit_scatter`.
+- **Scratch.** The job takes 16 bytes per listed cell from the `scratch` allocator (the cell, its count, its
+  offset and its placed count) and holds nothing else; it never frees them. Dropping the job cancels it. The
+  output arrays are the caller's: about 56 bytes per instance of `instance_count()`.
+- **Commit.** `commit_scatter` publishes on the owner thread exactly as a serial scatter does: the node
+  budget, then every array and node staged, then the cells; a fault leaves the scene as it was. The layer's
+  cells and instance count then match a serial scatter of the same inputs bit for bit, and
+  `FoliageRuntime.count_passes` advances by one. A layer attached but not prepared becomes prepared, as `prepare`
+  would leave it.
+- **Staleness.** `commit_scatter` faults `landscape::STALE` and publishes nothing if any of these changed since
+  `scatter_job`:
+  - the layer or its ground died or lost `Foliage` or `Terrain`, or the layer was prepared or torn down;
+  - the layer's rules, ground or cell size;
+  - the height map's revision, replacement or pixel array;
+  - the density map's revision;
+  - for a `SMOOTH` layer, the border ring's revision or its linked edges;
+  - either node's world matrix, unless both moved by the origin shift alone since the job was taken (the
+    translation by the shift within float rounding, the rotation and scale unchanged), which commits shifted as
+    `scene.shift_foliage()` would; a turn or a move during a rebase is stale;
+  - `FoliageRuntime.scatter_revision`, which advances whenever `update` or a commit scatters or re-places the
+    layer. Commit before `update`: an `update` that scatters the layer first makes the job stale.
+
+  The application drops a stale job and takes a new one.
+
 ## Budgets
 
 - **Nodes**, checked by `add_foliage` and every re-scatter against the scene's free nodes: each non-empty cell
@@ -323,6 +375,13 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
 | `add_foliage`, `update` | `c3d::UNSUPPORTED` | Density map not `RGBA8_UNORM`, not a `MIP_ZERO` source, or layered, 3D or cube; ground height map as `terrain::height_view` |
 | `add_foliage`, `update` | `c3d::INVALID_ARGUMENT` | Density pixel bytes not `width × height × 4` (a released CPU copy included); ground height map as `terrain::height_view` |
 | `add_foliage`, `update` | `c3d::CAPACITY_EXCEEDED` | New cells past the scene's free nodes; an array allocation failed |
+| `scatter_job` | `c3d::INVALID_ARGUMENT` | Nothing pending: the layer is prepared and neither moved nor changed density |
+| `scatter_job` | `terrain::NOT_PREPARED` | The ground is not prepared, or its height map has a refresh pending |
+| `scatter_job` | `c3d::CAPACITY_EXCEEDED` | The scratch allocator failed |
+| `scatter_job`, `commit_scatter` | the faults of `add_foliage` | The checks `add_foliage` makes of a layer not yet prepared |
+| `reserve_output` | `c3d::CAPACITY_EXCEEDED` | An output array holds fewer than `instance_count()` entries |
+| `commit_scatter` | `landscape::STALE` | A source the job read changed ([above](#detached-scatter)) |
+| `commit_scatter` | `c3d::CAPACITY_EXCEEDED` | New cells past the scene's free nodes; an array allocation failed |
 
 ## Limits
 
@@ -341,7 +400,8 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
   ground's extent are rejected.
 - One density channel per layer, `RGBA8_UNORM` only.
 - `VERTEX_ALPHA` layers consume vertex alpha whether or not the wind blows.
-- No level of detail: every layer draws one level and relies on its fade.
+- Level of detail is whole-object ([above](#whole-object-lod)); a layer without `lod` draws one level and relies on
+  its fade.
 - The desc is fixed after `add_foliage`; so are the cells' layer bits, taken from the layer node at creation.
   Change either by removing `Foliage` and adding the layer again.
 - A whole density mark, a layer move or a ground move re-scatters the whole layer; a moving layer node also
@@ -349,7 +409,8 @@ The copied authoring LOD pointer and its slices remain library-owned; do not rep
   the cells they reach.
 - An edit that changes which candidates of a cell pass, at an equal count, gives that cell one rendering of
   wrong motion vectors: previous matrices pair by record index.
-- Placement runs on the calling thread and changes scene structure, so it never runs inside a job range.
+- Placement kernels may run in job ranges through the [job API](#detached-scatter); publication changes scene
+  structure and stays on the owner thread.
 
 ## The example
 
@@ -406,11 +467,30 @@ C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading fo
 medians of posed rows, pose dispatches, refits, bottom-level updates and batches traced at rest),
 `--capture FILE.png` (one frame at a fixed pose looking across a tree's shadow, in a wind of 25 m/s blowing across it,
 with the same options), `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,
-`--width W --height H` (2560 × 1440 by default in benchmark mode), `--validation` and `--sky` (an
+`--width W --height H` (2560 × 1440 by default in benchmark mode), `--workers N` (with `--benchmark`: scatter each layer
+again through the [job API](#detached-scatter-in-the-example)), `--validation` and `--sky` (an
 [atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the pass
 lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a
 [froxel volume](sky.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`). Interactive runs always validate; benchmark runs validate only with `--validation`. The tree layer's prepass and shadow-atlas cost is
 the `both` against `grass` difference; the grass layer's is `grass` against `none`.
+
+### Detached scatter in the example
+
+`--workers N` needs `--benchmark`. The `vegetation` target links `c3d_job`; the trampoline from the job ranges to a
+`JobPool` lives in `examples/landscape_scatter.c3`. After the load scatter, the example takes five fresh pending layers per mode, runs the job API on each, commits, compares
+the committed layer with the serial one cell by cell and bit by bit, and removes it:
+
+| `mode` | Ranges |
+| --- | --- |
+| `serial` | One range per phase on the owner thread, no pool |
+| `inline` | A pool without workers: the trampoline runs its ranges on the owner thread |
+| `workers` | A pool with `N` workers, for `N > 0` |
+
+It prints `scatter_job` (cells, instances and the serial load time), `scatter_job_timing` per mode (medians of
+`count_ms`, `reserve_ms` and `place_ms` for the phases, `commit_ms` for the owner thread, and `identical`) and, for
+`workers` in a build with `--define C3D_PROFILE_CPU --lib c3d_profile`, `scatter_job_ranges` per phase from the
+pool's worker range records: ranges and busy time per run and the workers that ran them. `gate scatter_job_identical` fails the run, as the two gates above do, when any scatter
+differs from the serial layer. The scene holds a second grass layer's cells while it runs.
 
 ## Measured cost
 

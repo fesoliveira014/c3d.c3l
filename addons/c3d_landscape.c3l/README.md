@@ -36,6 +36,8 @@ scene; a supplied root is included. Prepare terrain before dependent foliage.
 Preparing foliage while its ground terrain is pending returns `terrain::NOT_PREPARED` and
 retains the foliage authoring. Water has no landscape preparation dependency.
 Publish node world matrices before preparing foliage or water.
+Pending foliage can instead scatter as ranges on any scheduler with `foliage::scatter_job` and
+`foliage::commit_scatter` ([detached scatter](../../docs/vegetation.md#detached-scatter)).
 
 A prepared owner is a no-op for preparation, except a terrain [tile](../../docs/terrain.md#tile-sets), which
 re-validates and relinks. Each pending owner either receives

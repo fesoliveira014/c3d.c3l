@@ -126,6 +126,7 @@ struct FoliageRuntime {
     uint          cell_nodes;          // cells with a node
     uint          instances;           // placed over every cell
     uint          placed_cells;        // cells placed by the last update
+    uint          scatter_revision;    // advances whenever update or a commit scatters or re-places the layer
 }
 
 <*
@@ -255,7 +256,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     FoliageRuntime runtime = create_runtime(scene.allocator, cells_per_side, desc)!;
     defer catch free_runtime(&runtime);
     runtime.sway = layer_sway(desc.sway, {});
-    CellRange[1] everything = { whole_grid(&runtime) };
+    CellRange[1] everything = { whole_grid(cells_per_side) };
     rescatter(
         scene:   scene,
         assets:  assets,
@@ -466,6 +467,7 @@ fn void? refresh_layer(
     placed.ground_revision = current.ground_revision;
     placed.ring_revision = current.ring_revision;
     placed.ring_edges = current.ring_edges;
+    runtime.scatter_revision++;
 }
 
 // Cells that an input changed since the layer was placed; the whole grid when an input cannot say which.
@@ -510,7 +512,7 @@ fn usz changed_ranges(
     }
     if (!whole) return count;
 
-    ranges[0] = whole_grid(runtime);
+    ranges[0] = whole_grid(runtime.cells_per_side);
     return 1;
 }
 
@@ -541,6 +543,7 @@ fn void? rescatter_layer(
     }
     runtime.rejection = {};
     runtime.placed = current;
+    runtime.scatter_revision++;
 }
 
 fn void? rescatter_from(
