@@ -141,7 +141,10 @@ fn JobPool create_bench_pool(uint workers) @private {
     JobPoolDesc desc = job::default_job_pool_desc();
     desc.worker_count = workers;
     desc.background_workers = job::default_background_workers(workers);
-    return job::create_job_pool(mem, desc)!!;
+    desc.power_throttling_opt_out = true;
+    JobPool pool = job::create_job_pool(mem, desc)!!;
+    pool.bind_caller()!!;
+    return pool;
 }
 
 fn void print_cpu_ranges(String prefix, CpuSet cpus) @local {
@@ -172,6 +175,7 @@ fn void report_pinned_kernel(Mat4[] chain) @local {
     JobPoolDesc desc = job::default_job_pool_desc();
     desc.worker_count = (uint)types.performance.cardinality() - 1;
     desc.background_workers = job::default_background_workers(desc.worker_count);
+    desc.power_throttling_opt_out = true;
     JobPool unpinned = job::create_job_pool(mem, desc)!!;
     defer job::destroy_job_pool(&unpinned);
     desc.worker_cpus = types.performance;

@@ -24,6 +24,7 @@ import c3d::scene;
 import imgui;
 import landscape_foliage;
 import landscape_ground;
+import landscape_water_field;
 
 // A quarter of the pixels: on an RTX 4090 at 2560 x 1440 the mirror view takes 0.721 against 0.815 ms still,
 // 0.796 against 0.922 ms in orbit, and the frame 2.236 against 2.331 ms.
@@ -78,6 +79,11 @@ const float POND_WAVE_SPEED @local = 8; // metres per second: a ripple crosses t
 const float POND_DAMPING @local = 0.3f; // per second: the ripple loses half its height in about five seconds
 const float POND_DISTORTION @local = 0.4f; // screen uv per unit of tilt: a ripple's slopes still bend the reflection
 const float POND_REFRACTION @local = 0.1f;
+const float SPECTRAL_LAKE_CELL_SIZE @local = 0.5f; // metres: a lake's fetch raises waves of a metre at most
+const float SPECTRAL_LAKE_PATCH @local = 32; // metres: the tile; 12.5 cm per texel
+const float STORM_WIND_SPEED @local = 18;
+const float CALM_WIND_SPEED @local = 3;
+const float SETTLE_TRANSITION_SECONDS @local = 1;
 const float STIFF_WAVE_SPEED @local = 60; // metres per second: the benchmark's settle segment, which rings out quickly
 const float STIFF_DAMPING @local = 3.2f; // per second: close to critical for the lake's slowest wave at that speed
 const float RIPPLE_RADIUS @local = 3; // metres to the rim of a dropped ripple
@@ -238,6 +244,7 @@ struct Options @local {
     bool        ocean;
     bool        dive;
     bool        simulated;  // bodies simulate their surface; ripples come from the R key, a shot or the benchmark
+    bool        spectral;   // bodies draw a spectrum the GPU evolves; the wind sets it
     float       ripple_age; // seconds a shot lets its ripple spread
     float       dive_at;    // share of the descent a shot stands at; negative follows the clock
     float       wind_speed;
@@ -298,9 +305,12 @@ struct Demo @local {
     Node*[]             crates;
     WaterFluid          fluid; // view and time are the physics update's first step
     double              water_update_us;
+    double              field_us;            // CPU time water_gpu::update took to record the last frame's passes
     uint                simulation_bytes;    // texture bytes the last update uploaded for the lake's simulation
     uint                simulation_revision; // that texture's revision after the last update
     bool                simulation_awake;
+    uint                spectral_bytes;      // texture bytes the last frame uploaded for the lake's spectrum
+    uint                spectral_revision;   // the spectrum table's revision after the last frame
 }
 
 struct Controls @local {
@@ -316,10 +326,13 @@ struct FrameRecord @local {
     double                    frame_ms;
     double                    physics_us;
     double                    water_update_us;
+    double                    field_us;
     uint                      steps;
     uint                      upload_bytes;
+    uint                      dispatches;
     uint                      simulation_bytes;
     bool                      simulation_awake;
+    uint                      spectral_bytes;
     uint                      shadow_sets_recorded;
     uint                      shadow_sets_shared;
     float[render::PASS_COUNT] frame_gpu_ms;
@@ -631,6 +644,14 @@ fn void? add_body(
         desc.depth = OCEAN_DEPTH;
         desc.wave_count = 0; // flat until the sea state: the lake's 3.5 m wave is under an ocean's four-cell floor
     }
+    if (demo.options.spectral) {
+        desc.wave_model = SPECTRAL;
+        desc.wave_count = 0;
+        if (!demo.options.ocean) {
+            desc.cell_size = SPECTRAL_LAKE_CELL_SIZE;
+            desc.spectrum.patch_size = SPECTRAL_LAKE_PATCH;
+        }
+    }
     if (demo.options.simulated) {
         desc.wave_model = SIMULATED;
         desc.wave_count = 0;
@@ -879,6 +900,15 @@ fn void track_simulation(Demo* demo) @local {
     demo.simulation_bytes = texture.header.revision != demo.simulation_revision ? (uint)texture.pixels.len : 0;
     demo.simulation_revision = texture.header.revision;
     demo.simulation_awake = state.awake;
+}
+
+// Texture bytes the last frame uploaded for the lake's spectrum, which only a sea-state change rewrites.
+fn void track_spectrum(Demo* demo) @local {
+    if (!demo.options.spectral) return;
+    SpectralState* state = demo.scene.get(demo.bodies[0].node, WaterRuntime).spectral;
+    TextureAsset* table = demo.assets.texture(state.table);
+    demo.spectral_bytes = table.header.revision != demo.spectral_revision ? (uint)table.pixels.len : 0;
+    demo.spectral_revision = table.header.revision;
 }
 
 // The capture has no mirror of its own, so it leaves the water out.
@@ -1181,6 +1211,7 @@ fn double? step_scene(
     );
     demo.water_update_us = (double)(long)water_started.to_now() / NANOSECONDS_PER_MICROSECOND;
     track_simulation(demo);
+    track_spectrum(demo);
 
     place_mirrors(demo)!;
     foreach (&body : demo.bodies[:demo.body_count]) {
@@ -1210,6 +1241,10 @@ fn double? step_scene(
 // docs/water.md's render order: each viewer's mirrors, the textures it is given, then the viewer itself. The
 // capture renders last: a view with another shadow key between mirror and main would make main re-record.
 fn void? render_views(Demo* demo, Renderer* renderer) @local {
+    time::Clock fields_started = clock::now();
+    landscape_water_field::update(renderer, demo.scene, demo.assets)!;
+    demo.field_us = (double)(long)fields_started.to_now() / NANOSECONDS_PER_MICROSECOND;
+
     foreach (viewer_index, &viewer : demo.viewers[:demo.viewer_count]) {
         foreach (&body : demo.bodies[:demo.body_count]) {
             RenderTargetId target;
@@ -1318,8 +1353,21 @@ fn Options? parse_options(String[] args) @local {
                 }
             case "--waves":
                 switch (option_value(args, &index)!) {
-                    case "gerstner": options.simulated = false;
-                    case "simulated": options.simulated = true;
+                    case "gerstner":
+                        options.simulated = false;
+                        options.spectral = false;
+                    case "simulated":
+                        options.simulated = true;
+                        options.spectral = false;
+                    case "spectral":
+                        $if !landscape_water_field::ENABLED:
+                            io::eprintn("--waves spectral needs the gated build: "
+                              "python3 scripts/build.py --example water_gpu");
+                            return c3d::UNSUPPORTED~;
+                        $else
+                            options.simulated = false;
+                            options.spectral = true;
+                        $endif
                     default: return c3d::INVALID_ARGUMENT~;
                 }
             case "--ripple-age":
@@ -1356,6 +1404,7 @@ fn Options? parse_options(String[] args) @local {
         options.sea_state = true;
         options.crates = 0;
     }
+    if (options.spectral) options.sea_state = true;
     if (options.benchmark && options.current != (Vec3){}) return c3d::INVALID_ARGUMENT~;
     if (options.dive && options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (options.shot.len && options.benchmark) return c3d::INVALID_ARGUMENT~;
@@ -1391,6 +1440,10 @@ fn void? water_panel(
             imgui::checkbox("Calm waves (off: zero amplitudes)", &controls.calm);
         }
         if (demo.options.simulated) imgui::text("R drops a ripple where the camera looks");
+        if (demo.options.spectral) {
+            SpectralState* state = demo.scene.get(demo.bodies[0].node, WaterRuntime).spectral;
+            imgui::text("Spectral: sigma %.3f m, twin bound %.3f m", state.sigma, state.bound);
+        }
         imgui::checkbox("Ripples", &controls.ripples);
         imgui::slider_float(
             label: "Wind heading",
@@ -1807,8 +1860,23 @@ fn void? run_segments(
         uint segment_step = step - segment_start(options, segment);
         if (frame >= WARMUP_FRAMES + measured) segment = Segment.SETTLE;
         if (timed && step == settle_start) {
-            set_calm(demo, false)!;
+            if (options.spectral) {
+                apply_sea_state(
+                    demo:               demo,
+                    wind:               wind_velocity(0, WIND_HEADING_DEGREES),
+                    transition_seconds: SETTLE_TRANSITION_SECONDS,
+                )!;
+            } else {
+                set_calm(demo, false)!;
+            }
             if (options.simulated) stiffen_ponds(demo)!;
+        }
+        if (timed && options.spectral && step == segment_start(options, Segment.WAVES)) {
+            apply_sea_state(
+                demo:               demo,
+                wind:               wind_velocity(STORM_WIND_SPEED, WIND_HEADING_DEGREES),
+                transition_seconds: SEA_TRANSITION_SECONDS,
+            )!;
         }
         if (timed && options.simulated && step == segment_start(options, Segment.WAVES)) {
             drop_ripples(
@@ -1843,10 +1911,13 @@ fn void? run_segments(
                 .frame_ms             = frame_ms,
                 .physics_us           = physics_us,
                 .water_update_us      = demo.water_update_us,
+                .field_us             = demo.field_us,
                 .steps                = demo.physics.steps_last_update,
                 .upload_bytes         = renderer.stats.upload_bytes,
+                .dispatches           = renderer.stats.dispatches,
                 .simulation_bytes     = demo.simulation_bytes,
                 .simulation_awake     = demo.simulation_awake,
+                .spectral_bytes       = demo.spectral_bytes,
                 .shadow_sets_recorded = renderer.stats.shadow_sets_recorded,
                 .shadow_sets_shared   = renderer.stats.shadow_sets_shared,
             };
@@ -1964,6 +2035,36 @@ fn void print_simulation(FrameRecord[] records, String segment_name, double[] sc
     );
 }
 
+// The passes water_gpu::update records for the frame and the table it uploads when the sea state changes.
+fn void print_spectral(FrameRecord[] records, String segment_name, double[] scratch) @local {
+    usz upload_frames;
+    uint bytes;
+    foreach (index, record : records) {
+        scratch[index] = record.field_us;
+        if (!record.spectral_bytes) continue;
+
+        upload_frames++;
+        bytes = max(bytes, record.spectral_bytes);
+    }
+    io::printfn(
+        "spectral segment=%s dispatches=%d record_us median=%.1f p99=%.1f table_upload_frames=%d table_upload_bytes=%d",
+        segment_name,
+        records[^1].dispatches,
+        percentile(scratch[:records.len], 0.5f),
+        percentile(scratch[:records.len], 0.99f),
+        upload_frames,
+        bytes,
+    );
+}
+
+// Every frame records the passes of each spectral body, and no more.
+fn bool spectral_gate(Demo* demo, FrameRecord[] records) @local {
+    foreach (record : records) {
+        if (record.dispatches != demo.body_count * landscape_water_field::DISPATCHES_PER_BODY) return false;
+    }
+    return true;
+}
+
 // Once the pond has settled no frame uploads: the first asleep frame after the ripple is dropped starts the quiet.
 fn bool simulation_gate(Options options, FrameRecord[] records) @local {
     bool settled;
@@ -1999,6 +2100,10 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
                 if (options.sky && pass == Pass.FOG) continue; // the sky passes report it, with the mirror's
                 double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
                 io::printfn("gpu_ms view=main segment=%s pass=%s median=%.4f", name, pass, median);
+            }
+            if (options.spectral) {
+                double median = percentile(gather_frame_pass(records, Pass.CUSTOM_COMPUTE, result.scratch), 0.5f);
+                io::printfn("gpu_ms view=frame segment=%s pass=%s median=%.4f", name, Pass.CUSTOM_COMPUTE, median);
             }
             if (options.traced) {
                 foreach (pass : TRACE_PASSES) {
@@ -2054,6 +2159,13 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
                 scratch:      result.scratch,
             );
         }
+        if (options.spectral) {
+            print_spectral(
+                records:      records,
+                segment_name: name,
+                scratch:      result.scratch,
+            );
+        }
     }
     float expected = CRATE_DENSITY / physics::DEFAULT_FLUID_DENSITY;
     double mean = result.settle_count ? result.settle_sum / (double)result.settle_count : 0;
@@ -2067,10 +2179,12 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     bool density_gate = !crated
       || (result.settle_count > 0 && math::abs(result.settle_worst - expected) <= GATE_TOLERANCE);
     bool settle_gate = !options.simulated || simulation_gate(options, result.records);
+    bool dispatch_gate = !options.spectral || spectral_gate(demo, result.records);
     io::printfn("gate steady_uploads %s", steady_gate ? "pass" : "fail");
+    if (options.spectral) io::printfn("gate spectral_dispatches %s", dispatch_gate ? "pass" : "fail");
     if (options.simulated) io::printfn("gate simulation_uploads_stop_once_settled %s", settle_gate ? "pass" : "fail");
     io::printfn("gate crates_at_density_line %s", !crated ? "skipped: no crates" : (density_gate ? "pass" : "fail"));
-    return steady_gate && density_gate && settle_gate;
+    return steady_gate && density_gate && settle_gate && dispatch_gate;
 }
 
 fn String reflection_name(Reflection reflection) @local {
@@ -2099,7 +2213,7 @@ fn void print_header(Options options) @local {
         options.sky ? "on" : "off",
         options.volumetric_fog ? "on" : "off",
         options.split ? "on" : "off",
-        options.simulated ? "simulated" : "gerstner",
+        options.spectral ? "spectral" : (options.simulated ? "simulated" : "gerstner"),
     );
 }
 
@@ -2156,6 +2270,16 @@ fn bool? run_benchmark(Options options) @local {
     }
     foreach (index, &viewer : demo.viewers[:demo.viewer_count]) viewer.view = main_views[index];
     print_header(options);
+    if (options.spectral) {
+        WaterRuntime* sea = demo.scene.get(demo.bodies[0].node, WaterRuntime);
+        io::printfn(
+            "# spectrum sigma=%.4f envelope=%.4f bound=%.4f twin_waves=%d",
+            sea.spectral.sigma,
+            sea.spectral.envelope,
+            sea.spectral_bound,
+            sea.spectral.twin_count,
+        );
+    }
     pose_segment(
         demo:    &demo,
         segment: Segment.STILL,
@@ -2297,7 +2421,7 @@ fn int main(String[] args) {
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
               "[--current X,Z] [--ssgi] [--traced] [--capture] [--split] [--ripples on|off] [--width W] [--height H] "
               "[--sky] [--volumetric-fog] [--sea-state] [--ocean] [--dive [SHARE]] [--wind SPEED] "
-              "[--waves gerstner|simulated] [--ripple-age SECONDS] [--shot FILE.png].");
+              "[--waves gerstner|simulated|spectral] [--ripple-age SECONDS] [--shot FILE.png].");
         }
         return 1;
     }

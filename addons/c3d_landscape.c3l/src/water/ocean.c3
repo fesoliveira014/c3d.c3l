@@ -63,12 +63,6 @@ fn uint ocean_node_count(OceanState* ocean) @private {
     return ocean.level_offset[ocean.level_count - 1] + 1;
 }
 
-// Displacement leaves the rest footprint by the total amplitude in y and the crest shift in x and z.
-fn Vec3 ocean_growth(Wave[] waves) @private {
-    float shift = largest_shift(waves);
-    return { shift, total_amplitude(waves), shift };
-}
-
 // One unit chunk for every ocean of the store: the instance record maps it onto its node's box.
 fn GeometryId? ocean_chunk(AssetStore* assets, bool* created = null) @private {
     if (created) *created = false;
@@ -195,6 +189,7 @@ fn void? add_ocean_batch(
     WaterDesc* desc,
     GeometryId surface,
     MaterialId material,
+    float envelope,
 ) @private {
     uint count = ocean_node_count(ocean);
     Transform[]? transforms = alloc::new_array_try(scene.allocator, Transform, (sz)count);
@@ -204,7 +199,7 @@ fn void? add_ocean_batch(
     if (catch colors) return c3d::CAPACITY_EXCEEDED~;
     defer catch alloc::free(scene.allocator, colors.ptr);
 
-    ocean.growth = ocean_growth(desc.waves[:desc.wave_count]);
+    ocean.growth = surface_reach(desc, desc.waves[:desc.wave_count], envelope);
     InstancedMesh batch = {
         .geometry       = surface,
         .material       = material,
@@ -228,8 +223,9 @@ fn void place_ocean_bounds(
     OceanState* ocean,
     WaterDesc* desc,
     Wave[] waves,
+    float envelope,
 ) @private {
-    Vec3 growth = ocean_growth(waves);
+    Vec3 growth = surface_reach(desc, waves, envelope);
     if (growth == ocean.growth) return;
 
     ocean.growth = growth;
