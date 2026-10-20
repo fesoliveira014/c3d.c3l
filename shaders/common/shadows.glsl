@@ -276,7 +276,7 @@ float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, ve
     return clouds * media * atlas_shadow(frame, light, world_position, normal, view_depth, false).x;
 }
 
-// Share of the light reaching the point per channel. Traced lights and the float form above ignore the tint.
+// Share of the light reaching the point per channel. Traced lights and the float form above ignore the atlas tint.
 vec3 shadow_transmittance(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
     float clouds = cloud_shadow_visibility(frame, light, world_position);
     vec3 media = medium_shadow_transmittance(frame, light, world_position);

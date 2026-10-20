@@ -402,8 +402,8 @@ sun's packed light carries `LIGHT_MEDIUM_SHADOW`, and `light_casts_shadow` is tr
 `shadow_visibility` and `shadow_transmittance` multiply that light's visibility by
 `exp(−Σ σt · h / max(n · s, MEDIUM_SUN_COSINE_FLOOR))` per channel, summed over the kept boxes that hold the point. `h`,
 `n` and `s` are the in-scatter's, so a surface and the in-scatter share one column. Boxes that overlap at the point
-multiply, a point outside every box gets 1, and a sun at or below a box's top face gets the floored column, which is zero
-in every channel that absorbs. The water surface sits above its box and gets 1.
+multiply, a point outside every box gets 1, and a sun at or below a box's top face gets the floored column, which lets
+nothing through in a channel that absorbs. The water surface sits above its box and gets 1.
 
 - **Receivers.** Callers of `shadow_transmittance` get the column per channel, so a surface darkens with the medium's
   tint: forward Standard, Physical and Toon, the deferred lighting resolve, terrain, water, impostors and custom stages
