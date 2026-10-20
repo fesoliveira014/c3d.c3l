@@ -187,7 +187,7 @@ A `SubEmitter` has these fields:
 
 | Field | Meaning |
 | --- | --- |
-| `trigger` | `DEATH` fires when a particle expires or is evicted. `BIRTH` fires when a particle is emitted. `IMPACT` is part of the interface and nothing raises it, so such a sub-emitter never fires. |
+| `trigger` | `DEATH` fires when a particle expires, is evicted or dies on impact. `BIRTH` fires when a particle is emitted. `IMPACT` fires when a particle hits a surface, see [Collision](#collision). |
 | `target` | The node of the particle system that receives the children; it may be the same system. |
 | `count` | Particles spawned per event. |
 | `inherit_velocity` | Share of the parent particle's velocity added to each child, in [0, 1]. |
@@ -195,7 +195,7 @@ A `SubEmitter` has these fields:
 
 ### Events
 
-A step raises `DEATH` events with cause `EXPIRED` or `EVICTED`, and `BIRTH` events. An event is queued only if
+A step raises `DEATH` events with cause `EXPIRED`, `EVICTED` or `IMPACT`, `BIRTH` events, and `IMPACT` events. An event is queued only if
 some sub-emitter of that system accepts it, so events nobody listens for neither occupy the queue nor count as
 dropped. An event records the particle's position, velocity and seed, and its index in the system's event sequence.
 
@@ -238,10 +238,103 @@ one update is bounded by the queue capacities.
 | `evicted` | Live particles removed to make room. |
 | `dropped_events` | Events lost to a full queue. |
 | `skipped_events` | Deliveries whose target was unavailable. |
+| `collision_skips` | Particles that waited out a step because the callback budget ran out. |
 
-All four are cumulative, start at zero, saturate instead of wrapping, and restart when a system is read from
+All five are cumulative, start at zero, saturate instead of wrapping, and restart when a system is read from
 serialized data. A descriptor with more than `MAX_SUB_EMITTERS` sub-emitters, an `inherit_velocity` outside
 [0, 1], or sub-emitters with `max_events` of zero fails `INVALID_ARGUMENT`.
+
+## Collision
+
+`ParticleSystemDesc.collision` makes a system's particles meet surfaces. The default response is `NONE`. A
+`ParticleCollision` has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `response` | `NONE` disables collision. `BOUNCE` reflects the particle. `STICK` stops it. `DIE` removes it. |
+| `restitution` | Share of the normal speed a bounce keeps, in [0, 1]. |
+| `friction` | Share of the tangent speed a bounce loses, in [0, 1]. |
+| `radius_scale` | The collision radius is the drawn size, `size` times the size table, times this scale. |
+| `ground_plane` | Collide with the plane `y = ground_height`, with no callback. |
+| `ground_height` | Height of the plane, in absolute world metres. |
+| `max_queries` | Callback casts per step. |
+
+A step runs in this order: expire, evict, emit, integrate, collide. After integration each particle's last move is
+tested as the segment from `position - velocity * dt` to `position`. A segment of zero length, as in a
+zero-duration update or for a particle at rest, is not tested. Newborns are tested over their first move. Children
+spawned by event delivery are tested from the next step.
+
+### Ground plane
+
+`ground_height` is an absolute world height: the plane is compared with `position.y + Scene.world_shift.y`, so an
+origin rebase leaves it where it was. The plane needs no callback and is tested for every particle in every step.
+A particle hits it when its segment ends with the centre less than one radius above the plane while moving down.
+A segment that starts at or below that height hits at its start, so a particle resting on the plane cannot fall
+through it by rounding, and a particle that starts under the plane and moves down is placed on it.
+
+### Callback
+
+`ParticleSystem.set_collision(cast, context)` installs a `ParticleCollisionFn`. The system calls it with the
+segment of a particle's move in scene space and the collision radius, and it fills a `ParticleHit` and returns
+true when a sphere of that radius meets a surface. `point` is the contact point on the surface, `normal` has unit
+length and faces the particle, and `fraction` is the position of the hit along the segment. The package does not
+import physics or any other query provider; the application adapts one.
+
+- The cast runs on the owner thread inside `particle::update`. A physics world must not be stepping then: call
+  its update before `particle::update`, as the `particles --collide` example does.
+- `context` is passed unchanged to every call. It must outlive the system, or the application clears the cast
+  first with `set_collision(null, null)`. A null `cast` removes it.
+- The cast and context are not serialized. A system that was loaded, or prepared again, needs `set_collision`
+  again. `set_collision` requires a prepared system.
+- When both the plane and the cast are active, a particle takes the hit with the smaller fraction.
+
+A physics adapter casts a ray along the segment:
+
+```c3
+fn bool cast_physics(void* context, Vec3 from, Vec3 to, float radius, ParticleHit* out) {
+    PhysicsWorld* physics = context;
+    Vec3 path = to - from;
+    float length = path.length();
+    RayHit? hit = physics.raycast(from, path / length, length);
+    if (catch hit) return false;
+    *out = { .point = hit.point, .normal = hit.normal, .fraction = hit.fraction };
+    return true;
+}
+
+system.set_collision(&cast_physics, &physics);
+```
+
+`PhysicsWorld.cast_shape` with a sphere collider of `radius` also honours the radius, and `spatial::pick` serves
+scene meshes without physics; both allocate per call, so give them a small `max_queries`.
+
+### Budget
+
+At most `max_queries` casts run per step. The step starts at `query_cursor`, a pool index, and visits the pool in
+order, wrapping at the end. When the budget runs out, the remaining particles skip the callback that step and
+are counted in `collision_skips`; the plane still applies to them. The next step starts at the first particle
+that was skipped, so no particle is skipped every step, and with a steady pool each is queried at least once every
+`ceil(alive / max_queries)` steps. A step that fits in the budget leaves the cursor unchanged. `max_queries = 0`
+disables the callback. The pool order changes when particles die, so the cursor is a rotation, not a fixed assignment.
+
+### Responses
+
+A `BOUNCE` or `STICK` hit places the particle at `point + normal * radius` and drops the rest of that step's move.
+
+- `BOUNCE` splits the velocity into a part along the normal and a part across it. The normal part is reversed and
+  scaled by `restitution`; the tangent part is scaled by `1 - friction`. A hit on a particle that is moving away
+  from the surface leaves its velocity alone.
+- `STICK` sets the velocity to zero.
+- `DIE` removes the particle. Its `DEATH` event has cause `IMPACT`, and `on_evict` does not apply to it.
+
+Every hit raises an `IMPACT` event at `point` carrying the velocity from before the response, for `IMPACT`
+sub-emitters. A `DIE` hit raises its `DEATH` event after it. A particle that stays pressed against a surface, a
+stuck one under gravity or a bouncing one at rest, hits again on every step, and each hit raises its events, so
+size `max_events` and sub-emitter counts for that.
+
+Collision draws nothing from the system's random stream, and its results follow the cast's answers in pool order.
+A descriptor with `restitution` or `friction` outside [0, 1], a negative or non-finite `radius_scale`, a
+non-finite `ground_height`, or a response other than `NONE` with no plane and `max_queries` of zero fails
+`INVALID_ARGUMENT`.
 
 ## Draw modes and materials
 
@@ -272,7 +365,7 @@ once. ADDITIVE adds coverage-scaled RGB and preserves destination alpha.
 
 Simulation is inline, with no allocation during normal step/update. The pool is
 one aligned allocation of nine capacity-sized streams and the event queue; core
-separately owns draw arrays and persistent GPU records. GPU simulation, collision,
+separately owns draw arrays and persistent GPU records. GPU simulation, particle-particle collision,
 ribbons, flipbooks and parallel execution are outside this delivery. Core
 billboard material restrictions are documented separately.
 
@@ -293,6 +386,11 @@ enabled. `--frames N` closes an interactive smoke test after N frames.
 `--sparks` adds a smoke system that each dying spark feeds through a `DEATH`
 sub-emitter, and shows its live count with the event counters. It applies to the
 window and to `--benchmark`, which also prints them.
+
+`--collide` makes the sparks bounce on the ground plane and, through a physics
+ray cast, on a canopy and two crates that are static physics bodies. It applies
+to the window and to `--benchmark`, and `--benchmark` prints `collision_skips`.
+The `particles` target selects `c3d_physics` for this; the particle package does not.
 
 The example reads `Renderer.adapter_name`, borrowed until renderer destruction,
 and calls `renderer.log.check_validation()` through core. The latter reports a
@@ -366,4 +464,4 @@ Windows.
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 3. Version 2 added `saturation` and version 3 adds `sub_emitters`, `sub_emitter_count` and `max_events`; older payloads in both encodings read the defaults. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
+Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 4. Version 2 added `saturation`, version 3 added `sub_emitters`, `sub_emitter_count` and `max_events`, and version 4 adds `collision`; older payloads in both encodings read the defaults, which is no collision. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
