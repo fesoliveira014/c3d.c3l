@@ -69,17 +69,12 @@ fn void stage_cloth_work(PhysicsWorld* world, uint steps) @private {
     uint count = world.cloth_work_count;
 
     time::Clock started = clock::now();
-    if (world.parallel.run) {
-        world.parallel.run(
-            context: world.parallel.context,
-            range:   &stage_cloth_range,
-            data:    &context,
-            count:   count,
-            batch:   CLOTH_STAGE_BATCH,
-        );
-    } else {
-        stage_cloth_range(&context, 0, count);
-    }
+    world.parallel.for_ranges(
+        range: &stage_cloth_range,
+        data:  &context,
+        count: count,
+        batch: CLOTH_STAGE_BATCH,
+    );
 
     world.cloth_stats.stage_seconds = (clock::now() - started).to_sec();
 }
