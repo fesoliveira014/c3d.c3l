@@ -385,7 +385,8 @@ Empty/hidden batches make no draw or snapshot request.
   cloud-shadow visibility at the particle's position.
 
 `ParticleMaterialParams.normal` selects what a lit particle presents to the
-lights. DIRECT and DIRECT_SHADOWED read it; UNLIT and AMBIENT ignore it.
+lights and to the indirect illumination. AMBIENT, DIRECT and DIRECT_SHADOWED read
+it; UNLIT ignores it.
 
 - **CAMERA** is the billboard's facing axis, so every pixel has the same normal.
 - **SPHERICAL** bulges the normal toward the camera across the quad, as on a
@@ -402,6 +403,7 @@ lights. DIRECT and DIRECT_SHADOWED read it; UNLIT and AMBIENT ignore it.
 `anisotropy` applies to VOLUME only; other normals ignore it. `add_particle_material`
 faults `INVALID_ARGUMENT` for a value that is not finite or lies outside (-1, 1).
 The normal and the anisotropy can change at runtime with the other parameters.
+`@set_custom_params` bypasses the check, so the application keeps |anisotropy| below one.
 
 Each light adds `albedo * response * radiance` to the AMBIENT term, where albedo
 is the particle colour times the material colour times the map in slot 0 and
@@ -410,7 +412,9 @@ radiance is the light's colour, intensity and attenuation. The response is
 materials use. For VOLUME it is the phase function, which integrates to one over
 the sphere: at zero anisotropy it is `1 / (4 pi)`, a quarter of Lambert's
 response at normal incidence, so a light meant to read on smoke needs a
-correspondingly higher intensity. The AMBIENT term always uses the camera axis.
+correspondingly higher intensity. The indirect term of AMBIENT, DIRECT and
+DIRECT_SHADOWED uses the SPHERICAL normal under SPHERICAL and the camera axis under
+CAMERA and VOLUME.
 
 DIRECT_SHADOWED reads the shadow atlas and the cloud shadows only. The stage is
 compiled without ray-traced shadows, so a light whose only shadow is ray traced
