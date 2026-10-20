@@ -26,6 +26,8 @@ const float CAPACITY_DOMINANT @private = 0.5f; // the filled channel; the other 
 const float CAPACITY_FAINT @private = 0.25f;
 const Vec2 CAPACITY_RECT_SIZE @private = { 64, 64 };
 const String CAPACITY_OVERLAY_CASE @private = "test_overlay_and_material_sample_one_target_past_index_thirty_two";
+const uint CAPACITY_POSED_GRID_WIDTH @private = 64;
+const float CAPACITY_POSED_SPACING @private = 2; // wider than the 1 x 1 quad, so no two overlap
 
 struct CapacityCounts @private {
     ulong textures;
@@ -39,6 +41,11 @@ struct CapacitySampling @private {
     RenderTargetId[2] outputs;
     ViewId[2]         views;
     DeformedScene     consumer;
+}
+
+struct CapacityProbe @private {
+    bool ray_queries;
+    uint allocation_capacity;
 }
 
 fn CapacityCounts capacity_counts(Renderer* renderer) @private {
@@ -100,6 +107,53 @@ fn void capacity_expect_creation_fault(RendererDesc desc, fault expected) @priva
     Renderer? renderer = render::create_renderer(mem, &assets, desc);
     if (try created = renderer) render::destroy_renderer(&created);
     assert(@catch(renderer) == expected);
+}
+
+fn Renderer? capacity_probe_renderer(AssetStore* assets, bool ray_queries) @private {
+    return render::create_renderer(
+        allocator: mem,
+        assets:    assets,
+        desc:      { .validation = true, .application_name = "render_acceptance", .ray_queries = ray_queries },
+    );
+}
+
+fn CapacityProbe capacity_probe() @private {
+    AssetStore assets = capacity_assets();
+    defer asset::destroy_asset_store(&assets);
+    CapacityProbe probe = { .ray_queries = true };
+    Renderer? opened = capacity_probe_renderer(&assets, true);
+    if (catch excuse = opened) {
+        assert(excuse == c3d::UNSUPPORTED);
+        probe.ray_queries = false;
+        opened = capacity_probe_renderer(&assets, false);
+    }
+    Renderer renderer = opened!!;
+    defer render::destroy_renderer(&renderer);
+
+    probe.allocation_capacity = gpu::get_memory_stats(&renderer.device)!!.allocation_capacity;
+    return probe;
+}
+
+fn Scene? capacity_posed_scene(Fixture* fixture, uint count) @private {
+    Scene scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
+    defer catch scene::destroy_scene(&scene);
+    GeometryId quad;
+    @pool() {
+        Geometry shape = geometry::plane(tmem, 1, 1);
+        quad = fixture.assets.add_geometry(&shape)!;
+    };
+
+    for (uint index = 0; index < count; index++) {
+        Node* node = scene.add_mesh(quad, fixture.plain)!;
+        node.local.position = {
+            (float)(index % CAPACITY_POSED_GRID_WIDTH) * CAPACITY_POSED_SPACING,
+            0,
+            (float)(index / CAPACITY_POSED_GRID_WIDTH) * CAPACITY_POSED_SPACING,
+        };
+        scene.get(node, Mesh).vertex_motion = true;
+    }
+    scene.update_world();
+    return scene;
 }
 
 fn CapacitySampling? capacity_sampling(Fixture* fixture) @private {
@@ -539,6 +593,35 @@ fn void test_render_target_capacity_above_the_texture_table_faults() @test {
         { .texture_capacity = CAPACITY_SMALL_TABLE, .max_render_targets = CAPACITY_SMALL_TABLE + 1 },
         c3d::INVALID_ARGUMENT,
     );
+}
+
+fn void test_posed_capacity_beyond_the_tables_fails_at_creation() @test {
+    CapacityProbe device = capacity_probe();
+    uint reserved = render::RENDERER_RESERVED_ENTRIES + render::DEFAULT_MAX_VIEWS * render::VIEW_RESERVED_ENTRIES;
+    uint bound = (device.allocation_capacity - reserved) / render::POSED_SLOT_ALLOCATIONS;
+    capacity_expect_creation_fault(
+        { .ray_queries = device.ray_queries, .max_posed_trace_instances = bound + 1 },
+        c3d::INVALID_ARGUMENT,
+    );
+
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: device.ray_queries, max_posed_trace_instances: bound)!!;
+    defer destroy_fixture(&fixture);
+    print_adapter(&fixture);
+    io::eprintfn("posed slot bound %d, kinds: software%s", bound, device.ray_queries ? " and hardware" : "");
+    Scene scene = capacity_posed_scene(&fixture, bound)!!;
+    defer scene::destroy_scene(&scene);
+    Renderer* renderer = &fixture.renderer;
+
+    renderer.begin_frame()!!;
+    renderer.prepare_scene_trace(&scene, TraceKind.SOFTWARE)!!;
+    if (device.ray_queries) renderer.prepare_scene_trace(&scene, TraceKind.HARDWARE)!!;
+    renderer.end_frame()!!;
+    render::wait_frames(renderer)!!;
+
+    assert(renderer.stats.trace_posed_instances == bound);
+    assert(renderer.stats.trace_posed_overflow == 0);
+    check_validation(renderer);
 }
 
 fn void test_texture_stats_count_view_images_and_targets() @test {
