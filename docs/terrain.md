@@ -528,7 +528,7 @@ terrain::commit_bounds(&scene, &assets, &job)!;
 ```
 
 - **Snapshot.** `bounds_job` records the height map's revision, replacement and pixel array, the terrain's own
-  revision, pending rectangle and trace shape, and the node's world matrix. The texels are borrowed. A prepared
+  revision, pending rectangle and trace shape. The texels are borrowed. A prepared
   terrain with nothing to rebuild, or whose only change is a [`mark_dirty`](#edits) rectangle, which `update`
   refreshes serially, faults `INVALID_ARGUMENT`. A height map the checks refuse faults with the checks' fault and
   changes nothing; `update` then reports it and hides the batch.
@@ -551,10 +551,11 @@ terrain::commit_bounds(&scene, &assets, &job)!;
   - the node died or lost `Terrain`, or was prepared or torn down;
   - the height map's id, revision, replacement or pixel array;
   - the terrain's own revision, so an `update` that rebuilt it first makes the job stale; its pending rectangle; or
-    its trace shape (`trace` and `trace_level`);
-  - the node's world matrix, an origin shift included.
+    its trace shape (`trace` and `trace_level`).
 
-  Commit before `update`. The application drops a stale job and takes a new one.
+  Commit before `update`. The application drops a stale job and takes a new one. A moved node or an origin shift
+  does not make a job stale: the ranges write texel-space results only, and the commit builds the records, ranges
+  and trace grid from the live node and desc.
 
 ## Physics and navigation setup
 

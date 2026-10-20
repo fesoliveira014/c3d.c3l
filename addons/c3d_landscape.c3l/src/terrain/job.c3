@@ -4,7 +4,6 @@ import c3d;
 import c3d::asset;
 import c3d::landscape;
 import c3d::scene;
-import std::math;
 
 <*
  Detached bounds build of one terrain: its finest chunks as ranges, the reductions and publication at commit.
@@ -20,7 +19,6 @@ struct BoundsJob {
     uint           runtime_revision; // the height-map revision the bounds reflected; unread while pending
     bool           has_marked;       // the runtime had a pending rectangle
     TexelRect      marked;           // unread without has_marked
-    Mat4           world;
     ushort[]       texels;           // borrowed from the height map
     TerrainRuntime staged;           // the shape and arrays the leaf kernels write; owns nothing
 }
@@ -32,7 +30,7 @@ struct TraceShape @private {
 
 <*
  Capture a terrain's whole bounds build for detached ranges.
- @param [&in] scene : "World matrices current; the job reads the scene here only."
+ @param [&in] scene : "The job reads the scene here only."
  @param [&in] assets
  @param [&in] node : "A pending terrain, or a prepared one whose height map changed."
  @param scratch : "Holds the job's leaf arrays; the job never frees them."
@@ -87,7 +85,6 @@ fn BoundsJob? bounds_job(
         .height_revision = texture.header.revision,
         .height_replaced = texture.header.replaced_revision,
         .height_pixels   = texture.pixels.ptr,
-        .world           = node.world,
         .texels          = height_texels(texture),
         .staged          = staged,
     };
@@ -163,7 +160,7 @@ fn void? check_job_sources(Scene* scene, AssetStore* assets, BoundsJob* job) @pr
 
     Node* node = scene.node(job.node);
     bool prepared = scene.has(node, TerrainRuntime);
-    if (job.pending == prepared || node.world != job.world) return landscape::STALE~;
+    if (job.pending == prepared) return landscape::STALE~;
 
     TerrainDesc* desc = &scene.get(node, Terrain).desc;
     if (!c3d::same_id(desc.height_map, job.height_map) || !assets.textures.is_live(job.height_map)) {
