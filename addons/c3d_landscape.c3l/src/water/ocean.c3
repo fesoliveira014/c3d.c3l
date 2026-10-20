@@ -178,7 +178,7 @@ fn void? install_ocean(Scene* scene, Node* node, OceanState* ocean, WaterDesc* d
     QuadtreeLevel[MAX_OCEAN_LEVELS] storage;
     QuadtreeLevel[] levels = storage[:ocean.level_count];
     ocean_levels(ocean, desc, levels);
-    return scene.set_quadtree_ranges(node, levels, OCEAN_MORPH_BAND);
+    return scene.set_quadtree_ranges(node, levels, sea_debug.no_morph ? 0 : OCEAN_MORPH_BAND);
 }
 
 // All or nothing: a fault leaves the node without the batch.
@@ -236,7 +236,7 @@ fn void place_ocean_bounds(
     QuadtreeLevel[] levels = storage[:ocean.level_count];
     ocean_levels(ocean, desc, levels);
     // The levels come from a checked desc and the batch's own depth count: they cannot fault.
-    scene.set_quadtree_ranges(node, levels, OCEAN_MORPH_BAND)!!;
+    scene.set_quadtree_ranges(node, levels, sea_debug.no_morph ? 0 : OCEAN_MORPH_BAND)!!;
 }
 
 fn double[<2>] ocean_anchor(Scene* scene, Node* node) @private {

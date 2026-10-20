@@ -348,7 +348,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         slots[SPECTRAL_PREVIOUS_SLOT] = field_slot(spectral.previous);
     }
     MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
-    common.double_sided = true;
+    common.double_sided = !sea_debug.single_sided;
     MaterialId owned = assets.add_material(material::custom(
         shader:      shader,
         param_block: material::@as_bytes(params),

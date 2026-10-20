@@ -10,6 +10,8 @@ import std::math;
 
 const uint MARCH_FLAG @private = 1; // mirrored as WATER_MARCH in landscape/water_waves.glsl
 const uint SIMULATED_FLAG @private = 2; // mirrored as WATER_SIMULATED in landscape/water_waves.glsl
+const uint BACKFACE_FLAG @private = 8; // measurement; mirrored as WATER_DEBUG_BACKFACE in water.frag.glsl
+const uint BACKFACE_DISTANCE_FLAG @private = 16; // measurement; mirrored as WATER_DEBUG_BACKFACE_DISTANCE
 const uint SPECTRAL_FLAG @private = 4; // mirrored as WATER_SPECTRAL in landscape/water_waves.glsl
 
 <*
@@ -255,7 +257,9 @@ fn WaterParams pack_params(WaterDesc* desc, WaterParams kept) @private {
         .foam_crest            = desc.foam_crest,
         .flags                 = (desc.march_reflections ? MARCH_FLAG : 0)
             | (desc.wave_model == WaterWaveModel.SIMULATED ? SIMULATED_FLAG : 0)
-            | (desc.wave_model == WaterWaveModel.SPECTRAL ? SPECTRAL_FLAG : 0),
+            | (desc.wave_model == WaterWaveModel.SPECTRAL ? SPECTRAL_FLAG : 0)
+            | (sea_debug.tint_back_faces ? BACKFACE_FLAG : 0)
+            | (sea_debug.tint_back_distance ? BACKFACE_DISTANCE_FLAG : 0),
         .cell_size             = desc.mode == WaterMode.OCEAN ? desc.cell_size : 0,
         .roughness             = desc.roughness,
         .field_offset          = kept.field_offset,

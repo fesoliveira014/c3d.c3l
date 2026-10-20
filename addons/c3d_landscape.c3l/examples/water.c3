@@ -222,6 +222,7 @@ struct TileTerm @local {
     float phase;
 }
 
+float debug_camera_height @local; // measurement: the still camera's height over the water; zero keeps the default
 float debug_ripple_scale @local = 1; // measurement: multiplies the ripple map's periods per metre
 
 struct Options @local {
@@ -252,11 +253,21 @@ struct Options @local {
     bool        debug_ratio_floor;
     bool        debug_keep_floor;
     bool        debug_taa;
+    bool        debug_single_sided;
+    bool        debug_tint_back_faces;
+    bool        debug_tint_back_distance;
+    bool        debug_no_morph;
+    bool        debug_no_chop;
+    bool        debug_refraction_set;
+    float       debug_refraction;
+    bool        debug_distortion_set;
+    float       debug_distortion;
     bool        debug_print_waves;
     float       debug_cell_scale;
     float       debug_roughness;
     float       debug_ripple_scale;
     float       debug_jitter;
+    float       debug_camera_height;
     uint        debug_jitter_seed;
     uint        debug_frames;
     float       ripple_age; // seconds a shot lets its ripple spread
@@ -679,6 +690,8 @@ fn void? add_body(
         if (demo.options.ocean) desc.extent *= demo.options.debug_cell_scale; // keeps the chunk count within its limit
     }
     if (demo.options.debug_roughness > 0) desc.roughness = demo.options.debug_roughness;
+    if (demo.options.debug_refraction_set) desc.refraction_strength = demo.options.debug_refraction;
+    if (demo.options.debug_distortion_set) desc.reflection_distortion = demo.options.debug_distortion;
     desc.ripples = demo.options.ripples ? demo.ripples : (MaterialId){};
     desc.foam = demo.foam;
     desc.march_reflections = demo.options.reflection != Reflection.ENV;
@@ -1418,12 +1431,24 @@ fn Options? parse_options(String[] args) @local {
             case "--debug-ratio-floor": options.debug_ratio_floor = true;
             case "--debug-keep-floor": options.debug_keep_floor = true;
             case "--debug-taa": options.debug_taa = true;
+            case "--debug-single-sided": options.debug_single_sided = true;
+            case "--debug-tint-back-faces": options.debug_tint_back_faces = true;
+            case "--debug-tint-back-distance": options.debug_tint_back_distance = true;
+            case "--debug-no-morph": options.debug_no_morph = true;
+            case "--debug-no-chop": options.debug_no_chop = true;
+            case "--debug-refraction":
+                options.debug_refraction = option_value(args, &index)!.to_float()!;
+                options.debug_refraction_set = true;
+            case "--debug-distortion":
+                options.debug_distortion = option_value(args, &index)!.to_float()!;
+                options.debug_distortion_set = true;
             case "--debug-print-waves": options.debug_print_waves = true;
             case "--debug-cell-scale": options.debug_cell_scale = option_value(args, &index)!.to_float()!;
             case "--debug-roughness": options.debug_roughness = option_value(args, &index)!.to_float()!;
             case "--debug-ripple-scale": options.debug_ripple_scale = option_value(args, &index)!.to_float()!;
             case "--debug-jitter": options.debug_jitter = option_value(args, &index)!.to_float()!;
             case "--debug-jitter-seed": options.debug_jitter_seed = option_value(args, &index)!.to_uint()!;
+            case "--debug-camera-height": options.debug_camera_height = option_value(args, &index)!.to_float()!;
             case "--debug-frames": options.debug_frames = option_value(args, &index)!.to_uint()!;
             case "--sea-state": options.sea_state = true;
             case "--ocean": options.ocean = true;
@@ -1830,7 +1855,7 @@ fn void? pose_segment(
     Vec3 position = centre - (Vec3){ STILL_BACK * LAKE_EXTENT, 0, 0 };
     float yaw = (float)math::PI / 2;
     float pitch = STILL_PITCH;
-    float height = STILL_HEIGHT;
+    float height = debug_camera_height > 0 ? debug_camera_height : STILL_HEIGHT;
     if (segment == Segment.ORBIT) {
         float angle = 2 * (float)math::PI * (float)step / (float)frames;
         position = centre + (Vec3){ math::sin(angle) * ORBIT_RADIUS, 0, math::cos(angle) * ORBIT_RADIUS };
@@ -2480,6 +2505,7 @@ fn int main(String[] args) {
     }
     Options options = parsed;
     if (options.debug_ripple_scale > 0) debug_ripple_scale = options.debug_ripple_scale;
+    debug_camera_height = options.debug_camera_height;
     water::sea_debug = {
         .one_wave        = options.debug_one_wave,
         .no_floor        = options.debug_no_floor,
@@ -2487,6 +2513,11 @@ fn int main(String[] args) {
         .floor_cell_size = options.debug_keep_floor ? water::default_water_desc().cell_size : 0,
         .jitter_degrees  = options.debug_jitter,
         .jitter_seed     = options.debug_jitter_seed,
+        .single_sided    = options.debug_single_sided,
+        .tint_back_faces = options.debug_tint_back_faces,
+        .tint_back_distance = options.debug_tint_back_distance,
+        .no_morph        = options.debug_no_morph,
+        .no_chop         = options.debug_no_chop,
         .fetch_scale     = options.ocean && options.debug_cell_scale > 0 ? 1 / options.debug_cell_scale : 0,
     };
     if (options.shot.len) {

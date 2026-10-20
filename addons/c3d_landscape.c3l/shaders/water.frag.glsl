@@ -11,6 +11,8 @@
 
 const vec3 WATER_REFLECTANCE = vec3(0.02); // ior 1.33 at normal incidence
 const float WATER_IOR = 1.33; // air is 1; a ray leaving the water takes its inverse
+const uint WATER_DEBUG_BACKFACE = 8u; // measurement: back faces draw magenta
+const uint WATER_DEBUG_BACKFACE_DISTANCE = 16u; // measurement: back faces draw a colour per distance band
 const uint WATER_RIPPLES = 0u; // mirrored as RIPPLE_REFERENCE in water/material.c3
 const uint WATER_FOAM = 1u; // mirrored as FOAM_REFERENCE in water/material.c3
 const float WATER_REFRACTION_DEPTH = 1.0; // metres of water behind the surface at which refraction bends fully
@@ -160,6 +162,18 @@ void main() {
 
     // The branch holds explicit-lod reads only, so the derivatives above stay in uniform control flow.
     if (!gl_FrontFacing) {
+        if ((params.flags & WATER_DEBUG_BACKFACE) != 0u) {
+            out_color = vec4(1.0, 0.0, 1.0, 1.0);
+            return;
+        }
+        if ((params.flags & WATER_DEBUG_BACKFACE_DISTANCE) != 0u) {
+            float back_distance = distance(frame.camera_position.xyz, v_world_pos);
+            out_color = back_distance < 1000.0 ? vec4(1.0, 0.0, 0.0, 1.0)
+                : (back_distance < 2000.0 ? vec4(0.0, 1.0, 0.0, 1.0)
+                : (back_distance < 3000.0 ? vec4(0.0, 0.0, 1.0, 1.0)
+                : (back_distance < 4000.0 ? vec4(1.0, 1.0, 0.0, 1.0) : vec4(1.0, 1.0, 1.0, 1.0))));
+            return;
+        }
         color = water_from_below(frame, params, v_world_pos, normal, view_direction);
         out_color = material_output(color, 1.0, material.flags);
         return;

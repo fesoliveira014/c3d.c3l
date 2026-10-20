@@ -27,6 +27,11 @@ struct SeaDebug {
     float fetch_scale;     // multiplies the fetch; zero keeps it
     float jitter_degrees;  // each band's direction moves by up to this much either way, seeded per body
     uint  jitter_seed;     // mixed into every body's seed
+    bool  no_morph;        // the ocean's levels switch without a morph band
+    bool  no_chop;         // no horizontal crest shift
+    bool  tint_back_faces;    // the shader draws back-facing fragments magenta
+    bool  tint_back_distance; // the shader draws back-facing fragments by distance band
+    bool  single_sided;    // the surface culls back faces, as before it drew from below
 }
 
 SeaDebug sea_debug;
@@ -250,6 +255,7 @@ fn Wave[MAX_WAVES] sea_waves(
         wave.direction = { math::cos(angle), math::sin(angle) };
         wave.steepness = SEA_CHOP * 2 * (float)math::PI * MAX_WAVES * wave.amplitude / wave.wavelength;
         wave.steepness = min(wave.steepness, SEA_STEEPNESS_LIMIT);
+        if (sea_debug.no_chop) wave.steepness = 0;
     }
     return waves;
 }
