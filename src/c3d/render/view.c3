@@ -408,6 +408,11 @@ fn void? record_raster_view(
             transparent_start = candidates.len - transparent_count;
             weighted_start = candidates.len - weighted_count;
             foreach (&candidate : candidates) {
+                if (device_billboards_lost(renderer, candidate)) {
+                    renderer.stats.dangling_refs++;
+                    continue;
+                }
+
                 GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer)
                   : candidate.billboards || candidate.ribbons
                   ? acquire_billboard_geometry(renderer)! : resolve_geometry(renderer, candidate.geometry)!;
@@ -494,7 +499,13 @@ fn void? record_raster_view(
                 )!;
                 gpu::GpuAddress records = candidate_instanced(candidate)
                   ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0;
-                if (candidate.billboards) effects = billboard_atlas_address(candidate.billboards, records);
+                if (candidate.billboards) {
+                    effects = billboard_atlas_address(
+                        renderer: renderer,
+                        batch:    candidate.billboards,
+                        records:  records,
+                    )!;
+                }
                 usz index;
                 switch (list) {
                     case GBUFFER: index = gbuffer_filled++;
@@ -1487,7 +1498,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             }
         };
         scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
-            if (batch.count) {
+            if (batch.draw_count()) {
                 MeshPreparation prepared = prepare_billboards(self, batch)!;
                 sheen |= prepared.sheen;
                 scene_reads |= prepared.scene_reads;

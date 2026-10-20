@@ -257,25 +257,28 @@ fn void test_packed_billboard_batches_refuse_export() @test {
         create_fixture(&fixture);
         defer destroy_fixture(&fixture);
         serial::register_core_codecs()!!;
-        Node* root = fixture.source.add_node()!!;
-        fixture.source.add_billboards(
-            material: (MaterialId){},
-            capacity: 2,
-            parent: root,
-            source: BillboardSource.RECORDS,
-        )!!;
-        assert(@catch(serial::write_subtree(
-            allocator: tmem,
-            scene: &fixture.source,
-            assets: &fixture.assets,
-            root: root,
-        )) == c3d::UNSUPPORTED);
-        assert(@catch(serial::write_subtree_text(
-            allocator: tmem,
-            scene: &fixture.source,
-            assets: &fixture.assets,
-            root: root,
-        )) == c3d::UNSUPPORTED);
+        BillboardSource[2] refused = { BillboardSource.RECORDS, BillboardSource.DEVICE };
+        foreach (source : refused) {
+            Node* root = fixture.source.add_node()!!;
+            fixture.source.add_billboards(
+                material: (MaterialId){},
+                capacity: 2,
+                parent: root,
+                source: source,
+            )!!;
+            assert(@catch(serial::write_subtree(
+                allocator: tmem,
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: root,
+            )) == c3d::UNSUPPORTED);
+            assert(@catch(serial::write_subtree_text(
+                allocator: tmem,
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: root,
+            )) == c3d::UNSUPPORTED);
+        }
     };
 }
 

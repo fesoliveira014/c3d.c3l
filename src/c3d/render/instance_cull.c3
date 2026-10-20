@@ -255,7 +255,7 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
         Aabb? bound = cull_bound(item.candidate, item.geometry);
         item.bounded = culling && @ok(bound);
         item.bound = bound ?? item.geometry.bounds;
-        if (item.bounded || item.sorted) eligible++;
+        if (item.bounded || item.sorted || candidate_device_billboards(item.candidate)) eligible++;
     }
     CullArena* arena = &renderer.cull_arenas[slot_index];
     usz? args_offset = c3d::CAPACITY_EXCEEDED~;
@@ -273,7 +273,8 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     uint sorted;
     foreach (&item : items) {
         if (item.candidate.lod || item.candidate.quadtree) continue;
-        if (item.bounded || item.sorted) {
+        bool device = candidate_device_billboards(item.candidate);
+        if (item.bounded || item.sorted || device) {
             uint slot = args_index++;
             if (try block = args_offset) {
                 usz? list_offset = item.sorted
@@ -306,6 +307,13 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
             } else {
                 renderer.stats.cull_overflows++;
             }
+        }
+        if (device) {
+            // Records past the count word are stale, so an uncullable batch draws nothing.
+            MeshCandidate skipped = *item.candidate;
+            skipped.instance_count = 0;
+            *item.range = prepare_cull_range(renderer, &skipped, item.geometry)!;
+            continue;
         }
         *item.range = prepare_cull_range(renderer, item.candidate, item.geometry)!;
     }
@@ -361,6 +369,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 .first            = range.first,
                 .count            = range.count,
                 .keys             = item.keys_address,
+                .live_count       = device_billboard_count(renderer, item.candidate),
                 .instance_effects = item.effects,
                 .kind             = item.candidate.billboards
                     ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,

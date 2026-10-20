@@ -46,8 +46,8 @@ BillboardBatch authoring version 2 adds the batch's sprite-sheet `atlas` and eac
 binary and JSONC payloads read the atlas as off and every frame as 0. Reading and writing apply the
 `BillboardAtlas` and `frame` rules of `Scene.set_billboard_atlas` and `Scene.set_billboards`, so a layout that
 breaks them, or a negative or non-finite `frame`, faults `INVALID_ARGUMENT`. Writing a batch whose `source` is
-`RECORDS` faults `c3d::UNSUPPORTED`: its records are world-space draw data that an owner regenerates, as the particle
-package does.
+`RECORDS` or `DEVICE` faults `c3d::UNSUPPORTED`: its records are world-space draw data that an owner regenerates, as the
+particle package does, or live in a renderer buffer.
 
 RibbonBatch restores in the VALUE phase like BillboardBatch, at version 1: the material, the capacity and the live
 points, with unused points restarting at `RIBBON_POINT_DEFAULT`. Reading and writing apply the point rules of

@@ -697,6 +697,40 @@ fn void test_warm_standalone_frames_submit_and_empty_frames_do_not() @test {
     check_validation(renderer);
 }
 
+fn void test_frame_submission_is_reported_per_frame() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+
+    renderer.begin_frame()!!;
+    ulong submitted = renderer.frame_index;
+    render_view_and_finish(&fixture)!!;
+    renderer.end_frame()!!;
+    assert(renderer.frame_submitted && renderer.frame_was_submitted(submitted));
+
+    renderer.begin_frame()!!;
+    ulong aborted = renderer.frame_index;
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!!;
+    assert(@catch(renderer.end_frame()) == c3d::INVALID_ARGUMENT);
+
+    renderer.begin_frame()!!;
+    ulong open = renderer.frame_index;
+    assert(renderer.frame_was_submitted(submitted));
+    assert(!renderer.frame_was_submitted(aborted));
+    assert(!renderer.frame_was_submitted(open));
+
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!!;
+    assert(@catch(renderer.end_frame()) == c3d::INVALID_ARGUMENT);
+    assert(!renderer.frame_was_submitted(open));
+    assert(!renderer.frame_was_submitted(submitted));
+
+    renderer.begin_frame()!!;
+    renderer.end_frame()!!;
+    assert(!renderer.frame_submitted && !renderer.frame_was_submitted(open + 1));
+    check_validation(renderer);
+}
+
 fn void test_storage_texture_upload_write_sample_and_abort_keep_layouts_valid() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
