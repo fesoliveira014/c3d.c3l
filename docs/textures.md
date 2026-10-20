@@ -554,9 +554,9 @@ region is staged once per mip and copied with the barriers any upload of a resid
   every level whole, which costs what a whole upload costs. Each later region upload filters, for each level, only
   the box the edit reaches: the mip-0 box scaled to the level and widened to every texel whose filter reads it. The
   same boxes are copied, so the filtering and the staged bytes follow the boxes.
-- A whole upload of the texture refilters the chain in place. A replacement of the image, a residency change, a
-  released CPU source or a discarded upload leaves the chain to be filled again by the next region upload, or frees
-  it. A texture that is never region-edited keeps no chain.
+- A whole upload of the texture refilters the chain in place. A replaced image (a changed extent or format, a
+  residency change or a prepared re-upload) and a released CPU source free it, and a discarded upload leaves it
+  untrusted. The next region upload then fills it whole again. A texture that is never region-edited keeps no chain.
 - With supplied mips, each marked level's box is copied from that level's bytes.
 - A streamed texture copies only the levels of its resident chain.
 
