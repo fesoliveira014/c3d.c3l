@@ -44,14 +44,17 @@ fn void? upload_ribbon_records(
         capacity: (uint)batch.points.len + 1,
         record_size: RibbonPointGpu::size,
     )!;
+
     usz bytes = (usz)(batch.count + 1) * RibbonPointGpu::size;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     RibbonPointGpu[] records = ((RibbonPointGpu*)staging.bytes.ptr)[:batch.count + 1];
     pack_ribbon_records(records, maths::rebase(world, renderer.frame_origin), batch);
+
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });
     renderer.pending_instance_uploads.push(index);
+
     slot.revision = batch.revision;
     slot.world = world;
     slot.origin = renderer.frame_origin;
