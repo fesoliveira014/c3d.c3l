@@ -552,6 +552,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(Decal)!!;
     scene.world.register(CloudLayer)!!;
     scene.world.register(MediumVolume)!!;
+    scene.world.register(RibbonBatch)!!;
     scene.ambient_color = { 1, 1, 1 };
     scene.world.set_remove_hook(Mesh, &free_morph_weights, scene.hook_allocator);
     scene.world.set_remove_hook(ModelInstance, &free_model_instance, scene.hook_allocator);
@@ -560,6 +561,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.set_remove_hook(InstancedMesh, &free_instanced_mesh, scene.hook_allocator);
     scene.world.set_remove_hook(LodGroup, &free_lod_group, scene.hook_allocator);
     scene.world.set_remove_hook(BillboardBatch, &free_billboards, scene.hook_allocator);
+    scene.world.set_remove_hook(RibbonBatch, &free_ribbons, scene.hook_allocator);
 
     scene.crowd_removal = alloc::new(allocator, CrowdRemovalContext);
     *scene.crowd_removal = {

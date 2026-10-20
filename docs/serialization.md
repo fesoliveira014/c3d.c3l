@@ -47,6 +47,10 @@ binary and JSONC payloads read the atlas as off and every frame as 0. Reading an
 `BillboardAtlas` and `frame` rules of `Scene.set_billboard_atlas` and `Scene.set_billboards`, so a layout that
 breaks them, or a negative or non-finite `frame`, faults `INVALID_ARGUMENT`.
 
+RibbonBatch restores in the VALUE phase like BillboardBatch, at version 1: the material, the capacity and the live
+points, with unused points restarting at `RIBBON_POINT_DEFAULT`. Reading and writing apply the point rules of
+`Scene.set_ribbons`, so a non-finite value, a negative `width` or an unknown flag bit faults `INVALID_ARGUMENT`.
+
 LodGroup authoring version 3 restores in BINDINGS, after its source owners. Its common effects
 carry `trace_sway`; version-1 and version-2 binary and JSONC payloads read it as false.
 Rigid groups preserve ordered affine parts, levels, capacities, live placements,
