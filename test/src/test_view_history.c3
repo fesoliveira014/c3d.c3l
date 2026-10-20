@@ -516,6 +516,24 @@ fn void test_view_history_keeps_sample_and_slot_when_the_tables_grow() @test {
     assert(history.sample_index == 2 && history.slot == 0);
 }
 
+fn void test_affine_rows_hold_the_matrix_rows_in_shader_order() @test {
+    Transform placement = {
+        .position = { 3.3f, -1.7f, 12.9f },
+        .rotation = quaternion::from_axis_angle{float}(((Vec3){ 1, 2, 3 }).normalize(), 0.7f),
+        .scale    = { 1.3f, 0.6f, 2.1f },
+    };
+    Mat4 matrix = placement.to_mat4();
+    AffineRowsGpu rows = render::affine_rows(bitcast(matrix, Mat4f));
+    Vec4f[3] packed = { rows.row_0, rows.row_1, rows.row_2 };
+
+    // Elements run down each column, so the element at (row, column) is index column * 4 + row.
+    for (usz row = 0; row < 3; row++) {
+        for (usz column = 0; column < 4; column++) {
+            assert(packed[row][column] == matrix.m[column * 4 + row]);
+        }
+    }
+}
+
 fn void test_view_history_resizes_the_palette_with_the_binding() @test {
     Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
     defer scene::destroy_scene(&scene);

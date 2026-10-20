@@ -86,6 +86,8 @@ const uint DRAW_BILLBOARD_ATLAS = 512u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint GBUFFER_PROXY_SKIP_SHIFT = 16u;
 const float GBUFFER_PROXY_SKIP_UNIT = 0.01;
+const float MSAA_EDGE_DEPTH_TOLERANCE = 0.02;
+const float MSAA_EDGE_COLOR_TOLERANCE = 0.02;
 const uint FRAME_AO_BENT_NORMALS = 1024u;
 const uint AO_BLUR_FLAG_VECTOR_INPUT = 1u;
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1u;
@@ -548,6 +550,12 @@ struct LodHistoryGpu {
     uint _pad0;
 };
 
+struct AffineRowsGpu {
+    vec4 row_0;
+    vec4 row_1;
+    vec4 row_2;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPoseGpu {
     uint64_t skin;
     uint64_t morph;
@@ -708,6 +716,8 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer LightingReso
     uint reflection_texture;
     uint brdf_lut;
     float max_reflection_roughness;
+    uint msaa_edges;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsaoRoot {

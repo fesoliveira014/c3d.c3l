@@ -83,6 +83,8 @@ const uint DRAW_BILLBOARD_ATLAS = 512;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint GBUFFER_PROXY_SKIP_SHIFT = 16;
 const float GBUFFER_PROXY_SKIP_UNIT = 0.01;
+const float MSAA_EDGE_DEPTH_TOLERANCE = 0.02;
+const float MSAA_EDGE_COLOR_TOLERANCE = 0.02;
 const uint FRAME_AO_BENT_NORMALS = 1024;
 const uint AO_BLUR_FLAG_VECTOR_INPUT = 1;
 const uint AO_TEMPORAL_FLAG_HISTORY_VALID = 1;
@@ -800,6 +802,16 @@ $assert $reflect(LodHistoryGpu.generation).offset == 68;
 $assert $reflect(LodHistoryGpu.reject_history).offset == 72;
 $assert $reflect(LodHistoryGpu._pad0).offset == 76;
 
+struct AffineRowsGpu {
+    Vec4f row_0;
+    Vec4f row_1;
+    Vec4f row_2;
+}
+$assert AffineRowsGpu::size == 48;
+$assert $reflect(AffineRowsGpu.row_0).offset == 0;
+$assert $reflect(AffineRowsGpu.row_1).offset == 16;
+$assert $reflect(AffineRowsGpu.row_2).offset == 32;
+
 struct PreviousPoseGpu {
     GpuAddress skin;
     GpuAddress morph;
@@ -1086,8 +1098,10 @@ struct LightingResolveRoot {
     TextureIndex reflection_texture;
     TextureIndex brdf_lut;
     float        max_reflection_roughness;
+    TextureIndex msaa_edges;
+    uint         _pad0;
 }
-$assert LightingResolveRoot::size == 48;
+$assert LightingResolveRoot::size == 56;
 $assert $reflect(LightingResolveRoot.frame).offset == 0;
 $assert $reflect(LightingResolveRoot.base_color_metallic).offset == 8;
 $assert $reflect(LightingResolveRoot.normal_roughness).offset == 12;
@@ -1099,6 +1113,8 @@ $assert $reflect(LightingResolveRoot.sampler_index).offset == 32;
 $assert $reflect(LightingResolveRoot.reflection_texture).offset == 36;
 $assert $reflect(LightingResolveRoot.brdf_lut).offset == 40;
 $assert $reflect(LightingResolveRoot.max_reflection_roughness).offset == 44;
+$assert $reflect(LightingResolveRoot.msaa_edges).offset == 48;
+$assert $reflect(LightingResolveRoot._pad0).offset == 52;
 
 struct SsaoRoot {
     GpuAddress   frame;

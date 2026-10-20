@@ -85,6 +85,7 @@ python3 c3d_shader_tools/scripts/build_shaders.py --package path/to/package
 ## Breaking changes
 
 - Raw `InstanceArray` records are relative to the batch node. A custom vertex stage that indexes them directly places instances wrongly under a moved node, and nothing reports it. Read instances through `world_instance`, and a previous matrix through `previous_world_model`, as [Custom shaders](custom_shaders.md#vertex-contract) describes.
+- Previous instance matrices are `AffineRowsGpu` records, not `mat4`. A shader package built against an earlier `mesh_vertex.glsl` reads them in the old layout and draws wrong velocity until it is rebuilt with the release's shader tools; a stage that calls `previous_world_model` needs no source change.
 
 ## Making a release
 

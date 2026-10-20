@@ -71,3 +71,11 @@ fn void test_particle_material_faults_are_specific_and_do_not_publish() @test {
     assert(@catch(particle::add_particle_material(&assets, shader, params)) == c3d::CAPACITY_EXCEEDED);
     assert(@catch(particle::add_particle_shader(&assets)) == c3d::CAPACITY_EXCEEDED);
 }
+
+fn void test_particle_material_rejects_bad_anisotropy() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    ShaderId shader = particle::add_particle_shader(&assets)!!;
+    ParticleMaterialParams params = { .color = { 1, 1, 1, 1 }, .normal = ParticleNormal.VOLUME, .anisotropy = 1 };
+    assert(@catch(particle::add_particle_material(&assets, shader, params)) == c3d::INVALID_ARGUMENT);
+}

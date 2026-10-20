@@ -695,6 +695,17 @@ fn ClothSectorPlan? build_sector_plan(
     };
 }
 
+fn void fill_push_limits(float[] limits, ClothConstraint[] base_edges) @local {
+    limits[..] = float::max;
+    foreach (edge : base_edges) {
+        if (!(edge.rest_length > MIN_CONSTRAINT_LENGTH)) continue;
+
+        float bound = edge.rest_length * MAX_CONTACT_PUSH_FRACTION;
+        limits[edge.first] = math::min(limits[edge.first], bound);
+        limits[edge.second] = math::min(limits[edge.second], bound);
+    }
+}
+
 fn void seed_cloth_topology(
     ClothState* state,
     ClothSectorPlan* sector_plan,
@@ -713,6 +724,7 @@ fn void seed_cloth_topology(
     }
 
     state.rest_storage[:particle_count] = rest[..];
+    fill_push_limits(state.push_limits, sector_plan.base_edges);
     state.solved_reference_storage[:particle_count] = initial_positions[..];
     state.current_reference_storage[:particle_count] = initial_positions[..];
     if (state.staged_current_reference.len) {

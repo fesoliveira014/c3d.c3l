@@ -391,8 +391,7 @@ view's attachment-only multisample images, `msaa_color` and a forward view's `ms
 A hierarchical GI depth pyramid also holds one single-level view and heap slot per mip, in addition to
 its full-chain view. A render target also holds one attachment view. So do a view's `hdr_color`, `depth`,
 scene snapshots, weighted accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view,
-and each multisample image or
-sample-0 copy, at most 5 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
+and each multisample image, sample-0 copy or edge mask, at most 6 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
 three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
 table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
 default, so a store filled past about 1,000 uploaded textures faults on upload unless `texture_capacity` is raised.
@@ -409,7 +408,7 @@ Images a view allocates at creation, by setting:
 | `motion_blur` | +1, plus the 2 tile images |
 | Velocity, under `TAA`, `motion_blur`, `screen_space_gi`, `ambient_occlusion.temporal` or `ray_tracing.reflection_history` | +1 |
 | `DEFERRED` G-buffer | +5 |
-| `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used, +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` on a `FORWARD` view; a `DEFERRED` view also holds its G-buffer at that count and adds +1 `normal_sample_zero` with ambient occlusion, screen-space GI or `ray_tracing.reflections`, +1 `specular_sample_zero` with `ray_tracing.reflections` |
+| `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used, +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` on a `FORWARD` view; a `DEFERRED` view also holds its G-buffer at that count, adds +1 `msaa_edges`, +1 `normal_sample_zero` with ambient occlusion, screen-space GI or `ray_tracing.reflections`, +1 `specular_sample_zero` with `ray_tracing.reflections` |
 | `ambient_occlusion` | +2: `ao_raw` and `ao`, `R8_UNORM`, or `RGBA8_UNORM` with `ambient_occlusion.bent_normals` |
 | `ambient_occlusion.temporal` | +4: two history images, `R16_FLOAT` or `RGBA16_FLOAT` with `bent_normals`, and two depth images |
 | `screen_space_gi` | +7 |
@@ -749,7 +748,8 @@ the resolved `depth`.
 
 ### Deferred views
 
-A `DEFERRED` view holds its G-buffer at the view's count and lights once per sample. Its pass order is:
+A `DEFERRED` view holds its G-buffer at the view's count and lights a pixel once where all its samples come from one
+surface, and once per sample where they do not. Its pass order is:
 
 - `DEPTH_PREPASS` fills `msaa_depth` and resolves sample 0 into `depth`, so the pruned cluster reduction and every
   later single-sample reader find a depth before the G-buffer exists.
@@ -757,30 +757,40 @@ A `DEFERRED` view holds its G-buffer at the view's count and lights once per sam
   the normal and specular channels follow: `normal_sample_zero` with ambient occlusion, screen-space GI or traced
   reflections, and `specular_sample_zero` with traced reflections. Those effects read `depth` and the copies, as a
   forward view's effects read its resolved images.
-- `LIGHTING` is a fullscreen pass at the view's count into `msaa_color`. It shades every sample in its own
-  invocation (sample-rate shading), which reads that sample of the five channels and of `msaa_depth`. The layer mask
-  and the receive-shadow bit are never averaged, so a sample takes the shadow decision of the surface it covers,
-  including at a seam between a receiver and a non-receiver. The face normal used for shadow offsets is rebuilt from
-  the same sample of neighboring texels. A sample with no geometry keeps the clear color. Ambient occlusion,
-  screen-space GI and traced reflection results are per pixel.
+- `MSAA_EDGES` is a fullscreen pass at pixel rate that writes `msaa_edges`, a single-sample `R8_UINT` mask. A pixel is
+  an edge when any sample differs from sample 0: in depth by more than a fraction of the larger reverse-Z depth, in the
+  layer mask or the flag bits at all, or in a color, normal, roughness, occlusion, emissive or specular channel by
+  more than a small tolerance. The G-buffer is shaded once per pixel and primitive, so the samples of one primitive
+  agree and only a boundary between surfaces makes an edge. A seam between a shadow receiver and a non-receiver is an
+  edge because the receive-shadow bit differs. The tolerances are `MSAA_EDGE_DEPTH_TOLERANCE` and
+  `MSAA_EDGE_COLOR_TOLERANCE` in `abi/c3d.abi`.
+- `LIGHTING` is a fullscreen pass at the view's count into `msaa_color` with two draws. The first runs at pixel rate:
+  it skips edge pixels, lights the others once from sample 0, and the result reaches every covered sample. The second
+  shades each sample of an edge pixel in its own invocation (sample-rate shading), which reads that sample of the five
+  channels and of `msaa_depth`, and skips the other pixels. The layer mask and the receive-shadow bit are never
+  averaged, so a sample at an edge takes the shadow decision of the surface it covers. The face normal used for shadow
+  offsets is rebuilt from the same sample of neighboring texels. A sample with no geometry keeps the clear color.
+  Ambient occlusion, screen-space GI and traced reflection results are per pixel.
 - `FORWARD_OPAQUE` loads `msaa_color` and `msaa_depth`, draws the forward remainder and the sky at the view's count,
   then resolves color (the average of the lit samples) into `hdr_color` and depth sample 0 into `depth`.
 
-Everything after the resolve is single-sample, as on a forward view. A traced shadow is evaluated for every sample, so a
-view that traces shadows casts `N` times the rays at `N` samples, and a lighting invocation costs the same
-whatever the count; the G-buffer writes and the lighting invocations scale with `N` on every pixel, not only on edges.
-Previews of a multisample G-buffer channel show sample 0.
+Everything after the resolve is single-sample, as on a forward view. A traced shadow is cast once per pixel away from
+edges and once per sample at edges. A shadow edge inside one triangle is therefore shaded once per pixel and is not
+antialiased by the samples, the quality of forward multisampling, where the fragment shader also runs once per pixel;
+silhouettes, seams and creases between surfaces are antialiased. The G-buffer writes and the classification scale
+with `N` on every pixel, and the lighting cost scales with `N` only on edge pixels. Previews of a multisample
+G-buffer channel show sample 0.
 
 | Combination with `msaa` above `ONE` | Behavior |
 | --- | --- |
 | `TAA` | Faults `INVALID_ARGUMENT` |
 | `PATH_TRACED` | Faults `INVALID_ARGUMENT` |
-| `DEFERRED` | Lights once per sample; faults `UNSUPPORTED` without sample-rate shading |
+| `DEFERRED` | Lights edge pixels per sample and the rest once; faults `UNSUPPORTED` without sample-rate shading |
 | A count an image cannot be created at on the device | Faults `UNSUPPORTED`; adapters differ in the counts they accept |
 | `FXAA`, `NONE` | Allowed; FXAA filters the resolved image |
 | Motion blur, screen-space GI | Velocity from sample 0 |
 | Ambient occlusion, screen-space GI, traced reflections | Read the resolved depth and the sample-0 thin surface (forward) or sample-0 copies of the G-buffer channels (deferred) |
-| Traced shadows | Evaluated per fragment on a forward view, per sample on a deferred view |
+| Traced shadows | Evaluated per fragment on a forward view; on a deferred view per pixel, and per sample at edges |
 | Depth of field, auto focus, bloom, grading, LUT, auto exposure | Read the resolved images |
 | Decals | Unchanged: applied in the receiving draw's stage |
 | Installed impostors | Draw in the multisample pass; their alpha cut is not antialiased |
@@ -798,6 +808,7 @@ them. Bytes per working pixel at `N` samples:
 | `msaa_reflection_gbuffer` | `8 · N`, on a forward view |
 | G-buffer, deferred | `28 · N`, in place of the 28 of a single-sample G-buffer |
 | `normal_sample_zero`, `specular_sample_zero` | 8 each, single-sample |
+| `msaa_edges`, deferred | 1, single-sample |
 
 The single-sample images keep their formats and usages and are the resolve and copy targets.
 
@@ -894,8 +905,9 @@ depth prepass when its scene has an atmosphere, and splits before the transparen
 blended readers, the SSGI colour copy, then `FOG`, then transparency. With `volumetric_fog` the view also
 records `FOG_SCATTERING` and `FOG_INTEGRATION` after the sky tables. Dielectric F0 in the resolve is
 `0.04 · specular` for IOR 1.5, which is why other IORs and tinted specular colors route forward. On a view with
-[`msaa`](#multisample-anti-aliasing) above `ONE`, `DEPTH_PREPASS` also resolves sample 0 of the depth, `LIGHTING` runs
-once per sample into `msaa_color`, and `FORWARD_OPAQUE` resolves color into `hdr_color` and depth into `depth` (see
+[`msaa`](#multisample-anti-aliasing) above `ONE`, `DEPTH_PREPASS` also resolves sample 0 of the depth, `MSAA_EDGES`
+marks the pixels whose samples differ, `LIGHTING` lights the others once and the marked ones per sample into
+`msaa_color`, and `FORWARD_OPAQUE` resolves color into `hdr_color` and depth into `depth` (see
 [deferred views](#deferred-views)).
 
 Light selection follows `lights` on both paths: the resolve calls the same clustered or flat
