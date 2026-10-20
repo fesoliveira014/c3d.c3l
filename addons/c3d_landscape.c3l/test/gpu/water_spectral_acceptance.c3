@@ -37,7 +37,13 @@ fn void? evolve_fields(Fixture* fixture) @private {
 fn GeometryId plane_at(Fixture* fixture, float centre) @local {
     GeometryId id;
     @pool() {
-        Geometry plane = geometry::plane(tmem, TWIN_EXTENT, TWIN_EXTENT, PLANE_SEGMENTS, PLANE_SEGMENTS);
+        Geometry plane = geometry::plane(
+            allocator:  tmem,
+            width:      TWIN_EXTENT,
+            depth:      TWIN_EXTENT,
+            segments_x: PLANE_SEGMENTS,
+            segments_z: PLANE_SEGMENTS,
+        );
         foreach (&position : plane.positions) position.x += centre;
         plane.bounds = {
             .min = { centre - CLAIMED_REACH, 0, -CLAIMED_REACH },
@@ -212,7 +218,12 @@ fn void test_spectral_tiles_meet_at_the_patch_edge() @test {
 }
 
 // A frame that evolves the fields, then the texels of the displacement or of the one before it.
-fn Vec4[SEAM_PIXELS] read_field(Fixture* fixture, SpectralState* state, bool previous, double time) @local {
+fn Vec4[SEAM_PIXELS] read_field(
+    Fixture* fixture,
+    SpectralState* state,
+    bool previous,
+    double time,
+) @local {
     update_water(fixture, time);
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame({ .time = time, .delta = (float)VELOCITY_STEP })!!;
@@ -235,10 +246,30 @@ fn void test_spectral_previous_field_is_the_last_frames_displacement() @test {
     Node* water_node = add_sea(&fixture, spectral_desc(plane_at(&fixture, 0)));
     SpectralState* state = fixture.scene.get(water_node, WaterRuntime).spectral;
 
-    Vec4[SEAM_PIXELS] first = read_field(&fixture, state, false, SPECTRAL_TIMES[0]);
-    Vec4[SEAM_PIXELS] kept = read_field(&fixture, state, true, SPECTRAL_TIMES[1]);
-    Vec4[SEAM_PIXELS] second = read_field(&fixture, state, false, SPECTRAL_TIMES[2]);
-    Vec4[SEAM_PIXELS] kept_again = read_field(&fixture, state, true, SPECTRAL_TIMES[0]);
+    Vec4[SEAM_PIXELS] first = read_field(
+        fixture:  &fixture,
+        state:    state,
+        previous: false,
+        time:     SPECTRAL_TIMES[0],
+    );
+    Vec4[SEAM_PIXELS] kept = read_field(
+        fixture:  &fixture,
+        state:    state,
+        previous: true,
+        time:     SPECTRAL_TIMES[1],
+    );
+    Vec4[SEAM_PIXELS] second = read_field(
+        fixture:  &fixture,
+        state:    state,
+        previous: false,
+        time:     SPECTRAL_TIMES[2],
+    );
+    Vec4[SEAM_PIXELS] kept_again = read_field(
+        fixture:  &fixture,
+        state:    state,
+        previous: true,
+        time:     SPECTRAL_TIMES[0],
+    );
     float moved;
     foreach (index, texel : first) {
         assert(kept[index] == texel, "the history is not the frame before at %d", index);
@@ -253,7 +284,12 @@ fn void test_spectral_previous_field_is_the_last_frames_displacement() @test {
     defer destroy_fixture(&other);
     Node* other_node = add_sea(&other, spectral_desc(plane_at(&other, 0)));
     SpectralState* other_state = other.scene.get(other_node, WaterRuntime).spectral;
-    Vec4[SEAM_PIXELS] unmoved = read_field(&other, other_state, true, SPECTRAL_TIMES[0]);
+    Vec4[SEAM_PIXELS] unmoved = read_field(
+        fixture:  &other,
+        state:    other_state,
+        previous: true,
+        time:     SPECTRAL_TIMES[0],
+    );
     foreach (index, texel : first) assert(unmoved[index] == texel, "the first frame moved at %d", index);
     check_validation(&fixture.renderer);
 }

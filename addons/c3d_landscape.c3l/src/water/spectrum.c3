@@ -147,7 +147,12 @@ fn float spectral_cut(WaterDesc* desc) @private {
 }
 
 // A node-local wind over the body's fetch; a calm wind raises nothing.
-fn SeaSpectrum sea_spectrum(Vec2 wind_velocity, Vec2 rest_min, Vec2 rest_max, float cut) @private {
+fn SeaSpectrum sea_spectrum(
+    Vec2 wind_velocity,
+    Vec2 rest_min,
+    Vec2 rest_max,
+    float cut,
+) @private {
     float speed = min(wind_velocity.length(), SEA_WIND_LIMIT);
     if (!(speed > 0)) return { .cut = cut };
 
@@ -238,7 +243,12 @@ fn double component_variance(float[TABLE_FLOATS]* texel, bool both) @private {
 
 // Picks the strongest components for the twin and sets the sigma, the envelope and the bound from the rest.
 // `both` takes the larger of the two spectra per texel, which bounds every blended state between them.
-fn void analyse_spectrum(AssetStore* assets, SpectralState* state, WaterDesc* desc, bool both) @private {
+fn void analyse_spectrum(
+    AssetStore* assets,
+    SpectralState* state,
+    WaterDesc* desc,
+    bool both,
+) @private {
     float[TABLE_FLOATS]* texels = table_texels(assets, state);
     float patch_size = desc.spectrum.patch_size;
     double[SPECTRAL_TWIN_WAVES] strengths;
@@ -286,11 +296,21 @@ fn void analyse_spectrum(AssetStore* assets, SpectralState* state, WaterDesc* de
 }
 
 // The table: unit Gaussian pairs from the seed, and the roots of the sea the wind raises on both sides of the blend.
-fn SpectralState*? create_spectral(AssetStore* assets, WaterDesc* desc, Vec2 rest_min, Vec2 rest_max) @private {
+fn SpectralState*? create_spectral(
+    AssetStore* assets,
+    WaterDesc* desc,
+    Vec2 rest_min,
+    Vec2 rest_max,
+) @private {
     Allocator allocator = assets.allocator;
     sz count = (sz)SPECTRAL_SIZE * SPECTRAL_SIZE;
 
-    SeaSpectrum sea = sea_spectrum(DEFAULT_SPECTRAL_WIND, rest_min, rest_max, spectral_cut(desc));
+    SeaSpectrum sea = sea_spectrum(
+        wind_velocity: DEFAULT_SPECTRAL_WIND,
+        rest_min:      rest_min,
+        rest_max:      rest_max,
+        cut:           spectral_cut(desc),
+    );
     char[] pixels = alloc::new_array(allocator, char, count * TABLE_FLOATS * float::size);
     @pool() {
         float[] roots = alloc::new_array(tmem, float, count);
@@ -302,7 +322,12 @@ fn SpectralState*? create_spectral(AssetStore* assets, WaterDesc* desc, Vec2 res
         }
     };
 
-    TextureDesc table_desc = material::texture_2d_desc(SPECTRAL_SIZE, SPECTRAL_SIZE, RGBA32_FLOAT, "water_spectrum");
+    TextureDesc table_desc = material::texture_2d_desc(
+        width:      SPECTRAL_SIZE,
+        height:     SPECTRAL_SIZE,
+        format:     RGBA32_FLOAT,
+        debug_name: "water_spectrum",
+    );
     table_desc.generate_mips = false;
     TextureId? added = assets.add_texture_owned(table_desc, pixels);
     if (catch excuse = added) {
@@ -316,12 +341,22 @@ fn SpectralState*? create_spectral(AssetStore* assets, WaterDesc* desc, Vec2 res
     defer catch alloc::free(allocator, state);
     *state = { .table = table, .cut = sea.cut, .blend = 1 };
     add_field_textures(assets, state)!;
-    analyse_spectrum(assets, state, desc, false);
+    analyse_spectrum(
+        assets: assets,
+        state:  state,
+        desc:   desc,
+        both:   false,
+    );
     return state;
 }
 
 fn TextureId? add_field_texture(AssetStore* assets, PixelFormat format, ZString name) @private {
-    TextureDesc desc = material::texture_2d_desc(SPECTRAL_SIZE, SPECTRAL_SIZE, format, name);
+    TextureDesc desc = material::texture_2d_desc(
+        width:      SPECTRAL_SIZE,
+        height:     SPECTRAL_SIZE,
+        format:     format,
+        debug_name: name,
+    );
     desc.generate_mips = false;
     return assets.add_texture_empty(desc);
 }
@@ -390,7 +425,12 @@ fn void blend_spectral(
 ) @private {
     SpectralState* state = runtime.spectral;
     sz count = (sz)SPECTRAL_SIZE * SPECTRAL_SIZE;
-    SeaSpectrum sea = sea_spectrum(wind_velocity, runtime.rest_min, runtime.rest_max, state.cut);
+    SeaSpectrum sea = sea_spectrum(
+        wind_velocity: wind_velocity,
+        rest_min:      runtime.rest_min,
+        rest_max:      runtime.rest_max,
+        cut:           state.cut,
+    );
     float[TABLE_FLOATS]* texels = table_texels(assets, state);
     @pool() {
         float[] roots = alloc::new_array(tmem, float, count);
@@ -405,7 +445,12 @@ fn void blend_spectral(
     state.stage = SpectralStage.STARTING;
     state.blend = 0;
     state.duration = transition_seconds;
-    analyse_spectrum(assets, state, &runtime.desc, true);
+    analyse_spectrum(
+        assets: assets,
+        state:  state,
+        desc:   &runtime.desc,
+        both:   true,
+    );
     runtime.spectral_bound = state.bound;
 }
 
@@ -438,7 +483,12 @@ fn void advance_spectral(
     if (state.blend < 1) return;
 
     state.stage = SpectralStage.IDLE;
-    analyse_spectrum(assets, state, &runtime.desc, false);
+    analyse_spectrum(
+        assets: assets,
+        state:  state,
+        desc:   &runtime.desc,
+        both:   false,
+    );
     runtime.spectral_bound = state.bound;
     place_bounds(scene, node, runtime);
 }

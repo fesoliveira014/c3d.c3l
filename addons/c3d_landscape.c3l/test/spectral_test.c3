@@ -68,7 +68,12 @@ fn void update_water(Fixture* fixture, double time) @local {
     );
 }
 
-fn void set_sea(Fixture* fixture, Node* node, Vec2 wind, float seconds) @local {
+fn void set_sea(
+    Fixture* fixture,
+    Node* node,
+    Vec2 wind,
+    float seconds,
+) @local {
     water::set_sea_state(
         scene:              &fixture.scene,
         assets:             &fixture.assets,
@@ -76,6 +81,24 @@ fn void set_sea(Fixture* fixture, Node* node, Vec2 wind, float seconds) @local {
         wind_velocity:      wind,
         transition_seconds: seconds,
     )!!;
+}
+
+fn void? try_set_desc(Fixture* fixture, Node* node, WaterDesc desc) @local {
+    return water::set_desc(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   node,
+        desc:   desc,
+    );
+}
+
+fn void? try_attach(Fixture* fixture, Node* node, WaterDesc desc) @local {
+    return water::attach_water(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   node,
+        desc:   desc,
+    );
 }
 
 fn void assert_fault(fault excuse, fault expected, String what) @local {
@@ -151,13 +174,23 @@ fn void test_spectral_bounds_follow_the_sea_state() @test {
     SpectralState* state = state_of(&fixture, lake);
     WaterRuntime* runtime = fixture.scene.get(lake, WaterRuntime);
 
-    set_sea(&fixture, lake, STORM_WIND, 0);
+    set_sea(
+        fixture: &fixture,
+        node:    lake,
+        wind:    STORM_WIND,
+        seconds: 0,
+    );
     update_water(&fixture, 0);
     float storm = state.envelope;
     float storm_offset = -fixture.scene.node(runtime.medium_node).local.position.y;
     assert(storm_offset == storm + water::MEDIUM_SKIN, "the medium does not sit under the envelope");
 
-    set_sea(&fixture, lake, BREEZE_WIND, BLEND_SECONDS);
+    set_sea(
+        fixture: &fixture,
+        node:    lake,
+        wind:    BREEZE_WIND,
+        seconds: BLEND_SECONDS,
+    );
     update_water(&fixture, FIRST_UPDATE);
     assert(state.envelope >= storm, "the bounds shrank while the storm was still blending out");
     update_water(&fixture, BLEND_END);
@@ -175,12 +208,11 @@ fn void test_spectral_spectrum_is_fixed_for_the_life_of_the_body() @test {
 
     WaterDesc choppier = lake_desc(water::DEFAULT_SPECTRUM_SEED);
     choppier.spectrum.choppiness *= 2;
-    fault edit = @catch(water::set_desc(&fixture.scene, &fixture.assets, lake, choppier));
-    assert_fault(edit, c3d::INVALID_ARGUMENT, "A spectrum edit");
+    assert_fault(@catch(try_set_desc(&fixture, lake, choppier)), c3d::INVALID_ARGUMENT, "A spectrum edit");
 
     WaterDesc rougher = lake_desc(water::DEFAULT_SPECTRUM_SEED);
     rougher.roughness = 0.2f;
-    water::set_desc(&fixture.scene, &fixture.assets, lake, rougher)!!;
+    try_set_desc(&fixture, lake, rougher)!!;
 }
 
 fn void test_spectral_spectrum_is_checked() @test {
@@ -192,14 +224,14 @@ fn void test_spectral_spectrum_is_checked() @test {
     WaterDesc flat = lake_desc(water::DEFAULT_SPECTRUM_SEED);
     flat.spectrum.patch_size = 0;
     assert_fault(
-        @catch(water::attach_water(&fixture.scene, &fixture.assets, node, flat)),
+        @catch(try_attach(&fixture, node, flat)),
         c3d::INVALID_ARGUMENT,
         "A patch of no size",
     );
     WaterDesc inverted = lake_desc(water::DEFAULT_SPECTRUM_SEED);
     inverted.spectrum.choppiness = -1;
     assert_fault(
-        @catch(water::attach_water(&fixture.scene, &fixture.assets, node, inverted)),
+        @catch(try_attach(&fixture, node, inverted)),
         c3d::INVALID_ARGUMENT,
         "A negative choppiness",
     );
@@ -210,7 +242,7 @@ fn void test_spectral_sea_state_needs_a_prepared_body() @test {
     setup(&fixture);
     defer teardown(&fixture);
     Node* node = fixture.scene.add_node()!!;
-    water::attach_water(&fixture.scene, &fixture.assets, node, lake_desc(water::DEFAULT_SPECTRUM_SEED))!!;
+    try_attach(&fixture, node, lake_desc(water::DEFAULT_SPECTRUM_SEED))!!;
 
     fault pending = @catch(water::set_sea_state(
         scene:              &fixture.scene,

@@ -225,7 +225,12 @@ fn Aabb rest_bounds(AssetStore* assets, WaterDesc* desc) @private {
 }
 
 // Displacement leaves the rest bounds by the reach of the surface.
-fn Aabb drawn_bounds(Aabb rest, WaterDesc* desc, Wave[] waves, float envelope) @private {
+fn Aabb drawn_bounds(
+    Aabb rest,
+    WaterDesc* desc,
+    Wave[] waves,
+    float envelope,
+) @private {
     Vec3 growth = surface_reach(desc, waves, envelope);
     return { .min = rest.min - growth, .max = rest.max + growth };
 }

@@ -317,7 +317,12 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     defer catch if (simulation) release_simulation(assets, simulation);
     SpectralState* spectral;
     if (desc.wave_model == WaterWaveModel.SPECTRAL) {
-        spectral = create_spectral(assets, &desc, { rest.min.x, rest.min.z }, { rest.max.x, rest.max.z })!;
+        spectral = create_spectral(
+            assets:   assets,
+            desc:     &desc,
+            rest_min: { rest.min.x, rest.min.z },
+            rest_max: { rest.max.x, rest.max.z },
+        )!;
     }
     defer catch if (spectral) release_spectral(assets, spectral);
     float envelope = spectral ? spectral.envelope : 0;
@@ -376,7 +381,12 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             .receive_shadow      = true,
             .trace               = desc.trace,
             .has_bounds_override = true,
-            .local_bounds        = drawn_bounds(rest, &desc, desc.waves[:desc.wave_count], envelope),
+            .local_bounds        = drawn_bounds(
+                rest:     rest,
+                desc:     &desc,
+                waves:    desc.waves[:desc.wave_count],
+                envelope: envelope,
+            ),
         });
     }
     scene.add(node, (WaterRuntime){
@@ -518,7 +528,12 @@ fn void? set_desc(
     Mesh* mesh = scene.get(node, Mesh);
     mesh.geometry = surface;
     mesh.trace = desc.trace;
-    mesh.local_bounds = drawn_bounds(rest, &desc, desc.waves[:desc.wave_count], spectral_envelope(runtime));
+    mesh.local_bounds = drawn_bounds(
+        rest:     rest,
+        desc:     &desc,
+        waves:    desc.waves[:desc.wave_count],
+        envelope: spectral_envelope(runtime),
+    );
 }
 
 <*
