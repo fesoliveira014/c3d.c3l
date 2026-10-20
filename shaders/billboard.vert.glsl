@@ -57,6 +57,7 @@ void main() {
     }
 
     v_world_pos = world;
+    v_shading_pos = world;
     v_normal = normal;
     v_tangent = vec4(rotated_right, dot(cross(normal, rotated_right), rotated_up) < 0.0 ? -1.0 : 1.0);
     v_uv0 = uv0;

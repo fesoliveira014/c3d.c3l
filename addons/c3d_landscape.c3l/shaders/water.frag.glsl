@@ -20,6 +20,7 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec4 v_tangent;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 5) in vec4 v_color;
+layout(location = 9) centroid in vec3 v_shading_pos; // inside the triangle under MSAA, where v_world_pos can lie outside it
 layout(location = 0) out vec4 out_color;
 
 layout(push_constant) uniform Push {
@@ -152,7 +153,7 @@ void main() {
     vec3 color = evaluate_standard_lights(
         frame,
         surface,
-        v_world_pos,
+        v_shading_pos,
         wave_normal,
         draw.layers,
         (draw.flags & DRAW_RECEIVE_SHADOW) != 0u

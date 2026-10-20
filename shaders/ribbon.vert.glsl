@@ -75,6 +75,7 @@ void main() {
     float u = vertex.position.x + 0.5;
 
     v_world_pos = world;
+    v_shading_pos = world;
     v_normal = normal;
     v_tangent = vec4(tangent, dot(cross(normal, tangent), side) < 0.0 ? -1.0 : 1.0);
     v_uv0 = vec2(u, point.v);

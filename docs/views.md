@@ -739,7 +739,8 @@ An MSAA view draws its depth prepass, its forward pass and the sky into multisam
 
 A fragment shades once per pixel and primitive and the covered samples share its color: the sample count does not
 multiply shading cost, and a `MASK` material's alpha test is evaluated once as well, so its cut-out edges are not
-antialiased. There is no alpha-to-coverage.
+antialiased. There is no alpha-to-coverage. The position that lighting and traced shadow rays use is interpolated at the
+pixel's centroid (`v_shading_pos`), which lies inside the triangle; every other term interpolates at the pixel centre.
 
 Every later pass reads single-sample images, as on a view without the field: clouds, fog and the atmosphere's aerial
 perspective, scene-read and transmission draws, weighted and sorted transparency, the screen-space GI color copy,

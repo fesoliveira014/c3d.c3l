@@ -20,6 +20,7 @@ layout(location = 2) in vec4 v_tangent;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
+layout(location = 9) centroid in vec3 v_shading_pos; // inside the triangle under MSAA, where v_world_pos can lie outside it
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -312,14 +313,14 @@ void main() {
             visibility = shadow_transmittance(
                 frame,
                 light,
-                v_world_pos,
+                v_shading_pos,
                 material_sample.offset_normal,
                 view_depth
             );
         }
         color += visibility * evaluate_physical_light(
             light,
-            v_world_pos,
+            v_shading_pos,
             surface,
             draw.sheen_lut,
             draw.sheen_sampler

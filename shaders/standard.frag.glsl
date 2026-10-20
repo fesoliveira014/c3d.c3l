@@ -14,6 +14,7 @@ layout(location = 2) in vec4 v_tangent;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
+layout(location = 9) centroid in vec3 v_shading_pos; // inside the triangle under MSAA, where v_world_pos can lie outside it
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -55,7 +56,7 @@ void main() {
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u
         && material_sample.base_color.a < material.alpha_cutoff) discard;
 
-    vec3 color = shade_standard_surface(frame, draw, material_sample, 1.0, v_world_pos, ivec2(gl_FragCoord.xy));
+    vec3 color = shade_standard_surface(frame, draw, material_sample, 1.0, v_shading_pos, ivec2(gl_FragCoord.xy));
     if ((material.flags & MATERIAL_ALPHA_BLEND) != 0u) {
         color = apply_material_fog(frame, v_world_pos, color, material.flags);
     }

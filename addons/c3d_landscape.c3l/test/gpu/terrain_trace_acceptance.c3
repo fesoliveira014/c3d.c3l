@@ -635,13 +635,23 @@ struct AoSpeckleCase @local {
 }
 
 // llvmpipe creates no two-sample deferred view.
-const AoSpeckleCase[2] AO_SPECKLE_CASES @local = {
+const AoSpeckleCase[3] AO_SPECKLE_CASES @local = {
     { .shading = ShadingPath.FORWARD, .msaa = MsaaSamples.ONE },
     { .shading = ShadingPath.DEFERRED, .msaa = MsaaSamples.FOUR },
+    { .shading = ShadingPath.FORWARD, .msaa = MsaaSamples.FOUR },
 };
 
 // The measured grid is double-sided: a single-sided one hides a missing skip, since rays meet it from below.
-fn void test_traced_ao_does_not_speckle_terrain() @test {
+// A forward fragment shades once per pixel: its floor holds the 1x floor only if its rays start inside the triangle.
+fn void test_traced_lighting_does_not_speckle_terrain() @test {
+    Speckle single_sample_floor = render_speckle(
+        ray_queries:   false,
+        shading:       ShadingPath.FORWARD,
+        trace_level:   0,
+        lod_threshold: FINEST_LOD,
+        traced_ao:     true,
+    );
+
     foreach (&ao_case : AO_SPECKLE_CASES) {
         Speckle floor = render_speckle(
             ray_queries:   false,
@@ -651,6 +661,12 @@ fn void test_traced_ao_does_not_speckle_terrain() @test {
             traced_ao:     true,
             msaa:          ao_case.msaa,
         );
+
+        if (ao_case.shading == ShadingPath.FORWARD) {
+            assert(floor.mean_laplacian <= SPECKLE_LAPLACIAN_RATIO * single_sample_floor.mean_laplacian);
+            assert((float)floor.edges <= SPECKLE_PIXEL_RATIO * (float)single_sample_floor.edges);
+        }
+
         Speckle speckle = render_speckle(
             ray_queries:   false,
             shading:       ao_case.shading,
