@@ -219,10 +219,14 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(particle::ParticleSystemDescV7)!!.layout == 0x4c53c2a840dc4b22);
     assert(serial::described_type(particle::ParticleAuthoringV7)!!.version == 7);
     assert(serial::described_type(particle::ParticleAuthoringV7)!!.layout == 0xa19169c0d642b947);
-    assert(serial::described_type(ParticleSystemDesc)!!.version == 8);
-    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0xf4e634d538fb6561);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 8);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0x80aadf92bb6def28);
+    assert(serial::described_type(particle::ParticleSystemDescV8)!!.version == 8);
+    assert(serial::described_type(particle::ParticleSystemDescV8)!!.layout == 0xf4e634d538fb6561);
+    assert(serial::described_type(particle::ParticleAuthoringV8)!!.version == 8);
+    assert(serial::described_type(particle::ParticleAuthoringV8)!!.layout == 0x80aadf92bb6def28);
+    assert(serial::described_type(ParticleSystemDesc)!!.version == 9);
+    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0xac2f8cc71b7487d9);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 9);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0xc05a0e8dbcf9506c);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("particle_system") && schema.contains("emitting"));
@@ -234,7 +238,27 @@ fn void test_serial_layout_registration() @test {
         assert(schema.contains("turbulence") && schema.contains("octaves") && schema.contains("scroll"));
         assert(schema.contains("trail") && schema.contains("width_over_trail") && schema.contains("TILE"));
         assert(schema.contains("mesh_cast_shadow") && schema.contains("mesh_trace"));
+        assert(schema.contains("execution") && schema.contains("GPU"));
     };
+}
+
+fn void test_particle_execution_round_trips_in_both_encodings() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture, STRETCHED);
+            defer destroy_fixture(&fixture);
+            fixture.source.get(fixture.root, ParticleSystem).desc.execution = ParticleExecution.GPU;
+            char[] bytes = encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: fixture.root,
+                text_mode: text_mode,
+            )!!;
+            Node* restored = decode(&fixture, bytes, text_mode)!!;
+            assert(fixture.destination.get(restored, ParticleSystem).desc.execution == ParticleExecution.GPU);
+        };
+    }
 }
 
 fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @test {
