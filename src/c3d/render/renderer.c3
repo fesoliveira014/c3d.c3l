@@ -423,6 +423,8 @@ fn void? Renderer.end_frame(&self) {
             commit_uploads(self, slot);
             foreach (&record : self.views.items) {
                 if (record.history.pending) record.history.submitted = self.frame_index;
+                if (record.depth_written) record.depth_frame = frame + 1;
+                record.depth_written = false;
                 record.history.publish();
                 record.auto_exposure.history.publish();
                 record.focus.history.publish();
@@ -1259,6 +1261,7 @@ fn void abort_frame(Renderer* renderer) {
     }
     foreach (&record : renderer.views.items) {
         record.rendered = false;
+        record.depth_written = false;
         record.cluster_root = (gpu::GpuAddress)0;
     }
     renderer.has_output = false;

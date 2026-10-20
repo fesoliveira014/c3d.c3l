@@ -705,6 +705,8 @@ struct ViewRecord {
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
+    bool                                 depth_written; // the open frame's rendering wrote the depth
+    ulong                                depth_frame; // frame index + 1 of the last submitted depth write; 0 when none
     ulong                                last_scene; // identity of the scene this view last rendered
     ProjectionTerms                      projection_terms;
     OverlayProjection                    overlay_projection; // of the rendering in progress, for the world overlay
@@ -914,6 +916,18 @@ fn bool Renderer.has_depth_prepass_view(&self) {
 fn uint[<2>]? Renderer.view_extent(&self, ViewId view) {
     ViewRecord* record = self.views.try_get(view)!;
     return { record.hdr_color.width, record.hdr_color.height };
+}
+
+<*
+ Frame of the last submitted rendering that wrote the view's depth.
+ Recreating the depth image clears it.
+ @return? NOT_READY, c3d::INVALID_ID
+*>
+fn ulong? Renderer.view_depth_frame(&self, ViewId view) {
+    ViewRecord* record = self.views.try_get(view)!;
+    if (record.depth_frame == 0) return NOT_READY~;
+
+    return record.depth_frame - 1;
 }
 
 <*
@@ -1414,6 +1428,7 @@ fn void commit_resized_views(Renderer* renderer, StagedView[] views) @private {
         record.focus.reconfigure(&record.desc, &view.images.desc);
         adopt_view_images(record, &view.images);
         release_view_images(&renderer.device, &view.images);
+        record.depth_frame = 0;
         release_cluster_readback(&renderer.device, record);
         forget_view_history(renderer, record);
         record.desc = view.images.desc;

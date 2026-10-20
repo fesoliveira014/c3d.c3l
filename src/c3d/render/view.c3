@@ -262,6 +262,7 @@ fn void? record_camera_view(
         renderer.frame_recorded = true;
         renderer.work_recorded = true;
         record.rendered = true;
+        record.depth_written = record.desc.shading != ShadingPath.PATH_TRACED;
         record.last_scene = scene.identity;
     };
 }
