@@ -13,9 +13,9 @@ const Burst[2] OVERSIZED_BURSTS @private = { { 0, 100 }, { 5, 400 } };
 const uint OVERSIZED_EVICTED @private = 100; // every survivor
 const uint OVERSIZED_REFUSED @private = 144; // the 400 against the 256 slots
 const uint EVICT_POOL @private = 4;
-const uint EVICT_FILL_FRAMES @private = 2;
 const uint EVICT_BURST @private = 3;
-const uint EVICT_SETTLE_FRAMES @private = render::FRAMES_IN_FLIGHT + 2; // the delivery lands a step late
+const uint EVICT_FILL_FRAMES @private = 2; // frames before the burst that finds the pool full
+const uint EVICT_SETTLE_FRAMES @private = render::FRAMES_IN_FLIGHT + 2; // evict, take in the children, then read back
 
 fn Pair? add_eviction_pair(Fixture* fixture, bool trailed) @private {
     ParticleSystemDesc desc = reference_desc(fixture.material);
@@ -117,7 +117,7 @@ fn void test_gpu_evicted_particles_fire_death_only_with_on_evict() @test {
         parents[index].emit_burst(EVICT_POOL);
     }
     fixture.scene.update_world();
-    for (uint frame = 0; frame < EVICT_FILL_FRAMES + 1 + EVICT_SETTLE_FRAMES; frame++) {
+    for (uint frame = 0; frame < EVICT_FILL_FRAMES + EVICT_SETTLE_FRAMES; frame++) {
         if (frame == EVICT_FILL_FRAMES) {
             foreach (parent : parents) parent.emit_burst(EVICT_BURST);
         }
