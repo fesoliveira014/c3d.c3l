@@ -722,6 +722,8 @@ root RtAoRoot {
     uint         noise_frame;
     uint         ray_count;
     TextureIndex flags; // a single-sample word packed like the G-buffer flags; zero reads no proxy skip height
+    uint         samples;
+    uint         variant;
 }
 
 root RtReflectionRoot {

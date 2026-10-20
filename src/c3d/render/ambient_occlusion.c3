@@ -8,7 +8,7 @@ import std::math;
 
 $assert SsaoRoot::size == 48;
 $assert AoBlurRoot::size == 48;
-$assert RtAoRoot::size == 48;
+$assert RtAoRoot::size == 56;
 $assert AoTemporalRoot::size == 64;
 
 <*
@@ -25,6 +25,11 @@ const uint RT_AO_RAYS_MAX = 16; // 16 rays over a half-resolution 1080p estimate
  History images per kind; they follow ViewHistory.slot.
 *>
 const uint AO_HISTORY_SLOTS = 2; // 1080p at half resolution: 2.1 MB of visibility history and 4.1 MB of depth history
+
+<*
+ Measurement only: bit 0 reconstructs the ray-traced AO origin at sample 0, bit 1 the depth-face normal.
+*>
+uint ao_measure_variant;
 
 const float AO_DEPTH_TOLERANCE @private = 0.05f;   // relative linear depth, TAA's default
 const float AO_VELOCITY_THRESHOLD @private = 2;    // full-resolution pixels a frame, TAA's default
@@ -327,6 +332,8 @@ fn void? record_ambient_occlusion(
                 .noise_frame    = temporal_noise_frame(record, accumulates),
                 .ray_count      = ambient_occlusion.ray_count,
                 .flags          = reads_flags ? flags.view.index : (gpu::TextureIndex)0,
+                .samples        = 1u << (uint)record.desc.msaa,
+                .variant        = ao_measure_variant,
             };
         case NONE:
     }

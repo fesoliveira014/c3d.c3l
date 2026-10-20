@@ -844,6 +844,8 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtAoRoot {
     uint noise_frame;
     uint ray_count;
     uint flags;
+    uint samples;
+    uint variant;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionRoot {

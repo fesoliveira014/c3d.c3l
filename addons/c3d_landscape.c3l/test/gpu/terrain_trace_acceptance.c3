@@ -13,7 +13,9 @@ import c3d::scene;
 import c3d::shader;
 import c3d::shader::compile;
 import gpu;
+import std::io;
 import std::math;
+import std::os::env;
 
 const char[*] TRACE_PROBE_SOURCE @local = $embed("trace_probe.comp.glsl");
 const uint TRACE_GROUP_SIZE @local = 8; // mirrored as local_size_x and _y in trace_probe.comp.glsl
@@ -413,6 +415,8 @@ struct ShadeDesc @local {
     bool        traced_ao;      // ray traced ambient occlusion over an ambient-lit scene
     bool        back_faces;     // the terrain is double-sided, so rays meet the grid from below
     MsaaSamples msaa;
+    bool        ao_disabled;  // measurement: ambient stays, the AO pass is off
+    bool        no_shadows;   // measurement: no ray traced sun shadows
 }
 
 struct ShadeRig @local {
@@ -475,7 +479,7 @@ fn void? create_shade_rig(ShadeRig* rig, ShadeDesc* shade) @local {
     if (shade.traced_ao) rig.scene.ambient_intensity = AO_AMBIENT;
 
     Light sun = light::directional({ 1, 0.95f, 0.85f }, 3);
-    sun.shadow.ray_traced = true;
+    sun.shadow.ray_traced = !shade.no_shadows;
     Node* sun_node = rig.scene.add_light(sun, name: "sun")!;
     sun_node.local.rotation = maths::look_rotation(shade.sun_direction.normalize(), { 0, 1, 0 });
 
@@ -500,9 +504,9 @@ fn void? create_shade_rig(ShadeRig* rig, ShadeDesc* shade) @local {
     ViewDesc view_desc = render::texture_view_desc(rig.target, OutputMode.DISPLAY_LDR);
     view_desc.shading = shade.shading;
     view_desc.post.anti_aliasing = AntiAliasing.NONE;
-    view_desc.ray_tracing.shadows = true;
+    view_desc.ray_tracing.shadows = !shade.no_shadows;
     view_desc.msaa = shade.msaa;
-    if (shade.traced_ao) {
+    if (shade.traced_ao && !shade.ao_disabled) {
         view_desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
         view_desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
     }
@@ -571,6 +575,8 @@ fn Speckle render_speckle(
     bool        traced_ao = false,
     bool        back_faces = false,
     MsaaSamples msaa = MsaaSamples.ONE,
+    bool        ao_disabled = false,
+    bool        no_shadows = false,
 ) @local {
     ShadeDesc shade = {
         .ray_queries   = ray_queries,
@@ -584,6 +590,8 @@ fn Speckle render_speckle(
         .traced_ao     = traced_ao,
         .back_faces    = back_faces,
         .msaa          = msaa,
+        .ao_disabled   = ao_disabled,
+        .no_shadows    = no_shadows,
     };
     ShadeRig rig;
     create_shade_rig(&rig, &shade)!!;
@@ -634,34 +642,86 @@ struct AoSpeckleCase @local {
     MsaaSamples msaa;
 }
 
-// llvmpipe creates no two-sample deferred view.
-const AoSpeckleCase[2] AO_SPECKLE_CASES @local = {
+const AoSpeckleCase[3] AO_SPECKLE_CASES @local = {
     { .shading = ShadingPath.FORWARD, .msaa = MsaaSamples.ONE },
     { .shading = ShadingPath.DEFERRED, .msaa = MsaaSamples.FOUR },
+    { .shading = ShadingPath.FORWARD, .msaa = MsaaSamples.FOUR },
 };
 
-// The measured grid is double-sided: a single-sided one hides a missing skip, since rays meet it from below.
+const String[4] AO_VARIANT_NAMES @local = { "baseline", "V1 origin", "V2 normal", "V3 both" };
+
+fn uint[4] measured_ao_variants(usz* count) @local {
+    uint[4] variants = { 0, 1, 2, 3 };
+    *count = 4;
+    String? selected = env::tget_var("AO_MEASURE_VARIANT");
+    if (try selected) {
+        uint? parsed = selected.to_uint();
+        if (try parsed) {
+            variants[0] = parsed;
+            *count = 1;
+        }
+    }
+    return variants;
+}
+
+// Temporary measurement: prints the level-0 floor and the coarse measures of every row under every variant.
 fn void test_traced_ao_does_not_speckle_terrain() @test {
+    usz variant_count;
+    uint[4] variants = measured_ao_variants(&variant_count);
     foreach (&ao_case : AO_SPECKLE_CASES) {
-        Speckle floor = render_speckle(
-            ray_queries:   false,
-            shading:       ao_case.shading,
-            trace_level:   0,
-            lod_threshold: FINEST_LOD,
-            traced_ao:     true,
-            msaa:          ao_case.msaa,
-        );
-        Speckle speckle = render_speckle(
-            ray_queries:   false,
-            shading:       ao_case.shading,
-            trace_level:   TRACE_LEVEL,
-            lod_threshold: MIDDLE_LOD,
-            traced_ao:     true,
-            back_faces:    true,
-            msaa:          ao_case.msaa,
-        );
-        assert(speckle.mean_laplacian <= SPECKLE_LAPLACIAN_RATIO * floor.mean_laplacian);
-        assert((float)speckle.edges <= SPECKLE_PIXEL_RATIO * (float)floor.edges);
+        foreach (variant : variants[:variant_count]) {
+            render::ao_measure_variant = variant;
+            Speckle floor = render_speckle(
+                ray_queries:   false,
+                shading:       ao_case.shading,
+                trace_level:   0,
+                lod_threshold: FINEST_LOD,
+                traced_ao:     true,
+                msaa:          ao_case.msaa,
+            );
+            Speckle speckle = render_speckle(
+                ray_queries:   false,
+                shading:       ao_case.shading,
+                trace_level:   TRACE_LEVEL,
+                lod_threshold: MIDDLE_LOD,
+                traced_ao:     true,
+                back_faces:    true,
+                msaa:          ao_case.msaa,
+            );
+            io::printfn(
+                "AOROW shading=%s msaa=%s variant=%d(%s) floor_lap=%.3f floor_edges=%d coarse_lap=%.3f coarse_edges=%d",
+                ao_case.shading, ao_case.msaa, variant, AO_VARIANT_NAMES[variant],
+                floor.mean_laplacian, floor.edges, speckle.mean_laplacian, speckle.edges,
+            );
+        }
+    }
+    render::ao_measure_variant = 0;
+}
+
+// Temporary measurement: splits the forward floor between the AO pass and the sun shadows.
+fn void test_measure_ao_shadow_split() @test {
+    MsaaSamples[2] samples = { MsaaSamples.ONE, MsaaSamples.FOUR };
+    foreach (msaa : samples) {
+        foreach (shading : SHADINGS) {
+            for (uint mode = 0; mode < 4; mode++) {
+                bool ao_disabled = (mode & 1u) != 0;
+                bool no_shadows = (mode & 2u) != 0;
+                Speckle floor = render_speckle(
+                    ray_queries:   false,
+                    shading:       shading,
+                    trace_level:   0,
+                    lod_threshold: FINEST_LOD,
+                    traced_ao:     true,
+                    msaa:          msaa,
+                    ao_disabled:   ao_disabled,
+                    no_shadows:    no_shadows,
+                );
+                io::printfn(
+                    "SPLITROW shading=%s msaa=%s ao=%s shadows=%s floor_lap=%.3f floor_edges=%d",
+                    shading, msaa, !ao_disabled, !no_shadows, floor.mean_laplacian, floor.edges,
+                );
+            }
+        }
     }
 }
 

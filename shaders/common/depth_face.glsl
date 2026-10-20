@@ -4,6 +4,14 @@
 #include "gbuffer.glsl"
 #include "texture_fetch.glsl"
 
+// Vulkan's standard sample locations of sample 0, in pixels from the top-left corner.
+vec2 depth_face_sample_zero_offset(uint samples) {
+    if (samples == 2u) return vec2(0.25, 0.25);
+    if (samples == 4u) return vec2(0.375, 0.125);
+    if (samples == 8u) return vec2(0.5625, 0.3125);
+    return vec2(0.5);
+}
+
 #ifdef MULTISAMPLE
 #include "multisample_heap.glsl"
 
@@ -14,13 +22,8 @@
 #define DEPTH_FACE_FETCH(depth_texture, texel) gpu_fetch_ms(depth_texture, texel, 0).r
 #define DEPTH_FACE_TEXEL_OFFSET(depth_texture) depth_face_sample_zero_position(depth_texture)
 
-// Vulkan's standard sample locations of sample 0, in pixels from the top-left corner.
 vec2 depth_face_sample_zero_position(uint depth_texture) {
-    int samples = textureSamples(gpu_texture_ms_heap[nonuniformEXT(GPU_HEAP_SLOT(depth_texture))]);
-    if (samples == 2) return vec2(0.25, 0.25);
-    if (samples == 4) return vec2(0.375, 0.125);
-    if (samples == 8) return vec2(0.5625, 0.3125);
-    return vec2(0.5);
+    return depth_face_sample_zero_offset(uint(textureSamples(gpu_texture_ms_heap[nonuniformEXT(GPU_HEAP_SLOT(depth_texture))])));
 }
 #else
 // A sample-rate invocation shades one sample: depth reads take its index and texel positions its offset in the pixel.
@@ -35,6 +38,16 @@ vec2 depth_face_sample_zero_position(uint depth_texture) {
 
 const float DEPTH_FACE_SIDE_MISSING = 1e30; // error of a side that leaves the image or meets the background
 
+vec3 depth_face_texel_position_at(
+    FrameRoot frame,
+    ivec2 texel,
+    ivec2 extent,
+    float depth,
+    vec2 texel_offset
+) {
+    return reconstruct_world_position(frame, (vec2(texel) + texel_offset) / vec2(extent), depth);
+}
+
 vec3 depth_face_texel_position(
     FrameRoot frame,
     uint depth_texture,
@@ -42,11 +55,7 @@ vec3 depth_face_texel_position(
     ivec2 extent,
     float depth
 ) {
-    return reconstruct_world_position(
-        frame,
-        (vec2(texel) + DEPTH_FACE_TEXEL_OFFSET(depth_texture)) / vec2(extent),
-        depth
-    );
+    return depth_face_texel_position_at(frame, texel, extent, depth, vec2(DEPTH_FACE_TEXEL_OFFSET(depth_texture)));
 }
 
 // Depth is linear in screen space across a plane, so a side whose two texels extrapolate to the
@@ -75,7 +84,8 @@ vec3 depth_face_axis_step(
     ivec2 extent,
     ivec2 axis,
     float depth,
-    vec3 centre
+    vec3 centre,
+    vec2 texel_offset
 ) {
     float forward_depth;
     float backward_depth;
@@ -83,12 +93,31 @@ vec3 depth_face_axis_step(
     float backward_error = depth_face_side_error(depth_texture, texel, extent, -axis, depth, backward_depth);
     if (min(forward_error, backward_error) == DEPTH_FACE_SIDE_MISSING) return vec3(0.0);
     if (forward_error <= backward_error) {
-        return depth_face_texel_position(frame, depth_texture, texel + axis, extent, forward_depth) - centre;
+        return depth_face_texel_position_at(frame, texel + axis, extent, forward_depth, texel_offset) - centre;
     }
-    return centre - depth_face_texel_position(frame, depth_texture, texel - axis, extent, backward_depth);
+    return centre - depth_face_texel_position_at(frame, texel - axis, extent, backward_depth, texel_offset);
 }
 
 // World-space face under the texel from depth alone, turned toward the camera.
+vec3 depth_face_normal_at(
+    FrameRoot frame,
+    uint depth_texture,
+    ivec2 texel,
+    float depth,
+    vec3 toward_camera,
+    vec2 texel_offset
+) {
+    ivec2 extent = DEPTH_FACE_EXTENT(depth_texture);
+    vec3 centre = depth_face_texel_position_at(frame, texel, extent, depth, texel_offset);
+    vec3 across = depth_face_axis_step(frame, depth_texture, texel, extent, ivec2(1, 0), depth, centre, texel_offset);
+    vec3 down = depth_face_axis_step(frame, depth_texture, texel, extent, ivec2(0, 1), depth, centre, texel_offset);
+    vec3 normal = cross(down, across);
+    float normal_length = length(normal);
+    if (normal_length == 0.0) return toward_camera;
+    normal /= normal_length;
+    return dot(normal, toward_camera) < 0.0 ? -normal : normal;
+}
+
 vec3 depth_face_normal(
     FrameRoot frame,
     uint depth_texture,
@@ -96,15 +125,7 @@ vec3 depth_face_normal(
     float depth,
     vec3 toward_camera
 ) {
-    ivec2 extent = DEPTH_FACE_EXTENT(depth_texture);
-    vec3 centre = depth_face_texel_position(frame, depth_texture, texel, extent, depth);
-    vec3 across = depth_face_axis_step(frame, depth_texture, texel, extent, ivec2(1, 0), depth, centre);
-    vec3 down = depth_face_axis_step(frame, depth_texture, texel, extent, ivec2(0, 1), depth, centre);
-    vec3 normal = cross(down, across);
-    float normal_length = length(normal);
-    if (normal_length == 0.0) return toward_camera;
-    normal /= normal_length;
-    return dot(normal, toward_camera) < 0.0 ? -normal : normal;
+    return depth_face_normal_at(frame, depth_texture, texel, depth, toward_camera, vec2(DEPTH_FACE_TEXEL_OFFSET(depth_texture)));
 }
 
 #endif

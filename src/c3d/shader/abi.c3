@@ -1337,8 +1337,10 @@ struct RtAoRoot {
     uint         noise_frame;
     uint         ray_count;
     TextureIndex flags;
+    uint         samples;
+    uint         variant;
 }
-$assert RtAoRoot::size == 48;
+$assert RtAoRoot::size == 56;
 $assert $reflect(RtAoRoot.frame).offset == 0;
 $assert $reflect(RtAoRoot.depth).offset == 8;
 $assert $reflect(RtAoRoot.normals).offset == 12;
@@ -1350,6 +1352,8 @@ $assert $reflect(RtAoRoot.intensity).offset == 32;
 $assert $reflect(RtAoRoot.noise_frame).offset == 36;
 $assert $reflect(RtAoRoot.ray_count).offset == 40;
 $assert $reflect(RtAoRoot.flags).offset == 44;
+$assert $reflect(RtAoRoot.samples).offset == 48;
+$assert $reflect(RtAoRoot.variant).offset == 52;
 
 struct RtReflectionRoot {
     GpuAddress   frame;

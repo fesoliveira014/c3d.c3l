@@ -33,7 +33,10 @@ void main() {
         return;
     }
 
-    vec2 uv = (vec2(texel) + 0.5) / vec2(extent);
+    vec2 sample_zero = depth_face_sample_zero_offset(root.samples);
+    vec2 origin_offset = (root.variant & 1u) != 0u ? sample_zero : vec2(0.5);
+    vec2 normal_offset = (root.variant & 2u) != 0u ? sample_zero : vec2(0.5);
+    vec2 uv = (vec2(texel) + origin_offset) / vec2(extent);
     vec3 position = reconstruct_world_position(frame, uv, depth);
     vec3 normal;
     vec4 gbuffer_normal = root.normals != 0u ? fetch_texture_2d(root.normals, texel) : vec4(0.0);
@@ -43,7 +46,14 @@ void main() {
         vec3 view_position = (frame.view * vec4(position, 1.0)).xyz;
         bool orthographic = frame.proj[3][3] != 0.0;
         vec3 view_vector = orthographic ? vec3(0.0, 0.0, 1.0) : normalize(-view_position);
-        normal = depth_face_normal(frame, root.depth, texel, depth, transpose(mat3(frame.view)) * view_vector);
+        normal = depth_face_normal_at(
+            frame,
+            root.depth,
+            texel,
+            depth,
+            transpose(mat3(frame.view)) * view_vector,
+            normal_offset
+        );
     }
 
     mat3 basis = tangent_frame(normal);
