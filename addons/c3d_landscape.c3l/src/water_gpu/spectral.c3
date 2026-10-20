@@ -71,8 +71,7 @@ struct Stages @private {
  @param [&inout] scene : "Registered with register_water."
  @param [&inout] assets : "The store given to register_water."
  @require renderer.frame_open
- @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::SHADER_NOT_FOUND, c3d::CAPACITY_EXCEEDED
- @return? c3d::ASSET_DATA_UNAVAILABLE
+ @return? AssetStore.add_compute_shader!, Renderer.dispatch!
 *>
 fn void? update(Renderer* renderer, Scene* scene, AssetStore* assets) {
     Stages stages;
