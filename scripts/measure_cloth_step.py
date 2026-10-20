@@ -22,8 +22,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCENES = ("flag33", "flag128")
-SHAPES = ("pr0", "fused", "single", "single_cached")
+SCENES = ("flag33", "flag64", "flag128")
+SHAPES = ("pr0", "fused", "single", "single128", "single256")
 
 
 def run_example(exe: Path, scene: str, shape: str, extra: list[str]) -> str:

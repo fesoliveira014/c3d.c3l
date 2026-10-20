@@ -1,10 +1,12 @@
 #version 460
-#define CLOTH_LOCAL_SIZE 1024 // the largest group size every desktop device offers
-#ifdef CACHED
-#define CLOTH_COHERENT // not guaranteed visible across invocations without the qualifier; measures its cost only
+#if defined(G128)
+#define CLOTH_LOCAL_SIZE 128 // the smallest group size Vulkan guarantees
+#elif defined(G256)
+#define CLOTH_LOCAL_SIZE 256
 #else
-#define CLOTH_COHERENT coherent
+#define CLOTH_LOCAL_SIZE 1024 // the largest group size every desktop device offers
 #endif
+#define CLOTH_COHERENT coherent
 #include "physics/cloth_step.glsl"
 
 // Every thread of the one workgroup reaches each of these in step; the loops around them have uniform bounds.

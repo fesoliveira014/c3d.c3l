@@ -43,6 +43,7 @@ const float DENSITY_BAR_HEIGHT @local = 2.4f; // metres above the ground
 const float DENSITY_WIND_SPEED @local = 1.5f; // m/s; below the speed at which a hung sheet starts to flutter
 const float DENSITY_WIND_HEADING @local = 90; // degrees off the flag plane; straight at the sheets
 const uint BENCHMARK_CELLS @local = 32; // a 33x33-vertex flag at the default 4x8 solver settings
+const uint MEDIUM_FLAG_CELLS @local = 63; // a 64x64-vertex flag, 4096 particles
 const uint LARGE_FLAG_CELLS @local = 127; // a 128x128-vertex flag, 16384 particles
 const float HANGING_WIDTH @local = 1.8f;
 const float HANGING_DEPTH @local = 1.2f;
@@ -120,14 +121,15 @@ enum Scenario @local {
     CROWD,
     DENSITIES,
     FLAG33,
+    FLAG64,
     FLAG128,
 }
 
 const String[Scenario::len] SCENARIO_NAMES @local = {
-    "flag", "cape", "both", "contacts", "fold", "fast", "field", "crowd", "densities", "flag33", "flag128",
+    "flag", "cape", "both", "contacts", "fold", "fast", "field", "crowd", "densities", "flag33", "flag64", "flag128",
 };
 
-fn bool is_hanging(Scenario scenario) @local => scenario == FLAG33 || scenario == FLAG128;
+fn bool is_hanging(Scenario scenario) @local => scenario == FLAG33 || scenario == FLAG64 || scenario == FLAG128;
 
 struct Options @local {
     bool      benchmark;
@@ -1210,6 +1212,7 @@ fn void? create_demo(
             demo.camera.local.position = POLE_POSITION + (Vec3){ 1.4f, POLE_HEIGHT - 0.6f, 4.2f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -0.25f, 0, -1 }).normalize(), { 0, 1, 0 });
         case FLAG33:
+        case FLAG64:
         case FLAG128:
             demo.camera.local.position = { HANGING_WIDTH * 0.5f, HANGING_HEIGHT - 0.4f, 4.4f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.1f, -1 }).normalize(), { 0, 1, 0 });
@@ -1971,6 +1974,7 @@ fn Options? parse_options(String[] args) @local {
     if (options.cpu_only && (options.traced || options.validation || options.ragdoll || options.capture_path.len)) {
         return c3d::INVALID_ARGUMENT~;
     }
+    if (options.scenario == FLAG64) options.cells = MEDIUM_FLAG_CELLS;
     if (options.scenario == FLAG128) options.cells = LARGE_FLAG_CELLS;
     if (options.dump_path.len && (!options.gpu || !options.benchmark || !options.frames)) return c3d::INVALID_ARGUMENT~;
     if (options.gpu && (!is_hanging(options.scenario) || options.cpu_only || options.still || options.traced)) {
@@ -1988,10 +1992,10 @@ fn Options? parse_options(String[] args) @local {
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33|flag128]");
+        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33|flag64|flag128]");
         io::eprintn("  [--still] [--frames count]");
-        io::eprintn("  [--gpu]    (flag33 and flag128 only: simulate on the device; python3 scripts/build.py --example cloth_gpu)");
-        io::eprintn("  [--gpu-shape pr0|fused|single|single_cached]    (with --gpu: how a step lays its passes over dispatches)");
+        io::eprintn("  [--gpu]    (flag33, flag64 and flag128 only: simulate on the device; python3 scripts/build.py --example cloth_gpu)");
+        io::eprintn("  [--gpu-shape pr0|fused|single|single128|single256]    (with --gpu: how a step lays its passes over dispatches)");
         io::eprintn("  [--dump path]    (with --gpu --benchmark --frames n: write the device positions after n steps)");
         io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");

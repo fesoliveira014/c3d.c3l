@@ -26,7 +26,8 @@ const String INTEGRATE_KEY @private = "c3d_physics/cloth_integrate";
 const String OUTPUT_KEY @private = "c3d_physics/cloth_output";
 const String FUSED_KEY @private = "c3d_physics/cloth_fused";
 const String SINGLE_KEY @private = "c3d_physics/cloth_single";
-const String SINGLE_CACHED_KEY @private = "c3d_physics/cloth_single_cached";
+const String SINGLE_128_KEY @private = "c3d_physics/cloth_single_g128";
+const String SINGLE_256_KEY @private = "c3d_physics/cloth_single_g256";
 
 struct Stages @private {
     ComputeShaderId init;
@@ -37,7 +38,8 @@ struct Stages @private {
     ComputeShaderId output;
     ComputeShaderId fused;
     ComputeShaderId single;
-    ComputeShaderId single_cached;
+    ComputeShaderId single_128;
+    ComputeShaderId single_256;
 }
 
 <*
@@ -47,7 +49,8 @@ enum ClothStepShape {
     PR0,
     FUSED,
     SINGLE,
-    SINGLE_CACHED,
+    SINGLE128,
+    SINGLE256,
 }
 
 // Mirrors ClothRoot in cloth_root.glsl.
@@ -218,8 +221,10 @@ fn void? GpuCloth.step(
             self.record_fused(&recorder)!;
         case SINGLE:
             self.record_single(&recorder, self.stages.single)!;
-        case SINGLE_CACHED:
-            self.record_single(&recorder, self.stages.single_cached)!;
+        case SINGLE128:
+            self.record_single(&recorder, self.stages.single_128)!;
+        case SINGLE256:
+            self.record_single(&recorder, self.stages.single_256)!;
     }
     self.initialized = true;
     self.dispatches = recorder.dispatches;
@@ -492,7 +497,8 @@ fn Stages? add_stages(AssetStore* assets) @private {
         .output        = stage(assets, OUTPUT_KEY, physics::CLOTH_OUTPUT_SPIRV[..])!,
         .fused         = stage(assets, FUSED_KEY, physics::CLOTH_FUSED_SPIRV[..])!,
         .single        = stage(assets, SINGLE_KEY, physics::CLOTH_SINGLE_SPIRV[..])!,
-        .single_cached = stage(assets, SINGLE_CACHED_KEY, physics::CLOTH_SINGLE_CACHED_SPIRV[..])!,
+        .single_128    = stage(assets, SINGLE_128_KEY, physics::CLOTH_SINGLE_G128_SPIRV[..])!,
+        .single_256    = stage(assets, SINGLE_256_KEY, physics::CLOTH_SINGLE_G256_SPIRV[..])!,
     };
 }
 

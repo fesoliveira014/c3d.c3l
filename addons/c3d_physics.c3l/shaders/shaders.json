@@ -1,7 +1,7 @@
 {
   "module": "c3d::physics",
   "output": "src/shaders.c3",
-  "flags": [ "CACHED" ],
+  "flags": [ "G128", "G256" ],
   "entries": [
     { "shader": "cloth_init", "source": "cloth_init.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cloth_predict", "source": "cloth_predict.comp.glsl", "stage": "comp", "defines": [] },
@@ -11,6 +11,7 @@
     { "shader": "cloth_output", "source": "cloth_output.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cloth_fused", "source": "cloth_fused.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cloth_single", "source": "cloth_single.comp.glsl", "stage": "comp", "defines": [] },
-    { "shader": "cloth_single", "source": "cloth_single.comp.glsl", "stage": "comp", "defines": [ "CACHED" ] }
+    { "shader": "cloth_single", "source": "cloth_single.comp.glsl", "stage": "comp", "defines": [ "G128" ] },
+    { "shader": "cloth_single", "source": "cloth_single.comp.glsl", "stage": "comp", "defines": [ "G256" ] }
   ]
 }

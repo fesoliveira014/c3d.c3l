@@ -11,7 +11,8 @@ const char[*] CLOTH_INTEGRATE_SPIRV @private = $embed("../shaders/spv/cloth_inte
 const char[*] CLOTH_OUTPUT_SPIRV @private = $embed("../shaders/spv/cloth_output.spv");
 const char[*] CLOTH_FUSED_SPIRV @private = $embed("../shaders/spv/cloth_fused.spv");
 const char[*] CLOTH_SINGLE_SPIRV @private = $embed("../shaders/spv/cloth_single.spv");
-const char[*] CLOTH_SINGLE_CACHED_SPIRV @private = $embed("../shaders/spv/cloth_single_cached.spv");
+const char[*] CLOTH_SINGLE_G128_SPIRV @private = $embed("../shaders/spv/cloth_single_g128.spv");
+const char[*] CLOTH_SINGLE_G256_SPIRV @private = $embed("../shaders/spv/cloth_single_g256.spv");
 const char[*] INCLUDE_PHYSICS_CLOTH_ROOT_TEXT @private = $embed("../shaders/include/physics/cloth_root.glsl");
 const char[*] INCLUDE_PHYSICS_CLOTH_STEP_TEXT @private = $embed("../shaders/include/physics/cloth_step.glsl");
 
