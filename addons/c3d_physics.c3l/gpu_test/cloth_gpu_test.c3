@@ -134,3 +134,25 @@ fn void test_update_cloths_stores_device_inputs_and_never_solves() @test {
         assert(state.device.steps == 0 && state.device.anchor == start && state.device.target == node.world);
     };
 }
+
+fn void test_held_device_cloth_stores_no_step_until_it_wakes() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    @pool() {
+        Node* node = add_hanging_sheet(&fixture);
+        fixture.scene.add_cloth(&fixture.assets, node, device_desc(0))!!;
+        Cloth* cloth = fixture.scene.get(node, Cloth);
+
+        cloth.sleep();
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(cloth.state.device.steps == 0);
+
+        cloth.wake();
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(cloth.state.device.steps == 1);
+    };
+}
