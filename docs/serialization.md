@@ -47,6 +47,10 @@ binary and JSONC payloads read the atlas as off and every frame as 0. Reading an
 `BillboardAtlas` and `frame` rules of `Scene.set_billboard_atlas` and `Scene.set_billboards`, so a layout that
 breaks them, or a negative or non-finite `frame`, faults `INVALID_ARGUMENT`.
 
+RibbonBatch restores in the VALUE phase like BillboardBatch, at version 1: the material, the capacity and the live
+points, with unused points restarting at `RIBBON_POINT_DEFAULT`. Reading and writing apply the point rules of
+`Scene.set_ribbons`, so a non-finite value, a negative `width` or an unknown flag bit faults `INVALID_ARGUMENT`.
+
 LodGroup authoring version 3 restores in BINDINGS, after its source owners. Its common effects
 carry `trace_sway`; version-1 and version-2 binary and JSONC payloads read it as false.
 Rigid groups preserve ordered affine parts, levels, capacities, live placements,
@@ -529,7 +533,7 @@ version 3 payloads tracing off. The Foliage payload is version 3, which adds
 `trace_sway`. Version 2 added `rules.slope_normal`; version 1 payloads in both
 encodings read `FACE` and no swayed tracing, and version 2 payloads read no swayed tracing.
 The Water payload is version 5, which adds `wave_model`, `simulation`, `spectrum` and `ground`; version 4
-added `mode` and `depth`. Versions 1 to 4 read as `GERSTNER` with the default `simulation`, an empty `spectrum` and no
+added `mode` and `depth`. Versions 1 to 4 read as `GERSTNER` with the default `simulation` and `spectrum` and no
 `ground`; versions 1, 2 and 3 also read as a `BODY` with the default depth, and a body's `trace` and mirror fields as
 before. A `ground` is a node reference: it must name a Terrain node of the exported subtree, or the write faults. An ocean's
 generated `InstancedMesh` is omitted like a body's `Mesh`, and a prepared body's medium node, with its `MediumVolume`,

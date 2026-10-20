@@ -108,7 +108,7 @@ fn void test_surface_vertex_forms_declare_clip_distance() @test {
     usz surface_count;
     foreach (&entry : shader::SHADER_ENTRIES) {
         bool surface = entry.variant.shader == MESH || entry.variant.shader == BILLBOARD_VERTEX
-          || entry.variant.shader == IMPOSTOR_VERTEX;
+          || entry.variant.shader == RIBBON_VERTEX || entry.variant.shader == IMPOSTOR_VERTEX;
         assert(spirv_declares_capability(entry.spirv, SPIRV_CAPABILITY_CLIP_DISTANCE) == surface);
         if (surface) surface_count++;
     }

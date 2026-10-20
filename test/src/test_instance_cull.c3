@@ -79,6 +79,33 @@ fn void test_instance_visible_is_tighter_than_the_world_aabb() @test {
     assert(maths::frustum_intersects_aabb(&frustum, maths::aabb_transform(TURNED_SLAB, model)));
 }
 
+fn void test_instance_visible_composes_the_node_world() @test {
+    Frustum frustum = infinite_frustum();
+    Aabb box = { .min = { -0.5f, -0.5f, -0.5f }, .max = { 0.5f, 0.5f, 0.5f } };
+    Transform node = maths::TRANSFORM_IDENTITY;
+    node.position = { 30, 0, 0 };
+    Mat4 node_world = node.to_mat4();
+    Transform left = maths::TRANSFORM_IDENTITY;
+    left.position = { -30, 0, -10 };
+    Transform ahead = maths::TRANSFORM_IDENTITY;
+    ahead.position = { 0, 0, -10 };
+
+    assert(!render::instance_visible(&frustum, box, left.to_mat4()));
+    assert(render::instance_visible(
+        frustum:      &frustum,
+        local_bounds: box,
+        model:        left.to_mat4(),
+        node_world:   node_world,
+    ));
+    assert(render::instance_visible(&frustum, box, ahead.to_mat4()));
+    assert(!render::instance_visible(
+        frustum:      &frustum,
+        local_bounds: box,
+        model:        ahead.to_mat4(),
+        node_world:   node_world,
+    ));
+}
+
 fn void test_instance_visible_margin_admits_reaching_instances() @test {
     Frustum frustum = infinite_frustum();
     Mat4 model = slab_beside_right_plane();

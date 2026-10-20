@@ -36,6 +36,9 @@ fn void? native_bind_thread(CpuSet cpus) @private {
     if (sched_setaffinity(CALLING_THREAD, CpuSet::size, &cpus.data)) return c3d::UNSUPPORTED~;
 }
 
+// Linux has no per-thread power throttling control.
+fn void native_opt_out_power_throttling() @private {}
+
 fn uint? native_cpu_quota() @private {
     uint? quota;
     @pool() {

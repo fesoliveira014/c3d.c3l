@@ -407,7 +407,8 @@ fn void? record_raster_view(
             transparent_start = candidates.len - transparent_count;
             weighted_start = candidates.len - weighted_count;
             foreach (&candidate : candidates) {
-                GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer) : candidate.billboards
+                GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer)
+                  : candidate.billboards || candidate.ribbons
                   ? acquire_billboard_geometry(renderer)! : resolve_geometry(renderer, candidate.geometry)!;
                 Material* material_description = candidate_material(renderer, candidate);
                 MaterialRes*? resolved = candidate.impostor ? &renderer.impostor_material_resource : resolve_material(renderer, candidate.material);
@@ -536,7 +537,7 @@ fn void? record_raster_view(
                     .posed     = posed,
                     .instance_data  = records,
                     .effects   = effects,
-                    .front_face = !candidate.billboards && model_reflected != view_reflected
+                    .front_face = !candidate.billboards && !candidate.ribbons && model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
                     .weighted  = weighted,
                     .custom_velocity = custom_velocity_stage(renderer, material_description, candidate_instanced(candidate))!,
@@ -953,7 +954,6 @@ fn void? record_raster_view(
                         item:              item,
                         pose:              pose,
                         instances:         &previous_instances,
-                        previous_world:    prev_world,
                         positions:         vertices == VertexHistory.CHANGED,
                         stale_deformation: stale_deformation,
                     )!;
@@ -978,7 +978,7 @@ fn void? record_raster_view(
                 gpu::MappedGpuSpan draw_span = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                 write_draw_root(
                     root:          (DrawRoot*)draw_span.bytes.ptr,
-                    world:         item.candidate.billboards ? matrix::IDENTITY4
+                    world:         item.candidate.billboards || item.candidate.ribbons ? matrix::IDENTITY4
                       : maths::rebase(item.candidate.node.world, renderer.frame_origin),
                     prev_world:    prev_world,
                     frame:         frame_span.address,
@@ -1490,6 +1490,13 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 scene_reads |= prepared.scene_reads;
             }
         };
+        scene.@each(RibbonBatch; Entity entity, RibbonBatch* batch) {
+            if (batch.count > 1) {
+                MeshPreparation prepared = prepare_ribbons(self, batch)!;
+                sheen |= prepared.sheen;
+                scene_reads |= prepared.scene_reads;
+            }
+        };
         scene.@each(Decal; Entity entity, Decal* decal) {
             if (self.assets.materials.is_live(decal.material)
               && self.assets.material(decal.material).data.kind == MaterialKind.STANDARD) {
@@ -1914,7 +1921,6 @@ fn gpu::GpuAddress? upload_previous_pose(
     DrawItem* item,
     PoseRecord* pose,
     PreviousInstanceCache* instances,
-    Mat4 previous_world,
     bool positions,
     bool stale_deformation,
 ) @private {
@@ -1945,7 +1951,7 @@ fn gpu::GpuAddress? upload_previous_pose(
     InstancedMesh* batch = candidate.batch;
     if (batch && pose.instance_count == batch.count && pose.instance_revision != batch.revision) {
         InstanceSpan span = { .end = batch.count };
-        if (!candidate.crowd && previous_world == maths::rebase(candidate.node.world, renderer.frame_origin)) {
+        if (!candidate.crowd) {
             InstanceSpan edited = history_span(pose, batch);
             if (edited.end > edited.first) span = edited;
         }
@@ -1955,17 +1961,15 @@ fn gpu::GpuAddress? upload_previous_pose(
         if (try existing = instances.get(key)) {
             base = existing;
         } else {
+            Mat4f[] locals;
             if (candidate.crowd) {
-                Mat4f[] worlds = alloc::new_array(tmem, Mat4f, pose.instance_count);
-                foreach (uint source, packed : crowd_order) {
-                    worlds[packed] = bitcast(previous_world.mul(bitcast(pose.instances[source], Mat4)), Mat4f);
-                }
-
-                base = upload_bytes(renderer, worlds.ptr, worlds.len * Mat4f::size)!;
+                locals = alloc::new_array(tmem, Mat4f, pose.instance_count);
+                foreach (uint source, packed : crowd_order) locals[packed] = pose.instances[source];
             } else {
-                Mat4f[] locals = pose.instances[span.first:span.end - span.first];
-                base = upload_previous_worlds(renderer, locals, previous_world)!;
+                locals = pose.instances[span.first:span.end - span.first];
             }
+
+            base = upload_bytes(renderer, locals.ptr, locals.len * Mat4f::size)!;
             instances.set(key, base);
         }
         bind_previous_instances(
@@ -2018,14 +2022,6 @@ fn Mat4 batch_prev_model(Mat4 prev_world, Mat4 world) @private {
     // The product is the identity only up to rounding; at rest the velocity must be exactly zero.
     if (prev_world == world) return matrix::IDENTITY4;
     return prev_world.mul(maths::inverse_affine(world));
-}
-
-fn gpu::GpuAddress? upload_previous_worlds(Renderer* renderer, Mat4f[] locals, Mat4 previous_world) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, locals.len * Mat4f::size, STREAM_ALIGNMENT)!;
-    Mat4f* worlds = (Mat4f*)span.bytes.ptr;
-    foreach (index, local : locals) worlds[index] = bitcast(previous_world.mul(bitcast(local, Mat4)), Mat4f);
-    return span.address;
 }
 
 fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @private {
@@ -2694,7 +2690,8 @@ fn gpu::PipelineHandle? pipeline_for(
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
     ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
-    if (vertex.shader == BILLBOARD_VERTEX && published.desc.vertex.shaded.len) return PIPELINE_REJECTED~;
+    bool quad_vertex = vertex.shader == BILLBOARD_VERTEX || vertex.shader == RIBBON_VERTEX;
+    if (quad_vertex && published.desc.vertex.shaded.len) return PIPELINE_REJECTED~;
     key.custom = { .vertex = published.desc.vertex.shaded.len > 0, .fragment = true };
     uint weighted_flag = weighted ? shader::SHADER_FLAG_WEIGHTED_BLEND : 0;
     key.fragment = custom_fragment_variant(&published.desc, shadow_flags | weighted_flag);

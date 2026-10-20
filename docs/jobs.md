@@ -51,6 +51,7 @@ heap state: moving the handle keeps the pool running, and copies share one pool,
 | `background_only_workers` | 0 | Further workers that take only background ranges, outside the cap. |
 | `worker_cpus` | empty | Processors of the shared workers; empty leaves the system's choice. |
 | `background_cpus` | empty | Processors of the background-only workers; empty leaves the system's choice. |
+| `power_throttling_opt_out` | false | Windows: each worker, and the caller in `bind_caller`, asks the scheduler not to throttle it; ignored elsewhere ([Calling thread](#calling-thread)). |
 
 `default_job_pool_desc()` fills these. A cap at or above `worker_count` does not limit, so a descriptor that
 lowers `worker_count` also sets `background_workers`, usually to `job::default_background_workers(count)`:
@@ -234,8 +235,36 @@ On an i9-14900K under Windows, `performance` is processors 0-15 (eight cores wit
 `efficiency` 16-31. Binding the frame workers to the performance cores buys isolation from background work, not
 throughput: in the pinned row of [Measured cost](#measured-cost) the pinned pool is slower. Size the frame
 worker count from the physical performance cores. Fifteen workers on 16 logical processors share eight
-hyperthreaded cores, and unbound they also use the efficiency cores. The pool does not bind the calling thread. An application that binds it, for the ranges it
-runs in `wait`, does so after `create_job_pool`; bound first, it would narrow every worker's set to its own.
+hyperthreaded cores, and unbound they also use the efficiency cores.
+
+### Calling thread
+
+The pool does not bind the calling thread by itself. That thread runs ranges in `wait` and `wait_all`, and on a
+hybrid processor the system can schedule it onto an efficiency core while it waits on workers.
+`JobPool.bind_caller(cpus)` binds it the way a worker is bound:
+
+```c3
+CoreTypes types = job::core_types();
+JobPool pool = job::create_job_pool(mem, desc)!;
+defer job::destroy_job_pool(&pool);
+pool.bind_caller(types.performance)!;
+```
+
+- It pins the calling thread to the set it is given. On a hybrid processor that set should be the performance
+  cores, `core_types().performance`.
+- An empty argument selects the pool's `worker_cpus`. When that is empty too, the pool's set means every
+  processor the thread may use: nothing is bound, and on a hybrid processor the thread can still run on an
+  efficiency core.
+- It returns `c3d::UNSUPPORTED` when the system refuses the set or reads back another one, and for a set that
+  spans two Windows processor groups, as for a worker. It does not intersect the set with `available_cpus()`.
+- It binds only the calling thread. Call it once from the owner thread after `create_job_pool`; bound first,
+  that thread would narrow every worker's set to its own.
+
+With `power_throttling_opt_out`, on Windows each worker asks the scheduler not to throttle it when it starts,
+and `bind_caller` does the same for the calling thread before it binds. The request switches the thread's
+execution-speed power throttling off (`SetThreadInformation` with `ThreadPowerThrottling`), so the system does
+not run the thread as EcoQoS. A Windows release without the setting (it arrived in Windows 10 version 1709)
+refuses it, and the thread keeps the system's policy without a fault. Other platforms ignore the field.
 
 ## Temp memory
 

@@ -5,6 +5,9 @@ import std::os::win32;
 
 const usz MAX_PROCESSOR_GROUPS @private = CPU_SET_BITS / GROUP_MASK_BITS; // groups a dense index holds if each is full
 const CInt RELATION_PROCESSOR_CORE @private = 0; // LOGICAL_PROCESSOR_RELATIONSHIP.RelationProcessorCore
+const CInt THREAD_POWER_THROTTLING_CLASS @private = 3; // THREAD_INFORMATION_CLASS.ThreadPowerThrottling
+const Win32_ULONG POWER_THROTTLING_VERSION @private = 1; // THREAD_POWER_THROTTLING_CURRENT_VERSION
+const Win32_ULONG POWER_THROTTLING_EXECUTION_SPEED @private = 0x1; // THREAD_POWER_THROTTLING_EXECUTION_SPEED
 
 struct GroupAffinity @private {
     Win32_ULONG_PTR mask;
@@ -26,10 +29,19 @@ struct LogicalProcessorInformation @private {
     ProcessorRelationship processor;
 }
 
+struct ThreadPowerThrottlingState @private {
+    Win32_ULONG version;
+    Win32_ULONG control_mask;
+    Win32_ULONG state_mask;
+}
+
 $assert GroupAffinity::size == 16;
 $assert $reflect(ProcessorRelationship.group_count).offset == 22;
 $assert $reflect(ProcessorRelationship.group_mask).offset == 24;
 $assert $reflect(LogicalProcessorInformation.processor).offset == 8;
+$assert ThreadPowerThrottlingState::size == 12;
+$assert $reflect(ThreadPowerThrottlingState.control_mask).offset == 4;
+$assert $reflect(ThreadPowerThrottlingState.state_mask).offset == 8;
 
 extern fn Win32_BOOL set_thread_group_affinity(
     Win32_HANDLE thread,
@@ -47,6 +59,13 @@ extern fn Win32_BOOL get_logical_processor_information_ex(
     void* buffer,
     Win32_DWORD* length,
 ) @cname("GetLogicalProcessorInformationEx") @private;
+
+extern fn Win32_BOOL set_thread_information(
+    Win32_HANDLE thread,
+    CInt information_class,
+    void* information,
+    Win32_DWORD information_bytes,
+) @cname("SetThreadInformation") @private;
 
 fn usz processor_group_sizes(uint[] sizes) @private {
     usz groups = min((usz)get_active_processor_group_count(), (usz)sizes.len);
@@ -113,4 +132,21 @@ fn CoreTypes native_core_types(CpuSet available) @private {
         }
     };
     return core_types_from_ranks(&ranks, available);
+}
+
+fn void native_opt_out_power_throttling() @private {
+    // The control bit takes the mechanism from the system and the zero state switches it off.
+    ThreadPowerThrottlingState throttling = {
+        .version      = POWER_THROTTLING_VERSION,
+        .control_mask = POWER_THROTTLING_EXECUTION_SPEED,
+        .state_mask   = 0,
+    };
+
+    // A hint: a Windows release without the setting refuses it and the thread keeps the system's policy.
+    set_thread_information(
+        thread:            win32::getCurrentThread(),
+        information_class: THREAD_POWER_THROTTLING_CLASS,
+        information:       &throttling,
+        information_bytes: (Win32_DWORD)ThreadPowerThrottlingState::size,
+    );
 }
