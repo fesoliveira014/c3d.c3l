@@ -67,6 +67,20 @@ fn void test_core_batches_preserve_live_values_and_capacity_in_both_encodings() 
             name: "billboards",
             atlas: sheet,
         )!!;
+        RibbonPoint[3] strip;
+        strip[..] = scene::RIBBON_POINT_DEFAULT;
+        strip[0].position = { 1, 2, 3 };
+        strip[0].width = 0.5f;
+        strip[1].color = { 0.1f, 0.2f, 0.3f, 0.4f };
+        strip[1].v = 0.75f;
+        strip[2].flags = scene::RIBBON_BREAK;
+        fixture.source.add_ribbons(
+            material: material_id,
+            capacity: 4,
+            points: strip[..],
+            parent: root,
+            name: "ribbons",
+        )!!;
         Mat4 basis = matrix::IDENTITY4;
         basis.m01 = 0.25f;
         basis.m03 = 2;
@@ -150,6 +164,12 @@ fn void test_core_batches_preserve_live_values_and_capacity_in_both_encodings() 
             assert(billboard_batch.billboards[0].frame == 2.5f && billboard_batch.billboards[2].frame == 0);
             assert(billboard_batch.atlas.columns == 2 && billboard_batch.atlas.rows == 3);
             assert(billboard_batch.atlas.frame_count == 5 && billboard_batch.atlas.inset == sheet.inset);
+            RibbonBatch* ribbon_batch = fixture.destination.get(child_named(restored, "ribbons"), RibbonBatch);
+            assert(ribbon_batch.count == 3 && ribbon_batch.points.len == 4);
+            assert(ribbon_batch.points[0].position == strip[0].position && ribbon_batch.points[0].width == 0.5f);
+            assert(ribbon_batch.points[1].color == strip[1].color && ribbon_batch.points[1].v == 0.75f);
+            assert(ribbon_batch.points[2].flags == scene::RIBBON_BREAK);
+            assert(ribbon_batch.points[3].width == 1 && ribbon_batch.points[3].flags == 0);
             LodGroupState* single = fixture.destination.get(child_named(restored, "single"), LodGroup).state;
             assert(single.mode == SINGLE && single.count == 1 && !single.transforms.len);
             assert(single.desc.parts[0].local.m01 == 0.25f && single.desc.parts[0].local.m03 == 2);

@@ -377,6 +377,7 @@ const uint INSTANCE_SORT_WRITE_LIST = 8;
 const uint INSTANCE_KIND_MESH = 0;
 const uint INSTANCE_KIND_BILLBOARD = 1;
 const uint INSTANCE_KIND_LOD = 2;
+const uint INSTANCE_KIND_RIBBON = 3; // a renderer slot key only; the cull kernel never sees it
 const uint LOD_SELECT = 1;
 const uint LOD_CULL = 2;
 const uint LOD_FINALIZE = 3;
@@ -473,6 +474,18 @@ root BillboardAtlasGpu {
     vec2 inset;
     uint _pad1;
     uint _pad2;
+}
+
+// mirrored as RIBBON_BREAK in scene/ribbon.c3
+const uint RIBBON_POINT_BREAK = 1;
+
+struct RibbonPointGpu {
+    vec4 position_width; // xyz: position in the frame origin's space, w: width in metres after node scale
+    vec4 color;
+    float v;
+    uint flags;
+    uint _pad0;
+    uint _pad1;
 }
 
 struct SwayGpu {

@@ -21,6 +21,7 @@ const ulong LOD_EFFECTS_V1_LAYOUT @local = 0xf3d91f0510c4f53d;
 const ulong BILLBOARD_V1_LAYOUT @local = 0x2a7839a4c39e5ee2;
 const ulong BILLBOARD_ATLAS_LAYOUT @local = 0x366f90f50a77c888;
 const ulong BILLBOARD_LAYOUT @local = 0x3c55ee05bb7d1d63;
+const ulong RIBBON_POINT_LAYOUT @local = 0xc047a14f5cf2005b;
 const ulong MESH_LAYOUT @local = 0x81e7097de8b07d0c;
 const ulong MESH_V1_LAYOUT @local = 0x5e1d3cb5a05dfe89;
 
@@ -76,6 +77,7 @@ fn void? register_core_value_types() {
     register_core_value(BillboardV1, BILLBOARD_V1_LAYOUT, &defaults_billboard_v1)!;
     register_core_value(BillboardAtlas, BILLBOARD_ATLAS_LAYOUT, &defaults_billboard_atlas)!;
     register_core_value(Billboard, BILLBOARD_LAYOUT, &defaults_billboard)!;
+    register_core_value(RibbonPoint, RIBBON_POINT_LAYOUT, &defaults_ribbon_point)!;
     describe::register_reflected(MeshV1)!;
     register_core_value(MeshV1, MESH_V1_LAYOUT, &defaults_mesh_v1)!;
     register_described_type(
@@ -158,6 +160,10 @@ fn void defaults_billboard_atlas(void* value) @local {
 
 fn void defaults_billboard(void* value) @local {
     *(Billboard*)value = scene::BILLBOARD_DEFAULT;
+}
+
+fn void defaults_ribbon_point(void* value) @local {
+    *(RibbonPoint*)value = scene::RIBBON_POINT_DEFAULT;
 }
 
 fn void defaults_mesh(void* value) @local {

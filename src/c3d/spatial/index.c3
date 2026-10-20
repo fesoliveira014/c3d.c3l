@@ -18,6 +18,7 @@ bitstruct SceneEntryFlags : uint {
     bool skinned          : 2;
     bool billboard        : 3;
     bool lod_group        : 4;
+    bool ribbon           : 5;   // the entry bounds the whole batch
 }
 
 <*
@@ -155,6 +156,19 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
                     first: needed,
                 );
                 needed += batch.count;
+            } else {
+                dangling++;
+            }
+        }
+    };
+    scene.@each(RibbonBatch; Entity entity, RibbonBatch* batch) {
+        Node* node = scene.node(entity);
+        if (node.visible_effective && batch.count > 1) {
+            if (ribbon_batch_is_live(assets, batch)) {
+                if (needed < self.entries.len) {
+                    changed |= store_entry(&self.entries[needed], ribbon_entry(node, batch));
+                }
+                needed++;
             } else {
                 dangling++;
             }
@@ -413,6 +427,14 @@ fn SceneEntry billboard_entry(Node* node, uint index, Billboard billboard) @priv
         .instance_index = index,
         .flags = { .instanced, .billboard },
         .bounds = billboard_bounds(node.world, billboard),
+    };
+}
+
+fn SceneEntry ribbon_entry(Node* node, RibbonBatch* batch) @private {
+    return {
+        .node = node,
+        .flags = { .ribbon },
+        .bounds = ribbon_world_bounds(node, batch),
     };
 }
 

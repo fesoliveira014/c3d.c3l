@@ -60,6 +60,7 @@ fn ShaderVariant candidate_vertex_variant(
     }
 
     if (candidate.billboards) return { .shader = BILLBOARD_VERTEX };
+    if (candidate.ribbons) return { .shader = RIBBON_VERTEX };
     if (candidate_instanced(candidate)) {
         AnimatedCrowd* crowd = candidate.crowd;
         return mesh_vertex_variant(

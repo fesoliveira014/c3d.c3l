@@ -11,6 +11,7 @@ enum ShaderName : int {
     WEIGHTED_COMPOSITE,
     MESH,
     BILLBOARD_VERTEX,
+    RIBBON_VERTEX,
     IMPOSTOR_VERTEX,
     IMPOSTOR_FORWARD,
     IMPOSTOR_GBUFFER,
@@ -222,6 +223,7 @@ const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.
 const char[*] WEIGHTED_COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/weighted_composite.spv");
 const char[*] MESH_SPIRV @private = $embed("../../../shaders/spv/mesh.spv");
 const char[*] BILLBOARD_VERTEX_SPIRV @private = $embed("../../../shaders/spv/billboard_vertex.spv");
+const char[*] RIBBON_VERTEX_SPIRV @private = $embed("../../../shaders/spv/ribbon_vertex.spv");
 const char[*] IMPOSTOR_VERTEX_SPIRV @private = $embed("../../../shaders/spv/impostor_vertex.spv");
 const char[*] IMPOSTOR_FORWARD_SPIRV @private = $embed("../../../shaders/spv/impostor_forward.spv");
 const char[*] IMPOSTOR_FORWARD_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/impostor_forward_rt_shadows.spv");
@@ -454,13 +456,14 @@ const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_z
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[234] SHADER_ENTRIES = {
+const ShaderEntry[235] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
     { .variant = { .shader = WEIGHTED_COMPOSITE }, .spirv = WEIGHTED_COMPOSITE_SPIRV[..] },
     { .variant = { .shader = MESH }, .spirv = MESH_SPIRV[..] },
     { .variant = { .shader = BILLBOARD_VERTEX }, .spirv = BILLBOARD_VERTEX_SPIRV[..] },
+    { .variant = { .shader = RIBBON_VERTEX }, .spirv = RIBBON_VERTEX_SPIRV[..] },
     { .variant = { .shader = IMPOSTOR_VERTEX }, .spirv = IMPOSTOR_VERTEX_SPIRV[..] },
     { .variant = { .shader = IMPOSTOR_FORWARD }, .spirv = IMPOSTOR_FORWARD_SPIRV[..] },
     { .variant = { .shader = IMPOSTOR_FORWARD, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = IMPOSTOR_FORWARD_RT_SHADOWS_SPIRV[..] },

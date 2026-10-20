@@ -14,6 +14,7 @@ const ulong INSTANCES_V3_LAYOUT @local = 0x5d8d9a7cc4cd085d;
 const ulong INSTANCES_LAYOUT @local = 0x538fec02e9ba976c;
 const ulong BILLBOARDS_V1_LAYOUT @local = 0x0e6e17ed81a957bb;
 const ulong BILLBOARDS_LAYOUT @local = 0xee9607fc47eb65bd;
+const ulong RIBBONS_LAYOUT @local = 0x0a749b6758d8fac2;
 const ulong LOD_V1_LAYOUT @local = 0xdb17924ea7b43e3f;
 const ulong LOD_V2_LAYOUT @local = 0x8ed85fe0b352d50f;
 const ulong LOD_LAYOUT @local = 0xa073cd1a57d78766;
@@ -110,6 +111,12 @@ struct BillboardAuthoring @private {
     BillboardAtlas atlas;
 }
 
+struct RibbonAuthoring @private {
+    MaterialId material;
+    uint capacity;
+    RibbonPoint[] points;
+}
+
 struct LodAuthoringV1 @private {
     LodDesc desc;
     LodMode mode;
@@ -190,6 +197,7 @@ fn void? register_core_batch_codecs() @private {
     describe::register_reflected(InstanceAuthoring)!;
     describe::register_reflected(BillboardAuthoringV1)!;
     describe::register_reflected(BillboardAuthoring)!;
+    describe::register_reflected(RibbonAuthoring)!;
     describe::register_reflected(LodAuthoringV1)!;
     describe::register_reflected(ModelSkin)!;
     describe::register_reflected(AnimatedLodPartAuthoring)!;
@@ -223,6 +231,7 @@ fn void? register_core_batch_codecs() @private {
         layout: BILLBOARDS_LAYOUT,
         defaults: &defaults_billboards,
     )!;
+    register_core_value(RibbonAuthoring, RIBBONS_LAYOUT, &defaults_ribbons)!;
     register_core_value(LodAuthoringV1, LOD_V1_LAYOUT, &defaults_lod_v1)!;
     register_core_value(ModelSkin, ANIMATED_LOD_SKIN_LAYOUT, &defaults_animated_lod_skin)!;
     register_core_value(AnimatedLodPartAuthoring, ANIMATED_LOD_PART_LAYOUT, &defaults_animated_lod_part)!;
@@ -253,6 +262,11 @@ fn void? register_core_batch_codecs() @private {
         .attach = &attach_billboards,
         .binary_compatibility = billboards_binary_compatibility[..],
         .text_default_versions = billboards_text_default_versions[..],
+    })!;
+    register_described_owner(RibbonBatch, RibbonAuthoring, {
+        .name = "c3d.RibbonBatch",
+        .project = &project_ribbons,
+        .attach = &attach_ribbons,
     })!;
     register_described_owner(LodGroup, LodAuthoring, {
         .name = "c3d.LodGroup",
@@ -286,6 +300,10 @@ fn void defaults_billboards_v1(void* value) @local {
 
 fn void defaults_billboards(void* value) @local {
     *(BillboardAuthoring*)value = { .capacity = 1 };
+}
+
+fn void defaults_ribbons(void* value) @local {
+    *(RibbonAuthoring*)value = { .capacity = 1 };
 }
 
 fn void defaults_lod_v1(void* value) @local {
@@ -353,6 +371,17 @@ fn void? project_billboards(void* component, void* value, WriteContext* context)
         .facing = batch.facing,
         .billboards = batch.billboards[:batch.count],
         .atlas = batch.atlas,
+    };
+}
+
+fn void? project_ribbons(void* component, void* value, WriteContext* context) @local {
+    RibbonBatch* batch = component;
+    if (!scene::ribbon_points_valid(batch.points[:batch.count])) return c3d::INVALID_ARGUMENT~;
+
+    *(RibbonAuthoring*)value = {
+        .material = batch.material,
+        .capacity = (uint)batch.points.len,
+        .points = batch.points[:batch.count],
     };
 }
 
@@ -453,6 +482,22 @@ fn void? attach_billboards(void* value, ReadContext* context) @local {
     entries[..] = scene::BILLBOARD_DEFAULT;
     context.scene.set_billboards(context.node, source.billboards)!;
     context.scene.set_billboard_atlas(context.node, source.atlas)!;
+}
+
+fn void? attach_ribbons(void* value, ReadContext* context) @local {
+    RibbonAuthoring* source = value;
+    if (!source.capacity || source.points.len > source.capacity) return c3d::INVALID_ARGUMENT~;
+    if (!scene::ribbon_points_valid(source.points)) return c3d::INVALID_ARGUMENT~;
+    RibbonPoint[] entries = alloc::new_array_try(context.scene.allocator, RibbonPoint, (sz)source.capacity)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    context.scene.add(context.node, (RibbonBatch){
+        .material = source.material,
+        .points = entries,
+        .revision = 1,
+    });
+    defer catch context.scene.remove_component(context.node, RibbonBatch);
+    entries[..] = scene::RIBBON_POINT_DEFAULT;
+    context.scene.set_ribbons(context.node, source.points)!;
 }
 
 fn void? attach_lod(void* value, ReadContext* context) @local {
