@@ -131,12 +131,6 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
     if (desc.substeps > uint::max / steps) return c3d::CAPACITY_EXCEEDED~;
 
     bool first = !slot.started;
-    if (first) {
-        slot.started = true;
-        slot.pending = true;
-        slot.first_frame = renderer.frame_index;
-    }
-
     float substep_seconds = device.step_seconds / (float)desc.substeps;
     Vec3 gravity = device.gravity * desc.gravity_scale;
     ulong positions = (ulong)renderer.buffer_address(cloths.positions) + slot.first_particle * Vec4::size;
@@ -180,9 +174,16 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
             .color_count        = state.edge_colors,
         },
     };
-    if (slot.shape == ClothStepShape.SINGLE) return recorder.record_single(first);
-
-    return recorder.record_fused(state.edge_color_starts[:state.edge_colors + 1], first);
+    if (slot.shape == ClothStepShape.SINGLE) {
+        recorder.record_single(first)!;
+    } else {
+        recorder.record_fused(state.edge_color_starts[:state.edge_colors + 1], first)!;
+    }
+    if (first) {
+        slot.started = true;
+        slot.pending = true;
+        slot.first_frame = renderer.frame_index;
+    }
 }
 
 // The sphere is placed at its owner's pose of this update; one whose owner is gone does not push.

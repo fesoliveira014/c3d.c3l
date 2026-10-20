@@ -172,8 +172,8 @@ fn void? update(GpuCloths* cloths, Renderer* renderer, AssetStore* assets, Scene
  @param [&inout] renderer : "Frame open."
  @param cloth : "A cloth the latest update packed."
  @return "Vectors of world position and inverse mass, one per particle."
- @require renderer.frame_open
  @return? render::NOT_READY, c3d::INVALID_ID, Renderer.read_buffer!
+ @require renderer.frame_open
 *>
 fn Vec4[]? read_positions(GpuCloths* cloths, Renderer* renderer, Entity cloth) {
     ClothSlot* slot = find_slot(cloths, cloth);
