@@ -304,6 +304,36 @@ segment at the frame time whose origin is the old segment's offset there, wrappe
 ripples never jump. A steady wind and a still node write nothing: a steady frame uploads nothing for water.
 `update`'s wind scrolls the ripples only; the waves follow `set_sea_state`, and buoyancy follows the waves.
 
+**Roughness from the map's mips.** A minified ripple map averages slopes that the specular lobe would otherwise alias
+into specks, so the stage widens the lobe by what the mip filter averaged away. For each layer it reads the normal map a
+second time, raw, through the same slot, UV transform and sampler, so the hardware picks the same mip, and takes the
+length `ℓ` of `2 · rgb − 1`, clamped to (0, 1]. A mip of diverging normals decodes shorter than 1, and the shortening
+estimates the slope variance the filter removed (Toksvig's filter through `s = 2 / α² − 2`). With `α` the GGX alpha of
+`roughness` (`roughness²`), each layer adds `2 · (1 − ℓ) / ℓ · normal_scale²` to `α²`:
+
+- `normal_scale` squares because the stage scales the tangent slope by it, and a slope scaled by `k` has `k²` the
+  variance;
+- the layers add because `normalize(first + second − wave_normal)` sums their tangent slopes to first order, and they
+  sample the map at incommensurate scales and turns, so their variances are independent.
+
+The specular roughness becomes `(α² + variance)^¼`, at most 1, for the lights and the environment specular. The foam
+keeps its own roughness, and refraction, reflection distortion and the wave normal are unchanged. A body without a
+ripple reference, or one whose `normal_scale` is 0, widens nothing. The cost is two more fetches per fragment at the
+texels the ripple fetches read, and about a dozen arithmetic operations.
+
+What the map must be: the length exists only in the stored vectors, so the ripple map has `COLOR` semantics (the
+example's does, by design) with a linear encoding of `0.5 + 0.5 · n`, in `RGBA16_FLOAT` or `RGBA32_FLOAT`.
+
+- A `NORMAL_RGB` map renormalizes its mips and a `NORMAL_RG` map rebuilds the third component, so both read `ℓ = 1` and
+  widen nothing: that is why a `NORMAL_*` ripple map sparkles more than a `COLOR` one.
+- An sRGB map is not a valid ripple map: the sampler decodes it non-linearly before the stage reads it.
+- `RGBA8_UNORM` cannot carry the length. Rounding the third component moves it by up to `2 / 255`, which reads as a
+  shortening of 0.8% in random texels at every mip, a variance of up to 0.016 per layer and a roughness of up to 0.35,
+  and the real shortening of gentle ripples is smaller than that: the example's map shortens by about 0.3% where it
+  is fully minified.
+- A shortening under `RIPPLE_LENGTH_TOLERANCE` in `water.frag.glsl`, 0.0005 or one half-float step of the decoded
+  vector, reads as none, so the rounding of a half-float map adds nothing at the finest mips.
+
 ## Sea state
 
 `set_sea_state(scene, assets, node, wind_velocity, transition_seconds)` sets a water body's four waves to the sea a
@@ -1070,7 +1100,8 @@ the [vegetation](vegetation.md#the-example) example's grass and trees, then a la
 carves a cosine bowl 6 m deep and 55 m in radius into the height map before the terrain collider cooks it; no
 grass or tree grows under 0.3 m above the water. The sky is a generated equirectangular gradient with a sun
 disc, the scene's environment and background. The lake is `default_water_desc()` at 120 m with a generated
-tiling ripple normal map of eight non-aligned sine terms (4 m tiles) and a generated foam colour, on its own layer
+tiling ripple normal map of eight non-aligned sine terms (4 m tiles), stored `RGBA16_FLOAT` with `COLOR` semantics for
+[its mip length](#ripples-and-wind), and a generated foam colour, on its own layer
 bit. The mirror view renders at `MIRROR_RENDER_SCALE` with the lines above. `--crates 16|256` drops 1 m crates
 (density 600, drag 3000 N·s/m, well under the 36,000 N·s/m at which the drag limit binds, drag coefficient 1) over the
 middle 40 m, each with `Buoyancy` over `fluid_sample`; they bob on the orbital motion of the waves, and
