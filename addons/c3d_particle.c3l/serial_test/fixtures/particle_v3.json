@@ -1,0 +1,396 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "emitter",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "particle_system": {
+          "version": 3,
+          "value": {
+            "desc": {
+              "capacity": 7,
+              "saturation": "DROP_OLDEST",
+              "seed": 12345,
+              "render_mode": "MESH",
+              "material": "effect",
+              "geometry": "particle-mesh",
+              "shape": "CONE",
+              "radius": 2,
+              "half_extents": [
+                1,
+                2,
+                3
+              ],
+              "cone_angle": 0.400000006,
+              "rate": 7,
+              "lifetime": {
+                "min": 2,
+                "max": 3
+              },
+              "speed": {
+                "min": 1,
+                "max": 4
+              },
+              "size": {
+                "min": 0.200000003,
+                "max": 0.699999988
+              },
+              "rotation": {
+                "min": -1,
+                "max": 2
+              },
+              "spin": {
+                "min": -3,
+                "max": 3
+              },
+              "color_min": [
+                0.100000001,
+                0.200000003,
+                0.300000012,
+                0.400000006
+              ],
+              "color_max": [
+                2,
+                1,
+                0.5,
+                0.899999976
+              ],
+              "size_over_life": {
+                "values": [
+                  0,
+                  0.200000003,
+                  0.400000006,
+                  0.600000024,
+                  0.800000012,
+                  1,
+                  1.20000005,
+                  1.39999998
+                ]
+              },
+              "color_over_life": {
+                "values": [
+                  [
+                    0,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.100000001,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.200000003,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.300000012,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.400000006,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.5,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.600000024,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ],
+                  [
+                    0.699999988,
+                    0.400000006,
+                    0.600000024,
+                    0.800000012
+                  ]
+                ]
+              },
+              "gravity_scale": -0.5,
+              "drag": 0.800000012,
+              "stretch": 2,
+              "sub_emitters": [
+                {
+                  "trigger": "DEATH",
+                  "target": 2,
+                  "count": 3,
+                  "inherit_velocity": 0.25,
+                  "on_evict": true
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                }
+              ],
+              "sub_emitter_count": 1,
+              "max_events": 6
+            },
+            "emitting": false
+          }
+        }
+      }
+    },
+    {
+      "id": 1,
+      "parent": 0,
+      "name": "authored-child",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    },
+    {
+      "id": 2,
+      "parent": 0,
+      "name": "target",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "particle_system": {
+          "version": 3,
+          "value": {
+            "desc": {
+              "capacity": 1024,
+              "saturation": "REFUSE",
+              "seed": 1,
+              "render_mode": "BILLBOARD",
+              "material": null,
+              "geometry": null,
+              "shape": "POINT",
+              "radius": 1,
+              "half_extents": [
+                1,
+                1,
+                1
+              ],
+              "cone_angle": 0.52359879,
+              "rate": 0,
+              "lifetime": {
+                "min": 1,
+                "max": 1
+              },
+              "speed": {
+                "min": 0,
+                "max": 0
+              },
+              "size": {
+                "min": 1,
+                "max": 1
+              },
+              "rotation": {
+                "min": 0,
+                "max": 0
+              },
+              "spin": {
+                "min": 0,
+                "max": 0
+              },
+              "color_min": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "color_max": [
+                1,
+                1,
+                1,
+                1
+              ],
+              "size_over_life": {
+                "values": [
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1,
+                  1
+                ]
+              },
+              "color_over_life": {
+                "values": [
+                  [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  [
+                    1,
+                    1,
+                    1,
+                    1
+                  ],
+                  [
+                    1,
+                    1,
+                    1,
+                    1
+                  ]
+                ]
+              },
+              "gravity_scale": 0,
+              "drag": 0,
+              "stretch": 0,
+              "sub_emitters": [
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                },
+                {
+                  "trigger": "DEATH",
+                  "target": null,
+                  "count": 0,
+                  "inherit_velocity": 0,
+                  "on_evict": false
+                }
+              ],
+              "sub_emitter_count": 0,
+              "max_events": 0
+            },
+            "emitting": true
+          }
+        }
+      }
+    }
+  ]
+}

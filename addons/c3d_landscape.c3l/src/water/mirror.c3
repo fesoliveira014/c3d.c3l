@@ -65,7 +65,7 @@ fn MirrorState? place_mirror(
     Camera camera = *scene.get(viewing, Camera);
     camera.layers &= ~node.layers;
     *scene.get(mirror, Camera) = camera;
-    runtime.clip_plane = mirror_clip_plane(node.world, total_amplitude(bounding_waves(runtime)));
+    runtime.clip_plane = mirror_clip_plane(node.world, vertical_reach(runtime));
     return MirrorState.PLACED;
 }
 

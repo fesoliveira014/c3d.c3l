@@ -65,6 +65,9 @@ const Vec3 MEDIUM_ALBEDO @local = { 0.5f, 0.25f, 0.99f }; // the last channel pa
 const float MEDIUM_DEPTH @local = 12;
 const Vec2 OFF_CENTRE_SHIFT @local = { 40, -5 }; // metres the custom surface sits from its node
 const Vec3 BELOW_CAMERA @local = { 1, -3, 8 }; // under the rest plane of a body at y = 2
+const float SIMULATED_EXTENT @local = 32; // metres, at the one-metre cell of calm_desc
+const float FAST_WAVE_SPEED @local = 300; // metres per second: ten substeps at the fixed rate and a metre of spacing
+const float FASTEST_FIT_SPEED @local = 200; // seven substeps
 
 struct Fixture @local {
     AssetStore assets;
@@ -309,11 +312,25 @@ fn void test_inversion_converges_to_the_tolerance() @test {
     assert(steep.largest_excess <= ROUNDING_SLACK, "height error passed its residual bound by %e", steep.largest_excess);
 }
 
+fn WaterDesc simulated_desc(float extent = SIMULATED_EXTENT) @local {
+    WaterDesc desc = calm_desc();
+    desc.wave_model = SIMULATED;
+    desc.wave_count = 0;
+    desc.extent = extent;
+    desc.cell_size = 1;
+    return desc;
+}
+
 fn void test_invalid_desc_values_are_invalid_argument() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
     Node* node = fixture.scene.add_node()!!;
+    GeometryId plane;
+    @pool() {
+        Geometry flat = geometry::plane(tmem, 30, 10, 6, 2);
+        plane = fixture.assets.add_geometry(&flat)!!;
+    };
     uint free_nodes = fixture.scene.world.entities.free_count;
     uint free_materials = fixture.assets.materials.free_count;
 
@@ -325,7 +342,7 @@ fn void test_invalid_desc_values_are_invalid_argument() @test {
     aliased.cell_size = 1.25f;
     aliased.waves[1].wavelength = 2.49f;
     assert_fault(@catch(try_add(&fixture, node, aliased)), c3d::INVALID_ARGUMENT, "A wave shorter than two cells");
-    WaterDesc[14] rejected;
+    WaterDesc[24] rejected;
     foreach (&desc : rejected) *desc = calm_desc();
     rejected[0].wave_count = water::MAX_WAVES + 1;
     rejected[1].waves[0].wavelength = 0;
@@ -341,6 +358,19 @@ fn void test_invalid_desc_values_are_invalid_argument() @test {
     rejected[11].ripple_drift = float::nan;
     rejected[12].depth = 0;
     rejected[13].depth = float::nan;
+    foreach (&desc : rejected[14..]) *desc = simulated_desc();
+    rejected[14].mode = OCEAN;
+    rejected[14].cell_size = OCEAN_CELL_SIZE;
+    rejected[14].extent = OCEAN_EXTENT;
+    rejected[15].geometry = plane;
+    rejected[16].extent = water::MIN_SIMULATION_CELLS - 1;
+    rejected[17].extent = water::MAX_SIMULATION_CELLS + 1;
+    rejected[18].simulation.wave_speed = 0;
+    rejected[19].simulation.wave_speed = float::nan;
+    rejected[20].simulation.damping = 0;
+    rejected[21].simulation.damping = float::inf;
+    rejected[22].simulation.wave_speed = FAST_WAVE_SPEED;
+    rejected[23].simulation.damping = -1;
     foreach (index, desc : rejected) {
         assert_fault(@catch(try_add(&fixture, node, desc)), c3d::INVALID_ARGUMENT, "A rejected desc");
     }
@@ -354,6 +384,13 @@ fn void test_invalid_desc_values_are_invalid_argument() @test {
     WaterDesc two_cells = aliased;
     two_cells.waves[1].wavelength = 2.5f;
     try_add(&fixture, fixture.scene.add_node()!!, two_cells)!!;
+
+    foreach (extent : (float[2]){ (float)water::MIN_SIMULATION_CELLS, (float)water::MAX_SIMULATION_CELLS }) {
+        try_add(&fixture, fixture.scene.add_node()!!, simulated_desc(extent))!!;
+    }
+    WaterDesc fastest_fit = simulated_desc();
+    fastest_fit.simulation.wave_speed = FASTEST_FIT_SPEED;
+    try_add(&fixture, fixture.scene.add_node()!!, fastest_fit)!!;
 }
 
 fn void test_references_must_be_live_standard_materials() @test {
