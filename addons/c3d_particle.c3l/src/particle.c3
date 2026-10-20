@@ -69,6 +69,14 @@ enum ParticleTrigger {
 }
 
 <*
+ How a flipbook chooses the frame of a particle.
+*>
+enum FlipbookMode {
+    OVER_LIFE,
+    FPS,
+}
+
+<*
  Reason a particle left its pool.
 *>
 enum ParticleEventCause {
@@ -166,6 +174,20 @@ struct ParticleCollision {
 }
 
 <*
+ Sprite-sheet playback for billboard and stretched particles; zero columns disables it.
+*>
+struct ParticleFlipbook {
+    uint columns;
+    uint rows;
+    uint frame_count;
+    Vec2 inset; // UV units cut from each cell edge, as BillboardAtlas.inset
+    FlipbookMode mode;
+    float fps; // read in FPS mode
+    bool random_start; // each particle starts on a frame drawn from its seed
+    bool blend; // off writes whole frames
+}
+
+<*
  Immutable emission, simulation and draw configuration of one system.
 *>
 struct ParticleSystemDesc {
@@ -196,6 +218,7 @@ struct ParticleSystemDesc {
     uint sub_emitter_count;
     uint max_events; // event queue capacity; 0 disables events
     ParticleCollision collision;
+    ParticleFlipbook flipbook;
 }
 
 <*
@@ -339,6 +362,7 @@ fn void? prepare(Scene* scene, Node* emitter) {
             facing: desc.render_mode == ParticleRenderMode.STRETCHED
               ? BillboardFacing.DIRECTIONAL : BillboardFacing.CAMERA,
             parent: emitter,
+            atlas: flipbook_atlas(&desc.flipbook),
         )!;
     }
     child.transform_space = TransformSpace.WORLD;
@@ -490,6 +514,7 @@ fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
         if (!math::is_finite(share) || share < 0 || share > 1) return c3d::INVALID_ARGUMENT~;
     }
     check_particle_collision(&desc.collision)!;
+    check_particle_flipbook(&desc.flipbook, desc.render_mode)!;
 }
 
 fn void? check_particle_collision(ParticleCollision* collision) @private {
@@ -503,6 +528,16 @@ fn void? check_particle_collision(ParticleCollision* collision) @private {
     }
     if (!math::is_finite(collision.ground_height)) return c3d::INVALID_ARGUMENT~;
     if (collision.response != CollisionResponse.NONE && !collision.ground_plane && !collision.max_queries) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+fn void? check_particle_flipbook(ParticleFlipbook* flipbook, ParticleRenderMode render_mode) @private {
+    if (!scene::billboard_atlas_valid(flipbook_atlas(flipbook))) return c3d::INVALID_ARGUMENT~;
+    if (!flipbook.columns) return;
+
+    if (render_mode == ParticleRenderMode.MESH) return c3d::INVALID_ARGUMENT~;
+    if (flipbook.mode == FlipbookMode.FPS && !(math::is_finite(flipbook.fps) && flipbook.fps > 0)) {
         return c3d::INVALID_ARGUMENT~;
     }
 }
