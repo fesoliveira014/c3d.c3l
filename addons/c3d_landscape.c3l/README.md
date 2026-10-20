@@ -38,6 +38,8 @@ retains the foliage authoring. Water has no landscape preparation dependency.
 Publish node world matrices before preparing foliage or water.
 Pending foliage can instead scatter as ranges on any scheduler with `foliage::scatter_job` and
 `foliage::commit_scatter` ([detached scatter](../../docs/vegetation.md#detached-scatter)).
+Pending terrain can likewise build its bounds as ranges with `terrain::bounds_job` and
+`terrain::commit_bounds` ([detached bounds](../../docs/terrain.md#detached-bounds-build)).
 
 A prepared owner is a no-op for preparation, except a terrain [tile](../../docs/terrain.md#tile-sets), which
 re-validates and relinks. Each pending owner either receives

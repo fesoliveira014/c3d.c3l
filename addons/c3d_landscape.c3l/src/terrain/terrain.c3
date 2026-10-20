@@ -236,6 +236,22 @@ fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, TerrainRuntime)
 *>
 fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     if (is_prepared(scene, node)) return relink_tile(scene, assets, node);
+
+    return prepare_pending(
+        scene:  scene,
+        assets: assets,
+        node:   node,
+        job:    null,
+    );
+}
+
+// The finest chunks come from the job when there is one.
+fn void? prepare_pending(
+    Scene* scene,
+    AssetStore* assets,
+    Node* node,
+    BoundsJob* job,
+) @private {
     TerrainDesc desc = scene.get(node, Terrain).desc;
     uint layer_count = check_terrain_desc(assets, &desc)!;
     TextureAsset* height_map = assets.texture(desc.height_map);
@@ -275,6 +291,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         texels:       height_texels(height_map),
         rect:         whole_map(texels),
         height_scale: desc.height_scale,
+        job:          job,
     );
     publish_trace_params(assets, &runtime);
     link_tile(scene, assets, node)!;
@@ -398,13 +415,19 @@ fn void? update(Scene* scene, AssetStore* assets) {
     if (failure) return failure~;
 }
 
-fn void? update_node(Scene* scene, AssetStore* assets, Node* node) @private {
+// The finest chunks come from the job when there is one.
+fn void? update_node(
+    Scene* scene,
+    AssetStore* assets,
+    Node* node,
+    BoundsJob* job = null,
+) @private {
     Terrain* terrain = scene.get(node, Terrain);
     TerrainRuntime* runtime = scene.get(node, TerrainRuntime);
     InstancedMesh* batch = scene.get(node, InstancedMesh);
     check_lod_tunables(&terrain.desc)!;
 
-    if (catch excuse = refresh_changed_bounds(assets, &terrain.desc, runtime)) {
+    if (catch excuse = refresh_changed_bounds(assets, &terrain.desc, runtime, job)) {
         // The GPU copy may already hold the rejected shape; draw nothing until a conforming revision.
         hide_batch(scene, node);
         if (runtime.trace_grid.generation) show_trace_grid(scene, node, runtime, false);
@@ -468,7 +491,21 @@ fn TexelRect whole_map(uint texels) @private {
     return { .columns = texels, .rows = texels };
 }
 
-fn void? refresh_changed_bounds(AssetStore* assets, TerrainDesc* desc, TerrainRuntime* runtime) @private {
+// The rectangle covers in-place writes only: a rejected revision or a replacement, whose pixels may
+// reuse an address, rebuilds everything.
+fn bool is_region_refresh(TerrainRuntime* runtime, TextureAsset* texture) @private {
+    return runtime.has_pending
+        && !runtime.rejected
+        && texture.pixels.ptr == runtime.pixels
+        && texture.header.replaced_revision <= runtime.revision;
+}
+
+fn void? refresh_changed_bounds(
+    AssetStore* assets,
+    TerrainDesc* desc,
+    TerrainRuntime* runtime,
+    BoundsJob* job,
+) @private {
     if (!assets.textures.is_live(desc.height_map)) return c3d::INVALID_ID~;
     TextureAsset* texture = assets.texture(desc.height_map);
     if (texture.header.revision == runtime.revision) return;
@@ -476,18 +513,14 @@ fn void? refresh_changed_bounds(AssetStore* assets, TerrainDesc* desc, TerrainRu
     check_height_map(texture)!;
     // Bounds, instance capacity and the material payload are sized for one side length.
     if (texture.desc.width != runtime.texels) return c3d::INVALID_ARGUMENT~;
-    // The rectangle covers in-place writes only: a rejected revision or a replacement, whose pixels may
-    // reuse an address, rebuilds everything.
-    bool in_place = runtime.has_pending
-        && !runtime.rejected
-        && texture.pixels.ptr == runtime.pixels
-        && texture.header.replaced_revision <= runtime.revision;
+    bool in_place = is_region_refresh(runtime, texture);
     TexelRect refreshed = in_place ? runtime.pending : whole_map(runtime.texels);
     refresh_bounds(
         runtime:      runtime,
         texels:       height_texels(texture),
         rect:         refreshed,
         height_scale: desc.height_scale,
+        job:          job,
     );
     publish_trace_params(assets, runtime);
     if (in_place) {

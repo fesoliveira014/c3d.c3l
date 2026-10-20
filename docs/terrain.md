@@ -513,6 +513,49 @@ setup](#physics-and-navigation-setup).
   - A rejected revision leaves the log. Consumers that follow the ground, such as [vegetation](vegetation.md),
     read it.
 
+## Detached bounds build
+
+A terrain's whole bounds build can run as ranges on any scheduler: at load, for a terrain attached but not
+prepared, or after a height-map replacement or a revision advanced without `mark_dirty`, for a prepared one. The
+owner thread takes a snapshot, any thread runs the ranges, and the owner thread publishes. `add_terrain`,
+`prepare` and `update` stay serial and unchanged; the library never imports `c3d_job`, and the
+example drives the ranges with a `JobPool`.
+
+```c3
+BoundsJob job = terrain::bounds_job(&scene, &assets, ground, scratch)!;
+// run_range over disjoint ranges of [0, job.range_count()), on any threads, joined
+terrain::commit_bounds(&scene, &assets, &job)!;
+```
+
+- **Snapshot.** `bounds_job` records the height map's revision, replacement and pixel array, the terrain's own
+  revision, pending rectangle and trace shape, and the node's world matrix. The texels are borrowed. A prepared
+  terrain with nothing to rebuild, or whose only change is a [`mark_dirty`](#edits) rectangle, which `update`
+  refreshes serially, faults `INVALID_ARGUMENT`. A height map the checks refuse faults with the checks' fault and
+  changes nothing; `update` then reports it and hides the batch.
+- **Ranges.** `run_range(first, count)` takes positions in the finest chunks, row by row, `range_count()` of them,
+  in any order and on any thread, as long as no two running ranges overlap. A range builds each of its chunks'
+  bounds and, under `trace`, its gaps at every level. It writes only those chunks' entries in the job's own arrays,
+  so the terrain's runtime and the scene are untouched until the commit. While a range runs, nothing may edit,
+  replace or remove the height map; that is a programming error.
+- **Scratch.** The job takes 4 bytes per finest chunk from the `scratch` allocator for the bounds and, under
+  `trace`, 4 bytes per chunk and level for the gaps (28 KiB at 4097 texels), and holds nothing else; it never
+  frees them. Dropping the job cancels it.
+- **Commit.** `commit_bounds` runs on the owner thread. It copies the job's chunks into the runtime, then runs what
+  `prepare` (a pending terrain) or `update` (a prepared one, for this node alone) runs after the leaf bounds: the
+  gap and level reductions, the node records, the quadtree and tile set ranges and the trace grid. The bounds,
+  gaps and records equal a serial build of the same texels bit for bit. It faults as `prepare` or `update` does and
+  leaves the scene as that call would; after a fault in publishing the records, `update` publishes them again.
+  Afterwards `update` has nothing left to rebuild.
+- **Staleness.** `commit_bounds` faults `landscape::STALE` and changes nothing if any of these changed since
+  `bounds_job`:
+  - the node died or lost `Terrain`, or was prepared or torn down;
+  - the height map's id, revision, replacement or pixel array;
+  - the terrain's own revision, so an `update` that rebuilt it first makes the job stale; its pending rectangle; or
+    its trace shape (`trace` and `trace_level`);
+  - the node's world matrix, an origin shift included.
+
+  Commit before `update`. The application drops a stale job and takes a new one.
+
 ## Physics and navigation setup
 
 The package imports neither `c3d::physics` nor `c3d::nav`. It supplies two neutral values, `collision_input` and
@@ -731,6 +774,11 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `collision_input` | `c3d::UNSUPPORTED` | A world axis length of the node differs from 1 by more than 1e-4 |
 | `height_range` | `c3d::INVALID_ID` | A dead node or a node without `Terrain` |
 | `height_range` | `NOT_PREPARED` | A pending terrain |
+| `bounds_job` | the faults of `add_terrain` (pending) or `update` (prepared) | The value and height-map checks that precede the leaf bounds |
+| `bounds_job` | `c3d::INVALID_ARGUMENT` | A prepared terrain with nothing to rebuild, or with only a `mark_dirty` rectangle |
+| `bounds_job` | `c3d::CAPACITY_EXCEEDED` | The scratch allocator failed |
+| `commit_bounds` | `landscape::STALE` | A source the job read changed ([above](#detached-bounds-build)) |
+| `commit_bounds` | the faults of `prepare` or `update` | The call the commit stands in for |
 
 ## Limits
 
@@ -752,8 +800,9 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   textures stretch along the fall line. Use [`TRIPLANAR`](#slope-projection) for them.
 - Edits upload only the marked texels of the height map; with a collider, the end of a stroke re-cooks the whole
   field, or only the windows it touched when the collider is tiled into [windows](#physics-collider).
-- Updates run on the calling thread and change scene structure, so they never run inside a job range;
-  `sample_height` and `sample_normal` may.
+- `update`, `prepare` and publication run on the owner thread and change scene structure, so they never run inside a
+  job range. The bounds kernels of a whole build may, through the [job API](#detached-bounds-build);
+  `sample_height` and `sample_normal` may too.
 
 ## The example
 
