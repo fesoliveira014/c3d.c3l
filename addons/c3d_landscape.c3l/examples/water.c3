@@ -120,7 +120,7 @@ const float SUN_DISC_COSINE @local = 0.9995f; // about 3.6 degrees across
 
 const uint RIPPLE_MAP_SIZE @local = 256; // 256 KiB and its mips; one tile covers 1 / RIPPLE_UV_SCALE metres
 const float RIPPLE_UV_SCALE @local = 0.25f; // texture periods per metre
-const float RIPPLE_SLOPE @local = 0.4f; // slope bound; the eight terms peak near 0.6 of it; steeper ripples glint like chop
+const float RIPPLE_SLOPE @local = 0.3f; // slope bound; the eight terms reach 0.6 of it at most; steeper ripples glint like chop
 const uint FOAM_MAP_SIZE @local = 128;
 const float FOAM_UV_SCALE @local = 0.5f;
 const float FOAM_ROUGHNESS @local = 0.8f;
