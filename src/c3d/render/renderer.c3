@@ -388,6 +388,7 @@ fn void? Renderer.end_frame(&self) {
             self.stats.frame_ms = elapsed_ms(self.frame_started);
             return;
         }
+        record_buffer_readbacks(self, frame)!;
         bool present = self.has_output;
         self.has_output = false;
 
@@ -411,6 +412,7 @@ fn void? Renderer.end_frame(&self) {
             self.frame_submitted = true;
             commit_resident_crowds(self, self.frame_index);
             commit_compute_skin(self, self.frame_index);
+            commit_buffer_readbacks(self, frame);
             commit_uploads(self, slot);
             foreach (&record : self.views.items) {
                 if (record.history.pending) record.history.submitted = self.frame_index;
@@ -1207,6 +1209,8 @@ fn void abort_frame(Renderer* renderer) {
         post::clear_exposure_readback(renderer, renderer.recording_slot);
         post::clear_focus_readback(renderer, renderer.recording_slot);
         renderer.cull_readbacks[renderer.recording_slot].pending = false;
+        forget_geometry_history(renderer);
+        discard_buffer_readbacks(renderer);
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         renderer.shadow_atlas.colored.states = renderer.frame_colored_states;
         foreach (&record : renderer.targets.items) record.target.state = record.frame_state;

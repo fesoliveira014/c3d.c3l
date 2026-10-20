@@ -46,13 +46,14 @@ struct DispatchTexture {
 }
 
 <*
- One compute dispatch: its shader, root bytes, workgroup counts, written buffers and textures.
+ One compute dispatch: its shader, root bytes, workgroup counts, written buffers, geometries and textures.
 *>
 struct DispatchDesc {
     ComputeShaderId   shader;
     char[]            root;
     uint[<3>]         groups;
     BufferId[]        writes;
+    GeometryWrite[]   geometry;
     DispatchTexture[] textures;
 }
 
@@ -151,6 +152,7 @@ fn usz dispatch_root_size(usz root_len) {
 <*
  Record a compute dispatch into the open frame at its call position.
  A rejected stage is skipped and counted; the previous revision keeps dispatching.
+ A geometry write is a device revision of its streams: draws, velocity history and trace refit see it in the same frame.
  @param [&inout] self : "Records pending uploads first."
  @require self.frame_open, !self.overlay_open
  @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::SHADER_NOT_FOUND
@@ -166,6 +168,7 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
     foreach (buffer : desc.writes) {
         if (!self.buffers.is_live(buffer)) return c3d::INVALID_ID~;
     }
+    check_geometry_writes(self, desc.geometry)!;
     check_dispatch_textures(self, desc.textures)!;
 
     ComputeShaderRes* mirror = resolve_compute_shader(self, desc.shader)!;
@@ -186,6 +189,7 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
     foreach (index, &declared : desc.textures) {
         resolved[index] = resolve_dispatch_texture(self, declared, &bindings.slots[index])!;
     }
+    resolve_geometry_writes(self, desc.geometry)!;
     record_pending_copies(self, &self.commands)!;
     defer catch abort_frame(self);
     ProfileScopeToken dispatch_scope = begin_profile_dispatch(self, desc.shader, mirror.revision)!;
@@ -211,16 +215,21 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
     gpu::MappedGpuSpan root = slot.upload.take(&self.device, DispatchRoot::size, STREAM_ALIGNMENT)!;
     *(DispatchRoot*)root.bytes.ptr = { .textures = textures, .parameters = parameters };
 
-    if (desc.writes.len) {
+    record_geometry_history(self, desc.geometry)!;
+    bool writes_memory = desc.writes.len || desc.geometry.len;
+    if (writes_memory) {
         gpu::Barrier readers_done = { .before = self.consumer_stages, .after = { .compute } };
+        readers_done.before.transfer = true; // a readback copy of the previous frame reads the buffer
         gpu::cmd_barrier(&self.commands, &readers_done)!;
     }
     gpu::cmd_bind_pipeline(&self.commands, pipeline)!;
     gpu::cmd_dispatch(&self.commands, root.address, { desc.groups.x, desc.groups.y, desc.groups.z })!;
-    if (desc.writes.len) {
+    if (writes_memory) {
         gpu::Barrier writes_visible = { .before = { .compute }, .after = self.consumer_stages };
+        if (desc.geometry.len) writes_visible.after.transfer = true;
         gpu::cmd_barrier(&self.commands, &writes_visible)!;
     }
+    note_geometry_writes(self, desc.geometry);
     foreach (&entry : resolved[:desc.textures.len]) {
         if (entry.mirror && entry.use.layout == gpu::TextureLayout.STORAGE) {
             transition_dispatch_texture(self, entry, self.sampled_state)!;

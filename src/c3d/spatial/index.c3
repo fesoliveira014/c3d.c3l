@@ -515,5 +515,5 @@ fn SceneEntry instance_entry(
 
 // A batch has no per-instance morph weights, so its rest triangles are what it draws.
 fn bool batch_triangles_static(GeometryAsset* record, bool has_bounds_override) @local {
-    return !has_bounds_override && record.data.topology == Topology.TRIANGLES;
+    return !has_bounds_override && !record.bounds_overridden && record.data.topology == Topology.TRIANGLES;
 }

@@ -107,6 +107,11 @@ struct GpuGeometry {
     Aabb               bounds;
     TraceGeometry      trace;
     RtBlas             blas;
+    gpu::GpuAllocation previous;           // positions before the frame's first write; allocated at the first write
+    gpu::GpuAddress    previous_positions;
+    ulong              history_frame;      // frame_index + 1 of the frame that copied previous; 0 when none
+    uint               device_revision;    // advances with every dispatch write; never reset
+    bool               device_written;     // a dispatch wrote the block since it was last uploaded from the arrays
 }
 
 <*
@@ -324,7 +329,7 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     GeometryLayout layout = geometry_layout_from_width(&record.data, record.joints_u16);
     bool reuse = same_asset && mem::equals(&layout, &mirror.layout, GeometryLayout::size);
-    bool partial = reuse && mirror.revision != 0
+    bool partial = reuse && mirror.revision != 0 && !mirror.device_written
         && !record.dirty.whole && record.dirty.base_revision == mirror.revision;
     if (reuse) {
         renderer.pending_overwrite = true;
@@ -347,6 +352,11 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
 
         if (mirror.allocation.is_valid()) {
             renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
+        }
+        if (mirror.previous.is_valid()) {
+            renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.previous });
+            mirror.previous = {};
+            mirror.previous_positions = (gpu::GpuAddress)0;
         }
         if (!same_asset && mirror.trace.allocation.is_valid()) {
             renderer.pending_upload_retire.push({
@@ -395,6 +405,8 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
     mirror.layout = layout;
     mirror.topology = record.data.topology;
     mirror.bounds = record.data.bounds;
+    mirror.device_written = false;
+    mirror.history_frame = 0;
     renderer.assets.clear_geometry_dirty(geometry);
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)staged_bytes;
@@ -491,6 +503,9 @@ fn void sweep_geometries(Renderer* renderer) @private {
     foreach (&mirror : renderer.geometries) {
         if (!mirror.allocation.is_valid() || renderer.assets.geometries.is_live(mirror.asset)) continue;
         renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
+        if (mirror.previous.is_valid()) {
+            renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.previous });
+        }
         if (mirror.trace.allocation.is_valid()) {
             renderer.pending_upload_retire.push({
                 .kind       = RetiredKind.ALLOCATION,
@@ -510,6 +525,7 @@ fn void sweep_geometries(Renderer* renderer) @private {
 fn void free_geometries(Renderer* renderer) @private {
     foreach (&mirror : renderer.geometries) {
         if (mirror.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &mirror.allocation);
+        if (mirror.previous.is_valid()) (void)gpu::free_allocation(&renderer.device, &mirror.previous);
         if (mirror.trace.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &mirror.trace.allocation);
         if (mirror.blas.handle.is_valid()) (void)gpu::destroy_acceleration_structure(&renderer.device, mirror.blas.handle);
     }

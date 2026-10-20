@@ -52,6 +52,7 @@ struct PosedTraceRes {
     ulong                            compared_epoch;      // epoch of the last pose compare
     GeometryId                       geometry;            // rest geometry the copy follows
     uint                             built_revision;      // header.revision of the root and BLAS; 0 rebuilds both
+    uint                             built_device_revision; // device_revision a vertex-motion slot copied
     PosedTopology                    topology;            // rest topology the streams, nodes and BLAS were sized for
     gpu::GpuAddress                  source_root;         // rest block the root points into
     gpu::GpuAllocation               allocation;          // posed root, then positions, normals and tangents
@@ -786,8 +787,9 @@ fn void? acquire_posed_streams(
         bool held = slot.allocation.is_valid() && slot.source_root == mirror.root && slot.pose.len == 0
           && vertex_motion_slot_valid(slot.topology, topology);
         if (held) {
-            if (slot.built_revision == mirror.revision) return;
+            if (slot.built_revision == mirror.revision && slot.built_device_revision == mirror.device_revision) return;
             slot.built_revision = mirror.revision;
+            slot.built_device_revision = mirror.device_revision;
             slot.pose_valid = false;
             table.motion_copies.push(index);
             mark_posed_pending(table, index);
@@ -835,6 +837,7 @@ fn void? acquire_posed_streams(
     slot.geometry = mirror.asset;
     slot.topology = topology;
     slot.built_revision = mirror.revision;
+    slot.built_device_revision = mirror.device_revision;
     slot.source_root = mirror.root;
     if (vertex_motion) table.motion_copies.push(index);
     slot.pose_valid = false;

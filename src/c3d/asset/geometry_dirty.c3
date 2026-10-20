@@ -111,6 +111,7 @@ fn void mark_streams(
     VertexRange range,
 ) @private {
     record.header.revision++;
+    restore_source_bounds(record);
     foreach (stream : GeometryStream::values) {
         if (stream_marked(streams, stream)) extend_range(&record.dirty.ranges[stream.ordinal], range);
     }

@@ -886,6 +886,36 @@ fn void test_dispatch_rejects_more_textures_than_the_binding_block() @test {
     }
 }
 
+fn void test_dispatch_rejects_a_geometry_named_twice_before_recording() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    ComputeShaderId shader;
+    GeometryId geometry;
+    @pool() {
+        char[4] spirv;
+        ComputeShaderDesc shader_desc = { .compute = spirv[..] };
+        shader = assets.add_compute_shader(&shader_desc)!!;
+        Geometry plane = geometry::plane(tmem, 1, 1);
+        geometry = assets.add_geometry(&plane)!!;
+    };
+
+    render::Renderer renderer;
+    renderer.assets = &assets;
+    renderer.frame_open = true;
+    renderer.geometries = alloc::new_array(mem, render::GpuGeometry, assets.geometries.items.len);
+    defer alloc::free(mem, renderer.geometries.ptr);
+    renderer.geometries[geometry.index] = { .asset = geometry, .revision = 1 };
+
+    render::GeometryWrite[2] writes;
+    foreach (&write : writes) *write = { .geometry = geometry, .streams = { .positions = true } };
+    if (catch excuse = renderer.dispatch({ .shader = shader, .groups = { 1, 1, 1 }, .geometry = writes[..] })) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+        assert(renderer.stats.dispatches == 0 && !renderer.work_recorded);
+    } else {
+        assert(false, "a dispatch naming one geometry twice was accepted");
+    }
+}
+
 fn void test_storage_view_slot_orders_layers_then_mips() @test {
     assert(render::storage_view_slot(1, 0, 0) == 0);
     assert(render::storage_view_slot(4, 0, 3) == 3);

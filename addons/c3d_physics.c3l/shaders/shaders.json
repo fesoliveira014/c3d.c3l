@@ -1,0 +1,13 @@
+{
+  "module": "c3d::physics",
+  "output": "src/shaders.c3",
+  "flags": [],
+  "entries": [
+    { "shader": "cloth_init", "source": "cloth_init.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "cloth_predict", "source": "cloth_predict.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "cloth_project", "source": "cloth_project.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "cloth_collide", "source": "cloth_collide.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "cloth_integrate", "source": "cloth_integrate.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "cloth_output", "source": "cloth_output.comp.glsl", "stage": "comp", "defines": [] }
+  ]
+}
