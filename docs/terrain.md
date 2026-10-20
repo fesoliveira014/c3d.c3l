@@ -406,6 +406,7 @@ and `texel / 65535` scaling. Build the collider on the terrain node as a static 
 TerrainCollisionInput input = terrain::collision_input(&scene, terrain_node.id)!;
 ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
 collider.height_field = { .source = TEXTURE, .texture = input.height_map };
+foreach (side, neighbour : input.neighbours) collider.height_field.neighbours[side].texture = neighbour;
 collider.local.scale = input.scale;
 physics.add_body(terrain_node, physics::default_body_desc(STATIC), (&collider)[:1])!;
 ```
@@ -433,8 +434,18 @@ physics::add_height_field_windows(
 - [Tiles](#tile-sets) of one set each get their own windows. Tiles with equal `height_scale` quantize over the same
   range, so they meet exactly at the tile seam too.
 - Each window reads one sample of its neighbours past a shared edge, so a body crosses a window seam as it crosses
-  the interior of a whole field. The edge of a map reads no neighbour, so two tiles still meet as separate height
-  fields. The package README lists the window contracts.
+  the interior of a whole field. The package README lists the window contracts.
+- A tile of a set passes its linked neighbours' maps: `input.neighbours` holds the west, east, north and south
+  tiles' maps, empty where a side has none, in the order of `HeightFieldSide`. Where the tile's map ends the
+  collider reads the neighbour's second column or row in, since the first duplicates the shared edge, so a body
+  crosses a tile seam as it crosses the interior of one field. A side without a neighbour repeats the border
+  sample. The corners are not read.
+- A collider with a neighbour quantizes over the format's full range, like a window: its height step is
+  `height_scale / 65535` for `R16_UINT`. A set has one `height_scale` and tiles of different sets never link, so
+  linked tiles quantize alike.
+- A link or an unlink changes `input.neighbours`. `mark_changed` rebuilds from the description the body holds, and
+  windows copy their neighbours when added, so rebuild the colliders of both tiles from `collision_input`: remove
+  the body or the windows and add them again.
 
 ## Edits
 
@@ -487,13 +498,16 @@ setup](#physics-and-navigation-setup).
     `mark_dirty` rectangle.
   - A tile that is not linked to the set faults `INVALID_ARGUMENT`. A tile whose height map no longer passes the
     checks faults like `height_view`; a neighbour whose map does not conform is skipped.
-  - The result is a mask: bit `n` is set when the neighbour of `TerrainNeighbour` ordinal `n` had texels change
+  - The result is a mask: bit `n` is set when the neighbour of `TerrainNeighbour` ordinal `n` had texels change,
+    or when its [collider](#physics-collider) apron reads the rectangle, that is, when the rectangle meets the shared
+    edge or the row or column inside it toward a linked edge neighbour
     (`WEST` 0, `EAST` 1, `NORTH` 2, `SOUTH` 3, then `NORTH_WEST`, `NORTH_EAST`, `SOUTH_WEST`, `SOUTH_EAST`).
-    `set.neighbour(tile, direction)` names the tile. A neighbour that was skipped or already held the values has
-    no bit, and a repeated call returns 0.
+    `set.neighbour(tile, direction)` names the tile. A neighbour that was skipped has no bit, and a repeated call
+    returns the bits of the neighbours whose apron reads the rectangle.
   - A live collider is not re-cooked: mark the windows (or call `mark_changed` on the body) of the edited tile
-    and of each tile in the mask, and of no other tile. The copied strip is the neighbour's edge row or column
-    across the side, over the same texels as the rectangle along it.
+    and of each tile in the mask, and of no other tile. The strip to mark is the neighbour's edge row or column
+    across the side, over the same texels as the rectangle along it; a neighbour that only reads the rectangle
+    through its apron has no copied texels there, and the strip still marks its collider.
 - A live physics body is not re-cooked on a texture revision. `mark_changed` rebuilds the whole field on the
   next `PhysicsWorld.update`; `mark_height_field_windows_changed` rebuilds only the windows whose samples meet the
   rectangle, and a rectangle on a window edge marks both windows. Mark once when a stroke ends: collision is stale
@@ -565,10 +579,12 @@ The package imports neither `c3d::physics` nor `c3d::nav`. It supplies two neutr
 
 ### Collider
 
-`terrain::collision_input(&scene, node.id)` returns a `TerrainCollisionInput { height_map, scale }`: the terrain's own
-map and `{ cell_size, height_scale, cell_size }`. The application copies them into `ColliderDesc.height_field.texture`
-and `ColliderDesc.local.scale`, as under [Physics collider](#physics-collider), for one body or for
-`add_height_field_windows`.
+`terrain::collision_input(&scene, node.id)` returns a `TerrainCollisionInput { height_map, scale, neighbours }`: the
+terrain's own map, `{ cell_size, height_scale, cell_size }` and the maps of the linked tiles on the west, east, north
+and south, empty where the tile has none or the terrain is not linked. The application copies them into
+`ColliderDesc.height_field.texture`, `ColliderDesc.local.scale` and `ColliderDesc.height_field.neighbours[side].texture`,
+as under [Physics collider](#physics-collider), for one body or for `add_height_field_windows`. It supplies any
+neighbour `material_indices` itself.
 
 - A scaled terrain node draws a different surface from its collider: physics builds the body from the node's world
   position and rotation and drops its scale, and rendering keeps it. `collision_input` therefore faults `UNSUPPORTED`
@@ -688,6 +704,9 @@ fn GridHeightSample? tile_height(void* context, float world_x, float world_z) {
    rectangle that covers both tiles.
 
 After `terrain::update`, compare `height_range` with the range of the navigation source (see Retaking the range).
+
+**Link or unlink.** Rebuild the colliders of both tiles from a new `collision_input`: remove the body or the windows
+and add them again. `PhysicsBody.mark_changed()` keeps the neighbours of the stored description.
 
 **Replacement.** A new pixel array behind the height map, a replaced or restored map:
 
@@ -820,7 +839,9 @@ default is the finest whose grid has at most 2^22 vertices: 0 at 1025 texels, 1 
 traces one vertex per texel at any size.
 
 The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
-`--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.
+`--collision-window CELLS` sets the window size; 0 builds one collider over the whole map. With `--tiles 2x2` each
+collider, windowed or not, reads its linked neighbours' maps from `collision_input`, so a crate crosses a tile seam as it
+crosses the interior of a tile; P builds the colliders again from the links.
 
 `--morph` sets `morph_band` to 0.25 and `--triplanar` selects `TRIPLANAR` projection; the panel's slider changes the
 band while running, and the slope projection is chosen at start. Both apply to `--tiles` and `--capture` too.

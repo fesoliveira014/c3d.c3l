@@ -254,13 +254,31 @@ world.update(dt); // re-cooks the marked windows only
   seam as it crosses the interior of a whole field. A window with a neighbour takes its per-cell `material_indices`
   as its own cells plus one ring of map cells around them, repeated at the map border: `(count_x + 2) *
   (count_z + 2)` entries, against `count_x * count_z` for a window that covers the whole map.
-  `add_height_field_windows` cuts both from the map-wide data. The edge of a map reads no neighbour.
+  `add_height_field_windows` cuts both from the map-wide data.
+- The edge of a map reads a neighbour where `HeightField.neighbours` names one. It holds four
+  `HeightFieldNeighbour { texture, material_indices }` in `HeightFieldSide` order: `NEGATIVE_X`, `POSITIVE_X`,
+  `NEGATIVE_Z`, `POSITIVE_Z`. The apron of a side holds the neighbour's second column or row in, since the first
+  duplicates the shared edge, so a body crosses from one tile collider to the next as it crosses the interior of one
+  field. A side without a neighbour repeats the border sample, and corners are never read. A neighbour needs the
+  field's format and the length of the shared edge, and faults `INVALID_ARGUMENT` otherwise; `RGBA32_FLOAT` faults
+  `UNSUPPORTED`, as for a window. A neighbour on a `HEIGHTS` source faults `INVALID_ARGUMENT`.
+- A collider with a neighbour quantizes over the format's full range, like a window, so tiles with the same `scale`
+  meet exactly. The cook rounds heights to 16 bits over that range, a height step of `scale.y / 65535`.
+- A neighbour's `material_indices` are optional, one per neighbour cell, and copied with the body like the collider's
+  own, so the caller's array need not outlive the call. A neighbour without them gives solid cells. A whole-map
+  field's own indices stay one per cell and the cook rings them with the neighbours' cells.
+  `add_height_field_windows` copies the template's neighbours, cuts their cells into each window's ring, and keeps on
+  a window body only the maps of the sides where the map ends; a window beside another window carries none.
+- Neighbour maps join the snapshot key and the revision sum behind the `SOURCE_UNAVAILABLE` retry. A live collider is
+  still re-cooked only when marked: after an edit of a neighbour within two texels of the shared edge, mark this
+  collider's facing edge. Adding or removing a neighbour changes the description, so rebuild the body or the windows.
 
 With `C3D_PHYSICS_SERIAL`, `HeightFieldWindows` is a described owner whose payload is `{ window_cells, collider }`.
 Export omits the window bodies and nodes, validating each node's `HeightFieldWindowOwner` marker, and loading
 regenerates them through `add_height_field_windows`, so a restored terrain has its windows again with no
-application call. `PhysicsBody` authoring is version 2 for the new `window` field; version 1 payloads still read,
-with a zero window, in both formats.
+application call. `PhysicsBody` authoring is version 3 for `HeightField.neighbours` and `HeightFieldWindows` is
+version 2; payloads of earlier versions still read, without neighbours and, before version 2, with a zero window,
+in both formats.
 
 ## Breakables
 
