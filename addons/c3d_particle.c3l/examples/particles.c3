@@ -9,6 +9,7 @@ import c3d::light;
 import c3d::material;
 import c3d::maths;
 import c3d::particle;
+import c3d::physics;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
@@ -28,6 +29,11 @@ const uint SPARK_CAPACITY @local = 4096;
 const uint DEBRIS_CAPACITY @local = 1024;
 const uint PUFF_CAPACITY @local = 8192; // 448 KiB pool; above the puffs alive at the spark death rate
 const uint SPARK_EVENTS @local = 512; // 24 KiB queue; above the deaths one step raises at the spark rate
+const float OBSTACLE_THICKNESS @local = 0.12f;
+const Vec3 CANOPY_SIZE @local = { 2.4f, OBSTACLE_THICKNESS, 2.4f };
+const Vec3 CANOPY_POSITION @local = { 0, 1.7f, 0 };
+const Vec3 CRATE_SIZE @local = { 0.7f, 0.7f, 0.7f };
+const Vec3[2] CRATE_POSITIONS @local = { { -1.7f, 0.35f, 0.4f }, { 1.5f, 0.35f, -0.3f } };
 const uint STRESS_CAPACITY @local = 100_000; // about 18 MiB of pool, draw and packed records
 const float SATURATED_REQUEST_FRACTION @local = 0.1f; // share of the pool requested every step of the saturated segment
 const uint DEFAULT_BENCHMARK_FRAMES @local = 300;
@@ -42,6 +48,7 @@ struct Options @local {
     bool benchmark;
     bool stress;
     bool sparks;
+    bool collide;
     bool drop_oldest;
     bool limit_frames;
     uint frames;
@@ -51,6 +58,8 @@ struct Options @local {
 struct Demo @local {
     AssetStore assets;
     Scene scene;
+    PhysicsWorld physics;
+    bool has_physics;
     Node*[3] emitters;
     Node*[2] cameras;
     Node* spark_puffs;
@@ -94,14 +103,18 @@ fn TextureId? add_sprite(AssetStore* assets) @local {
 }
 
 fn void destroy_demo(Demo* demo) @local {
+    if (demo.has_physics) {
+        demo.scene.get(demo.emitters[1], ParticleSystem).set_collision(null, null);
+        physics::destroy_physics_world(&demo.physics);
+    }
     scene::destroy_scene(&demo.scene);
     asset::destroy_asset_store(&demo.assets);
 }
 
-fn Demo? create_demo(bool spark_smoke) @local {
+fn Demo? create_demo(Options options) @local {
     Demo demo = {
         .assets = asset::create_asset_store(mem, asset::default_asset_store_desc()),
-        .scene = scene::create_scene(mem, { .max_nodes = 32 }),
+        .scene = scene::create_scene(mem, { .max_nodes = 48 }),
     };
     defer catch destroy_demo(&demo);
     particle::register_particles(&demo.scene)!;
@@ -171,7 +184,7 @@ fn Demo? create_demo(bool spark_smoke) @local {
     demo.emitters[0] = demo.scene.add_particle_system(smoke, name: "smoke")!;
     demo.emitters[0].local.position = { -3, 0.15f, 0 };
 
-    if (spark_smoke) {
+    if (options.sparks) {
         ParticleSystemDesc puff = particle::default_particle_system_desc();
         puff.capacity = PUFF_CAPACITY;
         puff.seed = 4;
@@ -207,7 +220,7 @@ fn Demo? create_demo(bool spark_smoke) @local {
     sparks.color_min = { 1, 0.5f, 0.2f, 0.3f };
     sparks.color_max = { 1, 1, 0.6f, 0.7f };
     foreach (index, alpha : opacity) sparks.color_over_life.values[index] = { 1, 1, 1, 1 - (float)index / 7 };
-    if (spark_smoke) {
+    if (options.sparks) {
         sparks.max_events = SPARK_EVENTS;
         sparks.sub_emitter_count = 1;
         sparks.sub_emitters[0] = {
@@ -215,6 +228,16 @@ fn Demo? create_demo(bool spark_smoke) @local {
             .target = demo.spark_puffs.id,
             .count = 1,
             .inherit_velocity = 0.1f,
+        };
+    }
+    if (options.collide) {
+        sparks.collision = {
+            .response = BOUNCE,
+            .restitution = 0.45f,
+            .friction = 0.3f,
+            .radius_scale = 0.5f,
+            .ground_plane = true,
+            .max_queries = SPARK_CAPACITY, // one ray per spark, so none wait
         };
     }
     demo.emitters[1] = demo.scene.add_particle_system(sparks, name: "sparks")!;
@@ -250,6 +273,82 @@ fn Demo? create_demo(bool spark_smoke) @local {
     return demo;
 }
 
+fn bool cast_physics(
+    void* context,
+    Vec3 from,
+    Vec3 to,
+    float radius,
+    ParticleHit* out,
+) @local {
+    PhysicsWorld* physics = context;
+    Vec3 path = to - from;
+    float length = path.length();
+    RayHit? hit = physics.raycast(from, path / length, length);
+    if (catch hit) return false;
+
+    *out = { .point = hit.point, .normal = hit.normal, .fraction = hit.fraction };
+    return true;
+}
+
+fn void? add_obstacle(
+    Demo* demo,
+    Vec3 size,
+    Vec3 position,
+    MaterialId material,
+) @local {
+    GeometryId geometry;
+    @pool() {
+        Geometry shape = geometry::box(
+            allocator: tmem,
+            width: size.x,
+            height: size.y,
+            depth: size.z,
+        );
+        geometry = demo.assets.add_geometry(&shape)!;
+    };
+    Node* node = demo.scene.add_mesh(geometry, material, name: "obstacle")!;
+    node.local.position = position;
+    demo.scene.update_world();
+    ColliderDesc collider = physics::default_collider_desc(BOX);
+    collider.half_extents = size * 0.5f;
+    demo.physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!;
+}
+
+fn void? add_collision_world(Demo* demo) @local {
+    physics::register_physics(&demo.scene)!;
+    demo.physics = physics::create_physics_world(
+        allocator: mem,
+        assets: &demo.assets,
+        scene: &demo.scene,
+        desc: physics::default_physics_desc(),
+    )!;
+    demo.has_physics = true;
+    StandardParams surface = material::STANDARD_PARAMS_DEFAULT;
+    surface.base_color = { 0.35f, 0.4f, 0.5f, 1 };
+    surface.metallic = 0;
+    surface.roughness = 0.6f;
+    MaterialId material = demo.assets.add_material(material::standard(surface))!;
+    add_obstacle(
+        demo: demo,
+        size: CANOPY_SIZE,
+        position: CANOPY_POSITION,
+        material: material,
+    )!;
+    foreach (position : CRATE_POSITIONS) {
+        add_obstacle(
+            demo: demo,
+            size: CRATE_SIZE,
+            position: position,
+            material: material,
+        )!;
+    }
+    demo.scene.get(demo.emitters[1], ParticleSystem).set_collision(&cast_physics, &demo.physics);
+}
+
+fn void advance_physics(Demo* demo, float dt) @local {
+    if (demo.has_physics) demo.physics.update(dt);
+}
+
 fn void set_emission(Demo* demo, bool active) @local {
     foreach (emitter : demo.emitters) {
         ParticleSystem* system = demo.scene.get(emitter, ParticleSystem);
@@ -282,8 +381,9 @@ fn void report_metrics(String segment, Metrics totals, uint frames) @local {
 }
 
 fn void? run_benchmark(Options options) @local {
-    Demo demo = create_demo(options.sparks)!;
+    Demo demo = create_demo(options)!;
     defer destroy_demo(&demo);
+    if (options.collide) add_collision_world(&demo)!;
     Renderer renderer = render::create_renderer(mem, &demo.assets, { .validation = true, .gpu_timings = true })!;
     defer render::destroy_renderer(&renderer);
     RenderTargetId target = render::create_render_target(
@@ -302,6 +402,7 @@ fn void? run_benchmark(Options options) @local {
         set_emission(&demo, segment != 0);
         if (segment) {
             for (uint step = 0; step < PREWARM_STEPS; step++) {
+                advance_physics(&demo, STEP_SECONDS);
                 particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 });
             }
         }
@@ -312,6 +413,7 @@ fn void? run_benchmark(Options options) @local {
         ulong total_frames = (ulong)WARMUP_FRAMES + options.frames + render::FRAMES_IN_FLIGHT + 1;
         for (ulong frame = 0; frame < total_frames; frame++) {
             time::Clock frame_start = clock::now();
+            advance_physics(&demo, STEP_SECONDS);
             demo.scene.update_world();
             time::Clock update_start = clock::now();
             particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 });
@@ -340,6 +442,9 @@ fn void? run_benchmark(Options options) @local {
             }
         }
         report_metrics(segment ? "active" : "empty", totals, options.frames);
+    }
+    if (options.collide) {
+        io::printfn("sparks,collision_skips,%d", demo.scene.get(demo.emitters[1], ParticleSystem).collision_skips);
     }
     if (demo.spark_puffs) {
         ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
@@ -477,6 +582,9 @@ fn void? controls(
             imgui::text("Dropped: %llu", system.dropped);
             imgui::pop_id();
         }
+        if (demo.has_physics) {
+            imgui::text("Collision skips: %llu", demo.scene.get(demo.emitters[1], ParticleSystem).collision_skips);
+        }
         if (demo.spark_puffs) {
             ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
             imgui::text("Spark smoke alive: %u", demo.scene.get(demo.spark_puffs, ParticleSystem).alive);
@@ -506,8 +614,9 @@ fn void? controls(
 fn void? run_interactive(Options options) @local {
     platform::Window window = platform::create_window(platform::default_window_desc("c3d particles", WIDTH, HEIGHT))!;
     defer platform::destroy_window(&window);
-    Demo demo = create_demo(options.sparks)!;
+    Demo demo = create_demo(options)!;
     defer destroy_demo(&demo);
+    if (options.collide) add_collision_world(&demo)!;
     Renderer renderer = platform::create_window_renderer(
         allocator: mem,
         window: &window,
@@ -548,6 +657,7 @@ fn void? run_interactive(Options options) @local {
                 previous_width = renderer.output_width;
                 previous_height = renderer.output_height;
             }
+            advance_physics(&demo, window.clock.delta);
             demo.scene.update_world();
             time::Clock started = clock::now();
             particle::update(&demo.scene, window.clock.delta, { wind, 0, 0 });
@@ -585,6 +695,7 @@ fn Options? parse_options(String[] args) @local {
             case "--benchmark": options.benchmark = true;
             case "--stress": options.stress = true;
             case "--sparks": options.sparks = true;
+            case "--collide": options.collide = true;
             case "--drop-oldest": options.drop_oldest = true;
             case "--frames":
                 options.frames = option_value(args, &index)!.to_uint()!;
@@ -593,7 +704,8 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    if (!options.frames || (options.stress && options.benchmark) || (options.sparks && options.stress)
+    bool scene_effect = options.sparks || options.collide;
+    if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
         || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;
@@ -606,7 +718,8 @@ fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--frames count] [--capture-rgba path].");
+        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--collide]");
+        io::eprintn("    [--frames count] [--capture-rgba path].");
         return 1;
     }
     Options options = parsed;

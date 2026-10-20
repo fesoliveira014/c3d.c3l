@@ -31,7 +31,7 @@
       "type": "executable",
       "sources": ["examples/**"],
       "features": ["C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
-      "dependencies": ["c3d_particle", "c3d_profile", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"]
+      "dependencies": ["c3d_particle", "c3d_physics", "c3d_profile", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc"]
     }
   }
 }
