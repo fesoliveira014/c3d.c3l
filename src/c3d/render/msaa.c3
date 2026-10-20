@@ -8,6 +8,8 @@ const gpu::TextureUsage MSAA_COLOR_USAGE @private = { .color_attach };
 const gpu::TextureUsage MSAA_DEPTH_USAGE @private = { .depth_attach };
 const gpu::TextureUsage MSAA_SAMPLED_DEPTH_USAGE @private = { .depth_attach, .sampled };
 const gpu::TextureUsage MSAA_SAMPLED_USAGE @private = { .color_attach, .sampled };
+const gpu::TextureUsage MSAA_EDGES_USAGE @private = { .color_attach, .sampled };
+const gpu::Format MSAA_EDGES_FORMAT @private = gpu::Format.R8_UINT;
 
 <*
  Samples per pixel of a view's opaque scene passes; ONE is off.
@@ -60,6 +62,10 @@ fn gpu::SampleCount msaa_sample_count(MsaaSamples msaa) @private {
         case FOUR: return gpu::SampleCount.FOUR;
         case EIGHT: return gpu::SampleCount.EIGHT;
     }
+}
+
+fn bool msaa_edges_wanted(ViewDesc* desc) @private {
+    return desc.msaa != MsaaSamples.ONE && desc.shading == ShadingPath.DEFERRED;
 }
 
 fn bool msaa_reflection_gbuffer_wanted(ViewDesc* desc) @private {
@@ -275,6 +281,7 @@ fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private 
     ViewDesc* desc = &staged.desc;
     if (!msaa_normal_copy_wanted(desc)) staged.normal_sample_zero = {};
     if (!msaa_specular_copy_wanted(desc)) staged.specular_sample_zero = {};
+    if (desc.msaa == MsaaSamples.ONE || desc.shading != ShadingPath.DEFERRED) staged.msaa_edges = {};
 
     if (desc.msaa != previous.msaa) {
         staged.msaa_color = {};
@@ -282,6 +289,7 @@ fn void drop_stale_msaa_images(ViewRecord* staged, ViewDesc* previous) @private 
         staged.msaa_velocity = {};
         staged.msaa_reflection_gbuffer = {};
         staged.gbuffer = {};
+        staged.msaa_edges = {};
         return;
     }
 
@@ -332,4 +340,36 @@ fn void? record_sample_zero(Renderer* renderer, Target* source, Target* destinat
         rect:          {},
         load:          gpu::LoadOp.DONT_CARE,
     );
+}
+
+fn PipelineKey msaa_edges_pipeline_key() @private {
+    return {
+        .vertex        = { .shader = FULLSCREEN },
+        .fragment      = { .shader = MSAA_EDGES },
+        .color_formats = { [0] = MSAA_EDGES_FORMAT },
+        .color_count   = 1,
+        .depth_format  = gpu::Format.UNDEFINED,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = gpu::PolygonMode.FILL,
+    };
+}
+
+// The mask reads the G-buffer and depth, which the caller has left in the fragment-read state.
+fn void? record_msaa_edges(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root) @private {
+    Target* edges = &record.msaa_edges;
+    edges.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, msaa_edges_pipeline_key())!;
+
+    @profile_pass(renderer, Pass.MSAA_EDGES) {
+        record_fullscreen_pass(
+            renderer:      renderer,
+            target:        edges,
+            pipeline:      pipeline,
+            fragment_root: root,
+            rect:          {},
+            load:          gpu::LoadOp.DONT_CARE,
+        )!;
+    }!;
+
+    edges.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
 }

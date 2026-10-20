@@ -30,6 +30,7 @@ enum Pass : int {
     AMBIENT_OCCLUSION,
     SCREEN_SPACE_GI,
     RT_REFLECTIONS,
+    MSAA_EDGES,
     LIGHTING,
     FORWARD_OPAQUE,
     SKY,

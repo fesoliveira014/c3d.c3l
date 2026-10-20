@@ -370,7 +370,7 @@ height before shading, as the forward and the G-buffer stage of terrain do; see
 
 On a `DEFERRED` view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the stage writes the multisample
 G-buffer: the sample count is pipeline state, the stage source does not change, and it still shades once per pixel
-and primitive. The resolve lights each sample from its own channels.
+and primitive. The resolve lights an edge pixel per sample from its own channels and any other pixel once.
 
 The capability is also visible to shaders: `CustomMaterialGpu.capabilities` carries
 `CUSTOM_CAPABILITY_GBUFFER` when the stage is present. Pipelines for the G-buffer stage are keyed
