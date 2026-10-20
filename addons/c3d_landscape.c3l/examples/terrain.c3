@@ -22,7 +22,6 @@ import c3d::spatial;
 import imgui;
 import landscape_ground;
 
-const uint AUTO_TRACE_LEVEL @local = uint::max; // the finest trace level a terrain of the chosen size can pose
 const uint CRATE_CAPACITY @local = 256; // one node and one body each; the scene capacity lever
 const uint SCENE_NODE_CAPACITY @local = CRATE_CAPACITY + 16; // the collision windows' nodes come on top
 const uint COLLISION_WINDOW_CELLS @local = 256; // 65 k samples per window: one stroke re-cooks a few of them, not the map
@@ -252,10 +251,6 @@ fn Demo? build_demo(
     Scene* scene,
     PhysicsWorld* physics,
 ) @local {
-    uint texels = options.tiles ? (options.size - 1) / landscape_ground::TILES_PER_SIDE + 1 : options.size;
-    uint trace_level = options.trace_level;
-    if (trace_level == AUTO_TRACE_LEVEL) trace_level = landscape_ground::finest_trace_level(texels);
-
     Ground ground;
     if (options.tiles) {
         ground = landscape_ground::add_ground_tiles(
@@ -267,7 +262,7 @@ fn Demo? build_demo(
             morph_band:       options.morph_band,
             slope_projection: options.triplanar ? SlopeProjection.TRIPLANAR : SlopeProjection.TOP,
             trace:            options.traced_shadows,
-            trace_level:      trace_level,
+            trace_level:      options.trace_level,
         )!;
     } else {
         ground = landscape_ground::add_ground(
@@ -279,7 +274,7 @@ fn Demo? build_demo(
             morph_band:       options.morph_band,
             slope_projection: options.triplanar ? SlopeProjection.TRIPLANAR : SlopeProjection.TOP,
             trace:            options.traced_shadows,
-            trace_level:      trace_level,
+            trace_level:      options.trace_level,
         )!;
     }
     ground.node.visible = !options.hide_terrain;
@@ -410,7 +405,6 @@ fn Options? parse_options(String[] args) @local {
         .size             = landscape_ground::DEFAULT_MAP_SIZE,
         .layers           = landscape_ground::LAYER_COUNT,
         .lod_threshold    = terrain::DEFAULT_LOD_THRESHOLD,
-        .trace_level      = AUTO_TRACE_LEVEL,
         .collision_window = COLLISION_WINDOW_CELLS,
     };
     for (usz index = 1; index < args.len; index++) {

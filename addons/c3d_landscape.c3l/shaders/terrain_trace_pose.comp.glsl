@@ -7,8 +7,8 @@
 // The trace grid's vertices lie on the unit square; each one reads the height of the texel it stands on.
 void main() {
     TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
-    uint index = gl_GlobalInvocationID.x;
-    if (index >= root.vertex_count) return;
+    uint index;
+    if (!trace_pose_index(index)) return;
 
     CustomMaterialGpu material = CustomMaterialGpu(root.material);
     TerrainParams params = TerrainParams(material.parameters);

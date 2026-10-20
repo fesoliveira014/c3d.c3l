@@ -18,11 +18,6 @@ const uint CHUNK_CELLS = 128; // mirrored as TERRAIN_CHUNK_CELLS in terrain_heig
 const uint MAX_TERRAIN_LEVELS = 6; // 4097 texels: 1,365 nodes, each a bounds entry and a 128 B instance record
 
 <*
- Most vertices a trace grid may have.
-*>
-const uint MAX_TRACE_VERTICES = 65535 * 64; // Vulkan's minimum maxComputeWorkGroupCount[0] x TRACE_POSE_GROUP_SIZE (64)
-
-<*
  Projected node diameter, in pixels of a view's working extent, above which a node splits.
 *>
 const float DEFAULT_LOD_THRESHOLD = 512; // drawn cells under 2.8 px; halving it quadruples near chunks

@@ -87,7 +87,7 @@ than asserts, since descs also come from files.
 | `triplanar_sharpness` | Exponent of the plane weights: `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read and checked only under `TRIPLANAR` |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update`; `cast_shadow` also onto the [trace grid](#scene-traces) |
 | `trace` | Adds a trace-only grid, so [scene traces](scene_trace.md) see the terrain; baked at preparation |
-| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel. It stays below the map's level count (1 at 257 texels, 3 at 1025) and keeps the grid to `MAX_TRACE_VERTICES` (4,194,240, so level 1 or more at 2049 texels and 2 or more at 4097); read and checked only with `trace`, baked at preparation |
+| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel. It stays below the map's level count (1 at 257 texels, 3 at 1025); read and checked only with `trace`, baked at preparation |
 
 **Height maps.** `image::load_texture_r16` loads a 16-bit PNG as `R16_UINT`; an 8-bit file widens by 257, so
 255 becomes 65535. Generated heights go through `AssetStore.add_texture` with
@@ -175,7 +175,8 @@ of the whole extent, built from the same height map and independent of any view.
   and level 2. Its triangles split each cell along the diagonal from `(x + 1, z)` to `(x, z + 1)`, as the drawn chunks
   and the physics height field do. The geometry is shared by every terrain of that side length in a store.
 - **The stage.** The terrain shader carries a `trace_pose.single` form, `terrain_trace_pose.comp.glsl`
-  ([trace pose](custom_shaders.md#trace-pose)). Each vertex takes the height of the texel it stands on from the height
+  ([trace pose](custom_shaders.md#trace-pose)) with `trace_pose_grid` declared, so a grid of any size poses in one
+  dispatch. Each vertex takes the height of the texel it stands on from the height
   map, and its normal from the central differences the fragment stage uses, through the [border ring](#tile-sets) at a
   linked tile's edge. It reads no time, so the pose runs again only when the height map, the border ring or the
   material changes.
@@ -719,7 +720,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::UNSUPPORTED` | Height map not `R16_UINT`, not a `MIP_ZERO` source, or a layered, 3D or cube texture |
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
-| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `morph_band` that is negative, not finite or above `(1 - lod_hysteresis) / 2`, a positive `morph_band` with a zero `lod_threshold`, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count or whose grid has more than `MAX_TRACE_VERTICES` vertices, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `morph_band` that is negative, not finite or above `(1 - lod_hysteresis) / 2`, a positive `morph_band` with a zero `lod_threshold`, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain`, `prepare`, `update` | `c3d::UNSUPPORTED` | The node carries a `LodGroup`, which cannot share a batch with a quadtree |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
@@ -765,7 +766,7 @@ cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's laye
 camera beside the physics ray height, and the LOD threshold.
 
 `--shadows traced` sets `trace` on the ground, so ridges shadow valleys. `--trace-level LEVEL` sets the grid's level; the
-default is the finest the size allows: 0 at 1025 texels, 1 at 2049 and 2 at 4097.
+default is 0, one vertex per texel.
 
 The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
 `--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.

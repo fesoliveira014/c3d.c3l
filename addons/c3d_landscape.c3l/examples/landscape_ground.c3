@@ -384,19 +384,6 @@ fn MaterialId? add_layer(AssetStore* assets, LayerLook look, uint index) @local 
     return assets.add_material(material::standard(params));
 }
 
-<*
- Smallest trace level whose grid a terrain of this many texels per side can pose.
-*>
-fn uint finest_trace_level(uint texels) {
-    uint level;
-    while (true) {
-        uint side = ((texels - 1) >> level) + 1;
-        if (side * side <= terrain::MAX_TRACE_VERTICES) return level;
-
-        level++;
-    }
-}
-
 <* True for a height-map size in MAP_SIZES. *>
 fn bool is_map_size(uint size) {
     foreach (map_size : MAP_SIZES) {
