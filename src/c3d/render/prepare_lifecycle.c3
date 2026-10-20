@@ -125,6 +125,7 @@ fn void retire_prepare_texture(Renderer* renderer, PrepareUnit* unit, TextureRes
     }
 
     alloc::free(renderer.allocator, texture.storage_views.ptr);
+    release_retained_levels(renderer, texture);
     if (texture.view.is_valid()) retire_prepare_resource(
         renderer: renderer,
         unit: unit,

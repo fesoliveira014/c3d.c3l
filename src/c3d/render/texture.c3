@@ -27,6 +27,8 @@ struct TextureRes {
     bool copy_source;
     gpu::Format format;
     gpu::TextureView[] storage_views;
+    char[] mip_chain;    // generated levels from 1, kept so a region upload filters only its boxes
+    uint chain_revision; // revision mip_chain matches once committed; 0 when it cannot be trusted
 }
 
 <*
@@ -73,6 +75,8 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
     TextureRes* mirror = &renderer.textures[texture.index];
     TextureResidency* residency = &renderer.residencies[texture.index];
     residency.last_used_frame = renderer.frame_index;
+
+    if (!record.pixels.len) release_retained_levels(renderer, mirror);
 
     if (texture_current(renderer, texture)) {
         if (full_reader) mark_full_reader(residency);
@@ -121,6 +125,10 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             );
         }
 
+        bool chain_usable = reuse && same_chain && texture_retains_chain(record);
+
+        if (!chain_usable) release_retained_levels(renderer, mirror);
+
         TextureRegion[material::TEXTURE_MIP_CAPACITY] regions;
         bool regional = reuse && same_chain
             && texture_regions_stageable(
@@ -129,24 +137,36 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
                 mirror:   mirror,
                 regions:  regions[..],
             );
+        bool refilled = !regional && chain_usable && mirror.mip_chain.len > 0;
         TextureMipChain chain;
+        RetainedSources retained;
         TextureMipLayout layout;
 
         if (!regional) {
             switch (record.source_kind) {
                 case MIP_ZERO:
-                    chain = create_texture_mips(
-                        allocator: tmem,
-                        desc: desc,
-                        pixels: record.pixels,
-                        first_mip: base,
-                    )!;
-                    layout = {
-                        .total_bytes = chain.pixels.len,
-                        .mip_count = chain.mip_count,
-                        .layer_count = chain.layer_count,
-                        .offsets = chain.offsets,
-                    };
+                    if (refilled) {
+                        retained = refill_retained_levels(
+                            renderer: renderer,
+                            record:   record,
+                            mirror:   mirror,
+                            base:     base,
+                        )!;
+                        layout = retained.layout;
+                    } else {
+                        chain = create_texture_mips(
+                            allocator: tmem,
+                            desc: desc,
+                            pixels: record.pixels,
+                            first_mip: base,
+                        )!;
+                        layout = {
+                            .total_bytes = chain.pixels.len,
+                            .mip_count = chain.mip_count,
+                            .layer_count = chain.layer_count,
+                            .offsets = chain.offsets,
+                        };
+                    }
 
                 case SUPPLIED_MIPS:
                     layout = supplied_texture_mip_layout(desc, record.supplied_mips, first_mip: base)!;
@@ -157,7 +177,9 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
         }
 
         defer {
-            if (!regional && record.source_kind == TextureSourceKind.MIP_ZERO) destroy_texture_mips(&chain);
+            if (!regional && !refilled && record.source_kind == TextureSourceKind.MIP_ZERO) {
+                destroy_texture_mips(&chain);
+            }
         }
 
         uint mip_count = description.mip_levels;
@@ -214,12 +236,14 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             .semantic = desc.semantic,
             .texture = mirror.texture,
             .before = mirror.state,
+            .chain_revision = refilled ? record.header.revision : 0,
         };
 
         if (regional) {
             stage_texture_regions(
                 renderer: renderer,
                 record:   record,
+                mirror:   mirror,
                 pending:  &pending,
                 regions:  regions[..],
                 base:     base,
@@ -229,7 +253,18 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, layout.total_bytes, UPLOAD_RING_ALIGNMENT)!;
 
             switch (record.source_kind) {
-                case MIP_ZERO: mem::copy(staging.bytes.ptr, chain.pixels.ptr, chain.pixels.len);
+                case MIP_ZERO:
+                    if (refilled) {
+                        mem::copy(staging.bytes.ptr, retained.level_zero.ptr, retained.level_zero.len);
+                        mem::copy(
+                            staging.bytes.ptr + retained.level_zero.len,
+                            retained.levels.ptr,
+                            retained.levels.len,
+                        );
+                    } else {
+                        mem::copy(staging.bytes.ptr, chain.pixels.ptr, chain.pixels.len);
+                    }
+
                 case SUPPLIED_MIPS: copy_supplied_texture_mips(staging.bytes, record.supplied_mips, base);
                 case EMPTY: unreachable();
             }
@@ -340,6 +375,8 @@ fn bool texture_source_present(TextureAsset* record) @private {
 }
 
 fn void retire_texture(Renderer* renderer, TextureRes* mirror) @private {
+    release_retained_levels(renderer, mirror);
+
     if (!mirror.texture.is_valid()) return;
 
     foreach (view : mirror.storage_views) {
@@ -395,6 +432,8 @@ fn void sweep_textures(Renderer* renderer) @private {
 
 fn void free_textures(Renderer* renderer) @private {
     foreach (&mirror : renderer.textures) {
+        release_retained_levels(renderer, mirror);
+
         if (!mirror.texture.is_valid()) continue;
 
         foreach (view : mirror.storage_views) (void)gpu::destroy_texture_view(&renderer.device, view);

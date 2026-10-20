@@ -93,6 +93,8 @@ fn void? write_texture_filter_band(
     char[] mip_zero,
     TextureMipChain* chain,
     TextureCoverageState* coverage = null,
+    uint first_column = 0,
+    uint column_count = uint::max,
 ) @private {
     TextureBand band = texture_band(
         desc: desc,
@@ -111,6 +113,7 @@ fn void? write_texture_filter_band(
     uint output_height = material::texture_mip_extent(desc.height, mip);
     usz source_layer_bytes = (usz)width * height * texel_bytes;
     usz destination_layer_bytes = (usz)band.width * output_height * texel_bytes;
+    uint columns = math::min(column_count, band.width - first_column);
     char[] source_bytes;
 
     if (mip == 1) {
@@ -145,6 +148,8 @@ fn void? write_texture_filter_band(
                 height: height,
                 first_row: first_row,
                 row_count: row_count,
+                first_column: first_column,
+                column_count: columns,
                 source_bytes: source_bytes,
                 destination_bytes: destination_bytes,
                 semantic: desc.semantic,
@@ -159,6 +164,8 @@ fn void? write_texture_filter_band(
                 height: height,
                 first_row: first_row,
                 row_count: row_count,
+                first_column: first_column,
+                column_count: columns,
                 source_bytes: source_bytes,
                 destination_bytes: destination_bytes,
                 semantic: desc.semantic,
@@ -173,6 +180,8 @@ fn void? write_texture_filter_band(
                 height: height,
                 first_row: first_row,
                 row_count: row_count,
+                first_column: first_column,
+                column_count: columns,
                 source_bytes: source_bytes,
                 destination_bytes: destination_bytes,
                 semantic: desc.semantic,
@@ -187,6 +196,8 @@ fn void? write_texture_filter_band(
                 height: height,
                 first_row: first_row,
                 row_count: row_count,
+                first_column: first_column,
+                column_count: columns,
                 source_bytes: source_bytes,
                 destination_bytes: destination_bytes,
                 semantic: desc.semantic,
@@ -266,6 +277,12 @@ fn TextureMipChain? create_full_texture_mips(
         .offsets = layout.offsets, .pixels = chain.pixels[pixels.len..],
     };
 
+    fill_generated_texture_mips(desc, pixels, &generated)!;
+
+    return chain;
+}
+
+fn void? fill_generated_texture_mips(material::TextureDesc desc, char[] pixels, TextureMipChain* generated) @private {
     TextureCoverageState coverage;
     TextureCoverageState* collector;
 
@@ -274,7 +291,7 @@ fn TextureMipChain? create_full_texture_mips(
         collector = &coverage;
     }
 
-    for (uint mip = 1; mip <= layout.mip_count; mip++) {
+    for (uint mip = 1; mip <= generated.mip_count; mip++) {
         uint height = material::texture_mip_extent(desc.height, mip);
 
         for (uint layer = 0; layer < desc.layers; layer++) {
@@ -285,7 +302,7 @@ fn TextureMipChain? create_full_texture_mips(
                 first_row: 0,
                 row_count: height,
                 mip_zero: pixels,
-                chain: &generated,
+                chain: generated,
                 coverage: collector,
             )!;
 
@@ -300,7 +317,7 @@ fn TextureMipChain? create_full_texture_mips(
                 write_texture_coverage_band(
                     state: collector,
                     desc: desc,
-                    chain: &generated,
+                    chain: generated,
                     mip: mip,
                     layer: layer,
                     first_row: 0,
@@ -311,8 +328,6 @@ fn TextureMipChain? create_full_texture_mips(
             collector.level = {};
         }
     }
-
-    return chain;
 }
 
 <*
@@ -332,6 +347,8 @@ macro void? write_typed_mip_band(
     uint height,
     uint first_row,
     uint row_count,
+    uint first_column,
+    uint column_count,
     char[] source_bytes,
     char[] destination_bytes,
     TextureSemantic semantic,
@@ -346,7 +363,7 @@ macro void? write_typed_mip_band(
     uint step_y = height / next_height;
 
     for (uint destination_y = first_row; destination_y < first_row + row_count; destination_y++) {
-        for (uint destination_x = 0; destination_x < next_width; destination_x++) {
+        for (uint destination_x = first_column; destination_x < first_column + column_count; destination_x++) {
             double[RGBA_CHANNELS] sum;
             double area;
 
