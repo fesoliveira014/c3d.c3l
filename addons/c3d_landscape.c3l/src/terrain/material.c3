@@ -83,6 +83,7 @@ fn ShaderId? terrain_shader(AssetStore* assets, bool* created = null) @private {
     ShaderDesc desc = {
         .fragment         = landscape::TERRAIN_FRAGMENT_SPIRV[..],
         .gbuffer          = landscape::TERRAIN_GBUFFER_SPIRV[..],
+        .depth            = landscape::TERRAIN_DEPTH_SPIRV[..],
         .traced_fragment  = {
             .hardware = landscape::TERRAIN_FRAGMENT_RT_SHADOWS_SPIRV[..],
             .software = landscape::TERRAIN_FRAGMENT_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..],

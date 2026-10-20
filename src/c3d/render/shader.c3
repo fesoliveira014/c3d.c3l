@@ -139,7 +139,8 @@ fn void free_shaders(Renderer* renderer) @private {
 
 fn usz shader_desc_bytes(asset::ShaderDesc* desc) @private {
     asset::CustomVertex* vertex = &desc.vertex;
-    return desc.fragment.len + desc.gbuffer.len + desc.traced_fragment.hardware.len + desc.traced_fragment.software.len
+    return desc.fragment.len + desc.gbuffer.len + desc.depth.len + desc.traced_fragment.hardware.len
+        + desc.traced_fragment.software.len
         + desc.weighted_fragment.shaded.len + desc.weighted_fragment.traced.hardware.len
         + desc.weighted_fragment.traced.software.len + vertex.shaded.len + vertex.depth.len
         + vertex.instanced_shaded.len + vertex.instanced_depth.len

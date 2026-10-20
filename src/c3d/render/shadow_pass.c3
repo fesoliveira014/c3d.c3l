@@ -49,6 +49,7 @@ fn PipelineKey shadow_pipeline_key(
     bool tint = false,
     ReflectionPrepass reflection = ReflectionPrepass.OFF,
     gpu::SampleCount samples = gpu::SampleCount.ONE,
+    bool proxy_skip = false,
 ) @private {
     PipelineKey key = {
         .vertex = vertex,
@@ -69,6 +70,13 @@ fn PipelineKey shadow_pipeline_key(
         key.depth_format = gpu::Format.UNDEFINED;
     }
     if (vertex.shader == IMPOSTOR_VERTEX) key.fragment = { .shader = IMPOSTOR_DEPTH };
+    if (proxy_skip) {
+        // The word takes color 0, so the thin target moves to color 1.
+        if (reflection != ReflectionPrepass.OFF) key.color_formats[1] = REFLECTION_SURFACE_FORMAT;
+        key.color_formats[0] = PROXY_SKIP_FORMAT;
+        key.color_count = reflection != ReflectionPrepass.OFF ? 2 : 1;
+        key.fragment.flags |= shader::SHADER_FLAG_PROXY_SKIP;
+    }
     return key;
 }
 
@@ -81,6 +89,7 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
     bool tint = false,
     ReflectionPrepass reflection = ReflectionPrepass.OFF,
     gpu::SampleCount samples = gpu::SampleCount.ONE,
+    bool proxy_skip = false,
 ) @private {
     renderer.stats.pipeline_lookups++;
     PipelineKey key = shadow_pipeline_key(
@@ -91,15 +100,19 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
         tint:         tint,
         reflection:   reflection,
         samples:      samples,
+        proxy_skip:   proxy_skip,
     );
     if (material && material.kind == MaterialKind.CUSTOM) {
         ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
-        if (published.desc.vertex.depth.len) {
+        bool custom_vertex = published.desc.vertex.depth.len > 0;
+        bool custom_depth = proxy_skip && published.desc.depth.len > 0;
+        if (custom_vertex) {
             uint instanced = vertex.flags & shader::SHADER_FLAG_INSTANCED;
             key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY | instanced };
-            key.custom = { .vertex = true };
-            return custom_pipeline(renderer, published, key);
         }
+        if (custom_depth) key.fragment = {};
+        key.custom = { .vertex = custom_vertex, .depth = custom_depth };
+        if ((uint)key.custom) return custom_pipeline(renderer, published, key);
     }
     return renderer.pipelines.get(&renderer.device, key);
 }
@@ -130,6 +143,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
     bool colored = false,
     bool thin = false,
     gpu::SampleCount samples = gpu::SampleCount.ONE,
+    bool proxy_skip = false,
 ) @private {
     ShadowDraw[] draws = alloc::new_array(tmem, ShadowDraw, candidates.len);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -187,6 +201,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
             vertex_color: draw.masked && colored_vertices,
             reflection:   reflection,
             samples:      samples,
+            proxy_skip:   proxy_skip,
         );
         if (catch excuse = pipeline) {
             if (!shadow_pipeline_skippable(renderer, material, excuse)) return excuse~;
@@ -351,8 +366,8 @@ fn void? record_depth_draws(
             state.raster.cull_mode = wanted.cull;
             state.raster.front_face = wanted.front_face;
             state.raster.topology = wanted.topology;
-            if (state.color.targets.len) {
-                state.color.targets[0] = gpu::color_blend_disabled(
+            if (draw.reflection != ReflectionPrepass.OFF) {
+                state.color.targets[state.color.targets.len - 1] = gpu::color_blend_disabled(
                     wanted.writes_color ? gpu::COLOR_WRITE_ALL : (gpu::ColorWriteMask){},
                 );
             }

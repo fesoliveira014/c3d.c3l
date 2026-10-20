@@ -323,9 +323,9 @@ fn void? record_reflections(
     Target* normals = forward ? &record.reflection_gbuffer : deferred_normals(record);
     Target* specular = forward ? &record.reflection_gbuffer : deferred_specular(record);
     Target* traced = half_resolution ? &record.reflection_half : &record.reflection;
-    Target* flags = &record.gbuffer[GBufferChannel.FLAGS.ordinal];
-    // The proxy skip height rides in the G-buffer flags, which a forward view or a multisampled one has no copy of.
-    bool reads_flags = !forward && record.desc.msaa == MsaaSamples.ONE;
+    Target* flags = proxy_skip_word(record);
+    // A forward view traces only Standard and Physical pixels, which raise no proxy skip height.
+    bool reads_flags = !forward;
     uint noise_frame = temporal_noise_frame(record, accumulates);
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     normals.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;

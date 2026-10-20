@@ -721,7 +721,7 @@ root RtAoRoot {
     float        intensity;
     uint         noise_frame;
     uint         ray_count;
-    TextureIndex flags; // the G-buffer flags of a view with one sample per pixel; zero reads no proxy skip height
+    TextureIndex flags; // a single-sample word packed like the G-buffer flags; zero reads no proxy skip height
 }
 
 root RtReflectionRoot {
@@ -738,7 +738,7 @@ root RtReflectionRoot {
     uint         light_count;
     uint         ray_count;
     uint         trace_shift; // 0 traces every pixel of the output, 1 one pixel of each 2 x 2 block
-    TextureIndex flags;       // the G-buffer flags of a view with one sample per pixel; zero reads no proxy skip height
+    TextureIndex flags;       // a single-sample word packed like the G-buffer flags; zero reads no proxy skip height
     GpuAddress   light_spatial;
 }
 

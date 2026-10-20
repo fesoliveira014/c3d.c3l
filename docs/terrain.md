@@ -213,8 +213,10 @@ of the whole extent, built from the same height map and independent of any view.
   stay too: a box on the terrain keeps its shadow at its base, since only the grid is skipped. The values reach the stage
   through the material's parameter block, which an edit republishes only when a gap changed; an untraced terrain writes
   zero. The deferred path carries the height per pixel in the G-buffer flags (centimetres, rounded up), so the lighting
-  resolve and the ray-traced ambient occlusion and reflections of a deferred view apply the same rule; a forward view's
-  ambient occlusion and reflections, which have no flags channel, start their rays as before.
+  resolve and the ray-traced ambient occlusion and reflections of a deferred view apply the same rule. A forward view
+  with ray-traced ambient occlusion gets it from the terrain's prepass fragment, the shader's
+  [prepass stage](custom_shaders.md#prepass-stage), and a multisampled view reads sample 0 of either word. A forward
+  view's reflections never trace from terrain pixels: a custom material draws with zero specular weight.
 - **Hits.** Traced terrain shades grey and ignores layers, the control map and decals, like any custom material hit.
 - **Lifetime.** The grid is runtime-owned: removing the `Terrain` component or the node removes it at the next `update`
   or with the node. It is never serialized; `prepare` creates it again after a read. Each tile of a [set](#tile-sets)

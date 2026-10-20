@@ -7,7 +7,13 @@
 
 #ifdef REFLECTION_PREPASS
 // The thin target the reflection pass reads: octahedral normal, roughness and specular weight.
+// A view that also traces ambient occlusion binds the proxy skip word at location 0.
+#ifdef PROXY_SKIP
+#include "proxy_skip_output.glsl"
+layout(location = 1) out vec4 out_reflection_surface;
+#else
 layout(location = 0) out vec4 out_reflection_surface;
+#endif
 
 void write_gbuffer(StandardMaterialSample material_sample, float specular_weight, DrawRoot draw) {
     out_reflection_surface = vec4(
@@ -15,6 +21,9 @@ void write_gbuffer(StandardMaterialSample material_sample, float specular_weight
         material_sample.roughness,
         specular_weight
     );
+#ifdef PROXY_SKIP
+    write_proxy_skip();
+#endif
 }
 #else
 layout(location = 0) out vec4 out_base_color_metallic;

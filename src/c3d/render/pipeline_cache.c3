@@ -17,6 +17,7 @@ const usz KEY_COLOR_TARGETS = 5; // the five G-buffer channels; keeps the key at
 <*
  Which stages of a key come from a store shader instead of the registry.
  gbuffer selects the shader's G-buffer fragment in place of fragment.
+ depth selects its prepass fragment in place of fragment.
  trace_pose selects its trace-pose compute form; the key's vertex flags name the single or instanced form.
 *>
 bitstruct CustomStages : uint {
@@ -25,6 +26,7 @@ bitstruct CustomStages : uint {
     bool compute    : 2;
     bool gbuffer    : 3;
     bool trace_pose : 4;
+    bool depth      : 5;
 }
 
 enum ComputeSlot @private {
@@ -277,6 +279,7 @@ fn void? acquire_compute_slot(Renderer* renderer, ComputeSlot slot) @private {
  @require !key.custom.vertex || custom.vertex.len > 0
  @require !key.custom.fragment || custom.fragment.len > 0
  @require !key.custom.gbuffer || custom.fragment.len > 0
+ @require !key.custom.depth || custom.fragment.len > 0
  @require !key.custom.compute || custom.compute.len > 0
  @require !key.custom.trace_pose || custom.compute.len > 0
 *>
@@ -478,8 +481,15 @@ fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey 
 
     return {
         .vertex   = custom_vertex_form(&stages.vertex, key.vertex.flags) @pure,
-        .fragment = key.custom.gbuffer ? stages.gbuffer : custom_fragment_form(stages, key.fragment.flags) @pure,
+        .fragment = custom_stage_fragment(stages, key) @pure,
     };
+}
+
+fn char[] custom_stage_fragment(asset::ShaderDesc* stages, PipelineKey key) @private {
+    if (key.custom.gbuffer) return stages.gbuffer;
+    if (key.custom.depth) return stages.depth;
+
+    return custom_fragment_form(stages, key.fragment.flags);
 }
 
 fn char[] custom_fragment_form(asset::ShaderDesc* stages, uint fragment_flags) @private {
@@ -506,7 +516,9 @@ fn bool key_stages_present(PipelineKey key, asset::ShaderDesc* stages) @private 
     if (key.custom.trace_pose) return custom_stage_source(stages, key).compute.len > 0;
     if (key.custom.vertex && custom_stage_source(stages, key).vertex.len == 0) return false;
     if (key.custom.fragment && custom_fragment_form(stages, key.fragment.flags).len == 0) return false;
-    return !key.custom.gbuffer || stages.gbuffer.len > 0;
+    if (key.custom.gbuffer && stages.gbuffer.len == 0) return false;
+
+    return !key.custom.depth || stages.depth.len > 0;
 }
 
 <*
@@ -579,7 +591,7 @@ fn gpu::PipelineHandle? create_pipeline(
         defer if (counters) counters.elapsed_ns += (ulong)started.to_now();
         return gpu::create_compute_pipeline(device, &compute_desc);
     }
-    bool custom_fragment = key.custom.fragment || key.custom.gbuffer;
+    bool custom_fragment = key.custom.fragment || key.custom.gbuffer || key.custom.depth;
     // The pixel-rate form shades a pixel once and writes every covered sample.
     bool per_sample = (key.fragment.flags & shader::SHADER_FLAG_MULTISAMPLE) != 0
         && (key.fragment.flags & shader::SHADER_FLAG_MULTISAMPLE_PIXEL) == 0;
