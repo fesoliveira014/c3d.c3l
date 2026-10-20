@@ -467,6 +467,8 @@ C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading fo
 `--shadows atlas|traced`, `--trace-sway` (with `--shadows traced` and both layers: the tree layer sets
 `trace_sway` and the renderer holds 1,536 posed slots; a benchmark prints a `trace` line per segment with the
 medians of posed rows, pose dispatches, refits, bottom-level updates and batches traced at rest),
+`--trace-software` (with `--shadows traced`: the renderer asks for no ray queries, so traced shadows take the
+software kind; the benchmark header names the kind),
 `--capture FILE.png` (one frame at a fixed pose looking across a tree's shadow, in a wind of 25 m/s blowing across it,
 with the same options), `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,
 `--width W --height H` (2560 × 1440 by default in benchmark mode), `--workers N` (with `--benchmark`: scatter each layer

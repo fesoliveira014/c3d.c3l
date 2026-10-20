@@ -128,6 +128,7 @@ struct Options @local {
     ShadingPath   shading;
     bool          traced_shadows;
     bool          trace_sway;
+    bool          software_trace; // no ray queries, so traced shadows take the software kind
     String        capture;
     bool          sky;
     bool          volumetric_fog;
@@ -376,7 +377,7 @@ fn RendererDesc renderer_desc(Options options, bool validation, ZString applicat
         .validation                = validation,
         .gpu_timings               = options.gpu_timings,
         .application_name          = application_name,
-        .ray_queries               = options.traced_shadows,
+        .ray_queries               = options.traced_shadows && !options.software_trace,
         .max_trace_instances       = options.traced_shadows ? TRACE_INSTANCE_CAPACITY : 0,
         .max_posed_trace_instances = options.trace_sway ? POSED_INSTANCE_CAPACITY : 0,
         .max_instance_batches      = scene_node_budget(options, extent) - FIXED_NODES + 1,
@@ -483,6 +484,7 @@ fn Options? parse_options(String[] args) @local {
                     default: return c3d::INVALID_ARGUMENT~;
                 }
             case "--trace-sway": options.trace_sway = true;
+            case "--trace-software": options.software_trace = true;
             case "--capture": options.capture = option_value(args, &index)!;
             case "--size":
                 options.size = option_value(args, &index)!.to_uint()!;
@@ -509,6 +511,7 @@ fn Options? parse_options(String[] args) @local {
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.scatter_jobs && !options.benchmark) return c3d::INVALID_ARGUMENT~;
+    if (options.software_trace && !options.traced_shadows) return c3d::INVALID_ARGUMENT~;
     if (options.trace_sway && (!options.traced_shadows || options.foliage != FoliageChoice.BOTH)) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -1060,7 +1063,8 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
     uint tree_cells = options.foliage == BOTH ? grid_cells(demo.ground.extent, landscape_foliage::TREE_CELL_SIZE) : 0;
     io::printfn(
         "# vegetation size=%d shading=%s shadows=%s foliage=%s tree_fade_end=%g extent=%dx%d frames=%d "
-          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s volumetric_fog=%s trace_sway=%s",
+          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s volumetric_fog=%s trace_sway=%s "
+          "trace_kind=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
@@ -1076,6 +1080,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
         options.sky ? "on" : "off",
         options.volumetric_fog ? "on" : "off",
         options.trace_sway ? "on" : "off",
+        options.software_trace ? "software" : "hardware",
     );
     foreach (&layer : active_layers(demo)) {
         FoliageRuntime* runtime = demo.scene.get(layer.node, FoliageRuntime);
@@ -1266,7 +1271,8 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--trace-sway] [--size 1025|2049|4097] [--foliage both|grass|none] "
+              "[--shadows atlas|traced] [--trace-sway] [--trace-software] [--size 1025|2049|4097] "
+              "[--foliage both|grass|none] "
               "[--tree-fade-end METRES] [--width W] [--height H] [--capture FILE.png] [--sky] [--volumetric-fog] "
               "[--workers N, with --benchmark].");
         }
