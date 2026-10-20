@@ -139,8 +139,18 @@ fn void test_gpu_debris_counts_draw_shadow_and_trace_instances() @test {
     for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) debris_frame(&fixture, &debris, STEP_SECONDS)!!;
     assert(fixture.renderer.stats.trace_instances == DEBRIS_BURST);
 
-    Node* draw = fixture.scene.node(fixture.scene.get(debris.emitter, ParticleSystem).draw_node);
-    fixture.scene.get(draw, InstancedMesh).cast_shadow = false;
+    ParticleSystem* system = fixture.scene.get(debris.emitter, ParticleSystem);
+    InstancedMesh* batch = fixture.scene.get(fixture.scene.node(system.draw_node), InstancedMesh);
+    Aabb box = fixture.assets.geometry(system.desc.geometry).data.bounds;
+    foreach (transform : batch.transforms[:batch.count]) {
+        Aabb placed = maths::aabb_transform(box, transform.to_mat4());
+        for (usz axis = 0; axis < 3; axis++) {
+            assert(placed.min[axis] >= batch.local_bounds.min[axis]);
+            assert(placed.max[axis] <= batch.local_bounds.max[axis]);
+        }
+    }
+
+    batch.cast_shadow = false;
     debris_frame(&fixture, &debris, STEP_SECONDS)!!;
     lit = floor_pixel(&fixture, &debris, -SHADOW_REACH);
     shadowed = floor_pixel(&fixture, &debris, SHADOW_REACH);
@@ -187,7 +197,6 @@ fn void check_debris(Fixture* fixture, Pair* pair, BufferId copied) @private {
     InstancedMesh* host = fixture.scene.get(fixture.scene.node(pair.cpu.draw_node), InstancedMesh);
     InstancedMesh* mirror = fixture.scene.get(fixture.scene.node(pair.device.draw_node), InstancedMesh);
     assert(host.count == pair.cpu.alive && mirror.count == pair.cpu.alive);
-    Aabb box = fixture.assets.geometry(pair.device.desc.geometry).data.bounds;
     uint[CAPACITY] order;
     sort_by_spawn(pair.cpu, order[..]);
     for (uint rank = 0; rank < pair.cpu.alive; rank++) {
@@ -211,12 +220,6 @@ fn void check_debris(Fixture* fixture, Pair* pair, BufferId copied) @private {
         }
         for (usz component = 0; component < 4; component++) {
             assert(math::abs(found.rotation.v[component] - expected.rotation.v[component]) <= POSITION_TOLERANCE);
-        }
-
-        Aabb placed = maths::aabb_transform(box, found.to_mat4());
-        for (usz axis = 0; axis < 3; axis++) {
-            assert(placed.min[axis] >= mirror.local_bounds.min[axis]);
-            assert(placed.max[axis] <= mirror.local_bounds.max[axis]);
         }
     }
 }
