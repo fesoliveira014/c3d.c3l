@@ -1,0 +1,305 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "physics",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    },
+    {
+      "id": 1,
+      "parent": 0,
+      "name": "contact",
+      "local": {
+        "position": [
+          0.5,
+          -0.5,
+          0.5
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "physics_body": {
+          "version": 3,
+          "value": {
+            "body": {
+              "kind": "STATIC",
+              "name": "",
+              "linear_velocity": [
+                0,
+                0,
+                0
+              ],
+              "angular_velocity": [
+                0,
+                0,
+                0
+              ],
+              "linear_damping": 0,
+              "angular_damping": 0,
+              "gravity_scale": 1,
+              "allow_sleep": true,
+              "bullet": false,
+              "disabled": false,
+              "locks": {
+                "linear_x": false,
+                "linear_y": false,
+                "linear_z": false,
+                "angular_x": false,
+                "angular_y": false,
+                "angular_z": false
+              }
+            },
+            "colliders": [
+              {
+                "kind": "SPHERE",
+                "local": {
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "radius": 0.25,
+                "half_height": 0,
+                "half_extents": [
+                  0,
+                  0,
+                  0
+                ],
+                "geometry": null,
+                "height_field": {
+                  "source": "HEIGHTS",
+                  "heights": [],
+                  "count_x": 0,
+                  "count_z": 0,
+                  "texture": null,
+                  "window": {
+                    "x": 0,
+                    "z": 0,
+                    "count_x": 0,
+                    "count_z": 0
+                  },
+                  "neighbours": [
+                    {
+                      "texture": null,
+                      "material_indices": []
+                    },
+                    {
+                      "texture": null,
+                      "material_indices": []
+                    },
+                    {
+                      "texture": null,
+                      "material_indices": []
+                    },
+                    {
+                      "texture": null,
+                      "material_indices": []
+                    }
+                  ]
+                },
+                "children": [],
+                "density": 1000,
+                "explosion_scale": 1,
+                "material": {
+                  "friction": 0.600000024,
+                  "restitution": 0,
+                  "rolling_resistance": 0,
+                  "tangent_velocity": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "id": "0"
+                },
+                "face_materials": [],
+                "material_indices": [],
+                "sensor": false,
+                "contact_events": false,
+                "hit_events": false,
+                "filter": {
+                  "category": "1",
+                  "mask": "18446744073709551615",
+                  "group": 0
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "parent": 0,
+      "name": "fabric",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 3,
+          "value": {
+            "geometry": "cube",
+            "material": null,
+            "cast_shadow": false,
+            "receive_shadow": true,
+            "trace": false,
+            "trace_only": false,
+            "trace_facing": "MATERIAL",
+            "morph_weights": [],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        },
+        "cloth": {
+          "version": 9,
+          "value": {
+            "substeps": 2,
+            "iterations": 3,
+            "stretch_stiffness": 0.75,
+            "bend_stiffness": 0.25,
+            "damping": 0.300000012,
+            "thickness": 0.0399999991,
+            "gravity_scale": 0.200000003,
+            "pins": [
+              3,
+              1,
+              1,
+              0
+            ],
+            "collide_ground": true,
+            "ground_height": -3,
+            "colliders": [
+              {
+                "node": 1,
+                "model": null,
+                "template_index": 4294967295
+              }
+            ],
+            "contact_tolerance": 0.000199999995,
+            "contact_iterations": 12,
+            "max_shapes": 64,
+            "max_candidates": 2048,
+            "max_contacts": 1024,
+            "self_collision": true,
+            "seams": [
+              {
+                "first": 3,
+                "second": 0
+              },
+              {
+                "first": 0,
+                "second": 1
+              },
+              {
+                "first": 3,
+                "second": 0
+              },
+              {
+                "first": 1,
+                "second": 1
+              }
+            ],
+            "continuous": true,
+            "max_ccd_iterations": 96,
+            "render_particles": [],
+            "tangent_frame": false,
+            "tangent_uv_set": 0,
+            "attachments": [],
+            "bend_mode": "DISTANCE",
+            "bend_compliance": 0,
+            "rest_angles": [],
+            "transport": [],
+            "cuts": [],
+            "tears": {
+              "max_requests": 0,
+              "opening_iterations": 32
+            },
+            "sleep_speed": 0.349999994,
+            "sleep_steps": 17,
+            "density": 0.349999994,
+            "drag_coefficient": 0.899999976,
+            "lift_coefficient": 0.449999988
+          }
+        }
+      }
+    }
+  ]
+}
