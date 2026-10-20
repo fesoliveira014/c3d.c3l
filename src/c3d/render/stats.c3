@@ -189,9 +189,9 @@ struct Stats {
     uint  trace_posed_overflow;  // this frame: posed candidates left out past the slot capacity
     uint  trace_deform_overflow; // this frame: custom-posed rows left out past the slot capacity
     usz   trace_posed_bytes;     // this frame: GPU bytes the posed slots hold
-    uint  trace_poses;           // this frame: posing dispatches
+    uint  trace_poses;           // this frame: posing dispatches; a swaying batch poses its rows in one
     uint  trace_poses_reused;    // this frame: poses a trace slot took from compute skinning instead of dispatching
-    uint  trace_refits;          // this frame: node refit dispatches
+    uint  trace_refits;          // this frame: trees refit, all in one dispatch
     float trace_build_ms;
     uint  blas_builds;
     uint  blas_updates;          // this frame: in-place updates of posed bottom levels

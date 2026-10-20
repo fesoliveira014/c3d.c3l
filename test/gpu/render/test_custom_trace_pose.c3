@@ -435,14 +435,72 @@ fn void test_swaying_instances_trace_at_their_swayed_pose_including_one_off_came
         render_rig(&rig, SWAY_FIRST_TIME)!!;
         posed_assert_agreement(rig.harness.results, "swayed first instance", flat_faces: false);
         report_pose_counts(renderer, "swaying, first instance in view");
-        assert(renderer.stats.trace_posed_instances == 2 && renderer.stats.trace_poses == 2);
+        assert(renderer.stats.trace_posed_instances == 2 && renderer.stats.trace_poses == 1);
         assert(renderer.stats.trace_sway_at_rest == 0 && renderer.stats.blas_builds == (ray_queries ? 2 : 0));
 
         look_at_instance(&rig, SIDE_INSTANCE_X);
         render_rig(&rig, SWAY_SECOND_TIME)!!;
         posed_assert_agreement(rig.harness.results, "swayed second instance", flat_faces: false);
         report_pose_counts(renderer, "swaying, second instance in view");
-        assert(renderer.stats.trace_poses == 2 && renderer.stats.blas_updates == (ray_queries ? 2 : 0));
+        assert(renderer.stats.trace_poses == 1 && renderer.stats.blas_updates == (ray_queries ? 2 : 0));
+        check_validation(renderer);
+    }
+}
+
+fn void show_node(TraceRig* rig, Node* node, bool visible) @private {
+    node.visible = visible;
+    rig.harness.scene.update_world();
+}
+
+// The custom mesh and the batch's second row trade a slot while the first row keeps its pose and the key is unchanged.
+fn void test_swaying_row_with_a_reclaimed_slot_poses_again_under_an_unchanged_key() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        TraceRig rig;
+        create_trace_rig(&rig, ray_queries, max_posed_trace_instances: TWO_INSTANCES)!!;
+        defer destroy_trace_rig(&rig);
+        ShaderId shader = add_displace_shader(&rig.fixture, false)!!;
+        Node* custom = add_displaced_mesh(&rig, add_displace_material(&rig.fixture, shader, STILL_RATE)!!)!!;
+        Node* batch_node = add_upright_batch(&rig, add_tall_slab(&rig.fixture)!!, rig.fixture.plain)!!;
+        InstancedMesh* batch = rig.harness.scene.get(batch_node, InstancedMesh);
+        batch.sway = swaying_toward_the_camera(SWAY_AMPLITUDE);
+        batch.trace_sway = true;
+        Renderer* renderer = &rig.fixture.renderer;
+        look_at_instance(&rig, SIDE_INSTANCE_X);
+
+        show_node(&rig, batch_node, false);
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        report_pose_counts(renderer, "custom mesh alone");
+        assert(renderer.stats.trace_posed_instances == 1 && renderer.stats.trace_poses == 1);
+
+        // The second row takes the custom mesh's slot, the first row an unused one.
+        show_node(&rig, custom, false);
+        show_node(&rig, batch_node, true);
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        posed_assert_agreement(rig.harness.results, "swayed rows, fresh slots", flat_faces: false);
+        report_pose_counts(renderer, "swaying batch, fresh slots");
+        assert(renderer.stats.trace_posed_instances == 2 && renderer.stats.trace_poses == 1);
+
+        // The custom mesh takes the second row's slot back, which leaves that row at rest.
+        show_node(&rig, custom, true);
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        report_pose_counts(renderer, "swaying batch, slot taken");
+        assert(renderer.stats.trace_posed_instances == 2 && renderer.stats.trace_poses == 1);
+        assert(renderer.stats.trace_sway_at_rest == 1);
+
+        show_node(&rig, custom, false);
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        posed_assert_agreement(rig.harness.results, "swayed rows, slot reclaimed", flat_faces: false);
+        report_pose_counts(renderer, "swaying batch, slot reclaimed");
+        assert(renderer.stats.trace_posed_instances == 2 && renderer.stats.trace_poses == 1);
+        assert(renderer.stats.trace_sway_at_rest == 0);
+        assert(renderer.stats.blas_builds == (ray_queries ? 1 : 0) && renderer.stats.blas_updates == 0);
+        assert(renderer.stats.trace_refits == (ray_queries ? 0 : 1));
+
+        ulong revision = renderer.scene_trace.revision;
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        report_pose_counts(renderer, "swaying batch, still");
+        assert(renderer.stats.trace_poses == 0 && renderer.stats.trace_refits == 0 && renderer.stats.blas_updates == 0);
+        assert(renderer.scene_trace.revision == revision);
         check_validation(renderer);
     }
 }
