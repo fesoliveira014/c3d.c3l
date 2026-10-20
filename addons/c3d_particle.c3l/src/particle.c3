@@ -28,6 +28,7 @@ const Vec3 PARTICLE_GRAVITY = { 0, -9.81f, 0 };
 const uint MAX_SUB_EMITTERS = 4; // each adds one trigger test per raised event
 
 const uint DEFAULT_COLLISION_QUERIES @private = 256; // callback casts per step; each is one world query
+const float DEFAULT_IMPACT_SPEED @private = 1; // above the 0.98 m/s gravity adds in the longest step
 const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 56 KiB pool for a small effect; draw arrays are additional
 const usz PARTICLE_FLOAT_STREAMS @private = 5;
 
@@ -159,8 +160,9 @@ struct ParticleCollision {
     float friction; // share of the tangent speed lost by a bounce, [0, 1]
     float radius_scale; // drawn particle size to collision radius
     bool ground_plane; // collide with the plane at ground_height without the callback
-    float ground_height; // absolute world height, so a rebase leaves the plane where it was
+    float ground_height; // world height; the horizontal-only origin rebase never moves it
     uint max_queries; // callback casts per step; the rest wait, see ParticleSystem.query_cursor
+    float impact_speed; // least speed into the surface that raises IMPACT, metres per second
 }
 
 <*
@@ -404,6 +406,7 @@ fn ParticleSystemDesc default_particle_system_desc() {
             .restitution = 0.5f,
             .radius_scale = 0.5f,
             .max_queries = DEFAULT_COLLISION_QUERIES,
+            .impact_speed = DEFAULT_IMPACT_SPEED,
         },
     };
     desc.size_over_life.values[..] = 1;
@@ -494,7 +497,10 @@ fn void? check_particle_collision(ParticleCollision* collision) @private {
     foreach (share : shares) {
         if (!math::is_finite(share) || share < 0 || share > 1) return c3d::INVALID_ARGUMENT~;
     }
-    if (!math::is_finite(collision.radius_scale) || collision.radius_scale < 0) return c3d::INVALID_ARGUMENT~;
+    float[2] nonnegative = { collision.radius_scale, collision.impact_speed };
+    foreach (value : nonnegative) {
+        if (!math::is_finite(value) || value < 0) return c3d::INVALID_ARGUMENT~;
+    }
     if (!math::is_finite(collision.ground_height)) return c3d::INVALID_ARGUMENT~;
     if (collision.response != CollisionResponse.NONE && !collision.ground_plane && !collision.max_queries) {
         return c3d::INVALID_ARGUMENT~;

@@ -81,6 +81,7 @@ fn void create_fixture(Fixture* fixture, ParticleRenderMode mode, uint capacity 
         .ground_plane = true,
         .ground_height = -2.5f,
         .max_queries = 9,
+        .impact_speed = 2.5f,
     };
     fixture.source.attach_particle_system(fixture.root, desc)!!;
     fixture.source.get(fixture.root, ParticleSystem).emitting = false;
@@ -160,11 +161,11 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(particle::ParticleAuthoringV3)!!.version == 3);
     assert(serial::described_type(particle::ParticleAuthoringV3)!!.layout == 0xfce463fdcc2f5ec7);
     assert(serial::described_type(ParticleCollision)!!.version == 1);
-    assert(serial::described_type(ParticleCollision)!!.layout == 0x09e2850d14a5f92a);
+    assert(serial::described_type(ParticleCollision)!!.layout == 0xb3c1e7574d47f9eb);
     assert(serial::described_type(ParticleSystemDesc)!!.version == 4);
-    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x865696f77f5a9c11);
+    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x2bcd644f0dae365e);
     assert(serial::described_type(particle::ParticleAuthoring)!!.version == 4);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0xcc70319cd9dcd35b);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0xbc9869b807205e38);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("particle_system") && schema.contains("emitting"));
@@ -219,6 +220,7 @@ fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @tes
                 assert(system.desc.collision.restitution == 0.3f && system.desc.collision.friction == 0.2f);
                 assert(system.desc.collision.radius_scale == 0.75f && system.desc.collision.max_queries == 9);
                 assert(system.desc.collision.ground_height == -2.5f);
+                assert(system.desc.collision.impact_speed == 2.5f);
                 assert(system.desc.color_over_life.values[7] == source.desc.color_over_life.values[7]);
                 assert(restored.first_child && restored.first_child.name == "authored-child");
                 assert(fixture.destination.count(BillboardBatch) == 0 && fixture.destination.count(InstancedMesh) == 0);

@@ -4,13 +4,12 @@ import std::math;
 
 const Vec3 GROUND_NORMAL @private = { 0, 1, 0 };
 
-fn void collide(ParticleSystem* system, float seconds, double world_shift_y) @private {
+fn void collide(ParticleSystem* system, float seconds) @private {
     ParticleCollision* collision = &system.desc.collision;
     bool queries_enabled = system.collision_cast && collision.max_queries > 0;
     if (collision.response == CollisionResponse.NONE || !system.alive) return;
     if (!collision.ground_plane && !queries_enabled) return;
 
-    float plane_height = (float)((double)collision.ground_height - world_shift_y);
     bool dies = collision.response == CollisionResponse.DIE;
     uint count = system.alive;
     uint start = system.query_cursor % count;
@@ -31,7 +30,7 @@ fn void collide(ParticleSystem* system, float seconds, double world_shift_y) @pr
             from: from,
             to: to,
             radius: radius,
-            plane_height: plane_height,
+            plane_height: collision.ground_height,
             hit: &hit,
         );
         if (queries_enabled) {
@@ -95,17 +94,17 @@ fn void respond_to_hit(
 ) @private {
     ParticleCollision* collision = &system.desc.collision;
     Vec3 velocity = system.velocity[index];
+    float approach_speed = math::max(0.0f, -velocity.dot(hit.normal));
     system.position[index] = hit.point;
-    raise_event(system, index, { .trigger = ParticleTrigger.IMPACT });
+    if (approach_speed >= collision.impact_speed) raise_event(system, index, { .trigger = ParticleTrigger.IMPACT });
 
     Vec3 resting = hit.point + hit.normal * radius;
     switch (collision.response) {
         case NONE:
             return;
         case BOUNCE:
-            float approach = velocity.dot(hit.normal);
-            if (approach < 0) {
-                Vec3 into = hit.normal * approach;
+            if (approach_speed > 0) {
+                Vec3 into = hit.normal * -approach_speed;
                 system.velocity[index] = (velocity - into) * (1 - collision.friction) - into * collision.restitution;
             }
             system.position[index] = resting;

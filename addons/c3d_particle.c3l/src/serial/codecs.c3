@@ -11,15 +11,15 @@ const ulong RANGE_LAYOUT @private = 0xaf1f0c33b5e51627;
 const ulong TABLE_LAYOUT @private = 0xe4c18077262a7a22;
 const ulong COLOR_TABLE_LAYOUT @private = 0x4eacd1a988dfc1b2;
 const ulong SUB_EMITTER_LAYOUT @private = 0xbc17df2b03f79e67;
-const ulong COLLISION_LAYOUT @private = 0x09e2850d14a5f92a;
+const ulong COLLISION_LAYOUT @private = 0xb3c1e7574d47f9eb;
 const ulong DESC_V1_LAYOUT @private = 0x1a366da2bd207420;
 const ulong DESC_V2_LAYOUT @private = 0x63291d71ce5d82d3;
 const ulong DESC_V3_LAYOUT @private = 0x09ff25e64a1b07c9;
-const ulong DESC_LAYOUT @private = 0x865696f77f5a9c11;
+const ulong DESC_LAYOUT @private = 0x2bcd644f0dae365e;
 const ulong AUTHORING_V1_LAYOUT @private = 0xea58cb75a4a73416;
 const ulong AUTHORING_V2_LAYOUT @private = 0x2bb779bddc9e4271;
 const ulong AUTHORING_V3_LAYOUT @private = 0xfce463fdcc2f5ec7;
-const ulong AUTHORING_LAYOUT @private = 0xcc70319cd9dcd35b;
+const ulong AUTHORING_LAYOUT @private = 0xbc9869b807205e38;
 
 struct ParticleSystemDescV1 @private {
     uint capacity;

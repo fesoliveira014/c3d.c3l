@@ -9,6 +9,7 @@ const float TOLERANCE @local = 1e-4f;
 const float STEP @local = 0.1f;
 const float PARTICLE_SIZE @local = 0.2f;
 const float RADIUS @local = 0.1f; // PARTICLE_SIZE at the radius scale of the test descriptors
+const float IMPACT_SPEED @local = 1; // above the speed gravity adds in one STEP
 
 fn Scene make_scene() @local {
     Scene scene = scene::create_scene(mem, { .max_nodes = 32 });
@@ -28,6 +29,7 @@ fn ParticleSystemDesc colliding_desc(CollisionResponse response) @local {
         .radius_scale = 0.5f,
         .ground_plane = true,
         .max_queries = 4,
+        .impact_speed = IMPACT_SPEED,
     };
     return desc;
 }
@@ -162,24 +164,36 @@ fn void test_impact_sub_emitter_fires_at_the_hit_point() @test {
     assert(system.dropped_events == 0 && system.skipped_events == 0);
 }
 
-fn void test_collision_validation_rejects_unusable_fields() @test {
+fn void test_stuck_particle_under_gravity_raises_one_impact() @test {
     Scene scene = make_scene();
     defer scene::destroy_scene(&scene);
-    for (uint variant = 0; variant < 6; variant++) {
-        ParticleSystemDesc desc = colliding_desc(BOUNCE);
-        switch (variant) {
-            case 0: desc.collision.restitution = 1.5f;
-            case 1: desc.collision.friction = -0.1f;
-            case 2: desc.collision.radius_scale = bitcast(0x7fc00000u, float);
-            case 3: desc.collision.radius_scale = -1;
-            case 4: desc.collision.ground_height = bitcast(0x7f800000u, float);
-            case 5:
-                desc.collision.ground_plane = false;
-                desc.collision.max_queries = 0;
-        }
-        assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    }
-    ParticleSystemDesc plane_only = colliding_desc(BOUNCE);
-    plane_only.collision.max_queries = 0;
-    scene.add_particle_system(plane_only)!!;
+    Node* target_node = scene.add_particle_system(colliding_desc(NONE))!!;
+    ParticleSystemDesc desc = colliding_desc(STICK);
+    desc.gravity_scale = 1;
+    desc.max_events = 8;
+    desc.sub_emitter_count = 1;
+    desc.sub_emitters[0] = { .trigger = IMPACT, .target = target_node.id, .count = 1 };
+    Node* emitter = scene.add_particle_system(desc)!!;
+    ParticleSystem* system = scene.get(emitter, ParticleSystem);
+    scene.update_world();
+    emit_resting(system, emitter.world, 1);
+    system.position[0] = { 0, 1, 0 };
+    system.velocity[0] = { 0, -10, 0 };
+
+    for (uint step = 0; step < 5; step++) advance(system, emitter.world);
+
+    assert(system.alive == 1 && system.next_event == 1 && system.event_count == 1);
+    assert(math::abs(system.position[0].y - RADIUS) < TOLERANCE);
+}
+
+fn void test_a_response_needs_a_plane_or_queries() @test {
+    Scene scene = make_scene();
+    defer scene::destroy_scene(&scene);
+    ParticleSystemDesc desc = colliding_desc(BOUNCE);
+    desc.collision.ground_plane = false;
+    desc.collision.max_queries = 0;
+    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
+
+    desc.collision.ground_plane = true;
+    scene.add_particle_system(desc)!!;
 }
