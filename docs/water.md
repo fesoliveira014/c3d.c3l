@@ -1070,10 +1070,10 @@ the [vegetation](vegetation.md#the-example) example's grass and trees, then a la
 carves a cosine bowl 6 m deep and 55 m in radius into the height map before the terrain collider cooks it; no
 grass or tree grows under 0.3 m above the water. The sky is a generated equirectangular gradient with a sun
 disc, the scene's environment and background. The lake is `default_water_desc()` at 120 m with a generated
-tiling ripple normal map (4 m tiles) and a generated foam colour, on its own layer bit. The mirror view renders
-at `MIRROR_RENDER_SCALE` with the lines above. `--crates 16|256` drops 1 m crates (density 600, drag
-3000 N·s/m, well under the 36,000 N·s/m at which the drag limit binds, drag coefficient 1) over the middle
-40 m, each with `Buoyancy` over `fluid_sample`; they bob on the orbital motion of the waves, and
+tiling ripple normal map of eight non-aligned sine terms (4 m tiles) and a generated foam colour, on its own layer
+bit. The mirror view renders at `MIRROR_RENDER_SCALE` with the lines above. `--crates 16|256` drops 1 m crates
+(density 600, drag 3000 N·s/m, well under the 36,000 N·s/m at which the drag limit binds, drag coefficient 1) over the
+middle 40 m, each with `Buoyancy` over `fluid_sample`; they bob on the orbital motion of the waves, and
 `--current X,Z` adds a uniform current in m/s that carries them (not with `--benchmark`, whose settle gate
 expects still water).
 

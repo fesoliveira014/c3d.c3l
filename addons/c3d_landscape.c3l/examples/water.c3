@@ -120,18 +120,24 @@ const float SUN_DISC_COSINE @local = 0.9995f; // about 3.6 degrees across
 
 const uint RIPPLE_MAP_SIZE @local = 256; // 256 KiB and its mips; one tile covers 1 / RIPPLE_UV_SCALE metres
 const float RIPPLE_UV_SCALE @local = 0.25f; // texture periods per metre
-const float RIPPLE_SLOPE @local = 0.3f; // largest normal-map slope; steeper ripples glint like chop
+const float RIPPLE_SLOPE @local = 0.4f; // slope bound; the eight terms peak near 0.6 of it; steeper ripples glint like chop
 const uint FOAM_MAP_SIZE @local = 128;
 const float FOAM_UV_SCALE @local = 0.5f;
 const float FOAM_ROUGHNESS @local = 0.8f;
 const Vec3 FOAM_LIGHT @local = { 0.95f, 0.97f, 1 };
 const Vec3 FOAM_DARK @local = { 0.7f, 0.75f, 0.78f };
 
-const TileTerm[4] RIPPLE_TERMS @local = {
-    { .cycles_u = 3, .cycles_v = 1, .weight = 1, .phase = 0 },
-    { .cycles_u = -2, .cycles_v = 4, .weight = 0.7f, .phase = 1.3f },
-    { .cycles_u = 5, .cycles_v = -3, .weight = 0.4f, .phase = 2.1f },
-    { .cycles_u = 1, .cycles_v = 7, .weight = 0.25f, .phase = 0.4f },
+// No two terms are parallel and no length is an integer multiple of another, so the tile shows no lattice;
+// the weight falls with the length.
+const TileTerm[8] RIPPLE_TERMS @local = {
+    { .cycles_u = 1, .cycles_v = -3, .weight = 1, .phase = 0 },
+    { .cycles_u = 3, .cycles_v = -2, .weight = 0.82f, .phase = 2.4f },
+    { .cycles_u = 4, .cycles_v = -1, .weight = 0.67f, .phase = 4.1f },
+    { .cycles_u = 3, .cycles_v = -4, .weight = 0.5f, .phase = 1.1f },
+    { .cycles_u = 5, .cycles_v = 3, .weight = 0.4f, .phase = 5.3f },
+    { .cycles_u = 6, .cycles_v = 1, .weight = 0.37f, .phase = 3.3f },
+    { .cycles_u = 5, .cycles_v = 6, .weight = 0.26f, .phase = 0.7f },
+    { .cycles_u = 3, .cycles_v = 8, .weight = 0.23f, .phase = 4.8f },
 };
 const TileTerm[3] FOAM_TERMS @local = {
     { .cycles_u = 4, .cycles_v = 2, .weight = 1, .phase = 0.7f },
