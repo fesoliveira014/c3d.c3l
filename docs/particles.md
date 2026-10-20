@@ -256,8 +256,9 @@ serialized data. A descriptor with more than `MAX_SUB_EMITTERS` sub-emitters, an
 | `friction` | Share of the tangent speed a bounce loses, in [0, 1]. |
 | `radius_scale` | The collision radius is the drawn size, `size` times the size table, times this scale. |
 | `ground_plane` | Collide with the plane `y = ground_height`, with no callback. |
-| `ground_height` | Height of the plane, in absolute world metres. |
+| `ground_height` | Height of the plane, in world metres. |
 | `max_queries` | Callback casts per step. |
+| `impact_speed` | Least speed into the surface, in metres per second, that raises an `IMPACT` event. |
 
 A step runs in this order: expire, evict, emit, integrate, collide. After integration each particle's last move is
 tested as the segment from `position - velocity * dt` to `position`. A segment of zero length, as in a
@@ -266,8 +267,8 @@ spawned by event delivery are tested from the next step.
 
 ### Ground plane
 
-`ground_height` is an absolute world height: the plane is compared with `position.y + Scene.world_shift.y`, so an
-origin rebase leaves it where it was. The plane needs no callback and is tested for every particle in every step.
+`ground_height` is a world height; the origin rebase moves nodes horizontally only, so it never moves the plane. The
+plane needs no callback and is tested for every particle in every step.
 A particle hits it when its segment ends with the centre less than one radius above the plane while moving down.
 A segment that starts at or below that height hits at its start, so a particle resting on the plane cannot fall
 through it by rounding, and a particle that starts under the plane and moves down is placed on it.
@@ -326,15 +327,18 @@ A `BOUNCE` or `STICK` hit places the particle at `point + normal * radius` and d
 - `STICK` sets the velocity to zero.
 - `DIE` removes the particle. Its `DEATH` event has cause `IMPACT`, and `on_evict` does not apply to it.
 
-Every hit raises an `IMPACT` event at `point` carrying the velocity from before the response, for `IMPACT`
-sub-emitters. A `DIE` hit raises its `DEATH` event after it. A particle that stays pressed against a surface, a
-stuck one under gravity or a bouncing one at rest, hits again on every step, and each hit raises its events, so
-size `max_events` and sub-emitter counts for that.
+A hit raises an `IMPACT` event, for `IMPACT` sub-emitters, when the speed into the surface before the response is
+at least `impact_speed`. The event is at `point` and carries the velocity from before the response. The default
+speed is 1 m/s, above the 0.98 m/s that gravity adds over the longest step, so a particle that sticks or settles on
+a surface stops raising events once its speed into it falls below that. Zero raises an event for every hit. The response
+applies to every hit, and a `DIE` hit raises its `DEATH` event whatever its speed.
+
+A particle pressed against a surface still hits it on every step, so it spends one callback query per step.
 
 Collision draws nothing from the system's random stream, and its results follow the cast's answers in pool order.
-A descriptor with `restitution` or `friction` outside [0, 1], a negative or non-finite `radius_scale`, a
-non-finite `ground_height`, or a response other than `NONE` with no plane and `max_queries` of zero fails
-`INVALID_ARGUMENT`.
+A descriptor with `restitution` or `friction` outside [0, 1], a negative or non-finite `radius_scale` or
+`impact_speed`, a non-finite `ground_height`, or a response other than `NONE` with no plane and `max_queries` of
+zero fails `INVALID_ARGUMENT`.
 
 ## Draw modes and materials
 
