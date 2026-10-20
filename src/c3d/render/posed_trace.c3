@@ -12,6 +12,8 @@ import std::collections::list;
 import std::collections::map;
 import std::hash::fnv32a;
 import std::math;
+import std::time;
+import std::time::clock;
 
 <*
  Posed trace slots a renderer holds when RendererDesc leaves the count at zero.
@@ -246,11 +248,20 @@ fn uint? PosedTraceTable.claim(
         self.slots = alloc::new_array(self.allocator, PosedTraceRes, (sz)self.capacity);
         self.lookup.init(self.allocator, (sz)self.capacity);
     }
+    time::Clock started = gather_row_start();
     uint index;
+    bool missed;
     if (try found = self.lookup.get(key)) {
         index = found;
     } else {
-        index = vacant_posed_slot(self)!;
+        missed = true;
+        uint? vacant = vacant_posed_slot(self);
+        if (catch excuse = vacant) {
+            gather_row_stop(GatherStage.RESOLVE_CLAIM_OVERFLOW, started);
+            gather_count(GatherCounter.CLAIM_OVERFLOWS);
+            return excuse~;
+        }
+        index = vacant;
         PosedTraceRes* taken = &self.slots[index];
         if (taken.key.scene) {
             self.lookup.remove(taken.key);
@@ -261,6 +272,8 @@ fn uint? PosedTraceTable.claim(
     }
     self.slots[index].claimed_epoch = self.epoch;
     self.slots[index].last_seen = frame_index;
+    gather_row_stop(missed ? GatherStage.RESOLVE_CLAIM_MISS : GatherStage.RESOLVE_CLAIM_HIT, started);
+    gather_count(missed ? GatherCounter.CLAIM_MISSES : GatherCounter.CLAIM_HITS);
     return index;
 }
 
@@ -377,11 +390,18 @@ fn uint? vacant_posed_slot(PosedTraceTable* table) @local {
     if (table.exhausted_epoch == table.epoch) return c3d::CAPACITY_EXCEEDED~;
 
     foreach (uint index, &slot : table.slots) {
-        if (!slot.key.scene) return index;
+        if (!slot.key.scene) {
+            gather_count(GatherCounter.SLOT_VISITS_MISS, (long)index + 1);
+            return index;
+        }
     }
     foreach (uint index, &slot : table.slots) {
-        if (slot.claimed_epoch != table.epoch) return index;
+        if (slot.claimed_epoch != table.epoch) {
+            gather_count(GatherCounter.SLOT_VISITS_MISS, (long)table.slots.len + (long)index + 1);
+            return index;
+        }
     }
+    gather_count(GatherCounter.SLOT_VISITS_OVERFLOW, 2 * (long)table.slots.len);
     table.exhausted_epoch = table.epoch;
     return c3d::CAPACITY_EXCEEDED~;
 }

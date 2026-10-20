@@ -184,6 +184,7 @@ struct FrameRecord @local {
     uint                      instances_tested;
     uint                      instances_visible;
     TraceCounts               trace;
+    render::GatherMeasure     gather;
     uint                      placed_cells;
     bool                      cells_revised;
     bool                      stamped;
@@ -902,6 +903,7 @@ fn void? run_segments(
         time::Clock update_started = clock::now();
         foliage::update(demo.scene, demo.assets, wind)!;
         double update_us = (double)(long)update_started.to_now() / NANOSECONDS_PER_MICROSECOND;
+        render::gather_reset();
         render_offscreen(
             renderer:    renderer,
             scene:       demo.scene,
@@ -922,6 +924,7 @@ fn void? run_segments(
                 .instances_tested  = renderer.stats.instances_tested,
                 .instances_visible = renderer.stats.instances_visible,
                 .trace             = trace_counts(&renderer.stats),
+                .gather            = render::gather_measure,
                 .placed_cells      = placed_cells(demo),
                 .cells_revised     = cell_revision_sum(demo) != revisions,
                 .stamped           = stamped,
@@ -986,6 +989,78 @@ fn void print_trace_counts(String segment_name, FrameRecord[] records, double[] 
     );
 }
 
+fn double gather_mean(FrameRecord[] records, double[] values) @local {
+    double sum;
+    foreach (index, value : values[:records.len]) sum += value;
+    return records.len ? sum / (double)records.len : 0;
+}
+
+fn void print_gather_stages(String segment_name, FrameRecord[] records, double[] scratch) @local {
+    io::printfn(
+        "gather_clock segment=%s pair_ns=%d empty_ns=%d",
+        segment_name,
+        render::gather_pair_ns,
+        render::gather_empty_ns,
+    );
+    foreach (stage : render::GatherStage::values) {
+        if (stage == render::GatherStage.CALIBRATION) continue;
+
+        foreach (index, &record : records) {
+            scratch[index] = (double)record.gather.ns[stage.ordinal] / NANOSECONDS_PER_MILLISECOND;
+        }
+        double raw_median = percentile(scratch[:records.len], 0.5f);
+        double raw_mean = gather_mean(records, scratch);
+        foreach (index, &record : records) {
+            scratch[index] = (double)render::gather_net_ns(&record.gather, stage) / NANOSECONDS_PER_MILLISECOND;
+        }
+        double net_mean = gather_mean(records, scratch);
+        double net_median = percentile(scratch[:records.len], 0.5f);
+        foreach (index, &record : records) scratch[index] = (double)record.gather.calls[stage.ordinal];
+        double calls_mean = gather_mean(records, scratch);
+        double calls_median = percentile(scratch[:records.len], 0.5f);
+        io::printfn(
+            "gather_stage segment=%s stage=%s parent=%s raw_ms=%.4f net_ms=%.4f raw_mean_ms=%.4f net_mean_ms=%.4f "
+              "calls_median=%.0f calls_mean=%.2f",
+            segment_name,
+            stage,
+            render::gather_parent(stage),
+            raw_median,
+            net_median,
+            raw_mean,
+            net_mean,
+            calls_median,
+            calls_mean,
+        );
+    }
+}
+
+fn void print_gather_counters(String segment_name, FrameRecord[] records, double[] scratch) @local {
+    foreach (counter : render::GatherCounter::values) {
+        foreach (index, &record : records) scratch[index] = (double)record.gather.counts[counter.ordinal];
+        double mean = gather_mean(records, scratch);
+        double median = percentile(scratch[:records.len], 0.5f);
+        io::printfn(
+            "gather_counter segment=%s name=%s median=%.0f mean=%.2f max=%.0f sum=%.0f",
+            segment_name,
+            counter,
+            median,
+            mean,
+            percentile(scratch[:records.len], 1.0f),
+            mean * (double)records.len,
+        );
+    }
+    foreach (kind, name : render::GATHER_POSE_NAMES) {
+        foreach (index, &record : records) scratch[index] = (double)record.gather.rows_by_pose[kind];
+        io::printfn(
+            "gather_rows segment=%s pose=%s median=%.0f max=%.0f",
+            segment_name,
+            name,
+            percentile(scratch[:records.len], 0.5f),
+            percentile(scratch[:records.len], 1.0f),
+        );
+    }
+}
+
 fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     uint frames = demo.options.segment_frames;
     io::printfn("rescatter_ms %.4f", result.rescatter_ms);
@@ -1027,6 +1102,12 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
             if (revised_frames) steady_gate = false;
         }
         if (demo.options.traced_shadows) print_trace_counts(name, records, result.scratch);
+        $if $feat(MEASURE_GATHER):
+            if (demo.options.traced_shadows) {
+                print_gather_stages(name, records, result.scratch);
+                print_gather_counters(name, records, result.scratch);
+            }
+        $endif
         double tested = percentile(gather(records, INSTANCES_TESTED, result.scratch), 0.5f);
         double visible = percentile(gather(records, INSTANCES_VISIBLE, result.scratch), 0.5f);
         io::printfn("instances segment=%s tested_median=%.0f visible_median=%.0f", name, tested, visible);
@@ -1121,6 +1202,9 @@ fn bool? run_benchmark(Options options) @local {
     foliage::register_foliage(&scene)!;
 
     Demo demo = build_demo(options, &assets, &scene)!;
+    $if $feat(MEASURE_GATHER):
+        render::gather_calibrate();
+    $endif
     print_header(&demo, desc.max_instance_batches);
     bool scatter_gate = true;
     if (options.scatter_jobs) {
