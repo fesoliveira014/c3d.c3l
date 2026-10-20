@@ -248,6 +248,12 @@ pending uploads and environment preparations, then submits when the frame record
 dispatch, upload or preparation, presents only when a window image was acquired, and discards a
 frame that recorded none. Neither call advances animation or flushes scene removals.
 
+`Renderer.frame_was_submitted(frame)` reports whether the frame that had the index `frame` (a value of `frame_index`
+read while it was open) was submitted. `end_frame` advances `frame_index` before it submits, so the index alone cannot
+tell a submitted frame from one that faulted or recorded nothing. The answer is false for the open frame, for a frame
+that faulted or was discarded, and for a frame more than `FRAMES_IN_FLIGHT` indices behind `frame_index`. CPU state that
+mirrors GPU work should commit only when this is true.
+
 `render_view(scene, camera_node, view, debug = null, shadow_camera = null)`: `shadow_camera` is the camera the view's
 shadow set is fitted to; null uses `camera_node`. A view binds an earlier view's set instead of recording one when
 their keys match ([shadow sets](shadows.md#shadow-sets)). A `shadow_camera` without a `Camera` faults

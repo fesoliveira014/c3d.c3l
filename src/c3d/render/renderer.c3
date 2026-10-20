@@ -245,6 +245,7 @@ struct Renderer {
     bool                    compute_skinning;
     bool                    frame_compute_skinning; // compute_skinning as the frame began
     bool                    frame_submitted;
+    ulong[FRAMES_IN_FLIGHT] submitted_frames; // frame index + 1 of the last frame submitted from each slot; 0 when none
     uint                    recording_slot;
     Target                  window_target;
     FrameInfo               info;
@@ -410,6 +411,7 @@ fn void? Renderer.end_frame(&self) {
             submit_gpu_profile(self);
             if (present) self.output_submission = slot.done;
             self.frame_submitted = true;
+            self.submitted_frames[frame % FRAMES_IN_FLIGHT] = frame + 1;
             commit_resident_crowds(self, self.frame_index);
             commit_compute_skin(self, self.frame_index);
             commit_buffer_readbacks(self, frame);
@@ -435,6 +437,17 @@ fn void? Renderer.end_frame(&self) {
         }
         self.stats.frame_ms = elapsed_ms(self.frame_started);
     };
+}
+
+<*
+ Whether the frame that had this index while open was submitted.
+ False for the open frame, an aborted one, and frames older than FRAMES_IN_FLIGHT.
+ @param frame : "A value of frame_index read while the frame was open."
+*>
+fn bool Renderer.frame_was_submitted(&self, ulong frame) {
+    if (frame >= self.frame_index || self.frame_index - frame > FRAMES_IN_FLIGHT) return false;
+
+    return self.submitted_frames[frame % FRAMES_IN_FLIGHT] == frame + 1;
 }
 
 <*
