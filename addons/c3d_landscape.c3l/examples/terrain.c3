@@ -175,8 +175,6 @@ struct BenchmarkResult @local {
     FrameRecord[] records;
     double[]      scratch;
     double        bounds_build_ms;
-    double        bounds_leaf_ms;   // build_leaf and refresh_chunk_gaps
-    double        bounds_reduce_ms; // the rest of the update: reductions and publication
     double        control_upload_ms;
     double        height_upload_ms;
     double        physics_recook_ms;
@@ -842,23 +840,15 @@ fn void? render_offscreen(
 
 fn double elapsed_ms(time::Clock started) @local => (double)(long)started.to_now() / NANOSECONDS_PER_MILLISECOND;
 
-// A whole build, split into the leaf work and everything else the update does: reductions and publication.
-fn void? time_bounds_build(Demo* demo, BenchmarkResult* result) @local {
-    double[BOUNDS_BUILD_RUNS] builds;
-    double[BOUNDS_BUILD_RUNS] leaves;
-    double[BOUNDS_BUILD_RUNS] reductions;
-    Node* ground = demo.ground.node;
-    foreach (index, &build : builds) {
+fn double? time_bounds_build(Demo* demo, BenchmarkResult* result) @local {
+    double[] runs = result.scratch[:BOUNDS_BUILD_RUNS];
+    foreach (&run : runs) {
         demo.assets.mark_texture_dirty(demo.ground.desc.height_map);
         time::Clock started = clock::now();
         terrain::update(demo.scene, demo.assets)!;
-        *build = elapsed_ms(started);
-        leaves[index] = (double)demo.scene.get(ground, TerrainRuntime).leaf_ns / NANOSECONDS_PER_MILLISECOND;
-        reductions[index] = *build - leaves[index];
+        *run = elapsed_ms(started);
     }
-    result.bounds_build_ms = percentile(builds[..], 0.5f);
-    result.bounds_leaf_ms = percentile(leaves[..], 0.5f);
-    result.bounds_reduce_ms = percentile(reductions[..], 0.5f);
+    return percentile(runs, 0.5f);
 }
 
 // A region mark and the upload that follows it, as a stroke frame pays them.
@@ -1005,8 +995,6 @@ fn void print_edit_results(BenchmarkResult* result, FrameRecord[] edit) @local {
 fn bool print_results(Options options, BenchmarkResult* result) @local {
     uint frames = options.segment_frames;
     io::printfn("bounds_build_ms %.4f", result.bounds_build_ms);
-    io::printfn("bounds_leaf_ms %.4f", result.bounds_leaf_ms);
-    io::printfn("bounds_reduce_ms %.4f", result.bounds_reduce_ms);
     io::printfn("control_region_upload_ms %.4f", result.control_upload_ms);
     io::printfn("height_region_upload_ms %.4f", result.height_upload_ms);
     io::printfn("control_filter_ms %.4f", max(result.control_upload_ms - result.height_upload_ms, 0.0));
@@ -1143,7 +1131,7 @@ fn bool? run_benchmark(Options options) @local {
     defer alloc::free(mem, result.records.ptr);
     defer alloc::free(mem, result.scratch.ptr);
     renderer.prepare_scene(&scene)!;
-    time_bounds_build(&demo, &result)!;
+    result.bounds_build_ms = time_bounds_build(&demo, &result)!;
     result.control_upload_ms = time_region_upload(
         demo:     &demo,
         renderer: &renderer,

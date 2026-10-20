@@ -329,8 +329,9 @@ foliage::commit_scatter(&scene, &assets, &job)!;
   - the height map's revision, replacement or pixel array;
   - the density map's revision;
   - for a `SMOOTH` layer, the border ring's revision or its linked edges;
-  - either node's world matrix, unless both moved by exactly the origin shift since the job was taken, which
-    commits shifted as `scene.shift_foliage()` would;
+  - either node's world matrix, unless both moved by the origin shift alone since the job was taken (the
+    translation by the shift within float rounding, the rotation and scale unchanged), which commits shifted as
+    `scene.shift_foliage()` would; a turn or a move during a rebase is stale;
   - `FoliageRuntime.scatter_revision`, which advances whenever `update` or a commit scatters or re-places the
     layer. Commit before `update`: an `update` that scatters the layer first makes the job stale.
 

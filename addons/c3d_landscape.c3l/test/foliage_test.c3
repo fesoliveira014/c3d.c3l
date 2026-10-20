@@ -1374,6 +1374,8 @@ fn void test_pending_foliage_keeps_owned_lod_through_failure_retry_and_removal()
 
 const float REBASE_CELLS @local = 4; // 256 m cells, so the rebase offset is a render cell multiple
 const float REBASE_OFFSET @local = REBASE_CELLS * 256;
+const float REBASE_HEIGHT @local = 128;
+const float TURN_DEGREES @local = 0.5f; // about 0.009 in the rotation entries, under the translation tolerance
 
 fn Node* add_nested_ground(Fixture* fixture, Node* parent) @local {
     Node* ground = add_ground(fixture, RANDOM, MOVED_GROUND_POSITION);
@@ -1795,6 +1797,9 @@ fn void test_scatter_job_commits_shifted_after_a_rebase() @test {
         ScatterJob job = take_job(&fixture, layer, tmem);
         run_job(&job, tmem);
         fixture.scene.shift_origin({ REBASE_OFFSET, 0, REBASE_OFFSET });
+        // shift_origin takes no vertical offset; the check accounts for one all the same.
+        anchor.local.position.y -= REBASE_HEIGHT;
+        fixture.scene.world_shift[1] += REBASE_HEIGHT;
         fixture.scene.update_world();
         try_commit(&fixture, &job)!!;
 
@@ -1805,6 +1810,14 @@ fn void test_scatter_job_commits_shifted_after_a_rebase() @test {
         update_landscape(&fixture);
         assert(runtime.count_passes == count_passes);
         foreach (copy : committed) assert(cell_unchanged(&fixture, layer, copy));
+
+        write_density(&fixture, density, before_edit[..]);
+        ScatterJob turned = take_job(&fixture, layer, tmem);
+        run_job(&turned, tmem);
+        fixture.scene.shift_origin({ REBASE_OFFSET, 0, REBASE_OFFSET });
+        layer.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::deg_to_rad(TURN_DEGREES));
+        fixture.scene.update_world();
+        assert(@catch(try_commit(&fixture, &turned)) == landscape::STALE);
     };
 }
 

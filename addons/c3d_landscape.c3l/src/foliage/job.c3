@@ -39,8 +39,7 @@ struct ScatterJob {
  @param [&in] scene : "World matrices current; the job reads the scene here only."
  @param [&in] assets
  @param scratch : "Holds the job's cell arrays; the job never frees them."
- @return? terrain::NOT_PREPARED
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @return? terrain::NOT_PREPARED, c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require !scene.world.is_alive(layer) || terrain::upright_rigid(scene.node(layer).world)
 *>
 fn ScatterJob? scatter_job(
@@ -271,12 +270,19 @@ fn bool same_rules(ScatterRules* first, ScatterRules* second) @private {
       && first.slope_normal == second.slope_normal;
 }
 
-// Both poses moved by the origin shift alone: x and z by the shift, nothing else, within float rounding.
+// A pose moved by the origin shift alone: the translation by the shift within float rounding, the rest exactly.
 fn bool is_rebased(Mat4 before, Mat4 after, Vec3 shift) @private {
     Mat4 expected = before;
     expected.m03 -= shift.x;
+    expected.m13 -= shift.y;
     expected.m23 -= shift.z;
-    return math::abs(expected.m - after.m).max() <= REBASE_TOLERANCE;
+    Vec3 drift = maths::translation(after) - maths::translation(expected);
+    if (math::abs(drift).max() > REBASE_TOLERANCE) return false;
+
+    expected.m03 = after.m03;
+    expected.m13 = after.m13;
+    expected.m23 = after.m23;
+    return expected.m == after.m;
 }
 
 fn bool poses_hold(

@@ -3,8 +3,6 @@ module c3d::landscape::terrain;
 import c3d;
 import c3d::asset;
 import std::math;
-import std::time;
-import std::time::clock;
 
 const float TEXEL_MAX @private = 65535; // height = height_scale * texel / 65535, the physics height-field rule
 
@@ -115,7 +113,6 @@ fn void refresh_bounds(
     if (job) {
         adopt_leaves(runtime, job);
     } else {
-        time::Clock leaves_started = clock::now();
         for (uint z = first_z; z <= last_z; z++) {
             for (uint x = first_x; x <= last_x; x++) {
                 QuadNode leaf = { .x = x, .z = z };
@@ -123,7 +120,6 @@ fn void refresh_bounds(
                 if (runtime.trace_deviation.len) refresh_chunk_gaps(runtime, texels, leaf);
             }
         }
-        runtime.leaf_ns = (ulong)(long)leaves_started.to_now();
     }
 
     if (runtime.trace_deviation.len) publish_gaps(runtime, height_scale);
