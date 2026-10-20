@@ -231,14 +231,11 @@ fn Demo? create_demo(Options options) @local {
         };
     }
     if (options.collide) {
-        sparks.collision = {
-            .response = BOUNCE,
-            .restitution = 0.45f,
-            .friction = 0.3f,
-            .radius_scale = 0.5f,
-            .ground_plane = true,
-            .max_queries = SPARK_CAPACITY, // one ray per spark, so none wait
-        };
+        sparks.collision.response = BOUNCE;
+        sparks.collision.restitution = 0.45f;
+        sparks.collision.friction = 0.3f;
+        sparks.collision.ground_plane = true;
+        sparks.collision.max_queries = SPARK_CAPACITY; // one ray per spark, so none wait
     }
     demo.emitters[1] = demo.scene.add_particle_system(sparks, name: "sparks")!;
     demo.emitters[1].local.position = { 0, 0.2f, 0 };
@@ -309,6 +306,7 @@ fn void? add_obstacle(
     Node* node = demo.scene.add_mesh(geometry, material, name: "obstacle")!;
     node.local.position = position;
     demo.scene.update_world();
+
     ColliderDesc collider = physics::default_collider_desc(BOX);
     collider.half_extents = size * 0.5f;
     demo.physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!;
@@ -323,6 +321,7 @@ fn void? add_collision_world(Demo* demo) @local {
         desc: physics::default_physics_desc(),
     )!;
     demo.has_physics = true;
+
     StandardParams surface = material::STANDARD_PARAMS_DEFAULT;
     surface.base_color = { 0.35f, 0.4f, 0.5f, 1 };
     surface.metallic = 0;
