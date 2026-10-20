@@ -103,7 +103,7 @@ fn Aabb? cull_bound(MeshCandidate* candidate, GpuGeometry* geometry) @private {
     if (candidate.billboards) return candidate.world_bounds;
     if (candidate.ribbons) return NO_INSTANCE_BOUND~;
     if (candidate.crowd) return candidate.crowd.pose_bounds;
-    if (candidate.batch.has_bounds_override) return NO_INSTANCE_BOUND~;
+    if (candidate.batch.has_bounds_override && !candidate_device_instances(candidate)) return NO_INSTANCE_BOUND~;
     return geometry.bounds;
 }
 
@@ -119,7 +119,14 @@ fn void write_cull_planes(InstanceCullRoot* root, Frustum* frustum) @private {
 }
 
 fn bool candidate_device_batch(MeshCandidate* candidate) @private {
-    return candidate_device_billboards(candidate) || candidate_device_ribbons(candidate);
+    return candidate_device_billboards(candidate) || candidate_device_ribbons(candidate)
+      || candidate_device_instances(candidate);
+}
+
+fn gpu::GpuAddress device_live_count(Renderer* renderer, MeshCandidate* candidate) @private {
+    if (candidate_device_instances(candidate)) return device_instance_count(renderer, candidate);
+
+    return device_billboard_count(renderer, candidate);
 }
 
 fn usz visible_list_bytes(MeshCandidate* candidate) @private {
@@ -394,7 +401,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 .first            = range.first,
                 .count            = range.count,
                 .keys             = item.keys_address,
-                .live_count       = device_billboard_count(renderer, item.candidate),
+                .live_count       = device_live_count(renderer, item.candidate),
                 .instance_effects = item.effects,
                 .kind             = item.candidate.billboards
                     ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,

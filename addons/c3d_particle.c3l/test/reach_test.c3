@@ -96,3 +96,37 @@ fn void test_trail_bound_holds_the_strip_edges() @test {
         assert(bound_contains(bound, point.position - half) && bound_contains(bound, point.position + half));
     }
 }
+
+fn void test_mesh_bound_holds_the_corners_of_every_instance() @test {
+    Scene scene = reach_scene();
+    defer scene::destroy_scene(&scene);
+    Aabb geometry_bounds = { .min = { -1, -0.5f, -2 }, .max = { 1, 0.5f, 2 } };
+    ParticleSystemDesc desc = particle::default_particle_system_desc();
+    desc.capacity = 64;
+    desc.render_mode = ParticleRenderMode.MESH;
+    desc.shape = EmitterShape.POINT;
+    desc.lifetime = { .min = 4, .max = 4 };
+    desc.speed = { .min = 0, .max = 0 };
+    desc.size = { .min = 0.5f, .max = 0.5f };
+    desc.rotation = { .min = -(float)math::PI, .max = (float)math::PI };
+    Node* emitter = scene.add_particle_system(desc)!!;
+    ParticleSystem* system = scene.get(emitter, ParticleSystem);
+    system.emit_burst(desc.capacity);
+    scene.update_world();
+    ParticleReach reach;
+    reach.record(
+        desc: &desc,
+        emitter_world: emitter.world,
+        wind: {},
+        seconds: REACH_STEP_SECONDS,
+    );
+    particle::update(&scene, REACH_STEP_SECONDS);
+
+    Aabb bound = reach.bound(&desc, particle::bound_radius(geometry_bounds));
+    InstancedMesh* batch = scene.get(scene.node(system.draw_node), InstancedMesh);
+    assert(batch.count == desc.capacity);
+    foreach (transform : batch.transforms[:batch.count]) {
+        Aabb placed = maths::aabb_transform(geometry_bounds, transform.to_mat4());
+        assert(bound_contains(bound, placed.min) && bound_contains(bound, placed.max));
+    }
+}

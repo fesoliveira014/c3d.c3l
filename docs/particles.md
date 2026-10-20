@@ -205,17 +205,18 @@ collision, a second scan, and publication. Once every system has recorded its st
 [delivery](#gpu-sub-emitters). Every dispatch covers the system's capacity, or the system's `max_events` for a
 delivery; there is no indirect dispatch.
 The pool stays in spawn order. A system's buffer holds 208 bytes per particle: two copies of the particle state, the
-scan scratch and one billboard record; a [trail](#gpu-trails) adds `80 + 88 x max_points` bytes, and
+scan scratch and one billboard record, or one 128-byte instance record for MESH; a [trail](#gpu-trails) adds `80 + 88 x max_points` bytes, and
 [sub-emitters](#gpu-sub-emitters) add 96 bytes per event of `max_events`. The draw child is a
-core `DEVICE` [billboard batch](billboards.md#device-batches) over the same buffer, so every view culls and sorts the
-records the compute stages wrote, and no record is uploaded or copied by the CPU.
+core `DEVICE` [billboard batch](billboards.md#device-batches) over the same buffer, or for MESH a `DEVICE`
+[instanced batch](instancing.md#device-batches), so every view culls and sorts the records the compute stages wrote, and
+no record is uploaded or copied by the CPU.
 
 ### Supported subset
 
 - Supported: every emitter shape, rate and bursts; gravity, drag, wind and turbulence; lifetime tables, colour and
-  flipbooks; BILLBOARD and STRETCHED draw modes; trails; sub-emitters between GPU systems; REFUSE saturation; and
+  flipbooks; BILLBOARD, STRETCHED and MESH draw modes; trails; sub-emitters between GPU systems; REFUSE saturation; and
   `CollisionResponse` BOUNCE, STICK or DIE against `ground_plane`.
-- Refused with `UNSUPPORTED` at prepare: MESH draws, `DROP_OLDEST` and a collision response without `ground_plane`.
+- Refused with `UNSUPPORTED` at prepare: `DROP_OLDEST` and a collision response without `ground_plane`.
   `ParticleSystem.set_collision` requires a CPU system, because the callback is application code.
 
 ### GPU trails
@@ -232,6 +233,28 @@ points from newest to oldest, and a break with no width for each unused slot, so
 nothing. A terminating break follows the last strip. The count word is the number of live particles times
 `max_points + 1`, which the CPU never reads; the renderer turns it into the draw's segment count on the device. Widths,
 colours and texture coordinates follow [Publication](#publication).
+
+### GPU mesh debris
+
+A MESH system publishes one `InstanceGpu` record for each drawn particle, in spawn order, with the count word after the
+records. The record holds the matrix the CPU publishes (the position, a turn of `rotation` about +Y and a uniform scale
+of the drawn size) packed by core's `pack_instance_record`, and the particle's colour. The batch node keeps the identity
+pose of a WORLD child, so the records are in scene space. The records come out as the CPU's within the
+[tolerance](#determinism-and-tolerance) below, with one difference: the instance seed, which sway and fade read, is a
+hash of the particle's seed, where the CPU path hashes the position, so it does not change as the particle moves.
+
+The draw child is a core `DEVICE` [instanced batch](instancing.md#device-batches). The batch's `cast_shadow` is
+`mesh_cast_shadow`, and the shadow layers cull the device records with the same count word as the view, so shadows
+appear in the frame that spawns the debris. A device batch has no per-instance history, so motion vectors follow the
+batch node alone: debris shows no object motion in a temporal view. Picking and `SceneIndex` skip the batch.
+
+`mesh_trace` is served by a host mirror, because the scene trace reads CPU transforms. A traced system owns a second
+`READBACK` buffer of 16 bytes and 48 bytes per particle of `capacity`, which the renderer copies to the host every frame. Publication writes each drawn particle's
+position, size, rotation and colour there, and each `update` copies the snapshot that is `FRAMES_IN_FLIGHT` frames old
+into the batch's `transforms` and `colors`, sets `count` and marks the batch dirty. The scene trace therefore sees
+debris as it was that many frames earlier, and sees none until the first snapshot arrives. A rebase within those frames
+moves the traced debris once. The copy is the only per-particle readback; a system without `mesh_trace` has no mirror
+and is not traced. A traced system takes two of the renderer's 64 application buffers.
 
 ### GPU sub-emitters
 
@@ -268,8 +291,9 @@ Differences from the CPU path:
 
 The simulation state lives on the device. `alive`, `dropped`, `dropped_events` and `skipped_events` are read back from a
 `READBACK` buffer and reach the CPU `FRAMES_IN_FLIGHT` frames late; all read 0 before the first copy, and a frame without
-a copy keeps the previous values. A delivery's `dropped` and `skipped_events` reach the buffer with the target's or
-source's next step, one update later than the rest. Nothing waits for the device.
+a copy keeps the previous values. A traced mesh system's [mirror](#gpu-mesh-debris) arrives the same way. A delivery's
+`dropped` and `skipped_events` reach the buffer with the target's or source's next step, one update later than the rest.
+Nothing waits for the device.
 
 ### Aborted frames
 
@@ -298,8 +322,8 @@ Both paths draw every spawned value from `spawn_hash`, which `particle_random.gl
 system with one descriptor spawn the same particles. They differ only by floating-point order: the stages use float
 where the CPU uses double for the spawn samples and the flipbook, and the device's sine, cosine and fused operations.
 Replay is deterministic on one device and driver; there is no bit equality across devices, drivers or compilers.
-The acceptance case compares positions within 1e-3 m and sizes within 1e-5 m, and the stored points of a trail within
-1e-3 m.
+The acceptance case compares positions within 1e-3 m and sizes within 1e-5 m, the stored points of a trail within
+1e-3 m, and the matrix elements of a mesh record within 1e-3 and its colour within 1e-4.
 
 ### Bounds
 
@@ -311,7 +335,8 @@ sets the draw child's bounds override to that union grown by:
 - the fall `½·|g|·T·(T + 0.1 s)` along gravity, one-sided;
 - with non-zero drag, the winds of the last lifetime times `T`, one-sided, and the turbulence speed bound times `T`,
   where the bound is the curl supremum 8.5 times the octave amplitudes;
-- the largest drawn half-extent, from the size tables and the stretch;
+- the largest drawn half-extent, from the size tables and the stretch, or for MESH the largest size times the distance
+  from the origin of the geometry to the farthest corner of its bound;
 - for a ground-plane response, the plane's height and one collision radius above it.
 
 The trail child takes the same box grown by half the widest strip on every axis, because a stored point is a past
@@ -522,7 +547,7 @@ core handles per-camera projection and the zero/parallel-direction fallback. Bot
 write world-space `BillboardRecord` values into a `RECORDS` [batch](billboards.md#sources)
 that core copies relative to the frame origin, so no per-particle conversion runs in the renderer.
 Rotation is an extra in-plane turn. MESH publishes the supplied geometry/material
-with uniform scale and rotation about world +Y. Mesh particles inherit that
+with uniform scale and rotation about world +Y; a GPU system publishes [device records](#gpu-mesh-debris) instead. Mesh particles inherit that
 material's alpha/depth behaviour. Zero-area/zero-scale output is omitted without removing the simulated
 particle. Pick indices identify compacted draw records, not stable particles.
 
@@ -803,8 +828,9 @@ stretched sparks and mesh debris, with emitting/burst controls, wind, smoke
 lighting/soft distance, spark blending and a second camera. Validation is always
 enabled. `--frames N` closes an interactive smoke test after N frames.
 
-`--gpu` gives the smoke, sparks and embers systems, and the smoke that `--sparks` feeds, GPU execution where the
-[subset](#supported-subset) allows it, and the debris stays on the CPU as a mesh. It needs the
+`--gpu` gives the smoke, sparks, debris and embers systems, and the smoke that `--sparks` feeds, GPU execution where the
+[subset](#supported-subset) allows it. `--capacity` scales the debris pool and rate with the spark pool, from 1,024 and
+450 per second at the default 4,096 sparks. It needs the
 `particles_gpu` build, which enables `C3D_PARTICLE_GPU`, and applies to the window and to `--benchmark`, which then
 prints `execution,gpu`, the `gpu_particle_ms` of the custom compute pass, and `not_applicable` for the CPU-only
 `sparks_bounds_ms` and `sparks_copy_ms`. With `--collide` the sparks collide with the ground plane only. The flag

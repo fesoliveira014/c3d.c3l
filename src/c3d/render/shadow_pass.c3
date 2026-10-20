@@ -149,6 +149,9 @@ fn ShadowDraw[]? prepare_shadow_draws(
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     usz count;
     foreach (&candidate : candidates) {
+        // The view that draws the batch counts its lost buffer.
+        if (device_instances_lost(renderer, candidate)) continue;
+
         Material* material = candidate_material(renderer, candidate);
         gpu::GpuAddress custom_header;
         if (material.kind == MaterialKind.CUSTOM) {

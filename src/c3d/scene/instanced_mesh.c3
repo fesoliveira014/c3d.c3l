@@ -21,6 +21,19 @@ const uint QUADTREE_ROOT = uint::max; // mirrored as QUADTREE_ROOT in c3d.abi
 const uint MAX_QUADTREE_DEPTH = 8; // mirrored as MAX_QUADTREE_DEPTH in c3d.abi; each selection thread walks this many ancestors
 
 <*
+ Bytes of one record in a DEVICE instance batch's buffer.
+*>
+const usz INSTANCE_RECORD_BYTES = 128; // pinned to InstanceGpu in render/instances.c3
+
+<*
+ Where an instanced batch's draw data lives.
+*>
+enum InstanceSource {
+    TRANSFORMS, // Transform and color values that core packs once per revision
+    DEVICE,     // node-local records and a live count that compute writes
+}
+
+<*
  Source of a swaying vertex's bend weight.
 *>
 enum SwayWeight {
@@ -123,10 +136,22 @@ struct InstanceRangeLog {
 }
 
 <*
+ Renderer buffer holding a DEVICE batch's records and live count.
+*>
+struct InstanceDevice {
+    BufferId buffer;
+    usz records_offset; // capacity InstanceGpu records, 16-byte aligned
+    usz count_offset; // one uint, 4-byte aligned, at most capacity
+    uint capacity;
+}
+
+<*
  Batch of one geometry and material; instances live in [0, count) of capacity-sized arrays.
  In-place edits of transforms or colors reach the renderer, bounds and history only through
  mark_instances_dirty or mark_instances_range_dirty.
  aggregate and ranges are kept by the library from the arrays under revision; applications do not write them.
+ A DEVICE batch draws from its buffer: transforms, colors and count are the owner's optional host mirror,
+ read by scene tracing and nothing else.
 *>
 struct InstancedMesh {
     GeometryId        geometry;
@@ -146,6 +171,8 @@ struct InstancedMesh {
     InstanceAggregate aggregate;
     InstanceRangeLog  ranges;
     InstanceQuadtree  quadtree;
+    InstanceSource    source;
+    InstanceDevice    device; // DEVICE only; a zero buffer draws nothing
 }
 
 <*
@@ -188,10 +215,31 @@ fn InstanceSpan InstanceRangeLog.span_since(&self, uint revision) {
 }
 
 <*
+ Instances the batch can hold.
+*>
+fn uint InstancedMesh.capacity(&self) {
+    switch (self.source) {
+        case TRANSFORMS: return (uint)self.transforms.len;
+        case DEVICE: return self.device.capacity;
+    }
+}
+
+<*
+ Instances the renderer draws from; a DEVICE batch's capacity once attached.
+*>
+fn uint InstancedMesh.draw_count(&self) {
+    if (self.source != InstanceSource.DEVICE) return self.count;
+
+    return self.device.buffer.generation ? self.device.capacity : 0;
+}
+
+<*
  Live instances whose transform mirrors space, as of the current revision.
- Writes aggregate when stale.
+ Writes aggregate when stale; a DEVICE batch has none, because its records are unmirrored.
 *>
 fn uint InstancedMesh.mirrored_count(&self) {
+    if (self.source == InstanceSource.DEVICE) return 0;
+
     InstanceAggregate* aggregate = &self.aggregate;
     if (aggregate.mirrored_revision == self.revision) return aggregate.mirrored;
 

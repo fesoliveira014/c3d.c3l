@@ -19,6 +19,8 @@ const usz COUNTER_BYTES @private = 32; // mirrored as the two uvec4 of ParticleC
 const usz EVENT_BYTES @private = 48; // mirrored as ParticleEventGpu in particle_step.glsl
 const usz EVENT_HALVES @private = 2; // one for the step in flight, one for the step delivered last
 const usz EVENT_ACCEPT_WORDS @private = 4; // mirrored as the uvec4 event_accept of StepRoot; one word per trigger
+const usz MIRROR_HEADER_BYTES @private = 16; // the live count, padded; mirrored as the offset of MirrorRecords
+const usz MIRROR_RECORD_BYTES @private = 48; // mirrored as ParticleMirrorGpu in particle_publish.comp.glsl
 
 $assert EmitterShape.POINT.ordinal == 0; // mirrored as PARTICLE_SHAPE_POINT in particle_step.glsl
 $assert EmitterShape.SPHERE.ordinal == 1; // mirrored as PARTICLE_SHAPE_SPHERE in particle_step.glsl
@@ -42,6 +44,17 @@ enum ScanMode : uint @private {
     BLOCKS, // mirrored as PARTICLE_SCAN_BLOCKS in particle_step.glsl
     TOTALS, // mirrored as PARTICLE_SCAN_TOTALS in particle_step.glsl
 }
+
+// Mirrors ParticleMirrorGpu in particle_publish.comp.glsl.
+struct MirrorRecord @private {
+    Vec4 position_size;
+    Vec4 color;
+    float rotation;
+    float _pad0;
+    float _pad1;
+    float _pad2;
+}
+$assert MirrorRecord::size == MIRROR_RECORD_BYTES;
 
 // Mirrors StepRoot in particle_step.glsl.
 struct StepRoot @private {
@@ -122,9 +135,8 @@ struct StepRoot @private {
     float delivery_inherit;
     float impact_speed;
     uint delivery_valid;
-    uint _pad6;
-    uint _pad7;
-    uint _pad8;
+    uint mesh;
+    ulong mirror;
 }
 
 $assert StepRoot::size == 880;
@@ -145,6 +157,7 @@ $assert $reflect(StepRoot.event_capacity).offset == 824;
 $assert $reflect(StepRoot.event_accept).offset == 832;
 $assert $reflect(StepRoot.delivery_sub).offset == 848;
 $assert $reflect(StepRoot.delivery_valid).offset == 864;
+$assert $reflect(StepRoot.mirror).offset == 872;
 
 struct SystemLayout @private {
     usz state_home;
@@ -169,6 +182,17 @@ struct SystemLayout @private {
 struct SystemAddresses @private {
     ulong base;
     ulong counters;
+    ulong mirror; // zero without a host mirror
+}
+
+fn bool mirrors_instances(ParticleSystemDesc* desc) @private {
+    return desc.render_mode == ParticleRenderMode.MESH && desc.mesh_trace;
+}
+
+fn usz mirror_bytes(uint capacity) @private => MIRROR_HEADER_BYTES + (usz)capacity * MIRROR_RECORD_BYTES;
+
+fn usz record_bytes(ParticleSystemDesc* desc) @private {
+    return desc.render_mode == ParticleRenderMode.MESH ? scene::INSTANCE_RECORD_BYTES : BillboardRecord::size;
 }
 
 fn SystemLayout system_layout(ParticleSystemDesc* desc) @private {
@@ -180,7 +204,7 @@ fn SystemLayout system_layout(ParticleSystemDesc* desc) @private {
     layout.scan = layout.state_alt + (usz)capacity * PARTICLE_STATE_BYTES;
     layout.totals = layout.scan + (usz)capacity * SCAN_ENTRY_BYTES;
     layout.records = particle::particle_align(layout.totals + (usz)groups * TOTAL_ENTRY_BYTES, REGION_ALIGNMENT);
-    layout.count = layout.records + (usz)capacity * BillboardRecord::size;
+    layout.count = layout.records + (usz)capacity * record_bytes(desc);
     layout.size = layout.count + COUNT_WORD_BYTES;
     layout.groups = groups;
     uint trail_max_points = desc.trail.max_points;
@@ -302,5 +326,7 @@ fn StepRoot step_root(
         .event_capacity = desc.sub_emitter_count ? desc.max_events : 0,
         .event_accept = event_accept,
         .impact_speed = collision.impact_speed,
+        .mesh = desc.render_mode == ParticleRenderMode.MESH ? 1 : 0,
+        .mirror = addresses.mirror,
     };
 }

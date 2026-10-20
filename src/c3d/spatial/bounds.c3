@@ -70,6 +70,7 @@ fn bool instanced_mesh_is_live(AssetStore* assets, InstancedMesh* batch) {
  @param [&in] node : "World matrix as left by the last update_world."
  @param [&inout] batch : "Live geometry id and live count above zero."
  @param origin : "Absolute origin of the returned bounds; zero preserves world."
+ @require batch.source == InstanceSource.TRANSFORMS || batch.has_bounds_override
 *>
 fn Aabb instanced_world_bounds(
     AssetStore* assets,

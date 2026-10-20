@@ -104,10 +104,11 @@ fn float ParticleReach.speed_bound(&self, ParticleSystemDesc* desc) {
 }
 
 <*
- Scene-space box that holds every billboard the system can draw, from the slices recorded so far.
+ Scene-space box that holds every billboard or mesh the system can draw, from the slices recorded so far.
  @param [&in] desc : "The system's descriptor."
+ @param mesh_radius : "MESH only; the radius of the geometry's bound."
 *>
-fn Aabb ParticleReach.bound(&self, ParticleSystemDesc* desc) {
+fn Aabb ParticleReach.bound(&self, ParticleSystemDesc* desc, float mesh_radius = 0) {
     ReachUnion slices = union_slices(self);
     if (!slices.recorded) return {};
 
@@ -142,7 +143,8 @@ fn Aabb ParticleReach.bound(&self, ParticleSystemDesc* desc) {
             wind_speed: wind_speed,
         ) * desc.stretch;
     }
-    float half_extent = 0.5f * math::sqrt(width * width + height * height);
+    float half_extent = desc.render_mode == ParticleRenderMode.MESH
+      ? width * mesh_radius : 0.5f * math::sqrt(width * width + height * height);
     float travel = (desc.speed.max + self.inherited_speed + turbulence) * lifetime + half_extent;
     Vec3 margin = { travel, travel, travel };
     bound.min -= margin;
@@ -159,6 +161,14 @@ fn Aabb ParticleReach.trail_bound(&self, ParticleSystemDesc* desc) {
     float half_width = 0.5f * desc.trail.width * peak_scale(&desc.trail.width_over_trail);
     Vec3 margin = { half_width, half_width, half_width };
     return { .min = bound.min - margin, .max = bound.max + margin };
+}
+
+<*
+ Distance from the origin to the farthest corner of the bound.
+ @pure
+*>
+fn float bound_radius(Aabb bounds) {
+    return math::max(math::abs(bounds.min), math::abs(bounds.max)).length();
 }
 
 fn ReachUnion union_slices(ParticleReach* reach) @private {

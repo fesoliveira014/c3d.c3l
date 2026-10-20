@@ -134,6 +134,7 @@ fn PickHit[] pick(
         Node* node = scene.node(entity);
         float distance;
         if (batch.count && node.visible_effective && (options.layers & node.layers) != 0
+            && batch.source == InstanceSource.TRANSFORMS
             && !animated_lod_owns_node(scene, node)
             && instanced_mesh_is_live(assets, batch)
             && maths::ray_intersects_aabb(ray, instanced_world_bounds(assets, node, batch), &distance)) {
