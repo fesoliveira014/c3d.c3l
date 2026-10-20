@@ -68,6 +68,21 @@ struct StepRecorder @private {
     GeometryWrite[] output;
 }
 
+struct StepBatch @private {
+    ClothRoot[]     roots;   // parameters of workgroup i
+    GeometryWrite[] outputs; // geometry workgroup i writes
+    ClothSlot*[]    members; // cloth workgroup i steps
+    usz             count;
+}
+
+fn void StepBatch.add(&self, ClothSlot* slot, ClothRoot root) {
+    root.phases = slot.started ? 0 : PASS_INITIALIZE;
+    self.roots[self.count] = root;
+    self.outputs[self.count] = output_of(slot);
+    self.members[self.count] = slot;
+    self.count++;
+}
+
 fn void? StepRecorder.run(&self, uint threads, bool writes_output = false) {
     return self.renderer.dispatch({
         .shader   = self.stage,
@@ -107,83 +122,126 @@ fn void? StepRecorder.record_fused(&self, uint[] color_starts, bool first) {
     return self.run(self.root.particle_count, writes_output: true);
 }
 
-fn void? StepRecorder.record_single(&self, bool first) {
-    self.root.phases = first ? PASS_INITIALIZE : 0;
-    return self.renderer.dispatch({
-        .shader   = self.stage,
-        .root     = material::@as_bytes(self.root),
-        .groups   = { 1, 1, 1 },
-        .writes   = self.state_writes[..],
-        .geometry = self.output,
-    });
+fn StepBatch create_step_batch(Allocator allocator, sz capacity) @private {
+    return {
+        .roots   = alloc::new_array(allocator, ClothRoot, capacity),
+        .outputs = alloc::new_array(allocator, GeometryWrite, capacity),
+        .members = alloc::new_array(allocator, ClothSlot*, capacity),
+    };
+}
+
+fn void destroy_step_batch(Allocator allocator, StepBatch* batch) @private {
+    alloc::free(allocator, batch.roots.ptr);
+    alloc::free(allocator, batch.outputs.ptr);
+    alloc::free(allocator, batch.members.ptr);
+    *batch = {};
+}
+
+fn GeometryWrite output_of(ClothSlot* slot) @private {
+    return {
+        .geometry     = slot.geometry,
+        .streams      = { .positions = true, .normals = true },
+        .local_bounds = slot.bounds,
+    };
+}
+
+// The first step counts as taken once it is recorded; a cloth whose recording faulted initializes again.
+fn void note_first_step(ClothSlot* slot, Renderer* renderer) @private {
+    if (slot.started) return;
+
+    slot.started = true;
+    slot.pending = true;
+    slot.first_frame = renderer.frame_index;
 }
 
 // The due steps are taken here, so a frame that is not submitted loses them.
 fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSlot* slot) @private {
+    ClothState* state = scene.get(scene.node(slot.cloth), Cloth).state;
+    uint steps = state.device.steps;
+    if (!steps) return;
+
+    state.device.steps = 0;
+    if (state.desc.substeps > uint::max / steps) return c3d::CAPACITY_EXCEEDED~;
+
+    ClothRoot root = step_root(cloths, renderer, scene, slot, steps)!;
+    if (slot.shape == ClothStepShape.SINGLE) {
+        cloths.batch.add(slot, root);
+        return;
+    }
+
+    GeometryWrite[1] output = { output_of(slot) };
+    StepRecorder recorder = {
+        .renderer     = renderer,
+        .stage        = cloths.stages.fused,
+        .state_writes = { cloths.positions, cloths.work },
+        .output       = output[..],
+        .root         = root,
+    };
+    recorder.record_fused(state.edge_color_starts[:state.edge_colors + 1], !slot.started)!;
+    note_first_step(slot, renderer);
+}
+
+fn void? record_batch(GpuCloths* cloths, Renderer* renderer) @private {
+    StepBatch* batch = &cloths.batch;
+    usz count = batch.count;
+    batch.count = 0;
+    if (!count) return;
+
+    BufferId[2] state_writes = { cloths.positions, cloths.work };
+    renderer.dispatch({
+        .shader   = cloths.stages.single,
+        .root     = ((char*)batch.roots.ptr)[:count * ClothRoot::size],
+        .groups   = { (uint)count, 1, 1 },
+        .writes   = state_writes[..],
+        .geometry = batch.outputs[:count],
+    })!;
+    foreach (slot : batch.members[:count]) note_first_step(slot, renderer);
+}
+
+fn ClothRoot? step_root(
+    GpuCloths* cloths,
+    Renderer* renderer,
+    Scene* scene,
+    ClothSlot* slot,
+    uint steps,
+) @private {
     Node* node = scene.node(slot.cloth);
     ClothState* state = scene.get(node, Cloth).state;
     ClothDeviceStep* device = &state.device;
-    uint steps = device.steps;
-    if (!steps) return;
-
-    device.steps = 0;
     ClothDesc* desc = &state.desc;
-    if (desc.substeps > uint::max / steps) return c3d::CAPACITY_EXCEEDED~;
 
-    bool first = !slot.started;
     float substep_seconds = device.step_seconds / (float)desc.substeps;
     Vec3 gravity = device.gravity * desc.gravity_scale;
     ulong positions = (ulong)renderer.buffer_address(cloths.positions) + slot.first_particle * Vec4::size;
     ulong work = (ulong)renderer.buffer_address(cloths.work);
     ulong velocities = work + (ulong)(cloths.desc.max_particles + slot.first_particle) * Vec4::size;
     ulong tables = (ulong)renderer.buffer_address(cloths.tables) + slot.tables_offset;
-    GeometryWrite[1] output = {{
-        .geometry     = slot.geometry,
-        .streams      = { .positions = true, .normals = true },
-        .local_bounds = slot.bounds,
-    }};
-    StepRecorder recorder = {
-        .renderer     = renderer,
-        .stage        = slot.shape == ClothStepShape.SINGLE ? cloths.stages.single : cloths.stages.fused,
-        .state_writes = { cloths.positions, cloths.work },
-        .output       = output[..],
-        .root         = {
-            .positions          = positions,
-            .predicted          = work + slot.first_particle * Vec4::size,
-            .velocities         = velocities,
-            .edges              = tables + slot.tables.edges,
-            .initial            = tables + slot.tables.initial,
-            .rest               = tables + slot.tables.rest,
-            .marks              = tables + slot.tables.marks,
-            .color_starts       = tables + slot.tables.color_starts,
-            .adjacency          = tables + slot.tables.adjacency,
-            .triangles          = tables + slot.tables.triangles,
-            .geometry_positions = (ulong)renderer.geometry_stream_address(slot.geometry, GeometryStream.POSITIONS)!,
-            .geometry_normals   = (ulong)renderer.geometry_stream_address(slot.geometry, GeometryStream.NORMALS)!,
-            .anchor_frame       = bitcast(device.anchor, float[16]),
-            .target_frame       = bitcast(device.target, float[16]),
-            .inverse_world      = bitcast(maths::inverse_affine(node.world), float[16]),
-            .gravity_step       = { gravity.x, gravity.y, gravity.z, substep_seconds },
-            .sphere             = sphere_of(scene, state),
-            .particle_count     = slot.particle_count,
-            .stiffness          = 1 - math::pow(1 - desc.stretch_stiffness, 1 / (float)desc.iterations),
-            .damping            = math::max(0.0f, 1 - desc.damping * substep_seconds),
-            .ground             = desc.collide_ground ? desc.ground_height + desc.thickness : NO_GROUND,
-            .substeps           = steps * desc.substeps,
-            .iterations         = desc.iterations,
-            .color_count        = state.edge_colors,
-        },
+    return {
+        .positions          = positions,
+        .predicted          = work + slot.first_particle * Vec4::size,
+        .velocities         = velocities,
+        .edges              = tables + slot.tables.edges,
+        .initial            = tables + slot.tables.initial,
+        .rest               = tables + slot.tables.rest,
+        .marks              = tables + slot.tables.marks,
+        .color_starts       = tables + slot.tables.color_starts,
+        .adjacency          = tables + slot.tables.adjacency,
+        .triangles          = tables + slot.tables.triangles,
+        .geometry_positions = (ulong)renderer.geometry_stream_address(slot.geometry, GeometryStream.POSITIONS)!,
+        .geometry_normals   = (ulong)renderer.geometry_stream_address(slot.geometry, GeometryStream.NORMALS)!,
+        .anchor_frame       = bitcast(device.anchor, float[16]),
+        .target_frame       = bitcast(device.target, float[16]),
+        .inverse_world      = bitcast(maths::inverse_affine(node.world), float[16]),
+        .gravity_step       = { gravity.x, gravity.y, gravity.z, substep_seconds },
+        .sphere             = sphere_of(scene, state),
+        .particle_count     = slot.particle_count,
+        .stiffness          = 1 - math::pow(1 - desc.stretch_stiffness, 1 / (float)desc.iterations),
+        .damping            = math::max(0.0f, 1 - desc.damping * substep_seconds),
+        .ground             = desc.collide_ground ? desc.ground_height + desc.thickness : NO_GROUND,
+        .substeps           = steps * desc.substeps,
+        .iterations         = desc.iterations,
+        .color_count        = state.edge_colors,
     };
-    if (slot.shape == ClothStepShape.SINGLE) {
-        recorder.record_single(first)!;
-    } else {
-        recorder.record_fused(state.edge_color_starts[:state.edge_colors + 1], first)!;
-    }
-    if (first) {
-        slot.started = true;
-        slot.pending = true;
-        slot.first_frame = renderer.frame_index;
-    }
 }
 
 // The sphere is placed at its owner's pose of this update; one whose owner is gone does not push.

@@ -14,6 +14,8 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
+const uint64_t CLOTH_ROOT_BYTES = uint64_t(368u); // mirrored as ClothRoot::size in gpu/cloth_record.c3; the stride of the roots of a batched dispatch
+
 // Mirrors ClothRoot in gpu/cloth_record.c3.
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ClothRoot {
     uint64_t positions;          // vec4 per particle: world position, inverse mass
