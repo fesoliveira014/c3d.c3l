@@ -140,6 +140,7 @@ struct TerrainRuntime {
     float[]                  trace_deviation;  // per finest chunk: largest gap in height texels; empty without trace
     float[MAX_TERRAIN_LEVELS] drawn_deviation; // metres per level: largest gap between its drawn chunks and the surface
     float[]                  drawn_chunk_deviation; // per level above 0 and finest chunk: gap in texels; empty untraced
+    ulong                    leaf_ns;          // nanoseconds the last refresh spent on leaf bounds and chunk gaps
 }
 
 <*

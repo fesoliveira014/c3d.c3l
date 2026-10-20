@@ -819,7 +819,10 @@ of a stroke: the windows it touched, or the whole field when the collider is not
 
 `--benchmark` prints `update_us`, the instances drawn and the upload bytes per segment, and the
 `control_region_upload_ms`, `height_region_upload_ms` and `control_filter_ms` lines of
-[region uploads](#region-uploads); with `--gpu-timings` it adds the GPU pass times.
+[region uploads](#region-uploads); with `--gpu-timings` it adds the GPU pass times. Its `bounds_build_ms` is a
+whole bounds build (a revision without `mark_dirty`), split into `bounds_leaf_ms`, the leaf bounds and, under
+`--shadows traced`, the per-chunk gaps (`TerrainRuntime.leaf_ns` holds the last refresh's share), and
+`bounds_reduce_ms`, the rest of the update: reductions and publication.
 
 ### Region uploads
 
