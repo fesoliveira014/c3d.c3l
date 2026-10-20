@@ -2,6 +2,7 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "buffer_reference.glsl"
+#include "dispatch_grid.glsl"
 #include "instance_effects.glsl"
 #include "quadtree_morph.glsl"
 
@@ -188,7 +189,7 @@ void select_quadtree(InstanceCullRoot root, uint node) {
 
 void main() {
     InstanceCullRoot root = InstanceCullRoot(pc.root_gpu);
-    uint slot = gl_GlobalInvocationID.x;
+    uint slot = linear_group_index(INSTANCE_CULL_GROUP_SIZE);
     if (root.lod_mode == LOD_FINALIZE) {
         if (slot != 0u) return;
         if (root.args == 0ul) {

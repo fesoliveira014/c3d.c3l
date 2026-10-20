@@ -2,6 +2,7 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "buffer_reference.glsl"
+#include "dispatch_grid.glsl"
 
 layout(local_size_x = INSTANCE_SORT_GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 
@@ -38,7 +39,10 @@ uint pair_low(uint pair, uint distance) {
 }
 
 void order_global(InstanceSortRoot root) {
-    uint low = pair_low(gl_GlobalInvocationID.x, root.distance);
+    uint pair = linear_group_index(INSTANCE_SORT_GROUP_SIZE);
+    if (pair >= root.capacity / 2u) return;
+
+    uint low = pair_low(pair, root.distance);
     uint high = low + root.distance;
     SortKeys keys = SortKeys(root.keys);
     uint64_t low_key = keys.values[low];
@@ -50,7 +54,9 @@ void order_global(InstanceSortRoot root) {
 
 void order_block(InstanceSortRoot root, uint visible_count) {
     uint length = min(root.capacity, INSTANCE_SORT_BLOCK);
-    uint base = gl_WorkGroupID.x * length;
+    uint base = linear_group_id() * length;
+    if (base >= root.capacity) return;
+
     bool blocks = (root.mode & INSTANCE_SORT_BLOCKS) != 0u;
     for (uint slot = gl_LocalInvocationID.x; slot < length; slot += INSTANCE_SORT_GROUP_SIZE) {
         uint index = base + slot;

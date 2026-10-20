@@ -448,7 +448,7 @@ fn void? record_quadtree_selection(Renderer* renderer, QuadtreeSelection[] selec
                 .node_world             = bitcast(maths::rebase(selection.node.world, renderer.frame_origin), Mat4f),
             };
             uint groups = (batch.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
-            gpu::cmd_dispatch(&renderer.commands, block.address, { groups, 1, 1 })!;
+            gpu::cmd_dispatch(&renderer.commands, block.address, dispatch_grid(renderer, groups))!;
             renderer.stats.cull_dispatches++;
         }
         gpu::Barrier selected = { .before = { .compute }, .after = { .compute, .vertex_shader } };

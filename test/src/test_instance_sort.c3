@@ -6,6 +6,7 @@ import c3d::material;
 import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
+import gpu;
 import std::math;
 
 const uint SEED @local = 0x2545f491;
@@ -15,6 +16,8 @@ const uint SOURCE_STRIDE @local = 7919; // prime, so slot * stride % count visit
 const uint DEPTH_LEVELS @local = 64; // few enough that equal depths are common
 const uint PLACED_INSTANCES @local = 101; // odd, so the list needs its 8-byte pad before the keys
 const uint CORE_WORKGROUP_LIMIT @local = 65535; // Vulkan 1.3 core minimum of maxComputeWorkGroupCount[0]
+const uint ABOVE_ROW_INSTANCES @local = CORE_WORKGROUP_LIMIT * shader::INSTANCE_CULL_GROUP_SIZE + 1; // one past what a one-row cull grid covers
+const uint ABOVE_ROW_SORT_INSTANCES @local = (1 << 23) + 1; // the next power-of-two capacity gives a global step 65,536 groups
 const usz ROOMY_ARENA_BYTES @local = 1 << 30; // room for MAX_SORTED_INSTANCES, so only the cap refuses one more
 
 struct Random @local {
@@ -157,6 +160,14 @@ fn void test_sort_plan_sorts_partial_lists() @test {
     }
 }
 
+fn void assert_grid_covers(uint groups, uint max_x) @local {
+    gpu::Vec3u grid = render::grid_shape(groups, max_x);
+    assert(grid.x >= 1 && grid.x <= max_x);
+    assert(grid.z == 1);
+    assert((ulong)grid.x * grid.y >= groups);
+    assert((ulong)grid.x * (ulong)(grid.y - 1) < groups);
+}
+
 fn void test_sort_plan_dispatch_counts() @test {
     uint[4] capacities = { 1024, 8192, 16384, 131072 };
     usz[4] lengths = { 1, 10, 15, 36 };
@@ -168,19 +179,33 @@ fn void test_sort_plan_dispatch_counts() @test {
                 assert(((step.mode & shader::INSTANCE_SORT_WRITE_LIST) != 0) == (step_index == plan.len - 1));
             }
         }
-        uint largest = render::sort_capacity(render::MAX_SORTED_INSTANCES);
+        uint largest = render::sort_capacity(ABOVE_ROW_SORT_INSTANCES);
         foreach (step : render::sort_plan(tmem, largest)) {
             uint groups = render::sort_groups(step, largest);
-            assert(groups <= CORE_WORKGROUP_LIMIT);
+            assert_grid_covers(groups, CORE_WORKGROUP_LIMIT);
             uint covered = step.mode & shader::INSTANCE_SORT_GLOBAL
               ? groups * shader::INSTANCE_SORT_GROUP_SIZE * 2
               : groups * shader::INSTANCE_SORT_BLOCK;
             assert(covered == largest);
         }
     };
-    uint cull_groups = (render::MAX_SORTED_INSTANCES + shader::INSTANCE_CULL_GROUP_SIZE - 1)
-      / shader::INSTANCE_CULL_GROUP_SIZE;
-    assert(cull_groups <= CORE_WORKGROUP_LIMIT);
+    uint cull_groups = (ABOVE_ROW_INSTANCES + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
+    assert_grid_covers(cull_groups, CORE_WORKGROUP_LIMIT);
+    assert(render::grid_shape(cull_groups, CORE_WORKGROUP_LIMIT).y == 2);
+}
+
+fn void test_dispatch_grid_covers_every_group_within_the_x_limit() @test {
+    uint[4] limits = { CORE_WORKGROUP_LIMIT, 64, 7, 1 };
+    foreach (limit : limits) {
+        for (uint rows = 1; rows <= 4; rows++) {
+            for (uint step = 0; step < 3; step++) {
+                uint groups = rows * limit - 1 + step;
+                if (groups == 0) continue;
+                assert_grid_covers(groups, limit);
+                if (groups <= limit) assert(render::grid_shape(groups, limit).y == 1);
+            }
+        }
+    }
 }
 
 fn void test_sorted_placement_is_all_or_nothing() @test {
