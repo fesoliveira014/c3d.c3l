@@ -155,7 +155,12 @@ fn void? run_frame(Fixture* fixture, GpuCloth* flag, Vec4[] snapshot = {}) @priv
     renderer.begin_frame({ .time = 1, .delta = physics::DEFAULT_FIXED_DT })!;
     defer catch render::abort_frame(renderer);
     if (snapshot.len) snapshot[..] = flag.read_positions(renderer)![..];
-    flag.step(renderer, &fixture.scene, GRAVITY, physics::DEFAULT_FIXED_DT)!;
+    flag.step(
+        renderer:     renderer,
+        scene:        &fixture.scene,
+        gravity:      GRAVITY,
+        step_seconds: physics::DEFAULT_FIXED_DT,
+    )!;
     renderer.render_view(&fixture.scene, fixture.camera, fixture.view)!;
     renderer.finish_view(fixture.view)!;
     renderer.end_frame()!;
@@ -166,7 +171,12 @@ fn void test_flag_settles_under_gravity_with_pins_held() @test {
     create_fixture(&fixture)!!;
     defer destroy_fixture(&fixture);
     add_flag(&fixture)!!;
-    GpuCloth flag = cloth_gpu::create_gpu_cloth(&fixture.renderer, &fixture.assets, &fixture.scene, fixture.flag)!!;
+    GpuCloth flag = cloth_gpu::create_gpu_cloth(
+        renderer: &fixture.renderer,
+        assets:   &fixture.assets,
+        scene:    &fixture.scene,
+        node:     fixture.flag,
+    )!!;
     defer cloth_gpu::destroy_gpu_cloth(&fixture.renderer, &flag);
     ClothState* state = fixture.scene.get(fixture.flag, Cloth).state;
     Vec3[] initial = alloc::new_array(mem, Vec3, state.positions.len);

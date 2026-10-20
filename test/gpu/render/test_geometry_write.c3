@@ -32,7 +32,12 @@ struct FillWordsRoot @private {
 }
 $assert FillWordsRoot::size == 16;
 
-fn void? displace_geometry(Fixture* fixture, GeometryId geometry, ComputeShaderId shader, Vec3 offset) @private {
+fn void? displace_geometry(
+    Fixture* fixture,
+    GeometryId geometry,
+    ComputeShaderId shader,
+    Vec3 offset,
+) @private {
     Renderer* renderer = &fixture.renderer;
     DisplaceGeometryRoot root = {
         .positions = renderer.geometry_stream_address(geometry, GeometryStream.POSITIONS)!,
@@ -57,41 +62,51 @@ fn void? displace_geometry(Fixture* fixture, GeometryId geometry, ComputeShaderI
     });
 }
 
-fn Vec4? render_displaced_frame(
-    VertexScene* target,
-    LodVelocityProbe* probe,
-    ComputeShaderId shader,
-    float offset_x,
-) @private {
-    Fixture* fixture = target.fixture;
+struct Displacer @private {
+    VertexScene*      target;
+    LodVelocityProbe* probe;
+    ComputeShaderId   shader;
+}
+
+// The velocity pixel of a frame whose dispatch moves the plane by offset_x.
+fn Vec4? Displacer.velocity(&self, float offset_x) {
+    Fixture* fixture = self.target.fixture;
     Renderer* renderer = &fixture.renderer;
     ViewId view = fixture.view;
-    target.target.scene.update_world();
-    renderer.begin_frame({ .time = 1, .delta = 1.0f / 60, .reference_position = target.reference })!;
+    self.target.target.scene.update_world();
+    renderer.begin_frame({ .time = 1, .delta = 1.0f / 60, .reference_position = self.target.reference })!;
     defer catch render::abort_frame(renderer);
-    displace_geometry(fixture, target.geometry, shader, { offset_x, 0, 0 })!;
-    renderer.render_view(&target.target.scene, target.target.camera, view)!;
-    record_lod_target(fixture, probe, &renderer.views.get(view).velocity)!;
+    displace_geometry(
+        fixture:  fixture,
+        geometry: self.target.geometry,
+        shader:   self.shader,
+        offset:   { offset_x, 0, 0 },
+    )!;
+    renderer.render_view(&self.target.target.scene, self.target.target.camera, view)!;
+    record_lod_target(fixture, self.probe, &renderer.views.get(view).velocity)!;
     renderer.finish_view(view)!;
     renderer.end_frame()!;
     render::wait_frames(renderer)!;
-    gpu::invalidate_mapped_span(&renderer.device, probe.readback.span)!;
-    return lod_velocity_pixel(probe.readback, CENTER_UV);
+    gpu::invalidate_mapped_span(&renderer.device, self.probe.readback.span)!;
+    return lod_velocity_pixel(self.probe.readback, CENTER_UV);
 }
 
-fn uint? sample_displaced_frame(
-    VertexScene* target,
-    ComputeShaderId shader,
-    float offset_x,
-    bool written = true,
-) @private {
-    Fixture* fixture = target.fixture;
+// The colour pixel of a frame that moves the plane by offset_x, or leaves it alone.
+fn uint? Displacer.color(&self, float offset_x, bool written = true) {
+    Fixture* fixture = self.target.fixture;
     Renderer* renderer = &fixture.renderer;
-    target.target.scene.update_world();
-    renderer.begin_frame({ .time = 1, .delta = 1.0f / 60, .reference_position = target.reference })!;
+    self.target.target.scene.update_world();
+    renderer.begin_frame({ .time = 1, .delta = 1.0f / 60, .reference_position = self.target.reference })!;
     defer catch render::abort_frame(renderer);
-    if (written) displace_geometry(fixture, target.geometry, shader, { offset_x, 0, 0 })!;
-    renderer.render_view(&target.target.scene, target.target.camera, fixture.view)!;
+    if (written) {
+        displace_geometry(
+            fixture:  fixture,
+            geometry: self.target.geometry,
+            shader:   self.shader,
+            offset:   { offset_x, 0, 0 },
+        )!;
+    }
+    renderer.render_view(&self.target.target.scene, self.target.target.camera, fixture.view)!;
     sample(fixture, render::read_view_color(fixture.view))!;
     record_readback(fixture)!;
     renderer.finish_view(fixture.view)!;
@@ -109,39 +124,38 @@ fn void test_geometry_write_moves_the_draw_and_reports_its_velocity() @test {
     VertexScene target = create_vertex_scene(&fixture)!!;
     defer scene::destroy_scene(&target.target.scene);
     configure_vertex_view(&fixture, fixture.view, ShadingPath.FORWARD)!!;
-    ComputeShaderId shader = add_compute_shader(&fixture, (String)DISPLACE_GEOMETRY_SOURCE[..])!!;
+    Displacer displacer = {
+        .target = &target,
+        .probe  = &probe,
+        .shader = add_compute_shader(&fixture, (String)DISPLACE_GEOMETRY_SOURCE[..])!!,
+    };
     renderer.upload_geometry(target.geometry)!!;
 
-    check_rejected(render_displaced_frame(&target, &probe, shader, 0)!!);
-    check_still(render_displaced_frame(&target, &probe, shader, 0)!!);
-    check_still(render_displaced_frame(&target, &probe, shader, 0)!!);
+    check_rejected(displacer.velocity(0)!!);
+    check_still(displacer.velocity(0)!!);
+    check_still(displacer.velocity(0)!!);
 
-    Vec4 moved = render_displaced_frame(&target, &probe, shader, VERTEX_STEP)!!;
-    check_step(moved, vertex_step_velocity(&target, VERTEX_STEP));
+    check_step(displacer.velocity(VERTEX_STEP)!!, vertex_step_velocity(&target, VERTEX_STEP));
     assert(renderer.stats.upload_bytes == 0 && renderer.stats.vertex_history_bytes == 0);
-    check_still(render_displaced_frame(&target, &probe, shader, 0)!!);
+    check_still(displacer.velocity(0)!!);
 
     fixture.assets.release_geometry_cpu(target.geometry);
-    check_step(
-        render_displaced_frame(&target, &probe, shader, VERTEX_STEP)!!,
-        vertex_step_velocity(&target, VERTEX_STEP),
-    );
-    check_still(render_displaced_frame(&target, &probe, shader, 0)!!);
+    check_step(displacer.velocity(VERTEX_STEP)!!, vertex_step_velocity(&target, VERTEX_STEP));
+    check_still(displacer.velocity(0)!!);
     fixture.assets.geometry(target.geometry).data = geometry::plane(fixture.assets.allocator, QUAD_SIZE, QUAD_SIZE);
 
-    uint home = sample_displaced_frame(&target, shader, 0)!!;
-    uint away = sample_displaced_frame(&target, shader, OFFSCREEN_OFFSET)!!;
-    assert(home != away);
+    uint home = displacer.color(0)!!;
+    assert(home != displacer.color(OFFSCREEN_OFFSET)!!);
     assert(fixture.assets.geometry(target.geometry).data.bounds.max.x == WRITE_REACH);
 
     fixture.assets.mark_geometry_dirty(target.geometry);
     assert(fixture.assets.geometry(target.geometry).data.bounds.max.x != WRITE_REACH);
-    assert(sample_displaced_frame(&target, shader, 0, written: false)!! == home);
+    assert(displacer.color(0, written: false)!! == home);
 
     fixture.assets.mark_geometry_dirty(target.geometry);
-    assert(sample_displaced_frame(&target, shader, OFFSCREEN_OFFSET)!! != home);
+    assert(displacer.color(OFFSCREEN_OFFSET)!! != home);
     fixture.assets.mark_geometry_dirty(target.geometry);
-    assert(sample_displaced_frame(&target, shader, 0)!! == home);
+    assert(displacer.color(0)!! == home);
     check_validation(renderer);
 }
 

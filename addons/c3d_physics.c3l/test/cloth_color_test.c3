@@ -32,7 +32,12 @@ fn void test_color_starts_split_edges_that_share_no_particle() @test {
         uint[] destinations = alloc::new_array(tmem, uint, edges.len);
 
         ColorStarts starts;
-        uint colors = cloth::order_constraints_by_color(edges, used_colors, destinations, &starts);
+        uint colors = cloth::order_constraints_by_color(
+            constraints:  edges,
+            used_colors:  used_colors,
+            destinations: destinations,
+            starts:       &starts,
+        );
         assert(colors > 1 && starts[0] == 0 && starts[colors] == edges.len);
         for (uint color = 0; color < colors; color++) {
             bool[GRID_SIDE * GRID_SIDE] seen;
@@ -47,7 +52,13 @@ fn void test_color_starts_split_edges_that_share_no_particle() @test {
         ColorStarts again;
         ClothConstraint[] reordered = alloc::new_array(tmem, ClothConstraint, edges.len);
         reordered[..] = edges[..];
-        assert(cloth::order_constraints_by_color(reordered, used_colors, destinations, &again) == colors);
+        uint colors_again = cloth::order_constraints_by_color(
+            constraints:  reordered,
+            used_colors:  used_colors,
+            destinations: destinations,
+            starts:       &again,
+        );
+        assert(colors_again == colors);
         foreach (index, edge : edges) {
             assert(edge.first == unreported[index].first && edge.second == unreported[index].second);
             assert(edge.first == reordered[index].first && edge.second == reordered[index].second);

@@ -25,10 +25,20 @@ fn void? attach(
     state.attached = true;
 }
 
-fn void? step(State* state, Renderer* renderer, Scene* scene, float step_seconds) {
+fn void? step(
+    State* state,
+    Renderer* renderer,
+    Scene* scene,
+    float step_seconds,
+) {
     if (!state.attached) return;
 
-    return state.cloth.step(renderer, scene, physics::DEFAULT_GRAVITY, step_seconds);
+    return state.cloth.step(
+        renderer:     renderer,
+        scene:        scene,
+        gravity:      physics::DEFAULT_GRAVITY,
+        step_seconds: step_seconds,
+    );
 }
 
 fn void detach(State* state, Renderer* renderer) {

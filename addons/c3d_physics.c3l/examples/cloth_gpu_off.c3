@@ -21,6 +21,11 @@ fn void? attach(
     return c3d::UNSUPPORTED~;
 }
 
-fn void? step(State* state, Renderer* renderer, Scene* scene, float step_seconds) {}
+fn void? step(
+    State* state,
+    Renderer* renderer,
+    Scene* scene,
+    float step_seconds,
+) {}
 
 fn void detach(State* state, Renderer* renderer) {}

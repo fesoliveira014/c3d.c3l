@@ -1499,7 +1499,12 @@ fn void test_geometry_write_refits_the_vertex_motion_slot() @test {
         uint tree_revision = mirror.trace.revision;
 
         renderer.begin_frame()!!;
-        displace_geometry(&fixture, quad.geometry, shader, { 0, MOTION_LIFT, 0 })!!;
+        displace_geometry(
+            fixture:  &fixture,
+            geometry: quad.geometry,
+            shader:   shader,
+            offset:   { 0, MOTION_LIFT, 0 },
+        )!!;
         posed_record_frame(&fixture, &quad.harness, kind)!!;
         // The arrays only supply the expected hit; they are not marked dirty, so nothing uploads.
         foreach (&position : fixture.assets.geometry(quad.geometry).data.positions) position.y += MOTION_LIFT;
@@ -1511,7 +1516,12 @@ fn void test_geometry_write_refits_the_vertex_motion_slot() @test {
         } else {
             assert(renderer.stats.trace_refits == 1);
         }
-        motion_assert_hit(&fixture, &quad, true, "written");
+        motion_assert_hit(
+            fixture:       &fixture,
+            quad:          &quad,
+            check_normals: true,
+            name:          "written",
+        );
 
         posed_render(&fixture, &quad.harness, kind)!!;
         assert(renderer.stats.trace_refits == 0 && renderer.stats.blas_updates == 0 && renderer.stats.blas_builds == 0);

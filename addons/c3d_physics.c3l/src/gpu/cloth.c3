@@ -126,7 +126,13 @@ struct Recorder @private {
  @require renderer.frame_open
  @return? Renderer.dispatch!, Renderer.write_buffer!, Renderer.geometry_stream_address!
 *>
-fn void? GpuCloth.step(&self, Renderer* renderer, Scene* scene, Vec3 gravity, float step_seconds) {
+fn void? GpuCloth.step(
+    &self,
+    Renderer* renderer,
+    Scene* scene,
+    Vec3 gravity,
+    float step_seconds,
+) {
     if (self.pending_constants.len) {
         renderer.write_buffer(self.constants, self.pending_constants)!;
         alloc::free(self.allocator, self.pending_constants.ptr);
@@ -264,7 +270,12 @@ fn void? check_gpu_cloth(Scene* scene, Node* node) {
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, AssetStore.add_compute_shader!
  @return? Renderer.create_buffer!, Renderer.upload_geometry!
 *>
-fn GpuCloth? create_gpu_cloth(Renderer* renderer, AssetStore* assets, Scene* scene, Node* node) {
+fn GpuCloth? create_gpu_cloth(
+    Renderer* renderer,
+    AssetStore* assets,
+    Scene* scene,
+    Node* node,
+) {
     check_gpu_cloth(scene, node)!;
 
     Cloth* cloth = scene.get(node, Cloth);
