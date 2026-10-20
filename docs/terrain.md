@@ -766,7 +766,8 @@ cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's laye
 camera beside the physics ray height, and the LOD threshold.
 
 `--shadows traced` sets `trace` on the ground, so ridges shadow valleys. `--trace-level LEVEL` sets the grid's level; the
-default is 0, one vertex per texel.
+default is the finest whose grid has at most 2^22 vertices: 0 at 1025 texels, 1 at 2049 and 2 at 4097. `--trace-level 0`
+traces one vertex per texel at any size.
 
 The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
 `--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.
