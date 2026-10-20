@@ -210,9 +210,9 @@ fn void adopt_counters(
     char[] counters,
     usz slot_index,
 ) @private {
-    GpuStepState* state = system.gpu_step();
-    bool settled = state.started && renderer.frame_index >= state.started_frame + render::FRAMES_IN_FLIGHT;
-    if (!settled || counters.len < (slot_index + 1) * COUNTER_BYTES) return;
+    GpuStepState* state = particle::gpu_step_state(system);
+    bool counted = state.started && renderer.frame_index >= state.started_frame + render::FRAMES_IN_FLIGHT;
+    if (!counted || counters.len < (slot_index + 1) * COUNTER_BYTES) return;
 
     uint* words = (uint*)counters.ptr + slot_index * (COUNTER_BYTES / uint::size);
     system.alive = words[0];
@@ -233,7 +233,7 @@ fn void? step_system(
     slot.stamp = particles.stamp;
     usz slot_index = slot - particles.slots.ptr;
 
-    GpuStepState* state = system.gpu_step();
+    GpuStepState* state = particle::gpu_step_state(system);
     particle::settle_gpu_step(system, renderer.frame_was_submitted(state.pending.frame));
     adopt_counters(
         system: system,

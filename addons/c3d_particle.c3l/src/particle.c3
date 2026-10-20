@@ -414,7 +414,7 @@ fn void? prepare(Scene* scene, Node* emitter) {
     system.block = block;
     defer catch alloc::free(scene.allocator, system.block);
     if (device) {
-        *system.gpu_step() = {};
+        *gpu_step_state(&system) = {};
     } else {
         carve_particle_streams(&system);
     }
@@ -492,7 +492,7 @@ fn void Scene.shift_particles(&self, Vec3 offset) {
         if (system.is_prepared()) {
             self.node(system.draw_node).local = maths::TRANSFORM_IDENTITY;
             if (system.desc.execution == ParticleExecution.GPU) {
-                system.gpu_step().shift(offset);
+                shift_gpu_step(gpu_step_state(system), offset);
             } else {
                 for (uint index = 0; index < system.alive; index++) system.position[index] -= offset;
                 for (uint index = 0; index < system.event_count; index++) system.events[index].position -= offset;

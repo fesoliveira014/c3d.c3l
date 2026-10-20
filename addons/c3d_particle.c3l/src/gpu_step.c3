@@ -3,10 +3,7 @@ module c3d::particle;
 import c3d;
 import std::math;
 
-<*
- CPU outcome of a GPU system's recorded step, applied once its frame is known to be submitted.
-*>
-struct GpuPendingStep {
+struct GpuPendingStep @private {
     bool recorded;
     ulong frame; // Renderer.frame_index while the step was recorded
     double emit_accumulator;
@@ -16,10 +13,7 @@ struct GpuPendingStep {
     ParticleReach reach;
 }
 
-<*
- Scene-layer state of a GPU system; the system's block holds it.
-*>
-struct GpuStepState {
+struct GpuStepState @private {
     double[3] shift_requested; // sum of the offsets given to shift_particles; no vector, the block is 16-aligned
     double[3] shift_applied; // the part of it the committed steps have consumed
     ParticleReach reach;
@@ -28,10 +22,7 @@ struct GpuStepState {
     ulong started_frame; // frame of the first committed step
 }
 
-<*
- Inputs of one device step, derived from the committed state.
-*>
-struct GpuStepPlan {
+struct GpuStepPlan @private {
     float seconds;
     uint requested; // particles asked for this step, saturated
     Vec3 shift; // subtracted from every live particle first
@@ -40,27 +31,17 @@ struct GpuStepPlan {
 }
 
 <*
- The step state of a prepared GPU system.
- @require self.is_prepared() && self.desc.execution == ParticleExecution.GPU
+ @require system.is_prepared() && system.desc.execution == ParticleExecution.GPU
 *>
-fn GpuStepState* ParticleSystem.gpu_step(&self) => (GpuStepState*)self.block;
+fn GpuStepState* gpu_step_state(ParticleSystem* system) @private => (GpuStepState*)system.block;
 
-<*
- Queue the origin shift for the next device step.
-*>
-fn void GpuStepState.shift(&self, Vec3 offset) {
-    for (usz axis = 0; axis < 3; axis++) self.shift_requested[axis] += offset[axis];
-    self.reach.shift(offset);
-    self.pending.reach.shift(offset);
+fn void shift_gpu_step(GpuStepState* state, Vec3 offset) @private {
+    for (usz axis = 0; axis < 3; axis++) state.shift_requested[axis] += offset[axis];
+    state.reach.shift(offset);
+    state.pending.reach.shift(offset);
 }
 
 <*
- Derive the next device step from the committed state and park its outcome as pending.
- Replaces a pending step whose frame was not submitted.
- @param [&inout] system : "A prepared GPU system."
- @param emitter_world : "Published affine emitter matrix."
- @param frame : "Renderer.frame_index of the open frame."
- @param world_shift : "Total origin shift, as for step."
  @require system.is_prepared() && system.desc.execution == ParticleExecution.GPU
  @require dt >= 0 && math::is_finite(dt)
 *>
@@ -71,8 +52,8 @@ fn GpuStepPlan plan_gpu_step(
     Vec3 wind,
     ulong frame,
     double[<3>] world_shift,
-) {
-    GpuStepState* state = system.gpu_step();
+) @private {
+    GpuStepState* state = gpu_step_state(system);
     float seconds = math::min(dt, MAX_PARTICLE_STEP_SECONDS);
     double accumulator = system.emit_accumulator;
     if (system.emitting) accumulator += (double)system.desc.rate * seconds;
@@ -113,13 +94,10 @@ fn GpuStepPlan plan_gpu_step(
 }
 
 <*
- Commit or drop the pending step once its frame's outcome is known.
- @param [&inout] system : "A prepared GPU system."
- @param submitted : "Renderer.frame_was_submitted for the pending step's frame."
  @require system.is_prepared() && system.desc.execution == ParticleExecution.GPU
 *>
-fn void settle_gpu_step(ParticleSystem* system, bool submitted) {
-    GpuStepState* state = system.gpu_step();
+fn void settle_gpu_step(ParticleSystem* system, bool submitted) @private {
+    GpuStepState* state = gpu_step_state(system);
     GpuPendingStep* pending = &state.pending;
     if (!pending.recorded) return;
 
