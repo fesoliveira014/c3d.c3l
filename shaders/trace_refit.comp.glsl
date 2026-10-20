@@ -9,6 +9,8 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
+#define TRACE_REFIT_ROOT_BYTES 48ul // mirrors TraceRefitRoot::size, pinned in posed_trace.c3
+
 GPU_DECLARE_READONLY_ARRAY_REF(RefitSourceNodes, BvhNodeGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(RefitIndices, uint);
 
@@ -26,8 +28,9 @@ vec3 node_max(BvhNodeGpu node) {
 }
 
 // One workgroup refits one tree, deepest level first; topology and leaf primitives stay those of the rest tree.
+// The push constant addresses an array of roots, one per workgroup along x.
 void main() {
-    TraceRefitRoot root = TraceRefitRoot(pc.root_gpu);
+    TraceRefitRoot root = TraceRefitRoot(pc.root_gpu + uint64_t(gl_WorkGroupID.x) * TRACE_REFIT_ROOT_BYTES);
     GeometryRoot geometry = GeometryRoot(root.geometry);
     RefitSourceNodes source = RefitSourceNodes(root.source_nodes);
     RefitNodes nodes = RefitNodes(root.nodes);

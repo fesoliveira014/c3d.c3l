@@ -91,8 +91,10 @@ struct PosedTraceTable {
     ulong                        epoch;       // one per recording: an open frame, or a closed preparation
     ulong                        epoch_frame; // frame_index + 1 of the epoch's open frame; 0 when closed
     usz                          bytes;       // GPU bytes of every live slot
-    List{PosedDispatch}          dispatches;  // posing and refit work the current preparation queued
+    List{PosedDispatch}          dispatches;  // posing work the current preparation queued
+    List{TraceRefitRoot}         refits;      // trees the current preparation queued to refit, in one dispatch
     List{PosedBuild}             builds;      // BLAS builds and updates the current preparation queued
+    List{PosedSwayRow}           sway_rows;   // rows of the open swaying batch
     List{uint}                   motion_copies; // vertex-motion slots whose streams the mirror must refill
     gpu::PipelineHandle          pose_pipeline;
     gpu::PipelineHandle          pose_u16_pipeline;
@@ -106,10 +108,10 @@ struct PosedBuild @private {
 }
 
 struct PosedDispatch @private {
-    gpu::GpuAddress     pose_root;  // root of the pose pipeline in the frame ring; 0 when the pose is current
-    gpu::GpuAddress     refit_root; // TraceRefitRoot in the frame ring; 0 without a software refit
-    gpu::PipelineHandle pipeline;   // a custom stage's or the sway pose; invalid selects the skin pose pipelines
+    gpu::GpuAddress     pose_root;    // root of the pose pipeline in the frame ring
+    gpu::PipelineHandle pipeline;     // a custom stage's or the sway pose; invalid selects the skin pose pipelines
     uint                vertex_count;
+    uint                rows;         // sway rows posed along z; 1 for every other kind
     bool                joints_u16;
 }
 
@@ -128,6 +130,29 @@ struct CustomPoseInputs @private {
     InstanceGpu                                           instance; // zero for a single mesh
 }
 $assert CustomPoseInputs::size == 240;
+
+// What a swaying batch's pose reads besides its slots; equal bytes pose every held row the same.
+struct TraceSwayBatchKey @private {
+    TraceSwayBatchRoot root;               // rows zero
+    Mat4f              world;              // the batch node about the frame origin
+    uint               placement_revision; // InstancedMesh.revision or LodGroupState.revision
+    uint               row_count;          // the batch or group count
+    uint               _pad0;
+    uint               _pad1;
+}
+$assert TraceSwayBatchKey::size == 160;
+
+struct PosedSwayRow @private {
+    uint slot;
+    uint record; // the row's index among the kept records
+}
+
+// The open swaying batch: one batch or LOD part, whose posed rows collection keeps contiguous.
+struct PosedSwayBatch @private {
+    TracePoseSource*  source; // the first row's; null while none is open
+    GpuGeometry*      mirror;
+    TraceSwayBatchKey key;
+}
 
 struct TracePlacement @private {
     InstanceGpu instance;   // the record raster would write for the row
@@ -300,7 +325,9 @@ fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) 
     PosedTraceTable table = { .allocator = allocator, .capacity = capacity };
     table.pending.init(allocator);
     table.dispatches.init(allocator);
+    table.refits.init(allocator);
     table.builds.init(allocator);
+    table.sway_rows.init(allocator);
     table.motion_copies.init(allocator);
     return table;
 }
@@ -337,7 +364,9 @@ fn void free_posed_trace_storage(PosedTraceTable* table) @private {
     table.lookup.free();
     table.pending.free();
     table.dispatches.free();
+    table.refits.free();
     table.builds.free();
+    table.sway_rows.free();
     table.motion_copies.free();
     *table = {};
 }
@@ -390,7 +419,9 @@ fn void discard_posed_trace(PosedTraceTable* table) @private {
     }
     table.pending.clear();
     table.dispatches.clear();
+    table.refits.clear();
     table.builds.clear();
+    table.sway_rows.clear();
     table.motion_copies.clear();
     table.epoch_frame = 0;
 }
@@ -474,7 +505,7 @@ fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
         case CUSTOM:
             return (uint)CustomPoseInputs::size;
         case SWAY:
-            return (uint)TraceSwayPoseRoot::size;
+            return (uint)TraceSwayBatchKey::size;
         case MESH:
             uint palette = source.skin ? (uint)(source.skin.joints.len * Mat4f::size) : 0;
             return palette + (mesh_morphs(assets, source.mesh) ? (uint)MorphWeightsGpu::size : 0);
@@ -522,9 +553,7 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
             mem::copy(inputs.ptr, &custom, CustomPoseInputs::size);
             return inputs;
         case SWAY:
-            TraceSwayPoseRoot sway = sway_pose_root(renderer, source, record);
-            mem::copy(inputs.ptr, &sway, TraceSwayPoseRoot::size);
-            return inputs;
+            unreachable("a swaying batch compares its batch key");
         case MESH:
             if (source.skin) {
                 palette_bytes = source.skin.joints.len * Mat4f::size;
@@ -646,9 +675,13 @@ fn TracePlacement trace_placement(Renderer* renderer, TracePoseSource* source, T
     return result;
 }
 
-// The root a SWAY row poses from, without the geometry addresses of its slot.
-fn TraceSwayPoseRoot sway_pose_root(Renderer* renderer, TracePoseSource* source, TraceInstance* record) @private {
-    TracePlacement placement = trace_placement(renderer, source, record);
+// What the batch's pose reads, taken from its first row; the rows differ only by placement.
+fn TraceSwayBatchKey sway_batch_key(
+    Renderer* renderer,
+    TracePoseSource* source,
+    TraceInstance* record,
+    GpuGeometry* mirror,
+) @local {
     InstanceSway sway = source.lod ? source.lod.effects.sway : source.batch.sway;
     Aabb bounds = source.lod ? source.lod.object_bounds : renderer.assets.geometry(record.geometry).data.bounds;
     InstancedMesh logical = { .sway = sway };
@@ -661,18 +694,156 @@ fn TraceSwayPoseRoot sway_pose_root(Renderer* renderer, TracePoseSource* source,
         origin:        renderer.frame_origin,
         world_shift:   source.scene.world_shift,
     );
+    return {
+        .root = {
+            .source       = mirror.root,
+            .vertex_count = mirror.layout.vertex_count,
+            .flags        = sway.weight == SwayWeight.VERTEX_ALPHA ? shader::DRAW_SWAY_VERTEX_ALPHA : 0,
+            .sway         = effects.sway,
+            .anchor       = effects.anchor,
+        },
+        .world              = bitcast(maths::rebase(record.world, renderer.frame_origin), Mat4f),
+        .placement_revision = source.lod ? source.lod.revision : source.batch.revision,
+        .row_count          = source.lod ? source.lod.count : source.batch.count,
+    };
+}
+
+fn TraceSwayRowGpu sway_row(
+    Renderer* renderer,
+    TracePoseSource* source,
+    TraceInstance* record,
+    PosedTraceRes* slot,
+) @local {
+    TracePlacement placement = trace_placement(renderer, source, record);
     Mat4 inverse = maths::inverse_affine(bitcast(placement.instance.model, Mat4).mul(bitcast(placement.part_local, Mat4)));
     return {
-        .vertex_count    = renderer.geometries[record.geometry.index].layout.vertex_count,
-        .flags           = sway.weight == SwayWeight.VERTEX_ALPHA ? shader::DRAW_SWAY_VERTEX_ALPHA : 0,
         .instance        = placement.instance,
         .part_local      = placement.part_local,
-        .sway            = effects.sway,
-        .anchor          = effects.anchor,
         .inverse_model_0 = { inverse.m00, inverse.m10, inverse.m20, 0 },
         .inverse_model_1 = { inverse.m01, inverse.m11, inverse.m21, 0 },
         .inverse_model_2 = { inverse.m02, inverse.m12, inverse.m22, 0 },
+        .posed           = slot.root,
     };
+}
+
+fn bool PosedSwayBatch.holds(&self, TracePoseSource* source) {
+    TracePoseSource* first = self.source;
+    return first && first.node == source.node && first.part == source.part && first.batch == source.batch
+      && first.lod == source.lod;
+}
+
+// A row traced at rest never joins; record_index is where the row lands among the kept records.
+fn void? PosedSwayBatch.join(
+    &self,
+    Renderer* renderer,
+    uint slot_index,
+    TracePoseSource* source,
+    TraceInstance* record,
+    GpuGeometry* mirror,
+    uint record_index,
+) {
+    PosedTraceTable* table = &renderer.posed_trace;
+    acquire_posed_slot(
+        renderer: renderer,
+        index:    slot_index,
+        source:   source,
+        mirror:   mirror,
+        aliased:  false,
+    )!;
+    if (!self.source) {
+        self.source = source;
+        self.mirror = mirror;
+        self.key = sway_batch_key(
+            renderer: renderer,
+            source:   source,
+            record:   record,
+            mirror:   mirror,
+        );
+    }
+
+    point_at_posed_slot(record, &table.slots[slot_index], mirror);
+    table.sway_rows.push({ .slot = slot_index, .record = record_index });
+}
+
+// The first row holds the key in its pose bytes. A moved key poses every row; otherwise a row whose slot holds
+// no pose poses alone, which is a slot another key emptied or a stream rebuild cleared.
+fn void? PosedSwayBatch.close(&self, Renderer* renderer, TraceInstance[] records) {
+    if (!self.source) return;
+
+    PosedTraceTable* table = &renderer.posed_trace;
+    PosedTraceRes* leader = &table.slots[table.sway_rows[0].slot];
+    bool key_moved = leader.compared_epoch != table.epoch
+      && !(leader.pose_valid && mem::equals(leader.pose.ptr, (char*)&self.key, TraceSwayBatchKey::size));
+
+    uint posing;
+    foreach (row : table.sway_rows) {
+        if (key_moved || !table.slots[row.slot].pose_valid) posing++;
+    }
+
+    if (posing) {
+        self.pose_rows(
+            renderer:  renderer,
+            records:   records,
+            key_moved: key_moved,
+            posing:    posing,
+        )!;
+        mem::copy(leader.pose.ptr, &self.key, TraceSwayBatchKey::size);
+    }
+
+    foreach (row : table.sway_rows) {
+        PosedTraceRes* slot = &table.slots[row.slot];
+        slot.compared_epoch = table.epoch;
+        queue_posed_rebuild(
+            renderer:        renderer,
+            index:           row.slot,
+            mirror:          self.mirror,
+            update_in_place: true,
+        );
+        records[row.record].pose_serial = slot.pose_serial;
+    }
+    table.sway_rows.clear();
+    *self = {};
+}
+
+// One dispatch poses the rows that need it; z of the dispatch indexes the rows written to the ring.
+fn void? PosedSwayBatch.pose_rows(
+    &self,
+    Renderer* renderer,
+    TraceInstance[] records,
+    bool key_moved,
+    uint posing,
+) @local {
+    PosedTraceTable* table = &renderer.posed_trace;
+    acquire_compute_slot(renderer, ComputeSlot.TRACE_SWAY)!;
+
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    usz row_bytes = (usz)posing * TraceSwayRowGpu::size;
+    gpu::MappedGpuSpan span = frame.upload.take(&renderer.device, row_bytes, STREAM_ALIGNMENT)!;
+    TraceSwayRowGpu* posed_rows = (TraceSwayRowGpu*)span.bytes.ptr;
+    uint written;
+    foreach (row : table.sway_rows) {
+        PosedTraceRes* slot = &table.slots[row.slot];
+        if (!key_moved && slot.pose_valid) continue;
+
+        posed_rows[written++] = sway_row(
+            renderer: renderer,
+            source:   self.source,
+            record:   &records[row.record],
+            slot:     slot,
+        );
+        slot.pose_valid = true;
+        slot.pose_serial++;
+        mark_posed_pending(table, row.slot);
+    }
+
+    TraceSwayBatchRoot root = self.key.root;
+    root.rows = span.address;
+    table.dispatches.push({
+        .pose_root    = upload_bytes(renderer, &root, TraceSwayBatchRoot::size)!,
+        .pipeline     = table.sway_pipeline,
+        .vertex_count = root.vertex_count,
+        .rows         = posing,
+    });
 }
 
 fn void? acquire_trace_pose_pipelines(Renderer* renderer) @private {
@@ -736,11 +907,15 @@ fn gpu::Vec3u pose_grid(Renderer* renderer, uint vertex_count, uint depth = 1) @
     return { columns, (groups + columns - 1) / columns, depth };
 }
 
-// Every posing dispatch, then every refit, so three barriers serve any number of slots.
+$assert TraceRefitRoot::size == 48; // mirrored as TRACE_REFIT_ROOT_BYTES in trace_refit.comp.glsl
+
+// Every posing dispatch, then one refit of every tree, so three barriers serve any number of slots.
+// Sway rows (z) and refit trees (x) never outnumber the slots, at most 2,024 under the allocation table,
+// and every device takes 65,535 groups per axis, so no grid splits.
 fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     record_vertex_motion_copies(renderer, commands)!;
-    if (!table.dispatches.len()) return;
+    if (!table.dispatches.len() && !table.refits.len()) return;
     acquire_trace_pose_pipelines(renderer)!;
     bool profiled = renderer.frame_open;
     if (profiled) begin_profile_pass(renderer, Pass.TRACE_POSE)!;
@@ -750,23 +925,27 @@ fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @pri
     gpu::Barrier readers_done = { .before = renderer.consumer_stages, .after = { .compute } };
     gpu::cmd_barrier(commands, &readers_done)!;
     foreach (&dispatch : table.dispatches) {
-        if (!dispatch.pose_root) continue;
         gpu::PipelineHandle skin_pipeline = dispatch.joints_u16 ? table.pose_u16_pipeline : table.pose_pipeline;
         gpu::cmd_bind_pipeline(commands, dispatch.pipeline.is_valid() ? dispatch.pipeline : skin_pipeline)!;
-        gpu::cmd_dispatch(commands, dispatch.pose_root, pose_grid(renderer, dispatch.vertex_count))!;
+        gpu::cmd_dispatch(commands, dispatch.pose_root, pose_grid(renderer, dispatch.vertex_count, dispatch.rows))!;
         renderer.stats.trace_poses++;
     }
     gpu::Barrier posed = { .before = { .compute }, .after = { .compute } };
     gpu::cmd_barrier(commands, &posed)!;
-    gpu::cmd_bind_pipeline(commands, table.refit_pipeline)!;
-    foreach (&dispatch : table.dispatches) {
-        if (!dispatch.refit_root) continue;
-        gpu::cmd_dispatch(commands, dispatch.refit_root, { 1, 1, 1 })!;
-        renderer.stats.trace_refits++;
+    if (table.refits.len()) {
+        Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+        usz bytes = (usz)table.refits.len() * TraceRefitRoot::size;
+        gpu::MappedGpuSpan roots = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
+        mem::copy(roots.bytes.ptr, table.refits.entries, (sz)bytes);
+
+        gpu::cmd_bind_pipeline(commands, table.refit_pipeline)!;
+        gpu::cmd_dispatch(commands, roots.address, { (uint)table.refits.len(), 1, 1 })!;
+        renderer.stats.trace_refits += (uint)table.refits.len();
     }
     gpu::Barrier written = { .before = { .compute }, .after = renderer.consumer_stages };
     gpu::cmd_barrier(commands, &written)!;
     table.dispatches.clear();
+    table.refits.clear();
     renderer.work_recorded = true;
     if (profiled) end_profile_pass(renderer, Pass.TRACE_POSE)!;
 }
@@ -923,9 +1102,59 @@ fn void point_at_posed_slot(TraceInstance* record, PosedTraceRes* slot, GpuGeome
     record.pose_serial = slot.pose_serial;
 }
 
+// A slot follows the geometry revision its streams, tree copy and bottom level were sized for.
+// aliased: the slot follows a compute skinning pose.
+fn void? acquire_posed_slot(
+    Renderer* renderer,
+    uint index,
+    TracePoseSource* source,
+    GpuGeometry* mirror,
+    bool aliased,
+) @local {
+    PosedTraceTable* table = &renderer.posed_trace;
+    PosedTraceRes* slot = &table.slots[index];
+
+    // The slot's own streams went stale while it followed the compute pass.
+    if (slot.aliased && !aliased) slot.built_revision = 0;
+
+    acquire_posed_streams(
+        renderer:      renderer,
+        index:         index,
+        mirror:        mirror,
+        pose_bytes:    pose_input_bytes(source, renderer.assets),
+        vertex_motion: source.kind == TracePose.VERTEX_MOTION,
+        aliased:       aliased,
+    )!;
+    if (renderer.scene_trace.software_requested) acquire_posed_nodes(renderer, index, mirror)!;
+    if (renderer.scene_trace.hardware_requested) acquire_posed_blas(renderer, index, mirror)!;
+    slot.aliased = aliased;
+}
+
+// The tree copy and bottom level follow the pose the slot holds; a bottom level that was not built updates in full.
+fn void queue_posed_rebuild(
+    Renderer* renderer,
+    uint index,
+    GpuGeometry* mirror,
+    bool update_in_place,
+) @local {
+    PosedTraceTable* table = &renderer.posed_trace;
+    PosedTraceRes* slot = &table.slots[index];
+    if (renderer.scene_trace.software_requested && slot.refit_serial != slot.pose_serial) {
+        table.refits.push(refit_root(mirror, slot));
+        slot.refit_serial = slot.pose_serial;
+        mark_posed_pending(table, index);
+    }
+
+    if (renderer.scene_trace.hardware_requested && slot.blas_serial != slot.pose_serial) {
+        table.builds.push({ .slot = index, .update = slot.blas_serial != 0 && update_in_place });
+        slot.blas_serial = slot.pose_serial;
+        mark_posed_pending(table, index);
+    }
+}
+
 // Bring the row's posed slot to the current pose and point the row at it; empty inputs gather here.
 <*
- @require source.kind != TracePose.REST
+ @require source.kind != TracePose.REST && source.kind != TracePose.SWAY
 *>
 fn void? resolve_posed_instance(
     Renderer* renderer,
@@ -937,36 +1166,22 @@ fn void? resolve_posed_instance(
     char[] inputs,
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
-    bool software = renderer.scene_trace.software_requested;
-    bool hardware = renderer.scene_trace.hardware_requested;
     PosedDraw posed = claim_trace_pose(renderer, source, record, mirror, scene)!;
-    PosedTraceRes* slot = &table.slots[index];
-
-    // The slot's own streams went stale while it followed the compute pass.
-    if (slot.aliased && !posed.active) slot.built_revision = 0;
-
-    acquire_posed_streams(
-        renderer:      renderer,
-        index:         index,
-        mirror:        mirror,
-        pose_bytes:    pose_input_bytes(source, renderer.assets),
-        vertex_motion: source.kind == TracePose.VERTEX_MOTION,
-        aliased:       posed.active,
+    acquire_posed_slot(
+        renderer: renderer,
+        index:    index,
+        source:   source,
+        mirror:   mirror,
+        aliased:  posed.active,
     )!;
-    if (software) acquire_posed_nodes(renderer, index, mirror)!;
-    if (hardware) acquire_posed_blas(renderer, index, mirror)!;
-    slot.aliased = posed.active;
+    PosedTraceRes* slot = &table.slots[index];
 
     PosedDispatch dispatch = {
         .vertex_count = mirror.layout.vertex_count,
         .joints_u16   = mirror.layout.flags.joints_u16,
+        .rows         = 1,
     };
-    if (source.kind == TracePose.SWAY) {
-        acquire_compute_slot(renderer, ComputeSlot.TRACE_SWAY)!;
-        dispatch.pipeline = table.sway_pipeline;
-    } else if (source.kind == TracePose.CUSTOM) {
-        dispatch.pipeline = source.pipeline;
-    }
+    if (source.kind == TracePose.CUSTOM) dispatch.pipeline = source.pipeline;
 
     if (source.kind == TracePose.VERTEX_MOTION) {
         if (slot.update_vertex_motion(source.vertex_history_token)) {
@@ -989,23 +1204,18 @@ fn void? resolve_posed_instance(
             )!;
         }
     }
-    if (software && slot.refit_serial != slot.pose_serial) {
-        dispatch.refit_root = write_refit_root(renderer, mirror, slot)!;
-        slot.refit_serial = slot.pose_serial;
-    }
-    if (dispatch.pose_root || dispatch.refit_root) {
+    if (dispatch.pose_root) {
         table.dispatches.push(dispatch);
         mark_posed_pending(table, index);
     }
 
-    if (hardware && slot.blas_serial != slot.pose_serial) {
-        // A stage that does not read time re-poses on an edit, which may reshape the surface; the tree is built anew.
-        bool refits = source.kind != TracePose.CUSTOM || source.reads_time;
-        table.builds.push({ .slot = index, .update = slot.blas_serial != 0 && refits });
-        slot.blas_serial = slot.pose_serial;
-        mark_posed_pending(table, index);
-    }
-
+    // A stage that does not read time re-poses on an edit, which may reshape the surface; the tree is built anew.
+    queue_posed_rebuild(
+        renderer:        renderer,
+        index:           index,
+        mirror:          mirror,
+        update_in_place: source.kind != TracePose.CUSTOM || source.reads_time,
+    );
     point_at_posed_slot(record, slot, mirror);
 }
 
@@ -1089,7 +1299,8 @@ fn gpu::GpuAddress? write_pose_root(
     switch (source.kind) {
         case REST:
         case VERTEX_MOTION:
-            unreachable("only skinned, morphed and crowd rows pose on the GPU");
+        case SWAY:
+            unreachable("only skinned, morphed, custom and crowd rows pose through a root of their own");
         case CUSTOM:
             TraceCustomPoseRoot custom_root = {
                 .source       = mirror.root,
@@ -1103,11 +1314,6 @@ fn gpu::GpuAddress? write_pose_root(
                 custom_root.instance = upload_bytes(renderer, &instance, InstanceGpu::size)!;
             }
             return upload_bytes(renderer, &custom_root, TraceCustomPoseRoot::size)!;
-        case SWAY:
-            TraceSwayPoseRoot sway_root = sway_pose_root(renderer, source, record);
-            sway_root.source = mirror.root;
-            sway_root.posed = slot.root;
-            return upload_bytes(renderer, &sway_root, TraceSwayPoseRoot::size)!;
         case MESH:
             if (source.skin) palette = resolve_palette(renderer, source.node, source.skin)!;
             if (mesh_morphs(renderer.assets, source.mesh)) {
@@ -1162,10 +1368,8 @@ fn gpu::GpuAddress? write_pose_root(
     return root.address;
 }
 
-fn gpu::GpuAddress? write_refit_root(Renderer* renderer, GpuGeometry* mirror, PosedTraceRes* slot) @local {
-    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    gpu::MappedGpuSpan root = frame.upload.take(&renderer.device, TraceRefitRoot::size, STREAM_ALIGNMENT)!;
-    *(TraceRefitRoot*)root.bytes.ptr = {
+fn TraceRefitRoot refit_root(GpuGeometry* mirror, PosedTraceRes* slot) @local {
+    return {
         .geometry     = slot.root,
         .source_nodes = mirror.trace.nodes,
         .nodes        = slot.nodes,
@@ -1173,7 +1377,6 @@ fn gpu::GpuAddress? write_refit_root(Renderer* renderer, GpuGeometry* mirror, Po
         .depth_starts = mirror.trace.depth_starts,
         .depth_order  = mirror.trace.depth_order,
     };
-    return root.address;
 }
 
 fn void? record_posed_builds(
