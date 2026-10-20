@@ -74,6 +74,19 @@ const float OCEAN_BED_CLEARANCE @local = 12; // metres between the sea and the h
 const float BASIN_DEPTH @local = 6; // metres of water over the bed at the centre
 const float SHORE_CLEARANCE @local = 0.3f; // metres above the water under which no grass or tree grows
 
+const float POND_WAVE_SPEED @local = 8; // metres per second: a ripple crosses the 55 m basin in about seven seconds
+const float POND_DAMPING @local = 0.3f; // per second: the ripple loses half its height in about five seconds
+const float POND_DISTORTION @local = 0.4f; // screen uv per unit of tilt: a ripple's slopes still bend the reflection
+const float POND_REFRACTION @local = 0.1f;
+const float STIFF_WAVE_SPEED @local = 60; // metres per second: the benchmark's settle segment, which rings out quickly
+const float STIFF_DAMPING @local = 3.2f; // per second: close to critical for the lake's slowest wave at that speed
+const float RIPPLE_RADIUS @local = 3; // metres to the rim of a dropped ripple
+const float RIPPLE_STRENGTH @local = 10; // metres per second downward at its centre
+const float SHOT_DROP_OFFSET @local = -40; // metres west of the lake's centre: a shot's ripple falls by the west shore
+const float SHOT_VIEW_OFFSET @local = -12; // metres west of the centre: the shot looks west at the ripple and the shore
+const float SHOT_VIEW_HEIGHT @local = 3; // metres over the water
+const float SHOT_VIEW_PITCH @local = -0.1f;
+const float MAX_RIPPLE_AGE @local = 30; // seconds a shot may spread its ripple: 1,800 updates before its frames
 const float CRATE_SIZE @local = 1;
 const float CRATE_DENSITY @local = 600; // floats at 0.6 of its height
 const float CRATE_DRAG @local = 3000; // newton-seconds per metre: a damping ratio near 0.4 at the density line
@@ -224,6 +237,8 @@ struct Options @local {
     bool        sea_state;
     bool        ocean;
     bool        dive;
+    bool        simulated;  // bodies simulate their surface; ripples come from the R key, a shot or the benchmark
+    float       ripple_age; // seconds a shot lets its ripple spread
     float       dive_at;    // share of the descent a shot stands at; negative follows the clock
     float       wind_speed;
     String      shot;
@@ -282,6 +297,10 @@ struct Demo @local {
     Capture             capture;
     Node*[]             crates;
     WaterFluid          fluid; // view and time are the physics update's first step
+    double              water_update_us;
+    uint                simulation_bytes;    // texture bytes the last update uploaded for the lake's simulation
+    uint                simulation_revision; // that texture's revision after the last update
+    bool                simulation_awake;
 }
 
 struct Controls @local {
@@ -296,8 +315,11 @@ struct Controls @local {
 struct FrameRecord @local {
     double                    frame_ms;
     double                    physics_us;
+    double                    water_update_us;
     uint                      steps;
     uint                      upload_bytes;
+    uint                      simulation_bytes;
+    bool                      simulation_awake;
     uint                      shadow_sets_recorded;
     uint                      shadow_sets_shared;
     float[render::PASS_COUNT] frame_gpu_ms;
@@ -609,6 +631,14 @@ fn void? add_body(
         desc.depth = OCEAN_DEPTH;
         desc.wave_count = 0; // flat until the sea state: the lake's 3.5 m wave is under an ocean's four-cell floor
     }
+    if (demo.options.simulated) {
+        desc.wave_model = SIMULATED;
+        desc.wave_count = 0;
+        desc.simulation = { .wave_speed = POND_WAVE_SPEED, .damping = POND_DAMPING };
+        desc.ground = demo.ground.node.id;
+        desc.reflection_distortion = POND_DISTORTION;
+        desc.refraction_strength = POND_REFRACTION;
+    }
     desc.ripples = demo.options.ripples ? demo.ripples : (MaterialId){};
     desc.foam = demo.foam;
     desc.march_reflections = demo.options.reflection != Reflection.ENV;
@@ -816,6 +846,39 @@ fn void? set_ripples(Demo* demo, bool ripples) @local {
         body.desc.ripples = ripples ? demo.ripples : (MaterialId){};
         set_water_desc(demo, body)!;
     }
+}
+
+// A faster, more damped pond, so the ripple of the benchmark's waves segment dies within the settle segment.
+fn void? stiffen_ponds(Demo* demo) @local {
+    foreach (&body : demo.bodies[:demo.body_count]) {
+        body.desc.simulation = { .wave_speed = STIFF_WAVE_SPEED, .damping = STIFF_DAMPING };
+        set_water_desc(demo, body)!;
+    }
+}
+
+// Where a ray from the position along the direction meets each body's rest plane, the ripple's centre there.
+fn void? drop_ripples(Demo* demo, Vec3 origin, Vec3 direction) @local {
+    if (direction.y >= 0) return;
+    foreach (&body : demo.bodies[:demo.body_count]) {
+        Vec3 point = origin + direction * ((body.centre.y - origin.y) / direction.y);
+        water::add_impulse(
+            scene:          demo.scene,
+            node:           body.node.id,
+            world_position: point,
+            radius:         RIPPLE_RADIUS,
+            strength:       RIPPLE_STRENGTH,
+        )!;
+    }
+}
+
+// Texture bytes the update just uploaded for the lake's simulation, and whether the lake is still stepping.
+fn void track_simulation(Demo* demo) @local {
+    if (!demo.options.simulated) return;
+    SimulationState* state = demo.scene.get(demo.bodies[0].node, WaterRuntime).simulation;
+    TextureAsset* texture = demo.assets.texture(state.texture);
+    demo.simulation_bytes = texture.header.revision != demo.simulation_revision ? (uint)texture.pixels.len : 0;
+    demo.simulation_revision = texture.header.revision;
+    demo.simulation_awake = state.awake;
 }
 
 // The capture has no mirror of its own, so it leaves the water out.
@@ -1109,12 +1172,15 @@ fn double? step_scene(
     scene.update_world();
     terrain::update(scene, demo.assets)!;
     foliage::update(scene, demo.assets, wind)!;
+    time::Clock water_started = clock::now();
     water::update(
         scene:         scene,
         assets:        demo.assets,
         wind_velocity: wind,
         time:          time,
     );
+    demo.water_update_us = (double)(long)water_started.to_now() / NANOSECONDS_PER_MICROSECOND;
+    track_simulation(demo);
 
     place_mirrors(demo)!;
     foreach (&body : demo.bodies[:demo.body_count]) {
@@ -1250,6 +1316,15 @@ fn Options? parse_options(String[] args) @local {
                     case "off": options.ripples = false;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
+            case "--waves":
+                switch (option_value(args, &index)!) {
+                    case "gerstner": options.simulated = false;
+                    case "simulated": options.simulated = true;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
+            case "--ripple-age":
+                options.ripple_age = option_value(args, &index)!.to_float()!;
+                if (!(options.ripple_age >= 0 && options.ripple_age <= MAX_RIPPLE_AGE)) return c3d::INVALID_ARGUMENT~;
             case "--sea-state": options.sea_state = true;
             case "--ocean": options.ocean = true;
             case "--dive":
@@ -1275,6 +1350,8 @@ fn Options? parse_options(String[] args) @local {
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.ocean && (options.split || options.traced)) return c3d::INVALID_ARGUMENT~;
+    if (options.simulated && (options.ocean || options.sea_state)) return c3d::INVALID_ARGUMENT~;
+    if (options.ripple_age > 0 && !(options.simulated && options.shot.len)) return c3d::INVALID_ARGUMENT~;
     if (options.ocean) {
         options.sea_state = true;
         options.crates = 0;
@@ -1310,7 +1387,10 @@ fn void? water_panel(
         if (imgui::radio_button("Environment", controls.reflection == Reflection.ENV)) controls.reflection = ENV;
         imgui::checkbox("Full-resolution mirror", &controls.full_mirror);
         imgui::separator_text("Surface");
-        if (!demo.options.sea_state) imgui::checkbox("Calm waves (off: zero amplitudes)", &controls.calm);
+        if (!demo.options.sea_state && !demo.options.simulated) {
+            imgui::checkbox("Calm waves (off: zero amplitudes)", &controls.calm);
+        }
+        if (demo.options.simulated) imgui::text("R drops a ripple where the camera looks");
         imgui::checkbox("Ripples", &controls.ripples);
         imgui::slider_float(
             label: "Wind heading",
@@ -1505,6 +1585,14 @@ fn void? run_interactive(Options options) @local {
         if (!input.keyboard_captured_by_gui && input.key_pressed(platform::Scancode.F)) {
             fly_camera.flying = !fly_camera.flying;
         }
+        bool can_drop = demo.options.simulated && !options.dive && !input.keyboard_captured_by_gui;
+        if (can_drop && input.key_pressed(platform::Scancode.R)) {
+            drop_ripples(
+                demo:      &demo,
+                origin:    fly_camera.position,
+                direction: landscape_ground::look_direction(fly_camera.yaw, fly_camera.pitch),
+            )!;
+        }
         float rise = brush.rise(held, delta);
         if (rise > 0) {
             landscape_ground::stamp_under(
@@ -1617,6 +1705,15 @@ fn float dive_share(Options options, double time) @local {
     return phase < 1 ? phase : 2 - phase;
 }
 
+fn void place_ripple_view(Demo* demo) @local {
+    landscape_ground::place_camera(
+        camera_node: demo.viewers[0].camera_node,
+        position:    demo.bodies[0].centre + (Vec3){ SHOT_VIEW_OFFSET, SHOT_VIEW_HEIGHT, 0 },
+        yaw:         -(float)math::PI / 2,
+        pitch:       SHOT_VIEW_PITCH,
+    );
+}
+
 fn void? pose_segment(
     Demo* demo,
     Segment segment,
@@ -1709,7 +1806,17 @@ fn void? run_segments(
         Segment segment = timed ? segment_of(options, step) : Segment.STILL;
         uint segment_step = step - segment_start(options, segment);
         if (frame >= WARMUP_FRAMES + measured) segment = Segment.SETTLE;
-        if (timed && step == settle_start) set_calm(demo, false)!;
+        if (timed && step == settle_start) {
+            set_calm(demo, false)!;
+            if (options.simulated) stiffen_ponds(demo)!;
+        }
+        if (timed && options.simulated && step == segment_start(options, Segment.WAVES)) {
+            drop_ripples(
+                demo:      demo,
+                origin:    demo.bodies[0].centre + (Vec3){ 0, 1, 0 },
+                direction: { 0, -1, 0 },
+            )!;
+        }
         time::Clock frame_started = clock::now();
         pose_segment(
             demo:    demo,
@@ -1735,8 +1842,11 @@ fn void? run_segments(
             result.records[step] = {
                 .frame_ms             = frame_ms,
                 .physics_us           = physics_us,
+                .water_update_us      = demo.water_update_us,
                 .steps                = demo.physics.steps_last_update,
                 .upload_bytes         = renderer.stats.upload_bytes,
+                .simulation_bytes     = demo.simulation_bytes,
+                .simulation_awake     = demo.simulation_awake,
                 .shadow_sets_recorded = renderer.stats.shadow_sets_recorded,
                 .shadow_sets_shared   = renderer.stats.shadow_sets_shared,
             };
@@ -1831,6 +1941,42 @@ fn void print_sky_passes(
     }
 }
 
+// The simulation's CPU step and texture upload over the frames it uploaded.
+fn void print_simulation(FrameRecord[] records, String segment_name, double[] scratch) @local {
+    usz count;
+    uint bytes;
+    foreach (record : records) {
+        if (!record.simulation_bytes) continue;
+        scratch[count++] = record.water_update_us;
+        bytes = max(bytes, record.simulation_bytes);
+    }
+    if (!count) {
+        io::printfn("simulation segment=%s upload_frames=0", segment_name);
+        return;
+    }
+    io::printfn(
+        "simulation segment=%s upload_frames=%d update_us median=%.1f p99=%.1f upload_bytes=%d",
+        segment_name,
+        count,
+        percentile(scratch[:count], 0.5f),
+        percentile(scratch[:count], 0.99f),
+        bytes,
+    );
+}
+
+// Once the pond has settled no frame uploads: the first asleep frame after the ripple is dropped starts the quiet.
+fn bool simulation_gate(Options options, FrameRecord[] records) @local {
+    bool settled;
+    foreach (record : records[segment_start(options, Segment.WAVES)..]) {
+        if (!settled) {
+            settled = !record.simulation_awake;
+        } else if (record.simulation_bytes) {
+            return false;
+        }
+    }
+    return settled;
+}
+
 fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     Options options = demo.options;
     io::printfn("sample_ns median=%.1f", result.sample_ns);
@@ -1901,6 +2047,13 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
             io::printfn("upload_frames segment=still %d", upload_frames);
             steady_gate = upload_frames == 0;
         }
+        if (options.simulated) {
+            print_simulation(
+                records:      records,
+                segment_name: name,
+                scratch:      result.scratch,
+            );
+        }
     }
     float expected = CRATE_DENSITY / physics::DEFAULT_FLUID_DENSITY;
     double mean = result.settle_count ? result.settle_sum / (double)result.settle_count : 0;
@@ -1913,9 +2066,11 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     bool crated = demo.crates.len > 0;
     bool density_gate = !crated
       || (result.settle_count > 0 && math::abs(result.settle_worst - expected) <= GATE_TOLERANCE);
+    bool settle_gate = !options.simulated || simulation_gate(options, result.records);
     io::printfn("gate steady_uploads %s", steady_gate ? "pass" : "fail");
+    if (options.simulated) io::printfn("gate simulation_uploads_stop_once_settled %s", settle_gate ? "pass" : "fail");
     io::printfn("gate crates_at_density_line %s", !crated ? "skipped: no crates" : (density_gate ? "pass" : "fail"));
-    return steady_gate && density_gate;
+    return steady_gate && density_gate && settle_gate;
 }
 
 fn String reflection_name(Reflection reflection) @local {
@@ -1929,7 +2084,7 @@ fn String reflection_name(Reflection reflection) @local {
 fn void print_header(Options options) @local {
     io::printfn(
         "# water size=%d shading=%s reflection=%s mirror_scale=%g crates=%d ripples=%s foliage=%s ssgi=%s "
-          "extent=%dx%d frames=%d sky=%s volumetric_fog=%s split=%s",
+          "extent=%dx%d frames=%d sky=%s volumetric_fog=%s split=%s waves=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         reflection_name(options.reflection),
@@ -1944,6 +2099,7 @@ fn void print_header(Options options) @local {
         options.sky ? "on" : "off",
         options.volumetric_fog ? "on" : "off",
         options.split ? "on" : "off",
+        options.simulated ? "simulated" : "gerstner",
     );
 }
 
@@ -2081,6 +2237,8 @@ fn void? run_shot(Options options) @local {
     }
     if (options.dive) {
         place_dive(&demo, dive_share(options, 0));
+    } else if (options.simulated) {
+        place_ripple_view(&demo);
     } else {
         pose_segment(
             demo:    &demo,
@@ -2092,7 +2250,8 @@ fn void? run_shot(Options options) @local {
     prepare_views(&demo, &renderer, { options.width, options.height })!;
     renderer.prepare_scene(&scene)!;
 
-    for (uint frame = 0; frame < SHOT_FRAMES; frame++) {
+    uint lead_frames = (uint)math::round(options.ripple_age / TIME_STEP);
+    for (uint frame = 0; frame < lead_frames + SHOT_FRAMES; frame++) {
         step_scene(
             demo:     &demo,
             renderer: &renderer,
@@ -2100,6 +2259,15 @@ fn void? run_shot(Options options) @local {
             time:     frame_time(frame),
             delta:    TIME_STEP,
         )!;
+        if (options.simulated && frame == 0) {
+            drop_ripples(
+                demo:      &demo,
+                origin:    demo.bodies[0].centre + (Vec3){ SHOT_DROP_OFFSET, 1, 0 },
+                direction: { 0, -1, 0 },
+            )!;
+        }
+        if (frame < lead_frames) continue;
+
         render_offscreen(
             demo:     &demo,
             renderer: &renderer,
@@ -2128,7 +2296,8 @@ fn int main(String[] args) {
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
               "[--current X,Z] [--ssgi] [--traced] [--capture] [--split] [--ripples on|off] [--width W] [--height H] "
-              "[--sky] [--volumetric-fog] [--sea-state] [--ocean] [--dive [SHARE]] [--wind SPEED] [--shot FILE.png].");
+              "[--sky] [--volumetric-fog] [--sea-state] [--ocean] [--dive [SHARE]] [--wind SPEED] "
+              "[--waves gerstner|simulated] [--ripple-age SECONDS] [--shot FILE.png].");
         }
         return 1;
     }
