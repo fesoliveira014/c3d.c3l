@@ -51,6 +51,7 @@ fn void create_fixture(Fixture* fixture, ParticleRenderMode mode, uint capacity 
     fixture.source.add_node(fixture.root, "authored-child")!!;
     ParticleSystemDesc desc = particle::default_particle_system_desc();
     desc.capacity = 7;
+    desc.saturation = DROP_OLDEST;
     desc.seed = 12345;
     desc.render_mode = mode;
     desc.material = material;
@@ -122,18 +123,39 @@ fn Node*? decode(
     );
 }
 
+fn Node* find_child(Node* parent, String name) @private {
+    for (Node* child = parent.first_child; child; child = child.next_sibling) {
+        if (child.name == name) return child;
+    }
+    return null;
+}
+
 fn void test_serial_layout_registration() @test {
     particle::register_serial_codecs()!!;
     assert(serial::described_type(ParticleRange)!!.version == 1);
     assert(serial::described_type(ParticleRange)!!.layout == 0xaf1f0c33b5e51627);
     assert(serial::described_type(LifetimeTable)!!.layout == 0xe4c18077262a7a22);
     assert(serial::described_type(LifetimeColorTable)!!.layout == 0x4eacd1a988dfc1b2);
-    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x1a366da2bd207420);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0xea58cb75a4a73416);
+    assert(serial::described_type(particle::ParticleSystemDescV1)!!.version == 1);
+    assert(serial::described_type(particle::ParticleSystemDescV1)!!.layout == 0x1a366da2bd207420);
+    assert(serial::described_type(particle::ParticleAuthoringV1)!!.version == 1);
+    assert(serial::described_type(particle::ParticleAuthoringV1)!!.layout == 0xea58cb75a4a73416);
+    assert(serial::described_type(particle::ParticleSystemDescV2)!!.version == 2);
+    assert(serial::described_type(particle::ParticleSystemDescV2)!!.layout == 0x63291d71ce5d82d3);
+    assert(serial::described_type(particle::ParticleAuthoringV2)!!.version == 2);
+    assert(serial::described_type(particle::ParticleAuthoringV2)!!.layout == 0x2bb779bddc9e4271);
+    assert(serial::described_type(SubEmitter)!!.version == 1);
+    assert(serial::described_type(SubEmitter)!!.layout == 0xbc17df2b03f79e67);
+    assert(serial::described_type(ParticleSystemDesc)!!.version == 3);
+    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x09ff25e64a1b07c9);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 3);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0xfce463fdcc2f5ec7);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("particle_system") && schema.contains("emitting"));
         assert(schema.contains("color_over_life") && schema.contains("BILLBOARD"));
+        assert(schema.contains("saturation") && schema.contains("DROP_OLDEST"));
+        assert(schema.contains("sub_emitters") && schema.contains("inherit_velocity") && schema.contains("max_events"));
     };
 }
 
@@ -175,6 +197,8 @@ fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @tes
                 assert(!system.is_prepared() && !system.emitting && system.alive == 0);
                 assert(system.pending_burst == 0 && system.dropped == 0 && system.emit_accumulator == 0);
                 assert(system.desc.capacity == 7 && system.desc.seed == 12345 && system.desc.render_mode == mode);
+                assert(system.desc.saturation == DROP_OLDEST && system.evicted == 0 && system.next_spawn == 0);
+                assert(system.desc.sub_emitter_count == 0 && system.desc.max_events == 0);
                 assert(system.desc.color_over_life.values[7] == source.desc.color_over_life.values[7]);
                 assert(restored.first_child && restored.first_child.name == "authored-child");
                 assert(fixture.destination.count(BillboardBatch) == 0 && fixture.destination.count(InstancedMesh) == 0);
@@ -201,6 +225,83 @@ fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @tes
                 )!!);
             };
         }
+    }
+}
+
+fn void test_sub_emitter_targets_round_trip_inside_the_subtree() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture, BILLBOARD);
+            defer destroy_fixture(&fixture);
+            Node* target = fixture.source.add_node(fixture.root, "target")!!;
+            fixture.source.attach_particle_system(target, particle::default_particle_system_desc())!!;
+            Node* removed = fixture.source.add_node()!!;
+            Entity stale = removed.id;
+            fixture.source.remove(removed);
+            ParticleSystem* source = fixture.source.get(fixture.root, ParticleSystem);
+            source.desc.max_events = 6;
+            source.desc.sub_emitter_count = 2;
+            source.desc.sub_emitters[0] = {
+                .trigger = BIRTH,
+                .target = target.id,
+                .count = 3,
+                .inherit_velocity = 0.25f,
+            };
+            source.desc.sub_emitters[1] = {
+                .trigger = DEATH,
+                .target = target.id,
+                .count = 2,
+                .inherit_velocity = 1,
+                .on_evict = true,
+            };
+            source.desc.sub_emitters[2] = { .target = stale };
+            char[] bytes = encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: fixture.root,
+                text_mode: text_mode,
+            )!!;
+
+            Node* restored = decode(&fixture, bytes, text_mode)!!;
+            Node* restored_target = find_child(restored, "target");
+            ParticleSystemDesc desc = fixture.destination.get(restored, ParticleSystem).desc;
+            assert(restored_target.name == "target" && desc.max_events == 6 && desc.sub_emitter_count == 2);
+            assert(desc.sub_emitters[0].trigger == BIRTH && desc.sub_emitters[0].count == 3);
+            assert(desc.sub_emitters[0].inherit_velocity == 0.25f && !desc.sub_emitters[0].on_evict);
+            assert(desc.sub_emitters[1].trigger == DEATH && desc.sub_emitters[1].on_evict);
+            assert(c3d::same_id(desc.sub_emitters[0].target, restored_target.id));
+            assert(c3d::same_id(desc.sub_emitters[1].target, restored_target.id));
+            assert(!desc.sub_emitters[2].target.generation);
+            assert(bytes == encode(
+                scene: &fixture.destination,
+                assets: &fixture.assets,
+                root: restored,
+                text_mode: text_mode,
+            )!!);
+        };
+    }
+}
+
+fn void test_sub_emitter_target_outside_the_subtree_is_rejected() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture, BILLBOARD);
+            defer destroy_fixture(&fixture);
+            Node* outside = fixture.source.add_node(name: "outside")!!;
+            fixture.source.attach_particle_system(outside, particle::default_particle_system_desc())!!;
+            ParticleSystem* source = fixture.source.get(fixture.root, ParticleSystem);
+            source.desc.max_events = 2;
+            source.desc.sub_emitter_count = 1;
+            source.desc.sub_emitters[0] = { .trigger = DEATH, .target = outside.id, .count = 1 };
+            assert(@catch(encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: fixture.root,
+                text_mode: text_mode,
+            )) == c3d::INVALID_ARGUMENT);
+        };
     }
 }
 
