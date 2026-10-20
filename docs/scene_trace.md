@@ -63,6 +63,7 @@ A skinned mesh, a morphed mesh or both traces at the pose raster draws in the sa
 - **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a slot whose mesh or crowd part has a posed binding this frame takes that pose instead of running its own pose pass; its streams stay allocated, unwritten. The rule and its exceptions are on the animation page.
 - **Stats.** `trace_posed_instances`, `trace_posed_shared`, `trace_posed_overflow`, `trace_deform_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_poses_reused`, `trace_refits` and `blas_updates` (this frame). `trace_poses` counts posing dispatches, one per swaying batch or group part and one per other posed row; `trace_refits` counts the trees refit, which share one dispatch. Posing and refits run under `Pass.TRACE_POSE`.
 - **Hardware.** Each slot owns one bottom level created with `allow_update` and `prefer_fast_trace`: a full build when the slot is new, rebuilt or its source geometry changed, and an in-place update each frame the pose changes. Static bottom levels keep `prefer_fast_trace` alone. A pose change rebuilds the top level too. Updates and builds share the batched scratch described under [Hardware lifetime](#hardware-lifetime). `Stats.blas_updates` counts the updates; a full posed build counts in `blas_builds`. Both kinds refit rather than rebuild, so a strong pose traces slower than rest. A geometry whose vertex or primitive counts change replaces the slot's bottom level.
+- **Pose-only frames.** When poses move and no other row field does, as a swaying batch does while time passes, the trace revision advances and the instance rows and software top-level boxes stay as written. The software kind refits its node copies in place, which its rows already address. The hardware kind rebuilds the top level from the instance descriptors of its last packing, which the renderer keeps on the CPU (64 bytes per `RendererDesc.max_trace_instances`, allocated with the first hardware preparation) and copies into the frame's upload ring, so no descriptor is packed again. A change to any other field, such as a gust that moves the sway reach and with it the bounds, rewrites the rows and boxes and packs the descriptors anew. `Stats.trace_top_level_writes` counts the rewrites.
 
 ### Vertex-motion slots
 
@@ -72,7 +73,7 @@ A traced `Mesh` with `vertex_motion` and neither a skin binding nor selected mor
 - **Topology change.** A different geometry, vertex count, index count or stream layout rebuilds the slot, its tree and its bottom level.
 - **Refit only.** The tree keeps the topology of its first revision with no periodic rebuild. A surface folded far from that shape traces slower, not wrongly.
 - **Capacity.** Slots count against `RendererDesc.max_posed_trace_instances` and its creation bound ([Posed instances](#posed-instances)). With none free the mesh traces through the shared geometry and rebuilds it every revision, as a mesh without `vertex_motion` does; it is not counted in `trace_posed_overflow`.
-- **Top level.** The top level still rebuilds on every revision, and the trace revision advances, as for skin and morph poses.
+- **Top level.** The hardware top level still rebuilds on every revision, and the trace revision advances, as for skin and morph poses. The rows are rewritten only when a field other than the pose changes ([pose-only frames](#posed-instances)).
 - **Cost.** A slot holds the same bytes as other posed slots, and the geometry's rest tree gains the depth table at its first trace upload. A static `vertex_motion` mesh keeps a slot.
 
 ### Custom trace poses
@@ -165,7 +166,7 @@ Triangle geometry whose arrays form no triangle list (fewer than three positions
 
 `RendererDesc.max_trace_instances` bounds the instance table (4096 when zero). More eligible instances fault `c3d::CAPACITY_EXCEEDED` and leave the previous table in place. The top level, the instance table and the root live in one buffer of that capacity; each bottom level takes one acceleration-structure table entry, not an allocation entry, and is owned by its geometry mirror and released with it.
 
-`Stats.trace_instances`, `trace_nodes` (top-level nodes), `trace_skipped` and `trace_build_ms` (CPU time spent in the call) describe the current frame; `begin_frame` resets them. `Stats.blas_builds`, `blas_updates` and `tlas_builds` count acceleration structure builds and updates recorded in the frame, `acceleration_batches` the barrier-separated groups of bottom-level work; builds run under `Pass.ACCELERATION_BUILD`.
+`Stats.trace_instances`, `trace_nodes` (top-level nodes), `trace_skipped` and `trace_build_ms` (CPU time spent in the call) describe the current frame; `begin_frame` resets them. `Stats.trace_top_level_writes` counts the frame's rewrites of the top-level boxes and instance rows. `Stats.blas_builds`, `blas_updates` and `tlas_builds` count acceleration structure builds and updates recorded in the frame, `acceleration_batches` the barrier-separated groups of bottom-level work; builds run under `Pass.ACCELERATION_BUILD`.
 
 ### Hardware lifetime
 

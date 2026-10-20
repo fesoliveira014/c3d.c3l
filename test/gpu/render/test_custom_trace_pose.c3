@@ -41,6 +41,7 @@ const usz POSITION_BYTES @private = 12;               // a packed vec3 position
 const double[3] POSE_TIMES @private = { 0.0, 0.4, 0.8 };
 const double SWAY_FIRST_TIME @private = 0.3;
 const double SWAY_SECOND_TIME @private = 0.6;
+const double SWAY_THIRD_TIME @private = 0.9;
 const uint TWO_INSTANCES @private = 2;
 const float[2] MOVED_NODE_OFFSETS @private = { 0.4f, 0.9f };
 const bool[2] INSTANCED_MODES @private = { false, true };
@@ -443,6 +444,47 @@ fn void test_swaying_instances_trace_at_their_swayed_pose_including_one_off_came
         posed_assert_agreement(rig.harness.results, "swayed second instance", flat_faces: false);
         report_pose_counts(renderer, "swaying, second instance in view");
         assert(renderer.stats.trace_poses == 1 && renderer.stats.blas_updates == (ray_queries ? 2 : 0));
+        check_validation(renderer);
+    }
+}
+
+// A frame that moves the sway only changes the poses; a gust also moves the reach, so the bounds and the rows.
+fn void test_a_sway_only_frame_rewrites_no_rows_and_a_gust_frame_rewrites_them() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        TraceRig rig;
+        create_trace_rig(&rig, ray_queries)!!;
+        defer destroy_trace_rig(&rig);
+        Node* batch_node = add_upright_batch(&rig, add_tall_slab(&rig.fixture)!!, rig.fixture.plain)!!;
+        InstancedMesh* batch = rig.harness.scene.get(batch_node, InstancedMesh);
+        batch.sway = swaying_toward_the_camera(SWAY_AMPLITUDE);
+        batch.trace_sway = true;
+        Renderer* renderer = &rig.fixture.renderer;
+        uint top_level_builds = ray_queries ? 1 : 0;
+
+        render_rig(&rig, SWAY_FIRST_TIME)!!;
+        report_pose_counts(renderer, "sway, first frame");
+        assert(renderer.stats.trace_top_level_writes == 1 && renderer.stats.tlas_builds == top_level_builds);
+        ulong revision = renderer.scene_trace.revision;
+
+        render_rig(&rig, SWAY_SECOND_TIME)!!;
+        posed_assert_agreement(rig.harness.results, "sway only", flat_faces: false);
+        report_pose_counts(renderer, "sway, time moved");
+        assert(renderer.stats.trace_poses == 1 && renderer.stats.trace_posed_instances == 2);
+        assert(renderer.stats.trace_top_level_writes == 0 && renderer.stats.tlas_builds == top_level_builds);
+        assert(renderer.scene_trace.revision == revision + 1);
+
+        batch.sway.amplitude = 2 * SWAY_AMPLITUDE;
+        render_rig(&rig, SWAY_THIRD_TIME)!!;
+        posed_assert_agreement(rig.harness.results, "sway gust", flat_faces: false);
+        report_pose_counts(renderer, "sway, gust");
+        assert(renderer.stats.trace_poses == 1);
+        assert(renderer.stats.trace_top_level_writes == 1 && renderer.stats.tlas_builds == top_level_builds);
+        assert(renderer.scene_trace.revision == revision + 2);
+
+        render_rig(&rig, SWAY_THIRD_TIME)!!;
+        assert(renderer.stats.trace_poses == 0 && renderer.stats.trace_refits == 0);
+        assert(renderer.stats.trace_top_level_writes == 0 && renderer.stats.tlas_builds == 0);
+        assert(renderer.scene_trace.revision == revision + 2);
         check_validation(renderer);
     }
 }

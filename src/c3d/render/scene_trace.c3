@@ -33,6 +33,10 @@ const BvhBuildDesc TOP_LEVEL_BUILD @private = { .bins = 12, .leaf_size = 1 }; //
 // The top level depends on a record only up to its software bottom level, which a later preparation may fill.
 const usz TOP_LEVEL_PREFIX_BYTES @private = $reflect(TraceInstance.nodes).offset;
 
+// Neither the instance rows nor the top level read pose_serial, which only says whether a pose moved.
+const usz POSE_SERIAL_OFFSET @private = $reflect(TraceInstance.pose_serial).offset;
+const usz POSE_SERIAL_END @private = POSE_SERIAL_OFFSET + ulong::size;
+
 const ZString[FRAMES_IN_FLIGHT] TOP_LEVEL_NAMES @private = {
     "scene_tlas_0",
     "scene_tlas_1",
@@ -51,6 +55,12 @@ enum TraceSource @private {
     REUSE,
     BUILD,
     SKIP,
+}
+
+enum TraceRowChange @private {
+    NONE,  // every record equals the baseline
+    POSES, // pose_serial alone differs, so the boxes, instance rows and descriptors hold
+    ROWS,  // the set or another field differs
 }
 
 enum TracePose @private {
@@ -168,6 +178,8 @@ struct RtContext @private {
     RtTopLevel[FRAMES_IN_FLIGHT] top_levels;
     RtScratch[FRAMES_IN_FLIGHT]  scratch;   // per frame slot
     usz                          top_level_scratch_size;
+    gpu::AccelerationStructureInstance[] packed; // the baseline rows' descriptors, copied into each build's ring
+    bool                         packed_valid;   // packed holds the baseline's rows
     uint                         current;   // top level built last; FRAMES_IN_FLIGHT before the first build
     bool                         current_holds_set;
     ulong                        used_frame; // frame_index + 1 of the last frame that published current
@@ -577,6 +589,11 @@ fn TraceCollection collect_trace_instances(
     return collection;
 }
 
+// The batches whose instances become records; the capacity pass counts the same ones.
+fn bool batch_collected(Scene* scene, Node* node, InstancedMesh* batch) @local {
+    return node.visible_effective && batch.trace && batch.count && !spatial::animated_lod_owns_node(scene, node);
+}
+
 // A batch of swaying instances can fill every posed slot, so its rows claim after the other kinds do.
 fn void sway_rows_last(Allocator allocator, TraceCollection* collection) @private {
     usz count = collection.records.len;
@@ -589,11 +606,6 @@ fn void sway_rows_last(Allocator allocator, TraceCollection* collection) @privat
     TraceInstance[] records = alloc::new_array(allocator, TraceInstance, (sz)count);
     defer alloc::free(allocator, records.ptr);
     TracePoseSource[] poses = alloc::new_array(allocator, TracePoseSource, (sz)count);
-// The batches whose instances become records; the capacity pass counts the same ones.
-fn bool batch_collected(Scene* scene, Node* node, InstancedMesh* batch) @local {
-    return node.visible_effective && batch.trace && batch.count && !spatial::animated_lod_owns_node(scene, node);
-}
-
     defer alloc::free(allocator, poses.ptr);
 
     usz front;
@@ -697,6 +709,7 @@ fn void free_rt(Renderer* renderer) @private {
         if (scratch.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &scratch.allocation);
     }
     rt.pending_blas.free();
+    if (rt.packed.len) alloc::free(renderer.allocator, rt.packed.ptr);
     *rt = {};
 }
 
@@ -721,7 +734,8 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     RtContext* rt = &renderer.rt;
     bool same_set = trace.scene == scene.identity && trace.baseline_count == records.len
       && trace.origin == renderer.frame_origin;
-    bool rows_unchanged = same_set && records_equal(trace.baseline[:records.len], records, TraceInstance::size);
+    TraceRowChange change = TraceRowChange.ROWS;
+    if (same_set) change = compare_trace_rows(trace.baseline[:records.len], records);
     bool top_level_unchanged = top_level_reusable(
         trace:   trace,
         rt:      rt,
@@ -746,10 +760,11 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
         rt.current_holds_set = false;
     }
 
-    if (!rows_unchanged) {
+    if (change == TraceRowChange.ROWS) {
         write_top_level(renderer, scene, records, tlas_index)!;
-    } else if (tlas_index != trace.tlas_index) {
-        write_trace_root(renderer, tlas_index)!;
+    } else {
+        if (change == TraceRowChange.POSES) follow_poses(trace, records);
+        if (tlas_index != trace.tlas_index) write_trace_root(renderer, tlas_index)!;
     }
     renderer.stats.trace_instances = trace.baseline_count;
     renderer.stats.trace_nodes = trace.top_node_count;
@@ -774,6 +789,26 @@ fn bool records_equal(TraceInstance[] baseline, TraceInstance[] records, usz pre
         if (!mem::equals(&baseline[index], record, (sz)prefix_bytes)) return false;
     }
     return true;
+}
+
+fn TraceRowChange compare_trace_rows(TraceInstance[] baseline, TraceInstance[] records) @private {
+    usz tail_bytes = TraceInstance::size - POSE_SERIAL_END;
+    TraceRowChange change = TraceRowChange.NONE;
+    foreach (index, &record : records) {
+        TraceInstance* held = &baseline[index];
+        bool rows_same = mem::equals(held, record, (sz)POSE_SERIAL_OFFSET)
+          && mem::equals((char*)held + POSE_SERIAL_END, (char*)record + POSE_SERIAL_END, (sz)tail_bytes);
+        if (!rows_same) return TraceRowChange.ROWS;
+
+        if (held.pose_serial != record.pose_serial) change = TraceRowChange.POSES;
+    }
+    return change;
+}
+
+// The trace revision still advances, which restarts path accumulation over the new poses.
+fn void follow_poses(SceneTrace* trace, TraceInstance[] records) @local {
+    foreach (index, &record : records) trace.baseline[index].pose_serial = record.pose_serial;
+    trace.revision++;
 }
 
 fn void? acquire_scene_trace(Renderer* renderer) @local {
@@ -1079,6 +1114,8 @@ fn void? acquire_rt_top_levels(Renderer* renderer) @local {
     }
     rt.top_level_scratch_size = gpu::get_acceleration_structure_requirements(&renderer.device, &desc)!.build_scratch_size;
     rt.top_levels = created;
+    sz instance_capacity = renderer.max_trace_instances;
+    rt.packed = alloc::new_array(renderer.allocator, gpu::AccelerationStructureInstance, instance_capacity);
 }
 
 fn void? acquire_rt_scratch(Renderer* renderer, RtScratch* scratch, usz size) @local {
@@ -1182,17 +1219,13 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
     SceneTrace* trace = &renderer.scene_trace;
     RtContext* rt = &renderer.rt;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+
+    if (!rt.packed_valid) pack_top_level_instances(renderer)!;
+
     usz bytes = trace.baseline_count * gpu::AccelerationStructureInstance::size;
     gpu::MappedGpuSpan instances = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
-    gpu::AccelerationStructureInstance* packed = (gpu::AccelerationStructureInstance*)instances.bytes.ptr;
-    for (uint row = 0; row < trace.baseline_count; row++) {
-        gpu::AccelerationStructureInstanceDesc desc = tlas_instance_desc(
-            record: &trace.baseline[trace.row_records[row]],
-            row: row,
-            origin: trace.origin,
-        );
-        packed[row] = gpu::make_acceleration_structure_instance(&renderer.device, &desc)!;
-    }
+    mem::copy(instances.bytes.ptr, rt.packed.ptr, (sz)bytes);
+
     gpu::AccelerationStructureBuildDesc build = {
         .destination    = rt.top_levels[rt.build_target].tlas,
         .instances      = instances.span,
@@ -1200,6 +1233,21 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
         .scratch        = scratch,
     };
     gpu::cmd_build_acceleration_structure(commands, &build)!;
+}
+
+// The descriptors read no field a pose changes, so one packing serves every build until the rows are rewritten.
+fn void? pack_top_level_instances(Renderer* renderer) @local {
+    SceneTrace* trace = &renderer.scene_trace;
+    RtContext* rt = &renderer.rt;
+    for (uint row = 0; row < trace.baseline_count; row++) {
+        gpu::AccelerationStructureInstanceDesc desc = tlas_instance_desc(
+            record: &trace.baseline[trace.row_records[row]],
+            row:    row,
+            origin: trace.origin,
+        );
+        rt.packed[row] = gpu::make_acceleration_structure_instance(&renderer.device, &desc)!;
+    }
+    rt.packed_valid = true;
 }
 
 fn void? upload_trace_geometry(
@@ -1327,6 +1375,8 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     trace.scene = scene.identity;
     trace.origin = renderer.frame_origin;
     trace.revision++;
+    renderer.rt.packed_valid = false;
+    renderer.stats.trace_top_level_writes++;
 }
 
 fn void? write_trace_root(Renderer* renderer, uint tlas_index) @local {
