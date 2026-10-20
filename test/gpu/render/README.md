@@ -133,11 +133,24 @@ mkdir -p /tmp/c3d-xdg && chmod 700 /tmp/c3d-xdg
 c3c test acceptance --path test/gpu/render --test-filter none   # build only
 cd test/gpu/render
 env -u DISPLAY -u WAYLAND_DISPLAY XDG_RUNTIME_DIR=/tmp/c3d-xdg \
+  VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json) \
   timeout -k 5 300 ../../../build/render_acceptance/testrun --test-filter <name>
 ```
 
 Windowed examples cannot run while the compositor is wedged. `wsl --shutdown` from Windows
 recovers it but ends every WSL session on the host.
+
+WSL runs must also restrict the Vulkan loader to lavapipe: WSL's dzn driver and `libd3d12core`
+abort the process on the 329th instance that enumerates devices, and every fixture creates one.
+Set `VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json)`, or
+`VK_LOADER_DRIVERS_SELECT='*lvp*'` when `LD_LIBRARY_PATH` selects the SDK loader; the system
+loader 1.3.204 ignores the second variable. Never set either on a native GPU host, where the suite
+must run on the GPU.
+
+A test whose assertion fails skips its `defer destroy_fixture`. The harness records the live
+fixture, and when its test ends it prints which function created the fixture and destroys it, so
+the next test starts without the leaked runtime and device. If the test also holds device
+allocations that only it can free, the harness prints that the runtime is still alive.
 
 The workload is headless: one box whose material samples an empty storage
 texture, two render targets (`RGBA16_FLOAT`, `RGBA8_UNORM`), a compute shader
