@@ -221,6 +221,8 @@ A triangle's front is its counter-clockwise side in the geometry's local space: 
 - `trace_scene_any` is a shadow test toward the ray's far end. It keeps the faces a light there sees, the faces the shadow atlas draws: a single-sided triangle counts only when its front faces the far end. Its answer depends on the ray's direction; it is not a symmetric line-of-sight test.
 - `trace_scene_with_back_faces` keeps both faces of every triangle, and `surface_from_hit` sets `TraceSurface.back_face` for a single-sided triangle hit from behind. The probe update uses it, because a probe inside geometry must read dark.
 
+`Mesh.trace_facing` (`TraceFacing`) sets which faces a mesh's row has, for traces only. `MATERIAL`, the default, follows the material's `double_sided`; `FRONT` gives the row front faces only, whatever the material says; `BOTH` gives it two fronts. The resolved value sets `TRACE_INSTANCE_DOUBLE_SIDED`, so both kinds, the three entry points above and `TraceSurface.back_face` follow it. Raster, the shadow atlas and picking read the material alone. `InstancedMesh` and `LodGroup` rows follow the material.
+
 The instance mask and the alpha test apply to all three, after the facing test. Both kinds give the same hits. `trace_scene` and `trace_scene_any` counted both faces before the software path for traced effects landed; a shader that relied on that uses `trace_scene_with_back_faces` for a nearest hit. CPU picking applies `PickOptions.faces`, whose default `MATERIAL` matches `trace_scene`.
 
 ### Trace proxies
