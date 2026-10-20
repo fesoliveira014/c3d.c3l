@@ -217,5 +217,9 @@ fn Vec3 surface_reach(WaterDesc* desc, Wave[] waves) @private {
     return { largest_shift(waves), total_amplitude(waves), largest_shift(waves) };
 }
 
-// The metres under the rest plane the surface can reach: the medium's offset and the mirror's clip plane follow it.
-fn float vertical_reach(WaterRuntime* runtime) @private => surface_reach(&runtime.desc, bounding_waves(runtime)).y;
+// The metres under the rest plane the surface can reach now: the medium's offset and the mirror's clip plane follow it.
+// A simulated body reaches as far as its largest height since it woke, so a calm pond keeps its water fogged.
+fn float vertical_reach(WaterRuntime* runtime) @private {
+    if (runtime.simulation) return runtime.simulation.reach;
+    return total_amplitude(bounding_waves(runtime));
+}
