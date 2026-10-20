@@ -72,15 +72,15 @@ eye direction. Strips are always front-facing, in views of either handedness.
 
 ## Texture coordinates
 
-`u` runs from 0 at the left edge to 1 at the right edge, where left and right are those of a viewer looking along the
-direction of travel (increasing point index) with the strip's face toward them. `v` is the `v` of the points, as authored,
-interpolated along each segment. Both follow the texture-space convention of the store: `v = 0` is the first stored row of
-an image, the top. A strip drawn upward on the screen with `v` rising along its length therefore shows an image upside
-down; author `v` falling along the travel to put the top of the image at the head.
+Seen with the direction of travel (increasing point index) pointing up the screen, `u` runs from 0 at the left edge to 1
+at the right edge. `v` is the `v` of the points, as authored, interpolated along each segment. Both follow the
+texture-space convention of the [billboard quad](billboards.md#sprite-sheets) and of glTF: `v = 0` is the first stored row
+of an image, its top. A strip whose travel points up the screen and whose `v` rises along it therefore shows an image
+upside down, with its top at the start; author `v` falling along the travel to put the top of the image toward the head.
 
 The vertex stage writes UV0 and UV1 as `(u, v)`, `v_billboard` (location 8) as `(u, v, 0)`, the normal facing the eye,
-the tangent along the strip and the point colour, interpolated. Materials that sample UV0 or UV1, and custom fragments
-that read the varyings of [custom shaders](custom_shaders.md#billboard-varying), see no difference from a mesh.
+the tangent along the strip and the point colour, interpolated. Materials that sample UV0 or UV1 need no ribbon-specific
+setup; custom fragments read the varyings as described in [custom shaders](custom_shaders.md#billboard-varying).
 
 ## Materials and supported paths
 
