@@ -9,11 +9,12 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-// Moves the live particles and their stored trail points by the origin shift that queued since the last step.
+// Moves the live particles, the children delivered since, and their stored trail points by the origin shift that
+// queued since the last step.
 void main() {
     StepRoot root = StepRoot(DispatchRoot(pc.root_gpu).parameters);
     uint index = gl_GlobalInvocationID.x;
-    if (index >= ParticleControl(root.control).alive) return;
+    if (index >= particle_pool_size(ParticleControl(root.control))) return;
 
     ParticleStates states = ParticleStates(root.state_home);
     states.values[index].position -= root.shift_stretch.xyz;

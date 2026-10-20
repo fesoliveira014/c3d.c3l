@@ -87,7 +87,7 @@ fn void process_events(Scene* scene, ParticleSystem* source) @private {
                 node = scene.node(sub_emitter.target);
                 target = scene.get(node, ParticleSystem);
             }
-            if (!target || !target.is_prepared()) {
+            if (!target || !target.is_prepared() || target.desc.execution != source.desc.execution) {
                 source.skipped_events = saturating_add(source.skipped_events, 1);
                 continue;
             }

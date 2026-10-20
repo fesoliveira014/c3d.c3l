@@ -11,13 +11,16 @@ const char[*] PARTICLE_SCAN_SPIRV @private = $embed("../shaders/spv/particle_sca
 const char[*] PARTICLE_ADMIT_SPIRV @private = $embed("../shaders/spv/particle_admit.spv");
 const char[*] PARTICLE_ADVANCE_SPIRV @private = $embed("../shaders/spv/particle_advance.spv");
 const char[*] PARTICLE_PUBLISH_SPIRV @private = $embed("../shaders/spv/particle_publish.spv");
+const char[*] PARTICLE_DELIVER_SPIRV @private = $embed("../shaders/spv/particle_deliver.spv");
 const char[*] INCLUDE_PARTICLE_PARTICLE_RANDOM_TEXT @private = $embed("../shaders/include/particle/particle_random.glsl");
+const char[*] INCLUDE_PARTICLE_PARTICLE_SPAWN_TEXT @private = $embed("../shaders/include/particle/particle_spawn.glsl");
 const char[*] INCLUDE_PARTICLE_PARTICLE_STEP_TEXT @private = $embed("../shaders/include/particle/particle_step.glsl");
 
 <*
  GLSL includes of this package, by the name a shader writes.
 *>
-const asset::ShaderInclude[2] PARTICLE_SHADER_INCLUDES = {
+const asset::ShaderInclude[3] PARTICLE_SHADER_INCLUDES = {
     { .name = "particle/particle_random.glsl", .text = (String)INCLUDE_PARTICLE_PARTICLE_RANDOM_TEXT[..] },
+    { .name = "particle/particle_spawn.glsl", .text = (String)INCLUDE_PARTICLE_PARTICLE_SPAWN_TEXT[..] },
     { .name = "particle/particle_step.glsl", .text = (String)INCLUDE_PARTICLE_PARTICLE_STEP_TEXT[..] },
 };

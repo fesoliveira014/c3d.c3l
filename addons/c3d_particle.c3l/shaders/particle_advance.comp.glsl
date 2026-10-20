@@ -118,10 +118,17 @@ vec3 turbulence_air_velocity(StepRoot root, vec3 position) {
 }
 
 // Mirrors respond_to_hit in collide.c3 for the ground plane, whose normal is up.
-void respond_to_ground(StepRoot root, inout ParticleGpu particle, vec3 hit_point, float radius) {
+void respond_to_ground(
+    StepRoot root,
+    ParticleControl control,
+    inout ParticleGpu particle,
+    vec3 hit_point,
+    float radius
+) {
     float approach = max(0.0, -particle.velocity.y);
     vec3 resting = hit_point + vec3(0.0, radius, 0.0);
     particle.position = hit_point;
+    if (approach >= root.impact_speed) particle_raise_event(root, control, particle, PARTICLE_TRIGGER_IMPACT);
     if (root.response == PARTICLE_RESPONSE_BOUNCE) {
         if (approach > 0.0) {
             vec3 into = vec3(0.0, -approach, 0.0);
@@ -133,12 +140,13 @@ void respond_to_ground(StepRoot root, inout ParticleGpu particle, vec3 hit_point
         particle.velocity = vec3(0.0);
         particle.position = resting;
     } else {
+        particle_raise_event(root, control, particle, PARTICLE_TRIGGER_DEATH);
         particle.age = particle.lifetime;
     }
 }
 
 // Mirrors collide_ground_blocks and hit_ground_plane in collide.c3.
-void collide_ground(StepRoot root, inout ParticleGpu particle) {
+void collide_ground(StepRoot root, ParticleControl control, inout ParticleGpu particle) {
     vec3 to = particle.position;
     vec3 from = particle.position - particle.velocity * root.seconds;
     if (from == to) return;
@@ -152,7 +160,7 @@ void collide_ground(StepRoot root, inout ParticleGpu particle) {
 
     float fraction = clearance_from > 0.0 ? clearance_from / (clearance_from - clearance_to) : 0.0;
     vec3 centre = from + (to - from) * fraction;
-    respond_to_ground(root, particle, vec3(centre.x, plane, centre.z), radius);
+    respond_to_ground(root, control, particle, vec3(centre.x, plane, centre.z), radius);
 }
 
 // Mirrors record_trail_blocks, append_trail_point and drop_expired_trail_points in trail.c3.
@@ -187,7 +195,8 @@ void record_trail(StepRoot root, uint index, ParticleGpu particle) {
     headers.values[index] = header;
 }
 
-// Advances the survivors and the newborns together, flags who lives and who draws, and books the admission.
+// Advances the survivors and the newborns together, flags who lives and who draws, and books the admission. A newborn
+// that expires in its first step raises its DEATH event here, after it moved.
 void main() {
     StepRoot root = StepRoot(DispatchRoot(pc.root_gpu).parameters);
     ParticleControl control = ParticleControl(root.control);
@@ -202,7 +211,7 @@ void main() {
         control.pool_count = pool;
         control.dropped_low = uaddCarry(control.dropped_low, root.requested - emitted, carry);
         control.dropped_high += carry;
-        control.spawn_low = uaddCarry(control.spawn_low, emitted, carry);
+        control.spawn_low = uaddCarry(control.spawn_low, emitted + control.delivered, carry);
         control.spawn_high += carry;
     }
 
@@ -219,8 +228,9 @@ void main() {
         particle.rotation += particle.spin * root.seconds;
         if (index >= survivors) particle.age = root.seconds;
         bool live = particle.age < particle.lifetime;
+        if (!live) particle_raise_event(root, control, particle, PARTICLE_TRIGGER_DEATH);
         if (live && root.collides != 0u) {
-            collide_ground(root, particle);
+            collide_ground(root, control, particle);
             live = particle.age < particle.lifetime;
         }
         alternate.values[index] = particle;
