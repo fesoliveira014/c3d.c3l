@@ -187,6 +187,7 @@ fn void? update(
     DepthCollision depth = {},
 ) {
     DepthUse depth_use = prepare_depth(particles, renderer, scene, depth)!;
+
     particles.stamp++;
     if (!particles.counters.generation) {
         particles.counters = renderer.create_buffer({
