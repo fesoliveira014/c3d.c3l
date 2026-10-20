@@ -222,6 +222,7 @@ fn void? record_lod_selection(Renderer* renderer, LodSelection[] selections) @pr
                 .lod_animated = state.animated ? 1 : 0,
                 .lod_history_valid = selection.history_valid ? 1 : 0,
                 .lod_level_count = (uint)state.desc.levels.len + (selection.impostor ? 1 : 0),
+                .node_world = bitcast(maths::rebase(selection.node.world, renderer.frame_origin), Mat4f),
             };
             InstanceCullRoot* root = (InstanceCullRoot*)block.bytes.ptr;
             fill_lod_thresholds(state, selection.impostor, ((float*)&root.lod_thresholds)[:scene::MAX_LOD_CHOICES]);

@@ -44,6 +44,11 @@ layout(buffer_reference, std430, buffer_reference_align = 8) writeonly buffer So
     uint64_t values[];
 };
 
+// The record's instance composed with the batch node's world.
+mat4 instance_world(InstanceCullRoot root, mat4 record_model) {
+    return root.node_world * record_model;
+}
+
 bool box_visible(InstanceCullRoot root, mat4 model, float margin) {
     vec3 corners[8];
     for (uint corner = 0u; corner < 8u; corner++) {
@@ -103,7 +108,7 @@ float quadtree_size(InstanceCullRoot root, mat4 model) {
 }
 
 void select_lod(InstanceCullRoot root, uint source) {
-    mat4 model = CullInstances(root.instances).values[source].model;
+    mat4 model = instance_world(root, CullInstances(root.instances).values[source].model);
     float size = projected_size(root, model);
     if (size > 0.0 && !isinf(size)) size = exp2(log2(size) + root.lod_camera_bias.w);
     uint generation = LodMetadata(root.lod_metadata).values[source].generation;
@@ -149,7 +154,11 @@ bool quadtree_box_splits(InstanceCullRoot root, uint node, bool was_split) {
     }
 
     float range = quadtree_range(tree, depth, root.quadtree_pixel_scale, root.quadtree_world_scale);
-    float nearest = box_distance(root, CullInstances(root.instances).values[node].model, root.lod_camera_bias.xyz);
+    float nearest = box_distance(
+        root,
+        instance_world(root, CullInstances(root.instances).values[node].model),
+        root.lod_camera_bias.xyz
+    );
     return nearest < (was_split ? range * (1.0 + tree.hysteresis) : range);
 }
 
@@ -160,7 +169,8 @@ bool quadtree_splits(InstanceCullRoot root, uint node) {
         && (QuadtreeHistory(root.lod_previous).values[node] & QUADTREE_SPLIT) != 0u;
     if (root.quadtree_params != 0ul) return quadtree_box_splits(root, node, was_split);
 
-    float size = quadtree_size(root, CullInstances(root.instances).values[node].model) * root.quadtree_height_pixels;
+    float size = quadtree_size(root, instance_world(root, CullInstances(root.instances).values[node].model))
+        * root.quadtree_height_pixels;
     return was_split ? size >= root.quadtree_split_pixels / (1.0 + root.quadtree_hysteresis)
         : size > root.quadtree_split_pixels;
 }
@@ -224,7 +234,7 @@ void main() {
             if (dot(coefficients.xyz, center) + coefficients.w < -radius) return;
         }
     } else {
-        mat4 model = CullInstances(root.instances).values[source].model;
+        mat4 model = instance_world(root, CullInstances(root.instances).values[source].model);
         float margin = 0.0;
         if (root.instance_effects != 0ul) {
             InstanceEffectsGpu effects = InstanceEffectsGpu(root.instance_effects);
@@ -236,7 +246,7 @@ void main() {
             }
         }
         mat4 bounds_model = root.bounds_instances == 0ul || root.lod_animated != 0u ? model
-            : CullBounds(root.bounds_instances).values[source];
+            : instance_world(root, CullBounds(root.bounds_instances).values[source]);
 
         if (!box_visible(root, bounds_model, margin)) return;
 

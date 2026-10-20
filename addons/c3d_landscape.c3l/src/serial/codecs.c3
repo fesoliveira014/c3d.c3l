@@ -492,7 +492,9 @@ fn void defaults_water(void* value) @private => *(WaterDesc*)value = water::defa
 fn void defaults_water_simulation(void* value) @private {
     *(WaterSimulation*)value = water::default_water_desc().simulation;
 }
-fn void defaults_water_spectrum(void* value) @private => *(WaterSpectrum*)value = {};
+fn void defaults_water_spectrum(void* value) @private {
+    *(WaterSpectrum*)value = water::default_water_desc().spectrum;
+}
 
 fn void defaults_water_v1(void* value) @private {
     *(WaterDescV1*)value = water_desc_v1(water::default_water_desc());

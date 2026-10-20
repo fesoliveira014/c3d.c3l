@@ -82,6 +82,10 @@ python3 c3d_shader_tools/scripts/build_shaders.py --package path/to/package
 `--check` verifies the committed output instead of writing it. The tools need Python 3.10+ and `glslangValidator` on
 `PATH`.
 
+## Breaking changes
+
+- Raw `InstanceArray` records are relative to the batch node. A custom vertex stage that indexes them directly places instances wrongly under a moved node, and nothing reports it. Read instances through `world_instance`, and a previous matrix through `previous_world_model`, as [Custom shaders](custom_shaders.md#vertex-contract) describes.
+
 ## Making a release
 
 1. Every `lib/` submodule, and gpu.c3l's own `lib/` submodules, sits on a released tag of its repository.

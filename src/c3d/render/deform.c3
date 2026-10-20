@@ -3,7 +3,6 @@ module c3d::render;
 import c3d;
 import c3d::anim;
 import c3d::asset;
-import c3d::maths;
 import c3d::scene;
 import c3d::shader;
 import gpu;
@@ -127,14 +126,13 @@ fn gpu::GpuAddress? resolve_crowd_bounds(Renderer* renderer, MeshCandidate* cand
         alignment: STREAM_ALIGNMENT,
     )!;
     Mat4f[] bounds = ((Mat4f*)span.bytes.ptr)[:crowd.count];
-    Mat4 world = maths::rebase(candidate.node.world, renderer.frame_origin);
 
     uint written;
     for (uint parity = 0; parity < 2; parity++) {
         for (uint instance = 0; instance < crowd.count; instance++) {
             if (crowd.part_mirrored(instance, candidate.crowd_part) != (parity == 1)) continue;
 
-            bounds[written++] = bitcast(world.mul(crowd.placements[instance].to_mat4()), Mat4f);
+            bounds[written++] = bitcast(crowd.placements[instance].to_mat4(), Mat4f);
         }
     }
 
