@@ -362,10 +362,63 @@ fade, retaining hardware depth testing. The shader still declares depth reads,
 so setting soft distance to zero does not remove its snapshot requirement.
 Empty/hidden batches make no draw or snapshot request.
 
-UNLIT keeps the input radiance. AMBIENT multiplies it by scene ambient plus core
-diffuse indirect illumination, including the environment or selected probe
-volume. Fog uses `apply_material_fog` before coverage is premultiplied exactly
-once. ADDITIVE adds coverage-scaled RGB and preserves destination alpha.
+`ParticleMaterialParams.lighting` selects the illumination:
+
+- **UNLIT** keeps the input radiance.
+- **AMBIENT** multiplies it by scene ambient plus core diffuse indirect
+  illumination, including the environment or selected probe volume.
+- **DIRECT** adds every punctual and directional light that shares a layer with
+  the particle system, on top of AMBIENT. The stage walks the clustered light
+  list when the frame has clusters and the flat list otherwise.
+- **DIRECT_SHADOWED** is DIRECT with each light multiplied by its shadow-map and
+  cloud-shadow visibility at the particle's position.
+
+`ParticleMaterialParams.normal` selects what a lit particle presents to the
+lights and to the indirect illumination. AMBIENT, DIRECT and DIRECT_SHADOWED read
+it; UNLIT ignores it.
+
+- **CAMERA** is the billboard's facing axis, so every pixel has the same normal.
+- **SPHERICAL** bulges the normal toward the camera across the quad, as on a
+  sphere inscribed in it. It is built in the quad's own frame, so the particle's
+  rotation and the STRETCHED axis turn it with the quad, and the sphere's top is
+  the quad's top edge.
+- **VOLUME** has no surface. Each light scatters through the Henyey-Greenstein
+  phase function with `ParticleMaterialParams.anisotropy`, the asymmetry
+  `HeightFog.anisotropy` and `MediumVolume.anisotropy` use: positive values
+  scatter forward, so the particle brightens when the camera looks toward the
+  light. The angle is taken between the view ray from the camera and the
+  direction to the light.
+
+`anisotropy` applies to VOLUME only; other normals ignore it. `add_particle_material`
+faults `INVALID_ARGUMENT` for a value that is not finite or lies outside (-1, 1).
+The normal and the anisotropy can change at runtime with the other parameters.
+`@set_custom_params` bypasses the check, so the application keeps |anisotropy| below one.
+
+Each light adds `albedo * response * radiance` to the AMBIENT term, where albedo
+is the particle colour times the material colour times the map in slot 0 and
+radiance is the light's colour, intensity and attenuation. The response is
+`max(N.L, 0) / pi` for CAMERA and SPHERICAL, the Lambert convention core
+materials use. For VOLUME it is the phase function, which integrates to one over
+the sphere: at zero anisotropy it is `1 / (4 pi)`, a quarter of Lambert's
+response at normal incidence, so a light meant to read on smoke needs a
+correspondingly higher intensity. The indirect term of AMBIENT, DIRECT and
+DIRECT_SHADOWED uses the SPHERICAL normal under SPHERICAL and the camera axis under
+CAMERA and VOLUME.
+
+DIRECT_SHADOWED reads the shadow atlas and the cloud shadows only. The stage is
+compiled without ray-traced shadows, so a light whose only shadow is ray traced
+contributes unshadowed, in views that trace shadows too. Particles cast no
+shadow, and the stage ignores the receive-shadow flag, which billboard draws never
+carry: the lighting mode is the opt-in.
+
+DIRECT adds one light loop per covered pixel, and DIRECT_SHADOWED adds a shadow
+lookup per shadow-casting light in that loop. The cost therefore grows with the
+pixels a system covers and with the lights that reach them, which is why the
+modes are opt-in.
+
+Fog uses `apply_material_fog` on the lit colour before coverage is premultiplied
+exactly once. ADDITIVE adds the lit, coverage-scaled RGB and preserves
+destination alpha. The ordinary and the weighted-transparency forms light alike.
 
 Simulation is inline, with no allocation during normal step/update. The pool is
 one aligned allocation of nine capacity-sized streams, the event queue and, with [trails](#trails), the trail
@@ -568,6 +621,14 @@ narrowing to nothing over 0.4 seconds, drawn additively with a generated soft-ed
 `--collide` for sharp turns at the bounces. It applies to the window and to `--benchmark`. With `--stress` it gives the
 stress system the same trail, and each segment prints `trail_points`, `trail_draw_count` and the core `ribbon_bounds_ms`
 and `ribbon_pack_ms` beside the billboard timings; run `--stress` with and without `--trails` to compare the update cost.
+
+`--lit-smoke` shows only the smoke, lit: a plume with a point light circling it, under a directional light
+whose shadow an overhead slab casts across part of the plume. The L key cycles the lighting through its four
+modes and the N key cycles the normal through its three. `--lighting` and `--normal` set the starting modes
+by lowercase name, for example `--lighting direct_shadowed --normal volume`. With `--benchmark`, the run
+reports the transparent pass for AMBIENT, DIRECT and DIRECT_SHADOWED as the segments `ambient`, `direct`
+and `direct_shadowed`, or for the `--lighting` mode alone. Sparks and debris do not emit, and the flag does
+not combine with `--stress`, `--sparks`, `--smoke`, `--embers`, `--trails` or `--collide`.
 
 `--collide` makes the sparks bounce on the ground plane and, through a physics
 ray cast, on a canopy and two crates that are static physics bodies. It applies

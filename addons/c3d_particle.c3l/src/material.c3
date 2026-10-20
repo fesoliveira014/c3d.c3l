@@ -11,6 +11,17 @@ import std::math;
 enum ParticleLighting {
     UNLIT,
     AMBIENT,
+    DIRECT,
+    DIRECT_SHADOWED,
+}
+
+<*
+ Shape a particle presents to direct light.
+*>
+enum ParticleNormal {
+    CAMERA,
+    SPHERICAL,
+    VOLUME,
 }
 
 <*
@@ -20,15 +31,22 @@ struct ParticleMaterialParams {
     Vec4 color;
     float soft_distance;
     ParticleLighting lighting;
-    uint _pad0;
-    uint _pad1;
+    ParticleNormal normal;
+    float anisotropy;
 }
 $assert ParticleMaterialParams::size == 32;
 $assert $reflect(ParticleMaterialParams.color).offset == 0;
 $assert $reflect(ParticleMaterialParams.soft_distance).offset == 16;
 $assert $reflect(ParticleMaterialParams.lighting).offset == 20;
+$assert $reflect(ParticleMaterialParams.normal).offset == 24;
+$assert $reflect(ParticleMaterialParams.anisotropy).offset == 28;
 $assert ParticleLighting.UNLIT.ordinal == 0; // mirrored as PARTICLE_UNLIT in particle.frag.glsl
 $assert ParticleLighting.AMBIENT.ordinal == 1; // mirrored as PARTICLE_AMBIENT in particle.frag.glsl
+$assert ParticleLighting.DIRECT.ordinal == 2; // mirrored as PARTICLE_DIRECT in particle.frag.glsl
+$assert ParticleLighting.DIRECT_SHADOWED.ordinal == 3; // mirrored as PARTICLE_DIRECT_SHADOWED in particle.frag.glsl
+$assert ParticleNormal.CAMERA.ordinal == 0; // mirrored as PARTICLE_NORMAL_CAMERA in particle.frag.glsl
+$assert ParticleNormal.SPHERICAL.ordinal == 1; // mirrored as PARTICLE_NORMAL_SPHERICAL in particle.frag.glsl
+$assert ParticleNormal.VOLUME.ordinal == 2; // mirrored as PARTICLE_NORMAL_VOLUME in particle.frag.glsl
 
 <*
  Publish the package's depth-reading particle fragment shader.
@@ -39,7 +57,7 @@ $assert ParticleLighting.AMBIENT.ordinal == 1; // mirrored as PARTICLE_AMBIENT i
 fn ShaderId? add_particle_shader(AssetStore* assets, String key = "") {
     ShaderDesc desc = {
         .fragment = PARTICLE_FRAGMENT_SPIRV[..],
-        .weighted_fragment = { // the stage reads no shadows, so one source serves every weighted form
+        .weighted_fragment = { // atlas shadows only, so one source serves every weighted form
             .shaded = PARTICLE_FRAGMENT_WEIGHTED_BLEND_SPIRV[..],
             .traced = {
                 .hardware = PARTICLE_FRAGMENT_WEIGHTED_BLEND_SPIRV[..],
@@ -72,6 +90,7 @@ fn MaterialId? add_particle_material(
         || desc.vertex.shaded.len || desc.gbuffer.len) return c3d::INVALID_ARGUMENT~;
     if (!valid_particle_color(params.color) || !math::is_finite(params.soft_distance)
         || params.soft_distance < 0) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(params.anisotropy) || math::abs(params.anisotropy) >= 1) return c3d::INVALID_ARGUMENT~;
     TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
     slots[0] = map;
     MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
