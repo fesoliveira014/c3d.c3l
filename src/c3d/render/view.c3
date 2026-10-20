@@ -16,6 +16,7 @@ import gpu;
 import std::collections::list;
 import std::collections::map;
 import std::math;
+import std::os::env;
 import std::sort;
 
 alias PreviousInstanceCache @private = HashMap{ulong, gpu::GpuAddress};
@@ -1959,7 +1960,7 @@ fn gpu::GpuAddress? upload_previous_pose(
                 locals = pose.instances[span.first:span.end - span.first];
             }
 
-            base = upload_bytes(renderer, locals.ptr, locals.len * Mat4f::size)!;
+            base = upload_previous_instances(renderer, locals.ptr, locals.len * Mat4f::size)!;
             instances.set(key, base);
         }
         bind_previous_instances(
@@ -2019,6 +2020,50 @@ fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @priv
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, size, STREAM_ALIGNMENT)!;
     mem::copy(span.bytes.ptr, data, (sz)size);
     return span.address;
+}
+
+const usz PREVIOUS_UPLOAD_PERIOD = 64;
+const String PREVIOUS_UPLOAD_ENV = "C3D_PREVIOUS_UPLOAD_OFFSET";
+
+struct PreviousUploadProbe {
+    bool resolved;
+    bool active;
+    uint offset;
+    uint uploads;
+    uint misplaced;
+    uint first_address_mod;
+}
+
+PreviousUploadProbe previous_upload_probe;
+
+fn void resolve_previous_upload_probe(PreviousUploadProbe* probe) @local {
+    probe.resolved = true;
+    String value = env::tget_var(PREVIOUS_UPLOAD_ENV) ?? "";
+    uint? parsed = value.to_uint();
+    if (catch parsed) return;
+    probe.active = parsed % 16 == 0 && parsed < PREVIOUS_UPLOAD_PERIOD;
+    probe.offset = parsed;
+}
+
+fn gpu::GpuAddress? upload_previous_instances(Renderer* renderer, void* data, usz size) @local {
+    PreviousUploadProbe* probe = &previous_upload_probe;
+    if (!probe.resolved) resolve_previous_upload_probe(probe);
+
+    UploadRing* ring = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT].upload;
+    usz natural = align_up(ring.head, STREAM_ALIGNMENT);
+    usz lead = (probe.offset + PREVIOUS_UPLOAD_PERIOD - natural % PREVIOUS_UPLOAD_PERIOD) % PREVIOUS_UPLOAD_PERIOD;
+    usz trailing = (PREVIOUS_UPLOAD_PERIOD - lead) % PREVIOUS_UPLOAD_PERIOD;
+    bool padded = probe.active && natural + lead + size + trailing <= ring.mapped.bytes.len;
+    if (padded && natural + lead > ring.head) ring.take(&renderer.device, natural + lead - ring.head, 1)!;
+
+    gpu::GpuAddress address = upload_bytes(renderer, data, size)!;
+    if (padded && trailing > 0) ring.take(&renderer.device, trailing, 1)!;
+
+    uint observed = (uint)((ulong)address % PREVIOUS_UPLOAD_PERIOD);
+    if (probe.uploads == 0) probe.first_address_mod = observed;
+    if (probe.active && observed != probe.offset) probe.misplaced++;
+    probe.uploads++;
+    return address;
 }
 
 <*

@@ -47,6 +47,7 @@ const float MOVE_NODE_RADIUS @local = 3;
 const float MOVE_NODE_RADIANS_PER_SECOND @local = 0.6f;
 const float MOVE_NODE_SPIN_RADIANS_PER_SECOND @local = 0.2f;
 const double BENCHMARK_FRAMES_PER_SECOND @local = 60; // the benchmark loop's fixed frame time
+const uint PREVIOUS_UPLOAD_REPORT_FRAME @local = 4; // the line prints here when no upload was observed
 const uint GLASS_SIDE @local = 22; // 10,648 blended cubes, the sorted-instance lever; 47 gives 103,823
 const float GLASS_SPACING @local = 0.4f;
 const float GLASS_ALPHA @local = 0.35f;
@@ -112,6 +113,7 @@ struct SceneEdit @local {
     bool     edit_band;
     bool     whole_publication;
     bool     move_node;
+    bool     reported;
 }
 
 struct Controls @local {
@@ -436,6 +438,15 @@ fn void animate_band(
 
 fn void edit_each_frame(void* user, uint frame) @local {
     SceneEdit* edit = user;
+    render::PreviousUploadProbe* probe = &render::previous_upload_probe;
+    if (!edit.reported && (probe.uploads > 0 || frame == PREVIOUS_UPLOAD_REPORT_FRAME)) {
+        edit.reported = true;
+        String offset = probe.active ? string::tformat("%d", probe.offset) : "unset";
+        String observed = probe.uploads > 0 ? string::tformat("%d", probe.first_address_mod) : "none";
+        io::eprintfn("previous_upload_offset=%s first_address_mod_64=%s uploads=%d misplaced=%d",
+            offset, observed, probe.uploads, probe.misplaced);
+    }
+
     double time = (double)frame / BENCHMARK_FRAMES_PER_SECOND;
     if (edit.move_node) move_props(edit.batches, time);
     if (!edit.edit_band) return;
@@ -675,6 +686,11 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkFlags flags) @local {
     return base;
 }
 
+fn void print_previous_upload_summary() @local {
+    render::PreviousUploadProbe* probe = &render::previous_upload_probe;
+    io::eprintfn("previous_upload_total uploads=%d misplaced=%d", probe.uploads, probe.misplaced);
+}
+
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
     io::eprintfn("instance_edit=%s move_node=%s fade_field=%s cells=%d props=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s",
@@ -771,6 +787,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         $endif
         print_banner(options, renderer.timestamps_enabled);
         collected = bench_loop::run_frames(&run, flags, samples)!;
+        print_previous_upload_summary();
         bench_loop::write_samples(samples[:collected], renderer.timestamps_enabled);
     } else {
         render::Renderer renderer = render::create_renderer(mem, &assets, renderer_desc)!;
@@ -784,6 +801,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         run.view = render::create_view(&renderer, view_desc)!;
         print_banner(options, renderer.timestamps_enabled);
         collected = bench_loop::run_frames(&run, flags, samples)!;
+        print_previous_upload_summary();
         bench_loop::write_samples(samples[:collected], renderer.timestamps_enabled);
     }
 }
