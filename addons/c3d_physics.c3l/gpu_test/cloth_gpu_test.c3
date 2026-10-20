@@ -1,6 +1,7 @@
 module c3d_physics_cloth_gpu_test;
 
 import c3d;
+import c3d::anim;
 import c3d::asset;
 import c3d::geometry;
 import c3d::material;
@@ -11,6 +12,7 @@ import c3d::scene;
 import std::math;
 
 const uint GRID_CELLS @local = 4;
+const float REFERENCE_TOLERANCE @local = 1e-5f;
 
 struct Fixture @local {
     AssetStore   assets;
@@ -40,15 +42,24 @@ fn void teardown(Fixture* fixture) @local {
     asset::destroy_asset_store(&fixture.assets);
 }
 
-fn Node* add_hanging_sheet(Fixture* fixture) @local {
+fn Node* add_hanging_sheet(Fixture* fixture, bool skinned = false) @local {
     uint side = GRID_CELLS + 1;
     Geometry grid = {
         .positions = alloc::new_array(tmem, Vec3, (sz)(side * side)),
         .indices   = alloc::new_array(tmem, uint, (sz)(6 * GRID_CELLS * GRID_CELLS)),
     };
+    if (skinned) {
+        grid.joints = alloc::new_array(tmem, ushort[<4>], (sz)(side * side));
+        grid.weights = alloc::new_array(tmem, Vec4, (sz)(side * side));
+    }
     for (uint row = 0; row < side; row++) {
         for (uint column = 0; column < side; column++) {
             grid.positions[row * side + column] = { (float)column / GRID_CELLS, -(float)row / GRID_CELLS, 0 };
+            if (skinned) {
+                float tip_share = (float)row / GRID_CELLS;
+                grid.joints[row * side + column] = { 0, 1, 0, 0 };
+                grid.weights[row * side + column] = { 1 - tip_share, tip_share, 0, 0 };
+            }
         }
     }
     usz next;
@@ -172,5 +183,82 @@ fn void test_held_device_cloth_stores_no_step_until_it_wakes() @test {
         fixture.physics.update(physics::DEFAULT_FIXED_DT);
         fixture.physics.update_cloths();
         assert(cloth.state.device.steps == 1);
+    };
+}
+
+fn void test_update_cloths_stores_the_wind_of_the_owner_each_update() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    @pool() {
+        Node* node = add_hanging_sheet(&fixture);
+        fixture.scene.add_cloth(&fixture.assets, node, device_desc(0))!!;
+        ClothState* state = fixture.scene.get(node, Cloth).state;
+
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(!state.device.wind_present);
+
+        Wind breeze = { .velocity = { 0, 0, 2 }, .max_speed = 1.5f };
+        fixture.scene.add(node, breeze);
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(state.device.wind_present && state.device.wind.velocity == breeze.velocity);
+        assert(state.device.wind.max_speed == breeze.max_speed);
+
+        fixture.scene.remove_component(node, Wind);
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(!state.device.wind_present);
+    };
+}
+
+fn void test_update_cloths_samples_the_reference_of_a_skinned_device_cloth() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    @pool() {
+        int[] parents = alloc::new_array(mem, int, 2);
+        parents[0] = -1;
+        parents[1] = 0;
+        Mat4[] inverse_bind = alloc::new_array(mem, Mat4, 2);
+        foreach (&bind : inverse_bind) *bind = matrix::IDENTITY4;
+        Skeleton skeleton = { .parents = parents, .inverse_bind = inverse_bind };
+        SkeletonId skeleton_id = fixture.assets.add_skeleton_owned(&skeleton)!!;
+        Node* root = fixture.scene.add_node(name: "root_joint")!!;
+        Node* tip = fixture.scene.add_node(root, "tip_joint")!!;
+        Node* owner = add_hanging_sheet(&fixture, skinned: true);
+        Node*[] joints = alloc::new_array(mem, Node*, 2);
+        joints[0] = root;
+        joints[1] = tip;
+        fixture.scene.add(owner, (SkinBinding){ .skeleton = skeleton_id, .joints = joints });
+        fixture.scene.update_world();
+        fixture.scene.add_cloth(&fixture.assets, owner, device_desc(0), &fixture.physics)!!;
+
+        ClothState* state = fixture.scene.get(owner, Cloth).state;
+        usz last = state.positions.len - 1;
+        Vec3 first_position = state.current_reference[last];
+        tip.local.position = { 0, 0.5f, 0 };
+        fixture.scene.update_world();
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(state.device.steps == 1);
+        assert(state.solved_reference[last] == first_position);
+        assert((state.current_reference[last] - first_position - (Vec3){ 0, 0.5f, 0 }).length() < REFERENCE_TOLERANCE);
+
+        tip.local.position = { 0, 0.75f, 0 };
+        fixture.scene.update_world();
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert((state.solved_reference[last] - first_position - (Vec3){ 0, 0.5f, 0 }).length() < REFERENCE_TOLERANCE);
+        assert((state.current_reference[last] - first_position - (Vec3){ 0, 0.75f, 0 }).length() < REFERENCE_TOLERANCE);
+        assert(state.positions[last] == first_position);
+
+        fixture.physics.update(0);
+        fixture.physics.update_cloths();
+        assert(state.device.steps == 0);
+        assert((state.solved_reference[last] - first_position - (Vec3){ 0, 0.5f, 0 }).length() < REFERENCE_TOLERANCE);
     };
 }
