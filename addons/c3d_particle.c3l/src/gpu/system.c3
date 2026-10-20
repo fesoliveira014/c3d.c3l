@@ -11,6 +11,9 @@ const usz SCAN_ENTRY_BYTES @private = 16; // mirrored as the uvec4 of ParticleSc
 const usz TOTAL_ENTRY_BYTES @private = 8; // mirrored as the uvec2 of ParticleTotals in particle_step.glsl
 const usz CONTROL_BYTES @private = 256; // mirrored as ParticleControl in particle_step.glsl; pads every offset to 16
 const usz COUNT_WORD_BYTES @private = 16; // one uint, padded
+const usz TRAIL_HEADER_BYTES @private = 16; // mirrored as TrailHeaderGpu in particle_step.glsl
+const usz TRAIL_POINT_BYTES @private = 16; // mirrored as the vec4 of TrailPoints in particle_step.glsl
+const usz TRAIL_DISTANCE_BYTES @private = 4; // mirrored as the float of TrailDistances in particle_step.glsl
 const usz REGION_ALIGNMENT @private = 16; // the records offset of a device batch is a multiple of 16
 const usz COUNTER_BYTES @private = 16; // alive, dropped low and high words, unused
 
@@ -82,9 +85,27 @@ struct StepRoot @private {
     Vec4 color_max;
     float[particle::LIFETIME_TABLE_ENTRIES] size_over_life;
     Vec4[particle::LIFETIME_TABLE_ENTRIES] color_over_life;
+    ulong trail_headers_home;
+    ulong trail_headers_alt;
+    ulong trail_points_home;
+    ulong trail_points_alt;
+    ulong trail_distances_home;
+    ulong trail_distances_alt;
+    ulong ribbon_records;
+    ulong ribbon_count;
+    uint trail_max_points;
+    float trail_interval;
+    float trail_lifetime;
+    float trail_width;
+    float trail_tile_length;
+    uint trail_tiled;
+    uint _pad4;
+    uint _pad5;
+    float[particle::LIFETIME_TABLE_ENTRIES] width_over_trail;
+    Vec4[particle::LIFETIME_TABLE_ENTRIES] color_over_trail;
 }
 
-$assert StepRoot::size == 544;
+$assert StepRoot::size == 800;
 $assert $reflect(StepRoot.capacity).offset == 64;
 $assert $reflect(StepRoot.acceleration_radius).offset == 96;
 $assert $reflect(StepRoot.emitter_row0).offset == 176;
@@ -93,6 +114,10 @@ $assert $reflect(StepRoot.flipbook_columns).offset == 320;
 $assert $reflect(StepRoot.color_min).offset == 352;
 $assert $reflect(StepRoot.size_over_life).offset == 384;
 $assert $reflect(StepRoot.color_over_life).offset == 416;
+$assert $reflect(StepRoot.trail_headers_home).offset == 544;
+$assert $reflect(StepRoot.trail_max_points).offset == 608;
+$assert $reflect(StepRoot.width_over_trail).offset == 640;
+$assert $reflect(StepRoot.color_over_trail).offset == 672;
 
 struct SystemLayout @private {
     usz state_home;
@@ -101,6 +126,14 @@ struct SystemLayout @private {
     usz totals;
     usz records;
     usz count;
+    usz trail_headers_home;
+    usz trail_headers_alt;
+    usz trail_points_home;
+    usz trail_points_alt;
+    usz trail_distances_home;
+    usz trail_distances_alt;
+    usz ribbons;
+    usz ribbon_count;
     usz size;
     uint groups;
 }
@@ -110,7 +143,7 @@ struct SystemAddresses @private {
     ulong counters;
 }
 
-fn SystemLayout system_layout(uint capacity) @private {
+fn SystemLayout system_layout(uint capacity, uint trail_max_points) @private {
     uint groups = (capacity + GROUP_SIZE - 1) / GROUP_SIZE;
     SystemLayout layout;
     layout.state_home = CONTROL_BYTES;
@@ -121,6 +154,25 @@ fn SystemLayout system_layout(uint capacity) @private {
     layout.count = layout.records + (usz)capacity * BillboardRecord::size;
     layout.size = layout.count + COUNT_WORD_BYTES;
     layout.groups = groups;
+    if (!trail_max_points) return layout;
+
+    usz stored = (usz)capacity * trail_max_points;
+    layout.trail_headers_home = layout.size;
+    layout.trail_headers_alt = layout.trail_headers_home + (usz)capacity * TRAIL_HEADER_BYTES;
+    layout.trail_points_home = layout.trail_headers_alt + (usz)capacity * TRAIL_HEADER_BYTES;
+    layout.trail_points_alt = layout.trail_points_home + stored * TRAIL_POINT_BYTES;
+    layout.trail_distances_home = layout.trail_points_alt + stored * TRAIL_POINT_BYTES;
+    layout.trail_distances_alt = particle::particle_align(
+        layout.trail_distances_home + stored * TRAIL_DISTANCE_BYTES,
+        REGION_ALIGNMENT,
+    );
+    layout.ribbons = particle::particle_align(
+        layout.trail_distances_alt + stored * TRAIL_DISTANCE_BYTES,
+        REGION_ALIGNMENT,
+    );
+    usz strip_points = (usz)trail_max_points + 1;
+    layout.ribbon_count = layout.ribbons + ((usz)capacity * strip_points + 1) * scene::RIBBON_RECORD_BYTES;
+    layout.size = layout.ribbon_count + COUNT_WORD_BYTES;
     return layout;
 }
 
@@ -136,6 +188,7 @@ fn StepRoot step_root(
     ParticleSystemDesc* desc = &system.desc;
     ParticleCollision* collision = &desc.collision;
     ParticleFlipbook* flipbook = &desc.flipbook;
+    ParticleTrail* trail = &desc.trail;
     float drag = math::min(1.0f, desc.drag * plan.seconds);
     bool turbulent = desc.turbulence.strength > 0 && drag > 0;
     bool stretched = desc.render_mode == ParticleRenderMode.STRETCHED;
@@ -191,5 +244,21 @@ fn StepRoot step_root(
         .color_max = desc.color_max,
         .size_over_life = desc.size_over_life.values,
         .color_over_life = desc.color_over_life.values,
+        .trail_headers_home = addresses.base + layout.trail_headers_home,
+        .trail_headers_alt = addresses.base + layout.trail_headers_alt,
+        .trail_points_home = addresses.base + layout.trail_points_home,
+        .trail_points_alt = addresses.base + layout.trail_points_alt,
+        .trail_distances_home = addresses.base + layout.trail_distances_home,
+        .trail_distances_alt = addresses.base + layout.trail_distances_alt,
+        .ribbon_records = addresses.base + layout.ribbons,
+        .ribbon_count = addresses.base + layout.ribbon_count,
+        .trail_max_points = trail.max_points,
+        .trail_interval = trail.point_interval,
+        .trail_lifetime = trail.lifetime,
+        .trail_width = trail.width,
+        .trail_tile_length = trail.tile_length,
+        .trail_tiled = trail.uv == TrailUv.TILE ? 1 : 0,
+        .width_over_trail = trail.width_over_trail.values,
+        .color_over_trail = trail.color_over_trail.values,
     };
 }

@@ -450,6 +450,7 @@ fn void? prepare(Scene* scene, Node* emitter) {
             material: desc.trail.material,
             capacity: desc.capacity * (desc.trail.max_points + 1),
             parent: emitter,
+            source: device ? RibbonSource.DEVICE : RibbonSource.POINTS,
         )!;
         trail.transform_space = TransformSpace.WORLD;
         trail.layers = emitter.layers;
@@ -491,15 +492,13 @@ fn void Scene.shift_particles(&self, Vec3 offset) {
     self.@each(ParticleSystem; entity, system) {
         if (system.is_prepared()) {
             self.node(system.draw_node).local = maths::TRANSFORM_IDENTITY;
+            if (system.desc.trail.max_points) self.node(system.trail_node).local = maths::TRANSFORM_IDENTITY;
             if (system.desc.execution == ParticleExecution.GPU) {
                 shift_gpu_step(gpu_step_state(system), offset);
             } else {
                 for (uint index = 0; index < system.alive; index++) system.position[index] -= offset;
                 for (uint index = 0; index < system.event_count; index++) system.events[index].position -= offset;
-                if (system.desc.trail.max_points) {
-                    shift_trail_points(system, offset);
-                    self.node(system.trail_node).local = maths::TRANSFORM_IDENTITY;
-                }
+                if (system.desc.trail.max_points) shift_trail_points(system, offset);
             }
         }
     };
@@ -659,7 +658,7 @@ fn void? check_particle_execution(ParticleSystemDesc* desc) @private {
     $else
         ParticleCollision* collision = &desc.collision;
         bool needs_depth = collision.response != CollisionResponse.NONE && !collision.ground_plane;
-        bool refused = desc.trail.max_points || desc.sub_emitter_count || needs_depth
+        bool refused = desc.sub_emitter_count || needs_depth
             || desc.render_mode == ParticleRenderMode.MESH || desc.saturation == ParticleSaturation.DROP_OLDEST;
         if (refused) return c3d::UNSUPPORTED~;
     $endif

@@ -377,6 +377,7 @@ fn void? project_billboards(void* component, void* value, WriteContext* context)
 
 fn void? project_ribbons(void* component, void* value, WriteContext* context) @local {
     RibbonBatch* batch = component;
+    if (batch.source != RibbonSource.POINTS) return c3d::UNSUPPORTED~;
     if (!scene::ribbon_points_valid(batch.points[:batch.count])) return c3d::INVALID_ARGUMENT~;
 
     *(RibbonAuthoring*)value = {

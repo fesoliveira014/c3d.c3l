@@ -408,7 +408,7 @@ fn void? record_raster_view(
             transparent_start = candidates.len - transparent_count;
             weighted_start = candidates.len - weighted_count;
             foreach (&candidate : candidates) {
-                if (device_billboards_lost(renderer, candidate)) {
+                if (device_billboards_lost(renderer, candidate) || device_ribbons_lost(renderer, candidate)) {
                     renderer.stats.dangling_refs++;
                     continue;
                 }
@@ -1505,7 +1505,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             }
         };
         scene.@each(RibbonBatch; Entity entity, RibbonBatch* batch) {
-            if (batch.count > 1) {
+            if (batch.draw_count() > 1) {
                 MeshPreparation prepared = prepare_ribbons(self, batch)!;
                 sheen |= prepared.sheen;
                 scene_reads |= prepared.scene_reads;

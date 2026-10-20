@@ -19,6 +19,19 @@ const RibbonPoint RIBBON_POINT_DEFAULT = {
 };
 
 <*
+ Bytes of one record in a DEVICE batch's buffer.
+*>
+const usz RIBBON_RECORD_BYTES = 48; // pinned to RibbonPointGpu in render/ribbons.c3
+
+<*
+ Where a ribbon batch's strip points live.
+*>
+enum RibbonSource {
+    POINTS, // RibbonPoint values that core packs once per revision
+    DEVICE, // frame-origin records and a live count that compute writes
+}
+
+<*
  One point of a camera-facing strip.
 *>
 struct RibbonPoint {
@@ -39,19 +52,33 @@ struct RibbonAggregate {
 }
 
 <*
- Fixed scene-owned array of strip points sharing one material.
+ Renderer buffer holding a DEVICE batch's records and live count.
+*>
+struct RibbonDevice {
+    BufferId buffer;
+    usz records_offset; // capacity + 1 RibbonPointGpu records, 16-byte aligned
+    usz count_offset; // one uint, 4-byte aligned, at most capacity
+    uint capacity;
+}
+
+<*
+ Fixed-capacity strip points sharing one material, drawn from one source.
 *>
 struct RibbonBatch {
     MaterialId material;
-    RibbonPoint[] points;
+    RibbonPoint[] points; // POINTS only
     uint count;
     uint revision;
     RibbonAggregate aggregate;
+    RibbonSource source;
+    RibbonDevice device; // DEVICE only; a zero buffer draws nothing, and count stays zero
+    bool has_bounds_override;
+    Aabb local_bounds; // node-local; read when has_bounds_override is set
 }
 
 <*
  Add a node carrying a scene-owned ribbon batch.
- @param points : "Copied; determines the live count."
+ @param points : "Copied; determines the live count; empty unless POINTS."
  @param [in] parent : "Null selects the root."
  @param name : "Copied into the scene allocator."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
@@ -64,19 +91,48 @@ fn Node*? Scene.add_ribbons(
     RibbonPoint[] points = {},
     Node* parent = null,
     String name = "",
+    RibbonSource source = RibbonSource.POINTS,
 ) {
+    if (source != RibbonSource.POINTS && points.len) return c3d::INVALID_ARGUMENT~;
     if (points.len > capacity) return c3d::CAPACITY_EXCEEDED~;
     check_ribbon_points(points)!;
     Node* node = self.add_node(parent, name)!;
     RibbonBatch batch = {
         .material = material,
-        .points = alloc::new_array(self.allocator, RibbonPoint, (sz)capacity),
         .count = (uint)points.len,
         .revision = 1,
+        .source = source,
     };
-    batch.points[:points.len] = points[..];
+    switch (source) {
+        case POINTS:
+            batch.points = alloc::new_array(self.allocator, RibbonPoint, (sz)capacity);
+            batch.points[:points.len] = points[..];
+        case DEVICE:
+            batch.device.capacity = capacity;
+    }
     self.world.add(node.id, batch);
     return node;
+}
+
+<*
+ Attach the buffer a DEVICE batch draws from, with its conservative bound.
+ @param [&in] node : "Carries a DEVICE RibbonBatch."
+ @param local_bounds : "Node-local bound of every strip the buffer can hold, widths included."
+ @require self.has(node, RibbonBatch)
+ @require self.get(node, RibbonBatch).source == RibbonSource.DEVICE
+ @require device.capacity == self.get(node, RibbonBatch).capacity()
+ @require device.records_offset % 16 == 0 && device.count_offset % 4 == 0
+*>
+fn void Scene.set_ribbon_device(
+    &self,
+    Node* node,
+    RibbonDevice device,
+    Aabb local_bounds,
+) {
+    RibbonBatch* batch = self.get(node, RibbonBatch);
+    batch.device = device;
+    batch.has_bounds_override = true;
+    batch.local_bounds = local_bounds;
 }
 
 <*
@@ -85,6 +141,7 @@ fn Node*? Scene.add_ribbons(
  @param points : "Copied into scene-owned storage."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require self.has(node, RibbonBatch)
+ @require self.get(node, RibbonBatch).source == RibbonSource.POINTS
 *>
 fn void? Scene.set_ribbons(&self, Node* node, RibbonPoint[] points) {
     RibbonBatch* batch = self.get(node, RibbonBatch);
@@ -100,6 +157,7 @@ fn void? Scene.set_ribbons(&self, Node* node, RibbonPoint[] points) {
  @param [&in] node : "Carries RibbonBatch."
  @return? c3d::CAPACITY_EXCEEDED
  @require self.has(node, RibbonBatch)
+ @require self.get(node, RibbonBatch).source == RibbonSource.POINTS
 *>
 fn void? Scene.resize_ribbons(&self, Node* node, uint count) {
     RibbonBatch* batch = self.get(node, RibbonBatch);
@@ -117,6 +175,25 @@ fn void? Scene.resize_ribbons(&self, Node* node, uint count) {
 fn void Scene.mark_ribbons_dirty(&self, Node* node) {
     RibbonBatch* batch = self.get(node, RibbonBatch);
     batch.revision = batch.revision == uint::max ? 1 : batch.revision + 1;
+}
+
+<*
+ Points the batch can hold.
+*>
+fn uint RibbonBatch.capacity(&self) {
+    switch (self.source) {
+        case POINTS: return (uint)self.points.len;
+        case DEVICE: return self.device.capacity;
+    }
+}
+
+<*
+ Points the renderer draws from; a DEVICE batch's capacity once attached.
+*>
+fn uint RibbonBatch.draw_count(&self) {
+    if (self.source != RibbonSource.DEVICE) return self.count;
+
+    return self.device.buffer.generation ? self.device.capacity : 0;
 }
 
 <*
@@ -165,5 +242,5 @@ fn void? check_ribbon_points(RibbonPoint[] points) @local {
 
 fn void free_ribbons(Entity entity, void* component, void* user) @private {
     RibbonBatch* batch = (RibbonBatch*)component;
-    alloc::free(*(Allocator*)user, batch.points.ptr);
+    if (batch.source == RibbonSource.POINTS) alloc::free(*(Allocator*)user, batch.points.ptr);
 }

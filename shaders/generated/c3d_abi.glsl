@@ -63,6 +63,7 @@ const uint LOD_FINALIZE = 3u;
 const uint LOD_LEVEL_COUNT = 6u;
 const uint QUADTREE_SELECT = 4u;
 const uint QUADTREE_CULL = 5u;
+const uint RIBBON_SEGMENTS = 6u;
 const uint QUADTREE_SPLIT = 1u;
 const uint QUADTREE_DRAW = 2u;
 const uint QUADTREE_ROOT = 4294967295u;

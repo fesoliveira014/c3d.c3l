@@ -10,6 +10,7 @@ const uint REACH_STEPS @local = 480;
 const float REACH_STEP_SECONDS @local = 1.0f / 60;
 const float EMITTER_SPEED @local = 5;
 const Vec3 REACH_WIND @local = { 3, 0, 0 };
+const float WIDE_TRAIL @local = 100; // far beyond the half-extent a particle adds to its bound
 
 fn Scene reach_scene() @local {
     Scene scene = scene::create_scene(mem, { .max_nodes = 8 });
@@ -57,4 +58,41 @@ fn void test_reach_bounds_contain_every_particle() @test {
         }
     }
     assert(checked > 0);
+}
+
+fn void test_trail_bound_holds_the_strip_edges() @test {
+    Scene scene = reach_scene();
+    defer scene::destroy_scene(&scene);
+    ParticleSystemDesc desc = particle::default_particle_system_desc();
+    desc.capacity = 4;
+    desc.shape = EmitterShape.POINT;
+    desc.lifetime = { .min = 4, .max = 4 };
+    desc.speed = { .min = 0, .max = 0 };
+    desc.size = { .min = 0.1f, .max = 0.1f };
+    desc.trail.max_points = 2;
+    desc.trail.point_interval = REACH_STEP_SECONDS;
+    desc.trail.lifetime = 1;
+    desc.trail.width = WIDE_TRAIL;
+    Node* emitter = scene.add_particle_system(desc)!!;
+    ParticleSystem* system = scene.get(emitter, ParticleSystem);
+    system.emit_burst(1);
+    scene.update_world();
+    ParticleReach reach;
+    for (uint step = 0; step < 10; step++) {
+        reach.record(
+            desc: &desc,
+            emitter_world: emitter.world,
+            wind: {},
+            seconds: REACH_STEP_SECONDS,
+        );
+        particle::update(&scene, REACH_STEP_SECONDS);
+    }
+
+    Aabb bound = reach.trail_bound(&desc);
+    RibbonBatch* batch = scene.get(scene.node(system.trail_node), RibbonBatch);
+    assert(batch.count > 0 && batch.points[0].width == WIDE_TRAIL);
+    foreach (point : batch.points[:batch.count]) {
+        Vec3 half = { 0.5f * point.width, 0.5f * point.width, 0.5f * point.width };
+        assert(bound_contains(bound, point.position - half) && bound_contains(bound, point.position + half));
+    }
 }

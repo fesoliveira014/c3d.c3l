@@ -246,7 +246,7 @@ fn void? step_system(
         slot_index: slot_index,
     );
 
-    SystemLayout layout = system_layout(system.desc.capacity);
+    SystemLayout layout = system_layout(system.desc.capacity, system.desc.trail.max_points);
     if (!slot.buffer.generation) {
         slot.buffer = renderer.create_buffer({
             .size = layout.size,
@@ -294,6 +294,15 @@ fn void? step_system(
         .capacity = system.desc.capacity,
     };
     scene.set_billboard_device(scene.node(system.draw_node), device, state.pending.reach.bound(&system.desc));
+    if (!system.desc.trail.max_points) return;
+
+    RibbonDevice ribbons = {
+        .buffer = slot.buffer,
+        .records_offset = layout.ribbons,
+        .count_offset = layout.ribbon_count,
+        .capacity = system.desc.capacity * (system.desc.trail.max_points + 1),
+    };
+    scene.set_ribbon_device(scene.node(system.trail_node), ribbons, state.pending.reach.trail_bound(&system.desc));
 }
 
 fn void? record_chain(

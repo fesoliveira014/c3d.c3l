@@ -10,6 +10,7 @@ import gpu;
 import std::math;
 
 $assert scene::RIBBON_BREAK == shader::RIBBON_POINT_BREAK;
+$assert scene::RIBBON_RECORD_BYTES == RibbonPointGpu::size;
 
 <*
  Pack world-space ribbon points in source order, then the terminating break point.
@@ -31,6 +32,22 @@ fn void pack_ribbon_records(RibbonPointGpu[] records, Mat4 node_world, RibbonBat
         };
     }
     records[batch.count] = { .flags = shader::RIBBON_POINT_BREAK };
+}
+
+fn bool candidate_device_ribbons(MeshCandidate* candidate) @private {
+    return candidate.ribbons && candidate.ribbons.source == RibbonSource.DEVICE;
+}
+
+fn bool device_ribbons_lost(Renderer* renderer, MeshCandidate* candidate) @private {
+    return candidate_device_ribbons(candidate) && !renderer.buffers.is_live(candidate.ribbons.device.buffer);
+}
+
+fn gpu::GpuAddress device_ribbon_records(Renderer* renderer, RibbonBatch* batch) @private {
+    return (gpu::GpuAddress)((ulong)renderer.buffer_address(batch.device.buffer) + batch.device.records_offset);
+}
+
+fn gpu::GpuAddress device_ribbon_count(Renderer* renderer, RibbonBatch* batch) @private {
+    return (gpu::GpuAddress)((ulong)renderer.buffer_address(batch.device.buffer) + batch.device.count_offset);
 }
 
 fn void? upload_ribbon_records(

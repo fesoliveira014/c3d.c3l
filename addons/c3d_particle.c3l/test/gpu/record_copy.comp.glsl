@@ -13,29 +13,26 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Re
     uint64_t records;
     uint64_t count;
     uint64_t destination;
-    uint capacity;
+    uint words;
     uint _pad0;
 };
 
-layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer SourceRecords {
-    BillboardGpu values[];
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer SourceWords {
+    uint values[];
 };
 
-layout(buffer_reference, std430, buffer_reference_align = 16) buffer CopiedRecords {
-    BillboardGpu values[];
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer CopiedWords {
+    uint values[];
 };
 
-layout(buffer_reference, std430, buffer_reference_align = 4) buffer CopiedWord {
-    uint value;
-};
-
+// Copies words of records, then the count word after them.
 void main() {
     RecordCopyRoot root = RecordCopyRoot(DispatchRoot(pc.root_gpu).parameters);
     uint index = gl_GlobalInvocationID.x;
-    if (index < root.capacity) {
-        CopiedRecords(root.destination).values[index] = SourceRecords(root.records).values[index];
+    if (index < root.words) {
+        CopiedWords(root.destination).values[index] = SourceWords(root.records).values[index];
     }
     if (index == 0u) {
-        CopiedWord(root.destination + uint64_t(root.capacity) * 64ul).value = CopiedWord(root.count).value;
+        CopiedWords(root.destination).values[root.words] = SourceWords(root.count).values[0];
     }
 }
