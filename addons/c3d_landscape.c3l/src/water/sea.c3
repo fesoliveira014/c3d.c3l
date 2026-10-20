@@ -63,7 +63,7 @@ const SeaBand[MAX_WAVES] SEA_BANDS @private = {
  @param node : "Carries Water."
  @param wind_velocity : "World XZ metres per second; the waves travel along it."
  @param transition_seconds : "Zero switches at the next update."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
 *>
 fn void? set_sea_state(
     Scene* scene,
@@ -76,8 +76,10 @@ fn void? set_sea_state(
     if (!math::is_finite(wind_velocity.x) || !math::is_finite(wind_velocity.y)) return c3d::INVALID_ARGUMENT~;
     if (!(transition_seconds >= 0) || !math::is_finite(transition_seconds)) return c3d::INVALID_ARGUMENT~;
 
-    Mat4 world = scene.node(node).world;
     Water* water = scene.world.get(node, Water);
+    if (water.desc.wave_model != WaterWaveModel.GERSTNER) return c3d::UNSUPPORTED~;
+
+    Mat4 world = scene.node(node).world;
     if (!scene.world.has(node, WaterRuntime)) {
         if (water.desc.geometry.generation && !assets.geometries.is_live(water.desc.geometry)) {
             return c3d::INVALID_ID~;
@@ -244,7 +246,7 @@ fn void place_bounds(Scene* scene, Node* node, WaterRuntime* runtime) @private {
         .min = { runtime.rest_min.x, 0, runtime.rest_min.y },
         .max = { runtime.rest_max.x, 0, runtime.rest_max.y },
     };
-    scene.get(node, Mesh).local_bounds = drawn_bounds(rest, bounding_waves(runtime));
+    scene.get(node, Mesh).local_bounds = drawn_bounds(rest, &runtime.desc, bounding_waves(runtime));
 }
 
 // Uploads the blended waves each update while a blend runs, then once more so the previous waves catch up.

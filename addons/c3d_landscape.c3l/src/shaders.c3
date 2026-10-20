@@ -28,15 +28,17 @@ const char[*] INCLUDE_LANDSCAPE_TERRAIN_HEIGHT_TEXT @private = $embed("../shader
 const char[*] INCLUDE_LANDSCAPE_TERRAIN_NORMAL_TEXT @private = $embed("../shaders/include/landscape/terrain_normal.glsl");
 const char[*] INCLUDE_LANDSCAPE_TERRAIN_SURFACE_TEXT @private = $embed("../shaders/include/landscape/terrain_surface.glsl");
 const char[*] INCLUDE_LANDSCAPE_WATER_REFLECTION_TEXT @private = $embed("../shaders/include/landscape/water_reflection.glsl");
+const char[*] INCLUDE_LANDSCAPE_WATER_SIMULATION_TEXT @private = $embed("../shaders/include/landscape/water_simulation.glsl");
 const char[*] INCLUDE_LANDSCAPE_WATER_WAVES_TEXT @private = $embed("../shaders/include/landscape/water_waves.glsl");
 
 <*
  GLSL includes of this package, by the name a shader writes.
 *>
-const asset::ShaderInclude[5] LANDSCAPE_SHADER_INCLUDES = {
+const asset::ShaderInclude[6] LANDSCAPE_SHADER_INCLUDES = {
     { .name = "landscape/terrain_height.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_HEIGHT_TEXT[..] },
     { .name = "landscape/terrain_normal.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_NORMAL_TEXT[..] },
     { .name = "landscape/terrain_surface.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_SURFACE_TEXT[..] },
     { .name = "landscape/water_reflection.glsl", .text = (String)INCLUDE_LANDSCAPE_WATER_REFLECTION_TEXT[..] },
+    { .name = "landscape/water_simulation.glsl", .text = (String)INCLUDE_LANDSCAPE_WATER_SIMULATION_TEXT[..] },
     { .name = "landscape/water_waves.glsl", .text = (String)INCLUDE_LANDSCAPE_WATER_WAVES_TEXT[..] },
 };

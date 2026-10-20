@@ -59,7 +59,7 @@ fn MediumVolume water_medium(WaterDesc* desc, Vec2 rest_min, Vec2 rest_max, floa
 // follows the body's layers. Water shallower than its troughs has no medium.
 fn void write_medium(Scene* scene, Node* node, WaterRuntime* runtime) @private {
     Node* medium_node = scene.node(runtime.medium_node);
-    float offset = total_amplitude(bounding_waves(runtime)) + MEDIUM_SKIN;
+    float offset = vertical_reach(runtime) + MEDIUM_SKIN;
     medium_node.layers = node.layers;
     medium_node.local.position = { 0, -offset, 0 };
     // The value update_world writes, so the medium is current whichever runs first.

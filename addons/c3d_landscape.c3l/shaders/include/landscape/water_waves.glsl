@@ -5,6 +5,7 @@
 
 const uint WATER_MAX_WAVES = 4u; // mirrored as MAX_WAVES in water/water.c3
 const uint WATER_MARCH = 1u; // mirrored as MARCH_FLAG in water/waves.c3
+const uint WATER_SIMULATED = 2u; // mirrored as SIMULATED_FLAG in water/waves.c3
 const float WATER_FADE_FULL_CELLS = 4.0; // mirrored as FADE_FULL_CELLS in water/material.c3; drawn whole
 const float WATER_FADE_NONE_CELLS = 2.0; // mirrored as NYQUIST_CELLS in water/material.c3; a wave this short is gone
 
@@ -34,9 +35,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Wa
     uint flags;
     float cell_size;
     float roughness;
+    uint grid_texels;
+    float grid_spacing;
     float _pad0;
-    float _pad1;
-    float _pad2;
 };
 
 struct WaterSurfacePoint {
