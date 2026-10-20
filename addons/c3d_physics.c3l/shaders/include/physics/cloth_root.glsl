@@ -4,7 +4,11 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 
-layout(local_size_x = 64) in; // mirrored as GROUP_SIZE in gpu/cloth.c3
+#ifndef CLOTH_LOCAL_SIZE
+#define CLOTH_LOCAL_SIZE 64
+#endif
+
+layout(local_size_x = CLOTH_LOCAL_SIZE) in; // 64 mirrored as GROUP_SIZE in gpu/cloth.c3
 
 layout(push_constant) uniform Push {
     uint64_t root_gpu;
@@ -34,6 +38,16 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Cl
     float    damping;            // velocity share kept per substep
     float    ground;             // lowest height a free particle may reach
     float    _pad0;
+    uint64_t marks;              // uint per particle: bit 0 set in the first color, bit 1 in the last
+    uint64_t color_starts;       // uint per color plus one: first edge of each color
+    uint     phases;             // PASS_* bits of the dispatched color pass
+    uint     member_bit;         // bit of marks that tells a particle is on an edge of the dispatched color
+    uint     substeps;
+    uint     iterations;
+    uint     color_count;
+    uint     _pad1;
+    uint     _pad2;
+    uint     _pad3;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClothVectors {

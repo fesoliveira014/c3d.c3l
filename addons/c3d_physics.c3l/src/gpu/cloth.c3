@@ -12,6 +12,10 @@ import c3d::scene;
 import std::math;
 
 const uint GROUP_SIZE @private = 64; // mirrored as local_size_x in cloth_root.glsl
+const uint PASS_PREDICT @private = 1; // mirrored in cloth_step.glsl
+const uint PASS_COLLIDE @private = 2; // mirrored in cloth_step.glsl
+const uint PASS_INTEGRATE @private = 4; // mirrored in cloth_step.glsl
+const uint PASS_INITIALIZE @private = 8; // mirrored in cloth_step.glsl
 const float NO_GROUND @private = -1e30f; // below every particle; disables the ground contact
 const float REACH_FACTOR @private = 1; // rest diagonals the bounds grow by; the sheet cannot stretch past its extent
 const String INIT_KEY @private = "c3d_physics/cloth_init";
@@ -20,6 +24,8 @@ const String PROJECT_KEY @private = "c3d_physics/cloth_project";
 const String COLLIDE_KEY @private = "c3d_physics/cloth_collide";
 const String INTEGRATE_KEY @private = "c3d_physics/cloth_integrate";
 const String OUTPUT_KEY @private = "c3d_physics/cloth_output";
+const String FUSED_KEY @private = "c3d_physics/cloth_fused";
+const String SINGLE_KEY @private = "c3d_physics/cloth_single";
 
 struct Stages @private {
     ComputeShaderId init;
@@ -28,6 +34,17 @@ struct Stages @private {
     ComputeShaderId collide;
     ComputeShaderId integrate;
     ComputeShaderId output;
+    ComputeShaderId fused;
+    ComputeShaderId single;
+}
+
+<*
+ How a step lays its passes over dispatches.
+*>
+enum ClothStepShape {
+    PR0,
+    FUSED,
+    SINGLE,
 }
 
 // Mirrors ClothRoot in cloth_root.glsl.
@@ -54,15 +71,27 @@ struct ClothRoot @private {
     float     damping;
     float     ground;
     float     _pad0;
+    ulong     marks;
+    ulong     color_starts;
+    uint      phases;
+    uint      member_bit;
+    uint      substeps;
+    uint      iterations;
+    uint      color_count;
+    uint      _pad1;
+    uint      _pad2;
+    uint      _pad3;
 }
 
-$assert ClothRoot::size == 272;
+$assert ClothRoot::size == 320;
 $assert $reflect(ClothRoot.world).offset == 80;
 $assert $reflect(ClothRoot.inverse_world).offset == 144;
 $assert $reflect(ClothRoot.gravity_step).offset == 208;
 $assert $reflect(ClothRoot.sphere).offset == 224;
 $assert $reflect(ClothRoot.particle_count).offset == 240;
 $assert $reflect(ClothRoot.stiffness).offset == 256;
+$assert $reflect(ClothRoot.marks).offset == 272;
+$assert $reflect(ClothRoot.phases).offset == 288;
 
 struct EdgeGpu @private {
     uint  first;
@@ -79,6 +108,8 @@ struct Sections @private {
     usz edges;
     usz adjacency;
     usz triangles;
+    usz marks;
+    usz color_starts;
     usz total;
 }
 
@@ -108,11 +139,14 @@ struct GpuCloth {
     float                       ground;
     Aabb                        bounds;
     bool                        initialized;
+    ClothStepShape              shape;
+    uint                        dispatches; // recorded by the latest step
 }
 
 struct Recorder @private {
     Renderer* renderer;
     ClothRoot root;
+    uint      dispatches;
 }
 
 <*
@@ -166,15 +200,34 @@ fn void? GpuCloth.step(
         .stiffness          = self.stretch_stiffness,
         .damping            = math::max(0.0f, 1 - self.damping * substep_seconds),
         .ground             = self.ground,
+        .marks              = (ulong)renderer.buffer_address(self.constants) + self.sections.marks,
+        .color_starts       = (ulong)renderer.buffer_address(self.constants) + self.sections.color_starts,
+        .substeps           = self.substeps,
+        .iterations         = self.iterations,
+        .color_count        = self.color_count,
     };
-    BufferId[2] state_writes = { self.positions, self.work };
-    BufferId[1] work_writes = { self.work };
     Recorder recorder = { .renderer = renderer, .root = root };
 
-    if (!self.initialized) {
-        recorder.run(self.stages.init, self.particle_count, state_writes[..])!;
-        self.initialized = true;
+    switch (self.shape) {
+        case PR0:
+            self.record_separate(&recorder)!;
+        case FUSED:
+            self.record_fused(&recorder)!;
+        case SINGLE:
+            self.record_single(&recorder)!;
     }
+    self.initialized = true;
+    self.dispatches = recorder.dispatches;
+}
+
+<*
+ One dispatch per pass: predict, each color, collide and integrate.
+*>
+fn void? GpuCloth.record_separate(&self, Recorder* recorder) {
+    BufferId[2] state_writes = { self.positions, self.work };
+    BufferId[1] work_writes = { self.work };
+
+    if (!self.initialized) recorder.run(self.stages.init, self.particle_count, state_writes[..])!;
     for (uint substep = 0; substep < self.substeps; substep++) {
         recorder.run(self.stages.predict, self.particle_count, work_writes[..])!;
         for (uint iteration = 0; iteration < self.iterations; iteration++) {
@@ -187,7 +240,61 @@ fn void? GpuCloth.step(
         }
         recorder.run(self.stages.integrate, self.particle_count, state_writes[..])!;
     }
+    return self.record_output(recorder);
+}
 
+<*
+ Fewest dispatches in the same Gauss-Seidel order: one per color pass, then the output.
+*>
+fn void? GpuCloth.record_fused(&self, Recorder* recorder) {
+    BufferId[2] state_writes = { self.positions, self.work };
+
+    if (!self.initialized) recorder.run(self.stages.init, self.particle_count, state_writes[..])!;
+    for (uint substep = 0; substep < self.substeps; substep++) {
+        for (uint iteration = 0; iteration < self.iterations; iteration++) {
+            for (uint color = 0; color < self.color_count; color++) {
+                uint phases;
+                if (iteration == 0 && color == 0) phases |= PASS_PREDICT;
+                if (color + 1 == self.color_count) {
+                    phases |= PASS_COLLIDE;
+                    if (iteration + 1 == self.iterations) phases |= PASS_INTEGRATE;
+                }
+                recorder.root.first = self.color_starts[color];
+                recorder.root.count = self.color_starts[color + 1] - self.color_starts[color];
+                recorder.root.phases = phases;
+                recorder.root.member_bit = color == 0 ? 0 : 1;
+                uint owners = (phases & (PASS_PREDICT | PASS_COLLIDE)) != 0 ? self.particle_count : 0;
+                recorder.run(self.stages.fused, recorder.root.count + owners, state_writes[..])!;
+            }
+        }
+    }
+    return self.record_output(recorder);
+}
+
+<*
+ One dispatch for the whole step, with workgroup barriers between passes.
+*>
+fn void? GpuCloth.record_single(&self, Recorder* recorder) {
+    BufferId[2] state_writes = { self.positions, self.work };
+    GeometryWrite[1] geometry_writes = {{
+        .geometry     = self.geometry,
+        .streams      = { .positions = true, .normals = true },
+        .local_bounds = self.bounds,
+    }};
+
+    recorder.root.phases = self.initialized ? 0 : PASS_INITIALIZE;
+    return recorder.run_groups(
+        stage:    self.stages.single,
+        groups:   { 1, 1, 1 },
+        writes:   state_writes[..],
+        geometry: geometry_writes[..],
+    );
+}
+
+<*
+ Write the node geometry from the final positions.
+*>
+fn void? GpuCloth.record_output(&self, Recorder* recorder) {
     GeometryWrite[1] geometry_writes = {{
         .geometry     = self.geometry,
         .streams      = { .positions = true, .normals = true },
@@ -221,10 +328,26 @@ fn void? Recorder.run(
     BufferId[] writes,
     GeometryWrite[] geometry = {},
 ) {
+    return self.run_groups(
+        stage:    stage,
+        groups:   { (threads + GROUP_SIZE - 1) / GROUP_SIZE, 1, 1 },
+        writes:   writes,
+        geometry: geometry,
+    );
+}
+
+fn void? Recorder.run_groups(
+    &self,
+    ComputeShaderId stage,
+    uint[<3>] groups,
+    BufferId[] writes,
+    GeometryWrite[] geometry = {},
+) {
+    self.dispatches++;
     return self.renderer.dispatch({
         .shader   = stage,
         .root     = material::@as_bytes(self.root),
-        .groups   = { (threads + GROUP_SIZE - 1) / GROUP_SIZE, 1, 1 },
+        .groups   = groups,
         .writes   = writes,
         .geometry = geometry,
     });
@@ -362,6 +485,8 @@ fn Stages? add_stages(AssetStore* assets) @private {
         .collide   = stage(assets, COLLIDE_KEY, physics::CLOTH_COLLIDE_SPIRV[..])!,
         .integrate = stage(assets, INTEGRATE_KEY, physics::CLOTH_INTEGRATE_SPIRV[..])!,
         .output    = stage(assets, OUTPUT_KEY, physics::CLOTH_OUTPUT_SPIRV[..])!,
+        .fused     = stage(assets, FUSED_KEY, physics::CLOTH_FUSED_SPIRV[..])!,
+        .single    = stage(assets, SINGLE_KEY, physics::CLOTH_SINGLE_SPIRV[..])!,
     };
 }
 
@@ -410,6 +535,20 @@ fn char[]? build_constants(GpuCloth* gpu_cloth, ClothState* state, AssetStore* a
         gpu_edges[index] = { .first = edge.first, .second = edge.second, .rest_length = edge.rest_length };
     }
 
+    usz starts_bytes = ((usz)gpu_cloth.color_count + 1) * uint::size;
+
+    // Bit 0: the particle is on an edge of the first color; bit 1: on an edge of the last.
+    uint[] marks = alloc::new_array(tmem, uint, particles);
+    for (uint edge = gpu_cloth.color_starts[0]; edge < gpu_cloth.color_starts[1]; edge++) {
+        marks[edges[edge].first] |= 1;
+        marks[edges[edge].second] |= 1;
+    }
+    uint last_color = gpu_cloth.color_count - 1;
+    for (uint edge = gpu_cloth.color_starts[last_color]; edge < gpu_cloth.color_starts[last_color + 1]; edge++) {
+        marks[edges[edge].first] |= 2;
+        marks[edges[edge].second] |= 2;
+    }
+
     // Offsets table, then the triangle numbers incident to each particle.
     uint[] adjacency = alloc::new_array(tmem, uint, (usz)particles + 1 + indices.len);
     foreach (vertex : indices) adjacency[vertex + 1]++;
@@ -427,6 +566,8 @@ fn char[]? build_constants(GpuCloth* gpu_cloth, ClothState* state, AssetStore* a
     sections.edges = place(&cursor_bytes, gpu_edges.len * EdgeGpu::size);
     sections.adjacency = place(&cursor_bytes, adjacency.len * uint::size);
     sections.triangles = place(&cursor_bytes, indices.len * uint::size);
+    sections.marks = place(&cursor_bytes, marks.len * uint::size);
+    sections.color_starts = place(&cursor_bytes, starts_bytes);
     sections.total = cursor_bytes;
 
     char[] block = alloc::new_array(gpu_cloth.allocator, char, (sz)sections.total);
@@ -435,6 +576,8 @@ fn char[]? build_constants(GpuCloth* gpu_cloth, ClothState* state, AssetStore* a
     mem::copy(&block[sections.edges], gpu_edges.ptr, (sz)(gpu_edges.len * EdgeGpu::size));
     mem::copy(&block[sections.adjacency], adjacency.ptr, (sz)(adjacency.len * uint::size));
     mem::copy(&block[sections.triangles], indices.ptr, (sz)(indices.len * uint::size));
+    mem::copy(&block[sections.marks], marks.ptr, (sz)(marks.len * uint::size));
+    mem::copy(&block[sections.color_starts], &gpu_cloth.color_starts, (sz)starts_bytes);
     return block;
 }
 

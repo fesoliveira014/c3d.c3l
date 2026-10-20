@@ -17,6 +17,7 @@ fn void? attach(
     AssetStore* assets,
     Scene* scene,
     Node* node,
+    String shape,
 ) {
     return c3d::UNSUPPORTED~;
 }
@@ -27,5 +28,11 @@ fn void? step(
     Scene* scene,
     float step_seconds,
 ) {}
+
+fn void report(State* state) {}
+
+fn void? dump(State* state, Renderer* renderer, String path) {
+    return c3d::UNSUPPORTED~;
+}
 
 fn void detach(State* state, Renderer* renderer) {}

@@ -8,6 +8,8 @@
     { "shader": "cloth_project", "source": "cloth_project.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cloth_collide", "source": "cloth_collide.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cloth_integrate", "source": "cloth_integrate.comp.glsl", "stage": "comp", "defines": [] },
-    { "shader": "cloth_output", "source": "cloth_output.comp.glsl", "stage": "comp", "defines": [] }
+    { "shader": "cloth_output", "source": "cloth_output.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "cloth_fused", "source": "cloth_fused.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "cloth_single", "source": "cloth_single.comp.glsl", "stage": "comp", "defines": [] }
   ]
 }

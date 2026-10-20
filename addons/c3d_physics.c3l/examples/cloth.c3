@@ -43,6 +43,7 @@ const float DENSITY_BAR_HEIGHT @local = 2.4f; // metres above the ground
 const float DENSITY_WIND_SPEED @local = 1.5f; // m/s; below the speed at which a hung sheet starts to flutter
 const float DENSITY_WIND_HEADING @local = 90; // degrees off the flag plane; straight at the sheets
 const uint BENCHMARK_CELLS @local = 32; // a 33x33-vertex flag at the default 4x8 solver settings
+const uint LARGE_FLAG_CELLS @local = 127; // a 128x128-vertex flag, 16384 particles
 const float HANGING_WIDTH @local = 1.8f;
 const float HANGING_DEPTH @local = 1.2f;
 const float HANGING_HEIGHT @local = 3; // metres; the bar the sheet swings down from
@@ -81,6 +82,7 @@ const float GUST_SHARE @local = 0.35f; // fraction of the speed a gust adds or r
 const float GUST_RATE @local = 0.7f; // radians per second
 const uint WARMUP_FRAMES @local = 120; // two simulated seconds settle the cloth before measuring
 const uint MEASURED_FRAMES @local = 600;
+const uint FRAMES_PER_WARMUP @local = 4; // with --frames n, one quarter of the frames warm up
 const float STEP_SECONDS @local = 1.0f / 60;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 const double PERCENTILE_95 @local = 0.95;
@@ -118,11 +120,14 @@ enum Scenario @local {
     CROWD,
     DENSITIES,
     FLAG33,
+    FLAG128,
 }
 
 const String[Scenario::len] SCENARIO_NAMES @local = {
-    "flag", "cape", "both", "contacts", "fold", "fast", "field", "crowd", "densities", "flag33",
+    "flag", "cape", "both", "contacts", "fold", "fast", "field", "crowd", "densities", "flag33", "flag128",
 };
+
+fn bool is_hanging(Scenario scenario) @local => scenario == FLAG33 || scenario == FLAG128;
 
 struct Options @local {
     bool      benchmark;
@@ -134,6 +139,8 @@ struct Options @local {
     bool      traced;
     bool      cpu_only;
     bool      gpu;
+    String    gpu_shape;
+    String    dump_path;
     bool      validation;
     TraceKind trace_kind;
     Scenario  scenario;
@@ -827,7 +834,7 @@ fn void tear_cloths(Demo* demo) @local {
 fn void? attach_cloths(Demo* demo) @local {
     if (!demo.simulated) return;
     if (demo.flag) {
-        if (demo.scenario == FLAG33) {
+        if (is_hanging(demo.scenario)) {
             attach_flag33(demo)!;
         } else {
             attach_flag(demo)!;
@@ -1190,7 +1197,7 @@ fn void? create_demo(
     demo.physics.add_body(ground, physics::default_body_desc(STATIC), (&ground_collider)[:1])!;
 
     if (scenario == FLAG || scenario == BOTH) build_flag(demo)!;
-    if (scenario == FLAG33) build_flag33(demo)!;
+    if (is_hanging(scenario)) build_flag33(demo)!;
     if (scenario == CAPE || scenario == BOTH) build_character(demo)!;
     if (scenario == CONTACTS) build_contact_scene(demo)!;
     if (scenario == FOLD) build_fold(demo)!;
@@ -1203,6 +1210,7 @@ fn void? create_demo(
             demo.camera.local.position = POLE_POSITION + (Vec3){ 1.4f, POLE_HEIGHT - 0.6f, 4.2f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ -0.25f, 0, -1 }).normalize(), { 0, 1, 0 });
         case FLAG33:
+        case FLAG128:
             demo.camera.local.position = { HANGING_WIDTH * 0.5f, HANGING_HEIGHT - 0.4f, 4.4f };
             demo.camera.local.rotation = maths::look_rotation(((Vec3){ 0, -0.1f, -1 }).normalize(), { 0, 1, 0 });
         case DENSITIES:
@@ -1420,8 +1428,8 @@ fn void? run_interactive(Options options) @local {
     create_demo(
         demo:         &demo,
         scenario:     options.scenario,
-        flag_columns: options.scenario == FLAG33 ? options.cells : FLAG_COLUMNS,
-        flag_rows:    options.scenario == FLAG33 ? options.cells : FLAG_ROWS,
+        flag_columns: is_hanging(options.scenario) ? options.cells : FLAG_COLUMNS,
+        flag_rows:    is_hanging(options.scenario) ? options.cells : FLAG_ROWS,
         simulated:    !options.still,
         field_count:  options.count,
         crowd_count:  options.scenario == CROWD ? options.count : 0,
@@ -1445,6 +1453,7 @@ fn void? run_interactive(Options options) @local {
             assets:   &demo.assets,
             scene:    &demo.scene,
             node:     demo.flag,
+            shape:    options.gpu_shape,
         )!;
     }
     defer cloth_gpu_hooks::detach(&demo.gpu, &renderer);
@@ -1676,6 +1685,8 @@ fn void? run_cpu_benchmark(Options options) @local {
 }
 
 fn void? run_benchmark(Options options) @local {
+    uint warmup_frames = options.frames ? options.frames / FRAMES_PER_WARMUP : WARMUP_FRAMES;
+    uint measured_frames = options.frames ? math::min(options.frames - warmup_frames, MEASURED_FRAMES) : MEASURED_FRAMES;
     Demo demo;
     create_demo(
         demo:         &demo,
@@ -1710,6 +1721,7 @@ fn void? run_benchmark(Options options) @local {
             assets:   &demo.assets,
             scene:    &demo.scene,
             node:     demo.flag,
+            shape:    options.gpu_shape,
         )!;
     }
     defer cloth_gpu_hooks::detach(&demo.gpu, &renderer);
@@ -1748,14 +1760,16 @@ fn void? run_benchmark(Options options) @local {
     Series pose_ms;
     Series acceleration_ms;
     Series trace_gpu_ms;
-    ulong first_measured = renderer.frame_index + WARMUP_FRAMES;
+    ulong first_measured = renderer.frame_index + warmup_frames;
     ulong last_gpu_frame = ulong::max;
-    uint total_frames = WARMUP_FRAMES + MEASURED_FRAMES + render::FRAMES_IN_FLIGHT + 1;
+    uint total_frames = options.dump_path.len
+        ? options.frames + render::FRAMES_IN_FLIGHT
+        : warmup_frames + measured_frames + render::FRAMES_IN_FLIGHT + 1;
     for (uint frame = 0; frame < total_frames; frame++) {
         double time = (double)frame * STEP_SECONDS;
-        if (options.ragdoll && frame == WARMUP_FRAMES) set_ragdoll(&demo, true);
-        if (options.tear && frame == WARMUP_FRAMES) tear_cloths(&demo);
-        if (options.hold && frame == WARMUP_FRAMES) set_field_held(&demo, true);
+        if (options.ragdoll && frame == warmup_frames) set_ragdoll(&demo, true);
+        if (options.tear && frame == warmup_frames) tear_cloths(&demo);
+        if (options.hold && frame == warmup_frames) set_field_held(&demo, true);
         step_demo(&demo, STEP_SECONDS, time);
         if ((demo.scenario == CONTACTS || demo.scenario == FAST) && demo.physics.cloth_stats.failed) return cloth::CONTACT_UNRESOLVED~;
         renderer.begin_frame({ .time = time, .delta = STEP_SECONDS })!;
@@ -1768,14 +1782,17 @@ fn void? run_benchmark(Options options) @local {
             step_seconds: STEP_SECONDS,
         )!;
         record_ms = (double)(clock::now() - recording) / NANOSECONDS_PER_MILLISECOND;
+        if (options.dump_path.len && frame + 1 == total_frames) {
+            cloth_gpu_hooks::dump(&demo.gpu, &renderer, options.dump_path)!;
+        }
         renderer.render_view(&demo.scene, demo.camera, view)!;
         renderer.finish_view(view)!;
         renderer.end_frame()!;
-        if (frame >= WARMUP_FRAMES && frame < WARMUP_FRAMES + MEASURED_FRAMES) {
-            solve_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.solve_seconds * 1000;
-            publish_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.publish_seconds * 1000;
-            stage_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.stage_seconds * 1000;
-            commit_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.commit_seconds * 1000;
+        if (frame >= warmup_frames && frame < warmup_frames + measured_frames) {
+            solve_ms[frame - warmup_frames] = demo.physics.cloth_stats.solve_seconds * 1000;
+            publish_ms[frame - warmup_frames] = demo.physics.cloth_stats.publish_seconds * 1000;
+            stage_ms[frame - warmup_frames] = demo.physics.cloth_stats.stage_seconds * 1000;
+            commit_ms[frame - warmup_frames] = demo.physics.cloth_stats.commit_seconds * 1000;
             upload_bytes += renderer.stats.upload_bytes;
             history_bytes += renderer.stats.vertex_history_bytes;
             trace_build_ms.add(renderer.stats.trace_build_ms);
@@ -1789,7 +1806,7 @@ fn void? run_benchmark(Options options) @local {
         }
         Stats* stats = &renderer.stats;
         if (stats.gpu_timing_state == GpuTimingState.READY && stats.gpu_frame_index != last_gpu_frame
-            && stats.gpu_frame_index >= first_measured && stats.gpu_frame_index < first_measured + MEASURED_FRAMES) {
+            && stats.gpu_frame_index >= first_measured && stats.gpu_frame_index < first_measured + measured_frames) {
             double total;
             foreach (pass_ms : stats.gpu_pass_ms) total += pass_ms;
             compute_ms[gpu_samples] = stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE.ordinal];
@@ -1827,8 +1844,8 @@ fn void? run_benchmark(Options options) @local {
     );
     io::printfn("publication,%s", demo.whole_publication ? "whole" : "streams");
     double cloths = (double)cloth_total(&demo);
-    double resting = resting_series.total / MEASURED_FRAMES;
-    double held = held_series.total / MEASURED_FRAMES;
+    double resting = resting_series.total / measured_frames;
+    double held = held_series.total / measured_frames;
     io::printfn(
         "cloths,%.0f,simulated_mean,%.2f,resting_mean,%.2f,held_mean,%.2f",
         cloths,
@@ -1839,21 +1856,21 @@ fn void? run_benchmark(Options options) @local {
     io::printfn("resolution,%dx%d,particles,%d,constraints,%d", WIDTH, HEIGHT, stats.particles, stats.constraints);
     io::printfn(
         "frames,%d,warmup,%d,substeps,%d,iterations,%d",
-        MEASURED_FRAMES,
-        WARMUP_FRAMES,
+        measured_frames,
+        warmup_frames,
         demo.fast ? 1 : cloth::DEFAULT_CLOTH_SUBSTEPS,
         demo.fast ? 1 : cloth::DEFAULT_CLOTH_ITERATIONS
     );
     print_update_timings(
         demo:       &demo,
         workers:    options.workers,
-        solve_ms:   solve_ms[..],
-        publish_ms: publish_ms[..],
-        stage_ms:   stage_ms[..],
-        commit_ms:  commit_ms[..],
+        solve_ms:   solve_ms[:measured_frames],
+        publish_ms: publish_ms[:measured_frames],
+        stage_ms:   stage_ms[:measured_frames],
+        commit_ms:  commit_ms[:measured_frames],
     );
-    io::printfn("upload_bytes_per_frame,%.0f", (double)upload_bytes / MEASURED_FRAMES);
-    io::printfn("vertex_history_bytes_per_frame,%.0f", (double)history_bytes / MEASURED_FRAMES);
+    io::printfn("upload_bytes_per_frame,%.0f", (double)upload_bytes / measured_frames);
+    io::printfn("vertex_history_bytes_per_frame,%.0f", (double)history_bytes / measured_frames);
     if (gpu_samples) {
         io::printfn("gpu_frame_ms,samples,%d,median,%.4f,p95,%.4f", gpu_samples,
             percentile(gpu_ms[:gpu_samples], 0.5), percentile(gpu_ms[:gpu_samples], PERCENTILE_95));
@@ -1861,11 +1878,12 @@ fn void? run_benchmark(Options options) @local {
             percentile(velocity_ms[:gpu_samples], 0.5), percentile(velocity_ms[:gpu_samples], PERCENTILE_95));
     }
     if (options.gpu) {
+        cloth_gpu_hooks::report(&demo.gpu);
         io::printfn("gpu_cloth,custom_compute_ms,samples,%d,median,%.4f,p95,%.4f", gpu_samples,
             percentile(compute_ms[:gpu_samples], 0.5), percentile(compute_ms[:gpu_samples], PERCENTILE_95));
         io::printfn(
             "gpu_cloth,record_ms,mean,%.4f,max,%.4f",
-            record_series.total / MEASURED_FRAMES,
+            record_series.total / measured_frames,
             record_series.peak,
         );
     }
@@ -1878,10 +1896,10 @@ fn void? run_benchmark(Options options) @local {
             trace_gpu_ms:    trace_gpu_ms,
             gpu_samples:     gpu_samples,
         );
-        io::printfn("trace_blas_builds,mean,%.4f,max,%.0f", blas_builds.total / MEASURED_FRAMES, blas_builds.peak);
-        io::printfn("trace_blas_updates,mean,%.4f,max,%.0f", blas_updates.total / MEASURED_FRAMES, blas_updates.peak);
-        io::printfn("trace_tlas_builds,mean,%.4f,max,%.0f", tlas_builds.total / MEASURED_FRAMES, tlas_builds.peak);
-        io::printfn("trace_upload_bytes,mean,%.0f,max,%.0f", upload_series.total / MEASURED_FRAMES, upload_series.peak);
+        io::printfn("trace_blas_builds,mean,%.4f,max,%.0f", blas_builds.total / measured_frames, blas_builds.peak);
+        io::printfn("trace_blas_updates,mean,%.4f,max,%.0f", blas_updates.total / measured_frames, blas_updates.peak);
+        io::printfn("trace_tlas_builds,mean,%.4f,max,%.0f", tlas_builds.total / measured_frames, tlas_builds.peak);
+        io::printfn("trace_upload_bytes,mean,%.0f,max,%.0f", upload_series.total / measured_frames, upload_series.peak);
     }
     return renderer.log.check_validation();
 }
@@ -1922,6 +1940,10 @@ fn Options? parse_options(String[] args) @local {
             options.cpu_only = true;
         } else if (args[index] == "--gpu") {
             options.gpu = true;
+        } else if (args[index] == "--gpu-shape" && index + 1 < args.len) {
+            options.gpu_shape = args[++index];
+        } else if (args[index] == "--dump" && index + 1 < args.len) {
+            options.dump_path = args[++index];
         } else if (args[index] == "--validation") {
             options.validation = true;
         } else if (args[index] == "--trace" && index + 1 < args.len) {
@@ -1949,7 +1971,9 @@ fn Options? parse_options(String[] args) @local {
     if (options.cpu_only && (options.traced || options.validation || options.ragdoll || options.capture_path.len)) {
         return c3d::INVALID_ARGUMENT~;
     }
-    if (options.gpu && (options.scenario != FLAG33 || options.cpu_only || options.still || options.traced)) {
+    if (options.scenario == FLAG128) options.cells = LARGE_FLAG_CELLS;
+    if (options.dump_path.len && (!options.gpu || !options.benchmark || !options.frames)) return c3d::INVALID_ARGUMENT~;
+    if (options.gpu && (!is_hanging(options.scenario) || options.cpu_only || options.still || options.traced)) {
         return c3d::INVALID_ARGUMENT~;
     }
     if (options.scenario == CROWD && !counted) options.count = CROWD_DEFAULT_COUNT;
@@ -1964,9 +1988,11 @@ fn Options? parse_options(String[] args) @local {
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33]");
+        io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33|flag128]");
         io::eprintn("  [--still] [--frames count]");
-        io::eprintn("  [--gpu]    (flag33 only: simulate on the device; python3 scripts/build.py --example cloth_gpu)");
+        io::eprintn("  [--gpu]    (flag33 and flag128 only: simulate on the device; python3 scripts/build.py --example cloth_gpu)");
+        io::eprintn("  [--gpu-shape pr0|fused|single]    (with --gpu: how a step lays its passes over dispatches)");
+        io::eprintn("  [--dump path]    (with --gpu --benchmark --frames n: write the device positions after n steps)");
         io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");
         io::eprintn("  [--cells n]    (benchmark flag size in cells per side; default 32)");

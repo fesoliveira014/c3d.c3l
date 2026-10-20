@@ -9,11 +9,15 @@ const char[*] CLOTH_PROJECT_SPIRV @private = $embed("../shaders/spv/cloth_projec
 const char[*] CLOTH_COLLIDE_SPIRV @private = $embed("../shaders/spv/cloth_collide.spv");
 const char[*] CLOTH_INTEGRATE_SPIRV @private = $embed("../shaders/spv/cloth_integrate.spv");
 const char[*] CLOTH_OUTPUT_SPIRV @private = $embed("../shaders/spv/cloth_output.spv");
+const char[*] CLOTH_FUSED_SPIRV @private = $embed("../shaders/spv/cloth_fused.spv");
+const char[*] CLOTH_SINGLE_SPIRV @private = $embed("../shaders/spv/cloth_single.spv");
 const char[*] INCLUDE_PHYSICS_CLOTH_ROOT_TEXT @private = $embed("../shaders/include/physics/cloth_root.glsl");
+const char[*] INCLUDE_PHYSICS_CLOTH_STEP_TEXT @private = $embed("../shaders/include/physics/cloth_step.glsl");
 
 <*
  GLSL includes of this package, by the name a shader writes.
 *>
-const asset::ShaderInclude[1] PHYSICS_SHADER_INCLUDES = {
+const asset::ShaderInclude[2] PHYSICS_SHADER_INCLUDES = {
     { .name = "physics/cloth_root.glsl", .text = (String)INCLUDE_PHYSICS_CLOTH_ROOT_TEXT[..] },
+    { .name = "physics/cloth_step.glsl", .text = (String)INCLUDE_PHYSICS_CLOTH_STEP_TEXT[..] },
 };
