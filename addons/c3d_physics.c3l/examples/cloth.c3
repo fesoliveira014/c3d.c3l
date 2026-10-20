@@ -135,6 +135,7 @@ struct Options @local {
     bool      traced;
     bool      cpu_only;
     bool      gpu;
+    bool      forces;
     bool      validation;
     TraceKind trace_kind;
     Scenario  scenario;
@@ -182,6 +183,7 @@ struct Demo @local {
     Node*        ball;
     Node*[]      copies;
     ClothExecution execution;
+    bool         forces;
     cloth_gpu_hooks::State gpu;
     Node*[2]     density_flags;
     uint         flag_columns;
@@ -379,6 +381,7 @@ fn void? build_flag33(Demo* demo) @local {
     demo.flag = demo.scene.add_mesh(sheet_geometry, fabric, name: "flag")!;
     demo.flag.local.position = { 0, HANGING_HEIGHT, 0 };
     demo.scene.get(demo.flag, scene::Mesh).trace = demo.traced;
+    if (demo.forces) demo.scene.add(demo.flag, (Wind){});
     Node* bar = demo.scene.add_mesh(bar_geometry, metal, name: "bar")!;
     bar.local.position = { HANGING_WIDTH * 0.5f, HANGING_HEIGHT + POLE_RADIUS, 0 };
     bar.local.rotation = quaternion::from_axis_angle((Vec3){ 0, 0, 1 }, (float)math::PI / 2);
@@ -393,6 +396,7 @@ fn void? build_flag33(Demo* demo) @local {
     foreach (index, &copy : demo.copies) {
         *copy = demo.scene.add_mesh(sheet_geometry, fabric, name: "flag_copy")!;
         copy.local.position = { (float)(index + 1) * HANGING_COPY_SPACING, HANGING_HEIGHT, 0 };
+        if (demo.forces) demo.scene.add(*copy, (Wind){});
     }
 }
 
@@ -511,11 +515,11 @@ fn void? attach_flag(Demo* demo) @local {
     };
 }
 
-// Only the device cloth subset: no bends, no wind, no cuts and one sphere.
+// Only the device cloth subset: no cuts and one sphere; --forces adds distance bends and wind.
 fn void? attach_flag33(Demo* demo) @local {
     demo.physics.update(0);
     ClothDesc desc = cloth::default_cloth_desc();
-    desc.bend_stiffness = 0;
+    if (!demo.forces) desc.bend_stiffness = 0;
     desc.damping = HANGING_DAMPING;
     desc.collide_ground = true;
     desc.colliders = (&demo.ball.id)[:1];
@@ -1149,9 +1153,11 @@ fn void? create_demo(
     uint crowd_count = 0,
     uint workers = 0,
     ClothExecution execution = ClothExecution.CPU,
+    bool forces = false,
 ) @local {
     demo.scenario = scenario;
     demo.execution = execution;
+    demo.forces = forces;
     demo.copy_count = scenario == FLAG33 && field_count > 1 ? field_count - 1 : 0;
     demo.simulated = simulated;
     demo.traced = traced;
@@ -1276,6 +1282,7 @@ fn void apply_wind(Demo* demo, double time) @local {
     float heading = math::deg_to_rad(demo.wind_heading);
     Vec3 velocity = { math::cos(heading) * speed, 0, math::sin(heading) * speed };
     if (demo.flag && demo.scene.has(demo.flag, Wind)) demo.scene.get(demo.flag, Wind).velocity = velocity;
+    foreach (copy : demo.copies) if (demo.scene.has(copy, Wind)) demo.scene.get(copy, Wind).velocity = velocity;
     foreach (flag : demo.density_flags) if (flag) demo.scene.get(flag, Wind).velocity = velocity;
     if (demo.character.cape) demo.scene.get(demo.character.cape, Wind).velocity = velocity * CAPE_WIND_SHARE;
     if (demo.crowd) demo.scene.get(demo.crowd, Wind).velocity = velocity * CAPE_WIND_SHARE;
@@ -1444,6 +1451,7 @@ fn void? run_interactive(Options options) @local {
         crowd_count:  options.scenario == CROWD ? options.count : 0,
         workers:      options.workers,
         execution:    options.gpu ? ClothExecution.GPU : ClothExecution.CPU,
+        forces:       options.forces,
     )!;
     defer destroy_demo(&demo);
     demo.whole_publication = options.whole_publication;
@@ -1456,7 +1464,7 @@ fn void? run_interactive(Options options) @local {
         desc: { .validation = true, .gpu_timings = true },
     )!;
     defer render::destroy_renderer(&renderer);
-    if (options.gpu) cloth_gpu_hooks::attach(&demo.gpu, &demo.assets)!;
+    if (options.gpu) cloth_gpu_hooks::attach(&demo.gpu, &demo.assets, demo.copy_count + 1, (demo.flag_columns + 1) * (demo.flag_rows + 1))!;
     defer cloth_gpu_hooks::detach(&demo.gpu, &renderer);
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -1642,6 +1650,7 @@ fn void? run_cpu_benchmark(Options options) @local {
         crowd_count:  options.scenario == CROWD ? options.count : 0,
         workers:      options.workers,
         execution:    options.gpu ? ClothExecution.GPU : ClothExecution.CPU,
+        forces:       options.forces,
     )!;
     defer destroy_demo(&demo);
     demo.gusts = false;
@@ -1694,6 +1703,7 @@ fn void? run_benchmark(Options options) @local {
         crowd_count:  options.scenario == CROWD ? options.count : 0,
         workers:      options.workers,
         execution:    options.gpu ? ClothExecution.GPU : ClothExecution.CPU,
+        forces:       options.forces,
     )!;
     defer destroy_demo(&demo);
     demo.gusts = false;
@@ -1710,7 +1720,7 @@ fn void? run_benchmark(Options options) @local {
     }
     Renderer renderer = created;
     defer render::destroy_renderer(&renderer);
-    if (options.gpu) cloth_gpu_hooks::attach(&demo.gpu, &demo.assets)!;
+    if (options.gpu) cloth_gpu_hooks::attach(&demo.gpu, &demo.assets, demo.copy_count + 1, (demo.flag_columns + 1) * (demo.flag_rows + 1))!;
     defer cloth_gpu_hooks::detach(&demo.gpu, &renderer);
     if (hardware && !renderer.caps.ray_queries.enabled) {
         io::eprintn("Hardware tracing needs ray queries; this adapter or driver does not provide them.");
@@ -1928,6 +1938,8 @@ fn Options? parse_options(String[] args) @local {
             options.cpu_only = true;
         } else if (args[index] == "--gpu") {
             options.gpu = true;
+        } else if (args[index] == "--forces") {
+            options.forces = true;
         } else if (args[index] == "--validation") {
             options.validation = true;
         } else if (args[index] == "--trace" && index + 1 < args.len) {
@@ -1958,6 +1970,7 @@ fn Options? parse_options(String[] args) @local {
     if (options.gpu && (options.scenario != FLAG33 || options.cpu_only || options.still || options.traced)) {
         return c3d::INVALID_ARGUMENT~;
     }
+    if (options.forces && options.scenario != FLAG33) return c3d::INVALID_ARGUMENT~;
     if (options.scenario == CROWD && !counted) options.count = CROWD_DEFAULT_COUNT;
     if (options.scenario == FLAG33 && !counted) options.count = 1;
     if (options.hold && options.scenario != FIELD) return c3d::INVALID_ARGUMENT~;
@@ -1974,6 +1987,7 @@ fn int main(String[] args) {
         io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33]");
         io::eprintn("  [--still] [--frames count]");
         io::eprintn("  [--gpu]    (flag33 only: ClothDesc.execution = GPU; python3 scripts/build.py --example cloth_gpu)");
+        io::eprintn("  [--forces]    (flag33 only: distance bends and wind)");
         io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters; flag33: count of flags)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");
         io::eprintn("  [--cells n]    (benchmark flag size in cells per side; default 32)");
