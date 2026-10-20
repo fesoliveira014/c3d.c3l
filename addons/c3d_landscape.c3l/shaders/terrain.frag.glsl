@@ -5,7 +5,7 @@
 #include "landscape/terrain_surface.glsl"
 #include "decals.glsl"
 
-layout(location = 0) in vec3 v_world_pos;
+layout(location = 0) centroid in vec3 v_world_pos;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_chunk; // x: the chunk's level, y: its morph toward the parent level
