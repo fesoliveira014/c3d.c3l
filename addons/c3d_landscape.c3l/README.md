@@ -55,6 +55,13 @@ pointer or slices. Prepared foliage also owns a separate frozen runtime copy.
 Removing authored foliage frees its authoring copy immediately. Existing runtime
 and cells remain valid until the next foliage update removes the orphans.
 
+## Spectral water
+
+A water body with the `SPECTRAL` wave model needs the `C3D_LANDSCAPE_GPU` feature and the application's call of
+`water_gpu::update(renderer, scene, assets)` each frame. Without the feature, preparing such a body faults
+`UNSUPPORTED`, so a consumer that never enables it keeps water in the scene layer. See [the water
+contract](../../docs/water.md#spectral-surface).
+
 ## Serialization
 
 Select `c3d_serial` and enable `C3D_LANDSCAPE_SERIAL` to register terrain, foliage and water authoring codecs. Reads restore pending owners without generated assets or nodes. See [the serialization contract](src/serial/README.md) for ownership, preparation order and the feature-on test targets.
