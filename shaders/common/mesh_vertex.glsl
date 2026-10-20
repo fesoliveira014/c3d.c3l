@@ -41,6 +41,7 @@ layout(location = 6) out vec4 v_clip_pos;
 layout(location = 7) out vec4 v_prev_clip_pos;
 #endif
 layout(location = 8) out vec3 v_billboard;
+layout(location = 9) centroid out vec3 v_shading_pos; // v_world_pos interpolated inside the triangle; traced lighting reads it under MSAA
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -337,6 +338,7 @@ void write_mesh_outputs(
 #endif
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)
     v_world_pos = world.xyz;
+    v_shading_pos = world.xyz;
     v_normal = normalize(normal_matrix * vertex.normal);
     v_tangent = (geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u
         ? world_tangent(model, vertex.tangent)

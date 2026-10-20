@@ -9,6 +9,7 @@ layout(location = 0) in vec3 v_world_pos;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_chunk; // x: the chunk's level, y: its morph toward the parent level
+layout(location = 9) centroid in vec3 v_shading_pos; // inside the triangle under MSAA, where v_world_pos can lie outside it
 layout(location = 0) out vec4 out_color;
 
 layout(push_constant) uniform Push {
@@ -37,6 +38,6 @@ void main() {
         position_dx,
         position_dy,
         surface_sample);
-    vec3 color = shade_standard_surface(frame, draw, surface_sample, 1.0, v_world_pos, ivec2(gl_FragCoord.xy));
+    vec3 color = shade_standard_surface(frame, draw, surface_sample, 1.0, v_shading_pos, ivec2(gl_FragCoord.xy));
     out_color = material_output(color, 1.0, material.flags);
 }

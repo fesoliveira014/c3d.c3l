@@ -290,7 +290,8 @@ fn void anchor_changed_waves(
     params.previous = params.waves;
 }
 
-// The ripples sample the node-local rest position, so a move adds its local image to their scroll.
+// The ripples sample the node-local rest position, so a move adds its local image to each layer's scroll,
+// in that layer's coordinates.
 fn void anchor_ripples(
     AssetStore* assets,
     WaterRuntime* runtime,
@@ -302,6 +303,7 @@ fn void anchor_ripples(
     Mat4 inverse = move.inverse;
     float local_x = (float)((double)inverse.m00 * move.delta.x + (double)inverse.m02 * move.delta.y);
     float local_z = (float)((double)inverse.m20 * move.delta.x + (double)inverse.m22 * move.delta.y);
-    Vec4 shifted = params.scroll_origin + (Vec4){ local_x, local_z, local_x, local_z };
+    Vec2 second = second_layer_coordinates({ local_x, local_z });
+    Vec4 shifted = params.scroll_origin + (Vec4){ local_x, local_z, second.x, second.y };
     params.scroll_origin = wrap_scroll(assets, runtime.desc.ripples, shifted);
 }

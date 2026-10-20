@@ -14,18 +14,30 @@ const float WATER_IOR = 1.33; // air is 1; a ray leaving the water takes its inv
 const uint WATER_RIPPLES = 0u; // mirrored as RIPPLE_REFERENCE in water/material.c3
 const uint WATER_FOAM = 1u; // mirrored as FOAM_REFERENCE in water/material.c3
 const float WATER_REFRACTION_DEPTH = 1.0; // metres of water behind the surface at which refraction bends fully
+const float RIPPLE_CROSS_ANGLE = 0.6; // mirrored as RIPPLE_CROSS_ANGLE in water/water.c3
+const float RIPPLE_SECOND_SCALE = 1.618034; // mirrored as RIPPLE_SECOND_SCALE in water/water.c3
 
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
 layout(location = 2) in vec4 v_tangent;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 5) in vec4 v_color;
+layout(location = 9) centroid in vec3 v_shading_pos; // inside the triangle under MSAA, where v_world_pos can lie outside it
 layout(location = 0) out vec4 out_color;
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
     uint64_t fragment_root_gpu;
 } pc;
+
+// Turned and scaled so the second tiling never realigns with the first;
+// twin of second_layer_coordinates in water/mirror.c3.
+vec2 ripple_second_uv(vec2 first_uv) {
+    float cosine = cos(RIPPLE_CROSS_ANGLE);
+    float sine = sin(RIPPLE_CROSS_ANGLE);
+    mat2 turn = mat2(cosine, sine, -sine, cosine);
+    return RIPPLE_SECOND_SCALE * (turn * first_uv);
+}
 
 StandardMaterialSample water_layer(
     CustomMaterialGpu material,
@@ -109,7 +121,7 @@ void main() {
     if (material.references[WATER_RIPPLES] != 0ul) {
         vec4 scroll = params.scroll_origin + params.scroll_velocity * (frame.jitter_time.z - params.scroll_time);
         vec2 first_uv = v_uv0 + scroll.xy;
-        vec2 second_uv = v_uv0 + scroll.zw;
+        vec2 second_uv = ripple_second_uv(v_uv0) + scroll.zw;
         vec3 first = water_layer(material, WATER_RIPPLES, geometry, wave_normal, first_uv, view_direction).normal;
         vec3 second = water_layer(material, WATER_RIPPLES, geometry, wave_normal, second_uv, view_direction).normal;
         // Sums the two perturbations of the wave normal.
@@ -152,7 +164,7 @@ void main() {
     vec3 color = evaluate_standard_lights(
         frame,
         surface,
-        v_world_pos,
+        v_shading_pos,
         wave_normal,
         draw.layers,
         (draw.flags & DRAW_RECEIVE_SHADOW) != 0u
