@@ -918,14 +918,14 @@ does not apply and the row carries `TRACE_MASK_ALL`.
   both. Traced shadows on the water work as before.
 - **Hits.** A hit on the water shades as any custom material hit does, grey under Lambert lighting; foam, refraction,
   reflection and ripples do not run there.
-- **From below.** The material is double-sided, and a trace row takes its facing from the material, so the row is
-  double-sided too: a ray from under the surface hits it as a front face. Keeping the row single-sided needs a switch
-  in core that no other surface has asked for, so the rows follow the material. The consequences, for a traced body:
-  ray-traced ambient occlusion of a submerged bed sees the surface as an occluder when the bed lies within the AO
-  radius; ray-traced reflections from underwater surfaces reflect the grey surface instead of passing through it; a
-  [probe](probe_volumes.md) under the rest plane hits the surface as a front face and reads it lit, where a
-  single-sided row would have counted it as a back face and excluded the probe as inside geometry; and a path-traced
-  view from under the water sees the grey surface. Untraced water has no row, so none of this applies.
+- **From below.** The material is double-sided so that the surface draws from underwater, but `add_water` and
+  `set_desc` set `Mesh.trace_facing` to `FRONT` ([facing](scene_trace.md#facing)), so the trace row has front faces
+  only. Raster is unaffected. For a traced body, a ray from under the surface passes through it: ray-traced ambient
+  occlusion of a submerged bed does not see the surface as an occluder, ray-traced reflections from underwater
+  surfaces do not reflect it, and a path-traced view from under the water does not see it. A [probe](probe_volumes.md)
+  under the rest plane hits the surface's back face and reads it as inside geometry, so it is excluded when more than
+  a quarter of its rays do. Shadow rays are unchanged, because the water casts none. Untraced water has no row, so
+  none of this applies.
 - **Bounds.** The pose stays inside `Mesh.local_bounds`, the rest bounds grown by the total amplitude and the crest
   shift ([Surface geometry](#surface-geometry)).
 
@@ -1050,7 +1050,8 @@ store.
   shows no glints or foam from below.
 - **Frames without media** (probe updates, reflection captures, the path tracer) show the bed through the water
   unabsorbed.
-- **Tracing from below**: the trace row is double-sided ([Scene traces](#scene-traces)).
+- **Tracing from below**: the trace row has front faces only, so rays from under the surface pass through it
+  ([Scene traces](#scene-traces)).
 - **Buoyancy**: eight cells over the colliders' box; a tilted body is approximated; a floating body at rest may
   sleep for one step each 0.5 s and wakes on the next; rendered crates lag the simulation by up to one fixed
   step (pose interpolation), visible as a bob offset on fast waves.

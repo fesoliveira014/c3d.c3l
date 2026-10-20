@@ -698,6 +698,42 @@ fn void test_tlas_instance_follows_the_row() @test {
     assert(!desc.flags.triangle_cull_disable && !desc.flags.triangle_facing_flip);
 }
 
+fn void test_trace_facing_sets_the_row_sidedness_over_the_material() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    MaterialCommon both_faces = material::MATERIAL_COMMON_DEFAULT;
+    both_faces.double_sided = true;
+    MaterialId double_sided = fixture.assets.add_material(
+        material::basic({ .color = { 1, 1, 1, 1 } }, both_faces),
+        "double_sided",
+    )!!;
+
+    MaterialId[2] materials = { fixture.opaque, double_sided };
+    TraceFacing[3] facings = { TraceFacing.MATERIAL, TraceFacing.FRONT, TraceFacing.BOTH };
+    bool[6] expected_double_sided = { false, true, false, false, true, true };
+    Node*[6] nodes;
+    foreach (facing_index, facing : facings) {
+        foreach (material_index, surface : materials) {
+            Node* node = fixture.scene.add_mesh(fixture.box, surface)!!;
+            fixture.scene.get(node, Mesh).trace_facing = facing;
+            nodes[facing_index * materials.len + material_index] = node;
+        }
+    }
+    fixture.scene.update_world();
+
+    @pool() {
+        render::TraceInstance[] records = collect(&fixture);
+        assert(records.len == nodes.len);
+        foreach (index, node : nodes) {
+            assert(same_entity(records[index].entity, node.id));
+            bool row_double_sided = (records[index].flags & shader::TRACE_INSTANCE_DOUBLE_SIDED) != 0;
+            assert(row_double_sided == expected_double_sided[index]);
+            bool cull_disabled = render::tlas_instance_desc(&records[index], 0).flags.triangle_cull_disable;
+            assert(cull_disabled == expected_double_sided[index]);
+        }
+    };
+}
+
 fn void test_rt_shadow_flags_follow_ray_queries() @test {
     Renderer* renderer = mem::new(Renderer);
     defer free(renderer);

@@ -15,6 +15,8 @@ const char[] LEGACY_INSTANCES_BINARY @local = $embed("../../../test/fixtures/tra
 const char[] LEGACY_INSTANCES_TEXT @local = $embed("../../../test/fixtures/trace_fields_legacy/instances-v1.jsonc");
 const char[] LEGACY_LOD_BINARY @local = $embed("../../../test/fixtures/trace_fields_legacy/lod-v2.bin");
 const char[] LEGACY_LOD_TEXT @local = $embed("../../../test/fixtures/trace_fields_legacy/lod-v2.jsonc");
+const char[] MESH_V2_BINARY @local = $embed("../../../test/fixtures/mesh_v2/mesh-v2.bin");
+const char[] MESH_V2_TEXT @local = $embed("../../../test/fixtures/mesh_v2/mesh-v2.jsonc");
 
 fn Node*? read_encoded(
     Fixture* fixture,
@@ -84,6 +86,37 @@ fn void test_older_payloads_read_the_trace_fields_as_off() @test {
     };
 }
 
+fn void test_mesh_version_2_payloads_read_the_trace_facing_as_material() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        Geometry geometry = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
+        fixture.assets.add_geometry(&geometry, "mesh_v2/box")!!;
+        fixture.assets.add_material(material::basic({}), "mesh_v2/material")!!;
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = read_encoded(
+                fixture:  &fixture,
+                binary:   MESH_V2_BINARY,
+                text:     MESH_V2_TEXT,
+                encoding: encoding,
+            )!!;
+            Mesh* mesh = fixture.destination.get(restored, Mesh);
+            assert(!mesh.cast_shadow && mesh.receive_shadow && mesh.trace && mesh.trace_only);
+            assert(mesh.trace_facing == TraceFacing.MATERIAL);
+            assert(mesh.morph_weights.len == 1 && mesh.morph_weights[0] == 0.25f && mesh.vertex_motion);
+            assert(mesh.has_bounds_override && mesh.local_bounds.max == (Vec3){ 3, 2, 1 });
+            fixture.destination.remove(restored);
+        }
+    };
+}
+
 fn void test_trace_fields_round_trip_in_both_encodings() @test {
     @pool() {
         Fixture fixture;
@@ -101,6 +134,14 @@ fn void test_trace_fields_round_trip_in_both_encodings() @test {
             name:     "mesh",
         )!!;
         fixture.source.get(mesh, Mesh).trace_only = true;
+        fixture.source.get(mesh, Mesh).trace_facing = TraceFacing.FRONT;
+        Node* both = fixture.source.add_mesh(
+            geometry: geometry,
+            material: material,
+            parent:   root,
+            name:     "both",
+        )!!;
+        fixture.source.get(both, Mesh).trace_facing = TraceFacing.BOTH;
         Transform[1] transforms = { maths::TRANSFORM_IDENTITY };
         Node* batch = fixture.source.add_instanced_mesh(
             geometry:   geometry,
@@ -140,7 +181,9 @@ fn void test_trace_fields_round_trip_in_both_encodings() @test {
             Node* restored = encoding == 0
               ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
               : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
-            assert(fixture.destination.get(child_named(restored, "mesh"), Mesh).trace_only);
+            Mesh* restored_mesh = fixture.destination.get(child_named(restored, "mesh"), Mesh);
+            assert(restored_mesh.trace_only && restored_mesh.trace_facing == TraceFacing.FRONT);
+            assert(fixture.destination.get(child_named(restored, "both"), Mesh).trace_facing == TraceFacing.BOTH);
             assert(fixture.destination.get(child_named(restored, "batch"), InstancedMesh).trace_sway);
             assert(fixture.destination.get(child_named(restored, "group"), LodGroup).state.effects.trace_sway);
             fixture.destination.remove(restored);

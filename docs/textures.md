@@ -549,10 +549,14 @@ region is staged once per mip and copied with the barriers any upload of a resid
 `Stats.upload_bytes` counts the staged texels of the boxes.
 
 **Mips.**
-- With generated mips, the renderer filters the edited layers' levels in temporary memory from the CPU pixels and
-  copies, for each level, the box the edit reaches: the mip-0 box scaled to the level and widened to every texel
-  whose filter reads it. Filtering costs what a whole upload costs, because the smallest level averages the whole
-  image; the staged and copied bytes follow the boxes.
+- With generated mips, the renderer keeps the generated levels of a region-edited texture in a CPU chain owned by
+  the texture's mirror, about one third of mip 0 in size. The first region upload allocates the chain and filters
+  every level whole, which costs what a whole upload costs. Each later region upload filters, for each level, only
+  the box the edit reaches: the mip-0 box scaled to the level and widened to every texel whose filter reads it. The
+  same boxes are copied, so the filtering and the staged bytes follow the boxes.
+- A whole upload of the texture refilters the chain in place. A replaced image (a changed extent or format, a
+  residency change or a prepared re-upload) and a released CPU source free it, and a discarded upload leaves it
+  untrusted. The next region upload then fills it whole again. A texture that is never region-edited keeps no chain.
 - With supplied mips, each marked level's box is copied from that level's bytes.
 - A streamed texture copies only the levels of its resident chain.
 

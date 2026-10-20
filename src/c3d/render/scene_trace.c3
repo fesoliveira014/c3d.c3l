@@ -397,6 +397,7 @@ fn TraceCollection collect_trace_instances(
                     cast_shadow: mesh.cast_shadow,
                     origin:      origin,
                     proxy:       mesh.trace_only,
+                    facing:      mesh.trace_facing,
                 );
                 // Raster skins only a geometry with joints; a binding over another draws morphs alone.
                 SkinBinding* posed_skin = skin && geometry_has_joints(assets.geometry(mesh.geometry)) ? skin : null;
@@ -1415,6 +1416,14 @@ fn TracePose mesh_trace_pose(AssetStore* assets, Mesh* mesh, SkinBinding* posed_
     return mesh.vertex_motion ? TracePose.VERTEX_MOTION : TracePose.REST;
 }
 
+fn bool trace_double_sided(TraceFacing facing, bool material_double_sided) @local {
+    switch (facing) {
+        case MATERIAL: return material_double_sided;
+        case FRONT: return false;
+        case BOTH: return true;
+    }
+}
+
 fn TraceInstance trace_record(
     AssetStore* assets,
     Entity entity,
@@ -1428,10 +1437,11 @@ fn TraceInstance trace_record(
     Vec3 origin = {},
     bool vertex_alpha_bend = false,
     bool proxy = false,
+    TraceFacing facing = TraceFacing.MATERIAL,
 ) @local {
     Material* data = &assets.material(material).data;
     uint flags = data.common.alpha_mode == AlphaMode.MASK ? shader::TRACE_INSTANCE_ALPHA_MASK : 0;
-    if (data.common.double_sided) flags |= shader::TRACE_INSTANCE_DOUBLE_SIDED;
+    if (trace_double_sided(facing, data.common.double_sided)) flags |= shader::TRACE_INSTANCE_DOUBLE_SIDED;
     if (vertex_alpha_bend) flags |= shader::TRACE_INSTANCE_BEND_FROM_ALPHA;
     if (proxy) flags |= shader::TRACE_INSTANCE_PROXY;
     uint mask = proxy
