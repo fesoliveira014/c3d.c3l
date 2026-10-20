@@ -17,7 +17,7 @@ const uint PARTICLE_SCAN_TOTALS = 1u;
 const uint PARTICLE_FLIPBOOK_FPS = 1u; // bits of StepRoot.flipbook_flags; mirrored in gpu/system.c3
 const uint PARTICLE_FLIPBOOK_RANDOM_START = 2u;
 const uint PARTICLE_FLIPBOOK_BLEND = 4u;
-const float PARTICLE_FULL_TURN = 6.2831855;
+const float PARTICLE_FULL_TURN = 6.2831855; // mirrored as FULL_TURN in step.c3
 
 // One live particle; mirrored as PARTICLE_STATE_BYTES in gpu/system.c3.
 struct ParticleGpu {

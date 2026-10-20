@@ -14,7 +14,7 @@ const uint PARTICLE_DRAW_ROTATION = 8u;
 const uint PARTICLE_DRAW_SPIN = 9u;
 const uint PARTICLE_DRAW_SEED = 10u;
 
-const float PARTICLE_UNIT_SCALE = 1.0 / 16777216.0; // high 24 bits fit a float mantissa exactly
+const float PARTICLE_UNIT_SCALE = 1.0 / 16777216.0; // mirrored as RANDOM_UNIT_SCALE in step.c3
 
 // Mirrors pcg_hash in step.c3.
 uint particle_pcg_hash(uint value) {

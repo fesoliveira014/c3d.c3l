@@ -4,16 +4,20 @@ import std::math;
 
 const uint POTENTIAL_COUNT @private = 3;
 const uint CORNER_COUNT @private = 8;
-const uint GRADIENT_CHOICES @private = 12;
-const uint GRADIENT_FIELD_BITS @private = 10; // each potential reads its own ten bits of the corner hash
+const uint GRADIENT_CHOICES @private = 12; // mirrored as TURBULENCE_GRADIENT_CHOICES in particle_advance.comp.glsl
+// Each potential reads its own ten bits of the corner hash; mirrored as TURBULENCE_GRADIENT_FIELD_BITS in
+// particle_advance.comp.glsl.
+const uint GRADIENT_FIELD_BITS @private = 10;
 const uint GRADIENT_FIELD_MASK @private = (1 << GRADIENT_FIELD_BITS) - 1;
-const float CURL_SCALE @private = 0.6f; // brings the first octave's root-mean-square speed to about one
-const float OCTAVE_GAIN @private = 0.5f;
+// Brings the first octave's root-mean-square speed to about one.
+const float CURL_SCALE @private = 0.6f; // mirrored as TURBULENCE_CURL_SCALE in particle_advance.comp.glsl
+const float OCTAVE_GAIN @private = 0.5f; // mirrored as TURBULENCE_OCTAVE_GAIN in particle_advance.comp.glsl
 const float FADE_QUINTIC_TERM @private = 6;
 const float FADE_QUARTIC_TERM @private = 15;
 const float FADE_CUBIC_TERM @private = 10;
 const float FADE_SLOPE_TERM @private = 30;
 
+// Mirrored as LATTICE_GRADIENTS in particle_advance.comp.glsl.
 const Vec3[GRADIENT_CHOICES] LATTICE_GRADIENTS @private = {
     { 1, 1, 0 }, { -1, 1, 0 }, { 1, -1, 0 }, { -1, -1, 0 },
     { 1, 0, 1 }, { -1, 0, 1 }, { 1, 0, -1 }, { -1, 0, -1 },

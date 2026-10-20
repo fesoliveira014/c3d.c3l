@@ -11,8 +11,9 @@ layout(push_constant) uniform Push {
 
 const float TURBULENCE_CURL_SCALE = 0.6; // mirrored as CURL_SCALE in turbulence.c3
 const float TURBULENCE_OCTAVE_GAIN = 0.5; // mirrored as OCTAVE_GAIN in turbulence.c3
-const uint TURBULENCE_GRADIENT_FIELD_BITS = 10u;
-const uint TURBULENCE_GRADIENT_CHOICES = 12u;
+const uint TURBULENCE_GRADIENT_FIELD_BITS = 10u; // mirrored as GRADIENT_FIELD_BITS in turbulence.c3
+const uint TURBULENCE_GRADIENT_CHOICES = 12u; // mirrored as GRADIENT_CHOICES in turbulence.c3
+// Mirrored as LATTICE_GRADIENTS in turbulence.c3.
 const vec3 LATTICE_GRADIENTS[12] = vec3[12](
     vec3(1.0, 1.0, 0.0), vec3(-1.0, 1.0, 0.0), vec3(1.0, -1.0, 0.0), vec3(-1.0, -1.0, 0.0),
     vec3(1.0, 0.0, 1.0), vec3(-1.0, 0.0, 1.0), vec3(1.0, 0.0, -1.0), vec3(-1.0, 0.0, -1.0),
