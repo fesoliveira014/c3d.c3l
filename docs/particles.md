@@ -485,6 +485,11 @@ sheet follows the edge rules for four sampled mip levels. It applies to the wind
 save the image with `--capture-rgba`. The inspector's smoke controls drive both smoke materials. The flag does not
 combine with `--stress`.
 
+`--embers` adds a system of rising additive embers whose drag follows a three-octave turbulence field that scrolls
+upward. It applies to the window, which shows the live count, and to `--benchmark`, which prints `embers,alive`. With
+`--stress` it gives the stress system the same turbulence, and each segment prints `turbulence_octaves`; run `--stress`
+with and without `--embers` to compare the update cost.
+
 `--collide` makes the sparks bounce on the ground plane and, through a physics
 ray cast, on a canopy and two crates that are static physics bodies. It applies
 to the window and to `--benchmark`, and `--benchmark` prints `collision_skips`.
