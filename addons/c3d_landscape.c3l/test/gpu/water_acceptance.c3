@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
 import c3d::landscape::water @public;
+import c3d::light;
 import c3d::material;
 import c3d::maths;
 import c3d::physics;
@@ -145,6 +146,17 @@ const int[<2>][9] BED_PIXELS @local = {
 };
 const float AO_MATCH_TOLERANCE @local = 0.03f; // relative to the untraced bed: the open-ground bound of the AO cases
 const float OCCLUDED_RATIO_MAXIMUM @local = 0.5f; // the bed under a double-sided row measures 0.09 of the untraced one
+
+const uint FILTER_MAP_SIZE @local = 64; // six mip levels
+const uint FILTER_CHANNELS @local = 4;
+const float FILTER_UV_SCALE @local = 8; // texture periods per metre: 28 texels to a pixel of the twin's view, past the sixth mip
+const float FILTER_TILT @local = 0.5f; // x of each texel's normal, leaning either way in turn: its mip is 0.87 long
+const float FILTER_CELL_SIZE @local = 0.5f; // the body is flat
+const uint FILTER_PATCH @local = 5; // pixels along the side of the patch around the optical axis
+const float FILTER_SUN_INTENSITY @local = 1;
+const float FILTER_PEAK_RATIO_MAXIMUM @local = 0.1f; // the widened lobe measures four orders under the narrow one
+const float FILTER_UNFILTERED_TOLERANCE @local = 0.05f; // relative to the body without a reference
+const float FLAT_MAP_TOLERANCE @local = 0.01f; // relative to the body without a reference
 
 const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with default_water_desc, the example's waves
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
@@ -2377,4 +2389,98 @@ fn void test_traced_simulated_water_agrees_with_the_drawn_surface() @test {
         assert(agreement.worst <= SURFACE_TOLERANCE, "worst %f at %f s", agreement.worst, time);
     }
     check_validation(&fixture.renderer);
+}
+
+fn TextureId add_filter_map(Fixture* fixture, TextureSemantic semantic, float tilt) @local {
+    TextureId map;
+    @pool() {
+        usz texels = (usz)FILTER_MAP_SIZE * FILTER_MAP_SIZE;
+        ushort[] pixels = alloc::new_array(tmem, ushort, (sz)(texels * FILTER_CHANNELS));
+        float upright = math::sqrt(1 - tilt * tilt);
+        for (usz texel = 0; texel < texels; texel++) {
+            uint column = (uint)(texel % FILTER_MAP_SIZE);
+            uint row = (uint)(texel / FILTER_MAP_SIZE);
+            float lean = ((column + row) & 1) != 0 ? tilt : -tilt;
+            ushort[FILTER_CHANNELS] encoded = {
+                asset::encode_texture_half(0.5f + 0.5f * lean),
+                asset::encode_texture_half(0.5f),
+                asset::encode_texture_half(0.5f + 0.5f * upright),
+                asset::encode_texture_half(1),
+            };
+            pixels[texel * FILTER_CHANNELS:FILTER_CHANNELS] = encoded[..];
+        }
+        material::TextureDesc desc = material::texture_2d_desc(FILTER_MAP_SIZE, FILTER_MAP_SIZE, RGBA16_FLOAT);
+        desc.semantic = semantic;
+        map = fixture.assets.add_texture(desc, ((char*)pixels.ptr)[:pixels.len * ushort::size])!!;
+    };
+    return map;
+}
+
+fn MaterialId add_filter_reference(Fixture* fixture, TextureId map) @local {
+    StandardParams params = material::STANDARD_PARAMS_DEFAULT;
+    params.normal_map = material::texture_slot(
+        texture:   map,
+        transform: { .scale = { FILTER_UV_SCALE, FILTER_UV_SCALE } },
+    );
+    return fixture.assets.add_material(material::standard(params))!!;
+}
+
+// The peak luminance of the patch around the optical axis, over a flat body that draws the reference's ripples.
+fn float filter_peak(Fixture* fixture, Node* camera_node, ViewId view, MaterialId ripples) @local {
+    Wave[] calm = {};
+    WaterDesc desc = surface_desc(calm, TWIN_EXTENT, FILTER_CELL_SIZE);
+    desc.ripples = ripples;
+    Node* water_node = add_water_node(fixture, desc);
+    defer fixture.scene.remove(water_node);
+
+    int[<2>][FILTER_PATCH * FILTER_PATCH] pixels;
+    int first = (int)TWIN_SIZE / 2 - (int)FILTER_PATCH / 2;
+    foreach (index, &pixel : pixels) {
+        *pixel = { first + (int)(index % FILTER_PATCH), first + (int)(index / FILTER_PATCH) };
+    }
+    Vec4[] colors = render_and_read(
+        fixture:  fixture,
+        viewing:  camera_node,
+        view:     view,
+        time:     0,
+        pixels:   pixels[..],
+        depth:    false,
+    )!!;
+    check_validation(&fixture.renderer);
+    float peak;
+    foreach (color : colors) peak = math::max(peak, luminance(color));
+    return peak;
+}
+
+fn void test_ripple_filter_widens_a_minified_ripple_highlight() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    fixture.scene.ambient_intensity = 0;
+    Node* sun = fixture.scene.add_light(light::directional({ 1, 1, 1 }, FILTER_SUN_INTENSITY, shadow: false))!!;
+    sun.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 }); // over the optical axis: the mirror angle
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: TWIN_FOV_DEGREES,
+        position:    TWIN_CAMERA_POSITION,
+        forward:     { 0, -1, 0 },
+        up:          { 0, 0, -1 },
+    );
+    ViewId view = add_view(&fixture, TWIN_SIZE);
+
+    MaterialId flat_reference = add_filter_reference(&fixture, add_filter_map(&fixture, COLOR, 0));
+    MaterialId filtered_reference = add_filter_reference(&fixture, add_filter_map(&fixture, COLOR, FILTER_TILT));
+    MaterialId unfiltered_reference = add_filter_reference(&fixture, add_filter_map(&fixture, NORMAL_RGB, FILTER_TILT));
+    float bare = filter_peak(&fixture, camera_node, view, {});
+    float flat = filter_peak(&fixture, camera_node, view, flat_reference);
+    float filtered = filter_peak(&fixture, camera_node, view, filtered_reference);
+    float unfiltered = filter_peak(&fixture, camera_node, view, unfiltered_reference);
+
+    io::printfn("Ripple filter peaks: bare %g, flat %g, renormalized %g, filtered %g", bare, flat, unfiltered, filtered);
+    assert(bare > 0, "the sun's highlight is not seen");
+    assert(math::abs(flat - bare) <= FLAT_MAP_TOLERANCE * bare, "a flat map moved the highlight: %f, not %f", flat, bare);
+    float unfiltered_miss = math::abs(unfiltered - bare);
+    assert(unfiltered_miss <= FILTER_UNFILTERED_TOLERANCE * bare, "a renormalized map moved it: %f, not %f", unfiltered, bare);
+    float kept = FILTER_PEAK_RATIO_MAXIMUM * unfiltered;
+    assert(filtered <= kept, "the minified map kept its highlight: %f, not under %f", filtered, kept);
 }
