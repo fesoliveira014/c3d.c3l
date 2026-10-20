@@ -45,6 +45,30 @@ struct GpuSystemSlot {
 }
 
 <*
+ View whose previous rendering GPU particles collide with, and the camera node it renders from.
+ A zero view disables depth collision.
+*>
+struct DepthCollision {
+    ViewId view;
+    Entity camera; // the node the application passes to render_view for the view
+}
+
+<*
+ Camera of one update, with the depth extent and the frame origin it pairs with.
+*>
+struct DepthCamera {
+    bool valid;
+    ulong frame; // Renderer.frame_index while the update derived it
+    Mat4 view_proj;
+    Mat4 inv_view_proj;
+    Vec4 distance; // xyz: forward axis; w: offset; the distance of a point is dot(xyz, point) + w
+    Vec4 position; // xyz: camera position relative to origin; w: 1 when orthographic
+    Vec3 origin; // Renderer.frame_origin
+    uint width;
+    uint height;
+}
+
+<*
  Compute stages, per-system buffers and the shared counters buffer of the application's GPU particle systems.
 *>
 struct GpuParticles {
@@ -53,12 +77,19 @@ struct GpuParticles {
     GpuSystemSlot[] slots;
     BufferId counters; // READBACK; one entry per slot, created at the first update
     uint stamp;
+    DepthCamera depth_pending; // of the last update; a camera commits once its frame was submitted
+    DepthCamera depth_committed; // of the last submitted update; pairs with the depth that frame rendered
 }
 
 struct SystemRef @private {
     Entity entity;
     ParticleSystem* system;
     GpuSystemSlot* slot;
+}
+
+struct DepthUse @private {
+    ViewId view;
+    DepthCamera* camera; // null while the update has no camera that pairs with the view's depth
 }
 
 struct ChainRecorder @private {
@@ -75,12 +106,13 @@ fn void? ChainRecorder.scan(&self, ComputeShaderId shader) {
     self.run(shader, 1)!;
 }
 
-fn void? ChainRecorder.run(&self, ComputeShaderId shader, uint groups) {
+fn void? ChainRecorder.run(&self, ComputeShaderId shader, uint groups, DispatchTexture[] textures = {}) {
     self.renderer.dispatch({
         .shader = shader,
         .root = ((char*)self.root)[:StepRoot::size],
         .groups = { groups, 1, 1 },
         .writes = self.writes,
+        .textures = textures,
     })!;
 }
 
@@ -138,7 +170,9 @@ fn void destroy_gpu_particles(GpuParticles* particles, Renderer* renderer) {
  @param [&inout] scene : "Registered; matrices current."
  @param dt : "Finite nonnegative seconds."
  @param wind : "Finite world-space air velocity in metres per second."
- @return? c3d::CAPACITY_EXCEEDED, Renderer.create_buffer!, Renderer.dispatch!, Renderer.read_buffer!
+ @param depth : "Systems with a collision response also collide with this view's depth."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ID, c3d::INVALID_ARGUMENT
+ @return? Renderer.create_buffer!, Renderer.dispatch!, Renderer.read_buffer!
  @require renderer.frame_open
  @require dt >= 0 && math::is_finite(dt)
  @require math::is_finite(wind.x) && math::is_finite(wind.y) && math::is_finite(wind.z)
@@ -149,7 +183,9 @@ fn void? update(
     Scene* scene,
     float dt,
     Vec3 wind = {},
+    DepthCollision depth = {},
 ) {
+    DepthUse depth_use = prepare_depth(particles, renderer, scene, depth)!;
     particles.stamp++;
     if (!particles.counters.generation) {
         particles.counters = renderer.create_buffer({
@@ -172,6 +208,7 @@ fn void? update(
                 counters: counters,
                 dt: dt,
                 wind: wind,
+                depth: depth_use,
             )) {
                 if (!failure) failure = excuse;
             }
@@ -198,6 +235,55 @@ fn char[]? read_snapshot(Renderer* renderer, BufferId buffer) @private {
         return excuse~;
     }
     return bytes;
+}
+
+fn DepthUse? prepare_depth(
+    GpuParticles* particles,
+    Renderer* renderer,
+    Scene* scene,
+    DepthCollision depth,
+) @private {
+    DepthCamera* pending = &particles.depth_pending;
+    if (pending.valid && renderer.frame_was_submitted(pending.frame)) particles.depth_committed = *pending;
+
+    *pending = {};
+    if (!depth.view.generation) return {};
+
+    uint[<2>] extent = renderer.view_extent(depth.view)!;
+    if (!scene.world.is_alive(depth.camera)) return c3d::INVALID_ID~;
+
+    Node* camera_node = scene.node(depth.camera);
+    Camera* camera = scene.get(camera_node, Camera);
+    if (!camera) return c3d::INVALID_ARGUMENT~;
+    if (extent.x == 0 || extent.y == 0) return {};
+
+    CameraMatrices matrices = camera::derive_matrices(
+        camera: *camera,
+        camera_world: maths::rebase(camera_node.world, renderer.frame_origin),
+        viewport: { (float)extent.x, (float)extent.y },
+    );
+    *pending = {
+        .valid = true,
+        .frame = renderer.frame_index,
+        .view_proj = matrices.view_proj,
+        .inv_view_proj = matrices.inv_view_proj,
+        .distance = { -matrices.view.m20, -matrices.view.m21, -matrices.view.m22, -matrices.view.m23 },
+        .position = {
+            matrices.position.x,
+            matrices.position.y,
+            matrices.position.z,
+            matrices.projection == Projection.ORTHOGRAPHIC ? 1.0f : 0.0f,
+        },
+        .origin = renderer.frame_origin,
+        .width = extent.x,
+        .height = extent.y,
+    };
+
+    DepthCamera* committed = &particles.depth_committed;
+    if (try rendered = renderer.view_depth_frame(depth.view)) {
+        if (committed.valid && committed.frame == rendered) return { .view = depth.view, .camera = committed };
+    }
+    return {};
 }
 
 fn GpuSystemSlot*? claim_slot(GpuParticles* particles, Entity emitter) @private {
@@ -249,6 +335,7 @@ fn void? step_system(
     char[] counters,
     float dt,
     Vec3 wind,
+    DepthUse depth,
 ) @private {
     GpuSystemSlot* slot = claim_slot(particles, entity)!;
     slot.stamp = particles.stamp;
@@ -298,6 +385,9 @@ fn void? step_system(
         frame: renderer.frame_index,
         world_shift: scene.world_shift,
     );
+    bool collides_with_depth = depth.camera
+        && system.desc.collision.response != CollisionResponse.NONE
+        && plan.shift == (Vec3){};
     StepRoot root = step_root(
         system: system,
         plan: &plan,
@@ -306,8 +396,10 @@ fn void? step_system(
         emitter_world: emitter.world,
         wind: wind,
         origin: renderer.frame_origin,
+        depth: collides_with_depth ? *depth.camera : (DepthCamera){},
     );
     BufferId[3] writes = { slot.buffer, particles.counters, slot.mirror };
+    DispatchTexture[1] depth_views = { render::read_view_depth(depth.view, asset::SAMPLER_NEAREST) };
     record_chain(
         renderer: renderer,
         stages: &particles.stages,
@@ -315,6 +407,7 @@ fn void? step_system(
         groups: layout.groups,
         shifted: !plan.first && plan.shift != (Vec3){},
         writes: writes[:slot.mirror.generation ? 3 : 2],
+        advance_textures: collides_with_depth ? depth_views[..] : (DispatchTexture[]){},
     )!;
     slot.chained = particles.stamp;
 
@@ -453,6 +546,7 @@ fn void? deliver_sub_emitter(
         emitter_world: scene.node(receiver.entity).world,
         wind: {},
         origin: renderer.frame_origin,
+        depth: {},
     );
     ulong source_base = (ulong)renderer.buffer_address(source.slot.buffer);
     root.source_control = source_base;
@@ -487,6 +581,7 @@ fn void? record_chain(
     uint groups,
     bool shifted,
     BufferId[] writes,
+    DispatchTexture[] advance_textures,
 ) @private {
     ChainRecorder chain = {
         .renderer = renderer,
@@ -498,7 +593,7 @@ fn void? record_chain(
     chain.run(stages.expire, groups)!;
     chain.scan(stages.scan)!;
     chain.run(stages.admit, groups)!;
-    chain.run(stages.advance, groups)!;
+    chain.run(stages.advance, groups, advance_textures)!;
     chain.scan(stages.scan)!;
     chain.run(stages.publish, groups)!;
 }

@@ -123,6 +123,15 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer St
     uint evicts; // nonzero under DROP_OLDEST
     uint _pad6;
     uint _pad7;
+    mat4 depth_view_proj; // render space of the depth rendering to clip space
+    mat4 depth_inv_view_proj;
+    vec4 depth_distance; // xyz: forward axis; w: offset; the distance of a point is dot(xyz, point) + w
+    vec4 depth_camera; // xyz: camera position in render space; w: nonzero when orthographic
+    vec4 depth_origin; // xyz: frame origin of the depth rendering
+    uint depth_width;
+    uint depth_height;
+    uint depth_collides; // nonzero when the dispatch binds the depth view as texture slot 0
+    uint _pad8;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleControl {
