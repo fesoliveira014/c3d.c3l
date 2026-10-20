@@ -373,7 +373,8 @@ upload ring for every dispatch of every GPU system.
 - the result depends on the view: a surface the named camera cannot see does not stop a particle;
 - contact lags one frame: a surface that moved since the depth was rendered is still where it was;
 - the view must render every frame that should collide, because a stale depth is not used;
-- a particle that starts a step behind a surface is not pulled out of it.
+- a particle that starts a step behind a surface is not pulled out of it, so one that rises through the underside of a
+  surface the camera sees from above passes through.
 
 ### Counters and latency
 
@@ -925,8 +926,9 @@ enabled. `--frames N` closes an interactive smoke test after N frames.
 `particles_gpu` build, which enables `C3D_PARTICLE_GPU`, and applies to the window and to `--benchmark`, which then
 prints `execution,gpu`, the `gpu_particle_ms` of the custom compute pass, and `not_applicable` for the CPU-only
 `sparks_bounds_ms` and `sparks_copy_ms`. With `--collide` the GPU sparks collide with the ground plane and with the
-[depth](#gpu-depth-collision) of the main camera's view, so they meet the canopy and the crates that the CPU sparks meet
-through the physics ray cast. The flag does not combine with `--stress`.
+[depth](#gpu-depth-collision) of the main camera's view, so they meet the canopy and the crates where that camera sees
+them. The CPU sparks meet them from every side through the physics ray cast: sparks that rise from below the canopy pass
+through its underside on the GPU. The flag does not combine with `--stress`.
 
 `--sparks` adds a smoke system that each dying spark feeds through a `DEATH`
 sub-emitter, and shows its live count with the event counters. It applies to the
