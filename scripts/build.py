@@ -77,6 +77,7 @@ ADDON_EXAMPLES = {
     "water": LANDSCAPE,
     "water_gpu": LANDSCAPE,
     "particles": PARTICLE,
+    "particles_gpu": PARTICLE,
     "ui": UI,
     "audio": AUDIO,
 }
