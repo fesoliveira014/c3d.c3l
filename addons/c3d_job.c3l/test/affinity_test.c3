@@ -63,6 +63,18 @@ fn void test_workers_report_the_requested_cpu_set() @test {
     }
 }
 
+fn void test_bind_caller_pins_the_calling_thread_to_the_set() @test {
+    CpuSet original = job::available_cpus();
+    JobPool pool = job::create_job_pool(mem, bound_desc({}, {}))!!;
+    defer job::destroy_job_pool(&pool);
+    defer (void)job::native_bind_thread(original);
+
+    CpuSet requested;
+    requested.set(first_available_cpu());
+    pool.bind_caller(requested)!!;
+    assert(job::available_cpus().data == requested.data);
+}
+
 fn void test_request_is_narrowed_to_the_available_cpus() @test {
     uint? outside = first_unavailable_cpu();
     if (catch outside) return;

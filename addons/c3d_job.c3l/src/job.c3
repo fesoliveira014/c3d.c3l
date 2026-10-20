@@ -54,6 +54,7 @@ struct JobPoolDesc {
     uint   background_only_workers; // workers that take only background ranges, outside the cap
     CpuSet worker_cpus;             // processors of the shared workers; empty leaves the system's choice
     CpuSet background_cpus;         // processors of the background-only workers; empty leaves the system's choice
+    bool   power_throttling_opt_out; // Windows: workers and bind_caller opt out of throttling; ignored elsewhere
     uint   record_capacity @if($feat(C3D_PROFILE_CPU)); // records held between drains; a full ring drops; 0 drops all
 }
 
@@ -101,6 +102,8 @@ struct JobPoolState @private {
     uint              shared_workers;
     uint              frame_slots;
     uint              background_workers;
+    CpuSet            worker_cpus; // the shared workers' request after narrowing; empty leaves the system's choice
+    bool              power_throttling_opt_out;
     Mutex             lock;    // guards every field below
     ConditionVariable work_available;
     ConditionVariable run_finished;
@@ -302,6 +305,23 @@ fn ulong JobPool.inline_ranges(&self) {
 fn CpuSet JobPool.worker_cpus(&self, uint worker) => self.state.workers[worker].cpus;
 
 <*
+ Bind the calling thread to processors, as the pool binds its workers.
+ Call it after `create_job_pool`; a bound creator narrows every worker's set.
+ @param cpus : "Empty selects worker_cpus; if that is empty too, nothing is bound."
+ @return? c3d::UNSUPPORTED
+*>
+fn void? JobPool.bind_caller(&self, CpuSet cpus = {}) {
+    JobPoolState* state = self.state;
+    if (state.power_throttling_opt_out) native_opt_out_power_throttling();
+
+    CpuSet target = cpus.cardinality() ? cpus : state.worker_cpus;
+    if (!target.cardinality()) return;
+
+    native_bind_thread(target)!;
+    if (native_thread_cpus().data != target.data) return c3d::UNSUPPORTED~;
+}
+
+<*
  Background cap for a worker count: a quarter, at least one, none without workers.
 *>
 fn uint default_background_workers(uint worker_count) {
@@ -340,13 +360,15 @@ fn JobPool? create_job_pool(Allocator allocator, JobPoolDesc desc) {
     uint worker_total = desc.worker_count + desc.background_only_workers;
 
     JobPoolState*? state = alloc::new_try(allocator, JobPoolState, {
-        .allocator          = allocator,
-        .worker_temp_bytes  = desc.worker_temp_bytes,
-        .shared_workers     = desc.worker_count,
-        .frame_slots        = desc.run_capacity,
-        .background_workers = desc.background_workers,
-        .frame_queue        = { .first = NO_RUN, .last = NO_RUN },
-        .background_queue   = { .first = NO_RUN, .last = NO_RUN },
+        .allocator                = allocator,
+        .worker_temp_bytes        = desc.worker_temp_bytes,
+        .shared_workers           = desc.worker_count,
+        .frame_slots              = desc.run_capacity,
+        .background_workers       = desc.background_workers,
+        .worker_cpus              = worker_cpus,
+        .power_throttling_opt_out = desc.power_throttling_opt_out,
+        .frame_queue              = { .first = NO_RUN, .last = NO_RUN },
+        .background_queue         = { .first = NO_RUN, .last = NO_RUN },
     });
     if (catch state) return c3d::CAPACITY_EXCEEDED~;
     defer catch alloc::free(allocator, state);
@@ -605,6 +627,7 @@ fn void bind_worker(Worker* worker) @private {
 fn int run_worker(void* argument) @private {
     Worker* worker = argument;
     JobPoolState* state = worker.state;
+    if (state.power_throttling_opt_out) native_opt_out_power_throttling();
     bind_worker(worker);
     @pool_init(state.allocator, (sz)state.worker_temp_bytes) {
         state.lock.lock();
