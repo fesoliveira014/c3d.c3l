@@ -41,6 +41,7 @@ const uint STRESS_CAPACITY @local = 100_000; // about 18 MiB of pool, draw and p
 const uint MAX_VIEWS @local = 2;
 const float SPARK_RATE @local = 3200; // per second at SPARK_CAPACITY; scales with --capacity to keep the pool full
 const float SATURATED_REQUEST_FRACTION @local = 0.1f; // share of the pool requested every step of the saturated segment
+const float EVICTING_SPARK_RATE_FACTOR @local = 2; // twice the rate that fills the pool, so every step evicts
 const uint DEFAULT_BENCHMARK_FRAMES @local = 300;
 const uint WARMUP_FRAMES @local = 60; // warm pipelines, uploads and delayed timestamp readback
 const uint PREWARM_STEPS @local = 1200; // twenty simulated seconds mix the ages before steady-state measurements
@@ -543,6 +544,10 @@ fn Demo? create_demo(Options options) @local {
     sparks.radius = 0.15f;
     sparks.cone_angle = 0.4f;
     sparks.rate = SPARK_RATE * options.capacity / SPARK_CAPACITY;
+    if (options.drop_oldest) {
+        sparks.saturation = DROP_OLDEST;
+        sparks.rate *= EVICTING_SPARK_RATE_FACTOR;
+    }
     sparks.lifetime = { .min = 1, .max = 1.6f };
     sparks.speed = { .min = 5, .max = 8 };
     sparks.size = { .min = 0.025f, .max = 0.05f };
@@ -920,6 +925,11 @@ fn void? run_benchmark(Options options) @local {
     }
     if (options.collide) {
         io::printfn("sparks,collision_skips,%d", demo.scene.get(demo.emitters[1], ParticleSystem).collision_skips);
+    }
+    if (options.drop_oldest) {
+        ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
+        io::printfn("sparks,refused,%d", sparks.dropped);
+        io::printfn("sparks,evicted,%d", sparks.evicted);
     }
     if (demo.embers) io::printfn("embers,alive,%d", demo.scene.get(demo.embers, ParticleSystem).alive);
     if (demo.spark_puffs) {
@@ -1304,7 +1314,7 @@ fn Options? parse_options(String[] args) @local {
     if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
         || (options.lit_smoke && (options.sparks || options.smoke || options.embers || options.trails
             || options.collide || options.debris_shadows))
-        || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
+        || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress && !options.benchmark)
         || (options.capture_rgba.len && !options.benchmark) || (options.gpu && options.stress)
         || !options.views || options.views > MAX_VIEWS || !options.capacity
         || ((options.views > 1 || options.capacity != SPARK_CAPACITY) && !options.benchmark)) {
@@ -1324,8 +1334,8 @@ fn int main(String[] args) {
             return 1;
         }
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark [--views 1|2] [--capacity sparks] | --stress [--drop-oldest]] [--sparks]");
-        io::eprintn("    [--smoke] [--embers] [--trails] [--collide] [--debris-shadows]");
+        io::eprintn("Use [--benchmark [--views 1|2] [--capacity sparks] [--drop-oldest] | --stress [--drop-oldest]]");
+        io::eprintn("    [--sparks] [--smoke] [--embers] [--trails] [--collide] [--debris-shadows]");
         io::eprintn("    [--lit-smoke [--lighting name] [--normal name]] [--workers count]");
         io::eprintn("    [--frames count] [--capture-rgba path] [--gpu].");
         return 1;

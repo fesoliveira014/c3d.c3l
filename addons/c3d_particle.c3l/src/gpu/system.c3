@@ -15,7 +15,7 @@ const usz TRAIL_HEADER_BYTES @private = 16; // mirrored as TrailHeaderGpu in par
 const usz TRAIL_POINT_BYTES @private = 16; // mirrored as the vec4 of TrailPoints in particle_step.glsl
 const usz TRAIL_DISTANCE_BYTES @private = 4; // mirrored as the float of TrailDistances in particle_step.glsl
 const usz REGION_ALIGNMENT @private = 16; // the records offset of a device batch is a multiple of 16
-const usz COUNTER_BYTES @private = 32; // mirrored as the two uvec4 of ParticleCounters in particle_publish.comp.glsl
+const usz COUNTER_BYTES @private = 48; // mirrored as the three uvec4 of ParticleCounters in particle_publish.comp.glsl
 const usz EVENT_BYTES @private = 48; // mirrored as ParticleEventGpu in particle_step.glsl
 const usz EVENT_HALVES @private = 2; // one for the step in flight, one for the step delivered last
 const usz EVENT_ACCEPT_WORDS @private = 4; // mirrored as the uvec4 event_accept of StepRoot; one word per trigger
@@ -137,9 +137,13 @@ struct StepRoot @private {
     uint delivery_valid;
     uint mesh;
     ulong mirror;
+    uint evict_accept;
+    uint evicts;
+    uint _pad6;
+    uint _pad7;
 }
 
-$assert StepRoot::size == 880;
+$assert StepRoot::size == 896;
 $assert $reflect(StepRoot.capacity).offset == 64;
 $assert $reflect(StepRoot.acceleration_radius).offset == 96;
 $assert $reflect(StepRoot.emitter_row0).offset == 176;
@@ -158,6 +162,7 @@ $assert $reflect(StepRoot.event_accept).offset == 832;
 $assert $reflect(StepRoot.delivery_sub).offset == 848;
 $assert $reflect(StepRoot.delivery_valid).offset == 864;
 $assert $reflect(StepRoot.mirror).offset == 872;
+$assert $reflect(StepRoot.evict_accept).offset == 880;
 
 struct SystemLayout @private {
     usz state_home;
@@ -251,8 +256,10 @@ fn StepRoot step_root(
     bool turbulent = desc.turbulence.strength > 0 && drag > 0;
     bool stretched = desc.render_mode == ParticleRenderMode.STRETCHED;
     uint[EVENT_ACCEPT_WORDS] event_accept;
+    uint evict_accept;
     foreach (sub_index, &sub_emitter : desc.sub_emitters[:desc.sub_emitter_count]) {
         event_accept[sub_emitter.trigger.ordinal] |= 1u << sub_index;
+        if (sub_emitter.trigger == ParticleTrigger.DEATH && sub_emitter.on_evict) evict_accept |= 1u << sub_index;
     }
     Vec3 acceleration = particle::PARTICLE_GRAVITY * (desc.gravity_scale * plan.seconds);
     Vec3 half_extents = desc.half_extents;
@@ -328,5 +335,7 @@ fn StepRoot step_root(
         .impact_speed = collision.impact_speed,
         .mesh = desc.render_mode == ParticleRenderMode.MESH ? 1 : 0,
         .mirror = addresses.mirror,
+        .evict_accept = evict_accept,
+        .evicts = desc.saturation == ParticleSaturation.DROP_OLDEST ? 1 : 0,
     };
 }

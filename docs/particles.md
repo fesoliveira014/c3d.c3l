@@ -214,9 +214,9 @@ no record is uploaded or copied by the CPU.
 ### Supported subset
 
 - Supported: every emitter shape, rate and bursts; gravity, drag, wind and turbulence; lifetime tables, colour and
-  flipbooks; BILLBOARD, STRETCHED and MESH draw modes; trails; sub-emitters between GPU systems; REFUSE saturation; and
-  `CollisionResponse` BOUNCE, STICK or DIE against `ground_plane`.
-- Refused with `UNSUPPORTED` at prepare: `DROP_OLDEST` and a collision response without `ground_plane`.
+  flipbooks; BILLBOARD, STRETCHED and MESH draw modes; trails; sub-emitters between GPU systems; REFUSE and DROP_OLDEST
+  saturation; and `CollisionResponse` BOUNCE, STICK or DIE against `ground_plane`.
+- Refused with `UNSUPPORTED` at prepare: a collision response without `ground_plane`.
   `ParticleSystem.set_collision` requires a CPU system, because the callback is application code.
 
 ### GPU trails
@@ -269,7 +269,8 @@ After every system has recorded its step, `update` records one delivery per sub-
 It runs one invocation per event slot. An invocation whose event the sub-emitter accepts claims up to `count` free
 slots in the target and spawns the children there, at the event position, through the target's own descriptor and
 emitter orientation, with the parent's velocity times `inherit_velocity` added. Children that do not fit are counted in
-the target's `dropped`. The target may be the same system.
+the target's `dropped`, whatever its saturation policy; [DROP_OLDEST](#gpu-drop_oldest) evicts only for the target's own
+emitter. The target may be the same system.
 
 Differences from the CPU path:
 
@@ -287,13 +288,30 @@ Differences from the CPU path:
 - The target's [bound](#bounds) includes the box of every source that delivers to it, and grows by the velocity the
   children inherit. A source with large or fast particles therefore widens its targets' bounds.
 
+### GPU DROP_OLDEST
+
+The pool stays in spawn order, so the oldest particles are the first ones in it. When the requests of a step exceed the
+free slots, admission leaves out the first `min(survivors, requests - free)` survivors, where the survivors are the
+particles that outlived the step's expiry, the children delivered since the last step included. It then admits the
+newborns as `REFUSE` does, into the room the eviction frees, and counts what still does not fit in `dropped`. The
+newborns of the step are never among the evicted, and a request larger than the capacity evicts every survivor, emits
+`capacity` particles and refuses the rest, as on the CPU. `evicted` counts the particles left out.
+
+An evicted particle raises a `DEATH` event, which only the sub-emitters with `on_evict` accept, as on the CPU. The
+event takes the position, velocity and seed the particle had before the step moved it, and it counts against
+`max_events` like any other. A trail leaves with its particle.
+
+A delivery to a target that saturates does not evict, which differs from the CPU. The children that find no free slot
+are counted in the target's `dropped`, as with `REFUSE`. The target's next step can evict the children it did take like
+any other survivor.
+
 ### Counters and latency
 
-The simulation state lives on the device. `alive`, `dropped`, `dropped_events` and `skipped_events` are read back from a
-`READBACK` buffer and reach the CPU `FRAMES_IN_FLIGHT` frames late; all read 0 before the first copy, and a frame without
-a copy keeps the previous values. A traced mesh system's [mirror](#gpu-mesh-debris) arrives the same way. A delivery's
-`dropped` and `skipped_events` reach the buffer with the target's or source's next step, one update later than the rest.
-Nothing waits for the device.
+The simulation state lives on the device. `alive`, `dropped`, `evicted`, `dropped_events` and `skipped_events` are read
+back from a `READBACK` buffer and reach the CPU `FRAMES_IN_FLIGHT` frames late; all read 0 before the first copy, and a
+frame without a copy keeps the previous values. A traced mesh system's [mirror](#gpu-mesh-debris) arrives the same
+way. A delivery's `dropped` and `skipped_events` reach the buffer with the target's or source's next step, one update
+later than the rest. Nothing waits for the device.
 
 ### Aborted frames
 
@@ -373,7 +391,8 @@ the pool. The pivot is the median of three fixed slots, never random, so equal
 seeds and call sequences evict the same particles and leave the same pool. The
 selection reorders the pool in place; pool order carries no meaning, as expiry
 already swap-removes. The `spawn` stream adds 8 bytes per particle to the pool
-under either policy.
+under either policy. A [GPU system](#gpu-drop_oldest) keeps its pool in spawn
+order and evicts its first survivors, the same particles.
 
 ## Events and sub-emitters
 
@@ -904,6 +923,11 @@ printed checksum consumes bounds and copied output. `--stress` and
 every step. Each segment reports `refused` (the system's `dropped`) and `evicted`.
 `--drop-oldest` selects `DROP_OLDEST` for both segments; the default is `REFUSE`.
 Only the `saturated` segment differs between the two policies.
+
+`--drop-oldest` also applies to `--benchmark`, with or without `--gpu`. It selects `DROP_OLDEST` for the sparks and
+doubles their rate, so the pool is full and every step evicts, and the run ends with `sparks,refused` and
+`sparks,evicted`, the totals over the prewarm and the measured frames. The totals of a GPU system lag by
+`FRAMES_IN_FLIGHT` frames.
 
 The headless benchmark uses one 1920x1080 display-output view without AA, 60
 rendered warm-up frames and 300 measured frames per segment. Active simulation

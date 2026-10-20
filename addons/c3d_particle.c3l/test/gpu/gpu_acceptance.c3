@@ -177,6 +177,10 @@ fn Pair? add_pair(Fixture* fixture, bool trailed = false) @private {
     ParticleSystemDesc desc = reference_desc(fixture.material);
     if (trailed) add_trail(&desc, fixture.material);
     fixture.trailed = trailed;
+    return add_pair_of(fixture, desc);
+}
+
+fn Pair? add_pair_of(Fixture* fixture, ParticleSystemDesc desc) @private {
     Pair pair;
     pair.cpu = fixture.scene.get(fixture.scene.add_particle_system(desc)!, ParticleSystem);
     desc.execution = ParticleExecution.GPU;
@@ -237,6 +241,7 @@ fn void? record_frame(
     FrameKind kind,
     uint expected_alive = 0,
     ulong expected_dropped = 0,
+    ulong expected_evicted = 0,
 ) @private {
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame()!;
@@ -261,14 +266,15 @@ fn void? record_frame(
             pair: pair,
             alive: expected_alive,
             dropped: expected_dropped,
+            evicted: expected_evicted,
         );
         if (fixture.trailed) check_trails(fixture, pair);
     }
     renderer.end_frame()!;
 }
 
-fn void queue_bursts(Pair* pair, uint step) @private {
-    foreach (burst : BURSTS) {
+fn void queue_bursts(Pair* pair, uint step, Burst[] bursts) @private {
+    foreach (burst : bursts) {
         if (burst.step != step) continue;
 
         pair.cpu.emit_burst(burst.count);
@@ -276,9 +282,9 @@ fn void queue_bursts(Pair* pair, uint step) @private {
     }
 }
 
-fn void check_counters(Pair* pair, uint alive, ulong dropped) @private {
-    assert(pair.cpu.alive == alive && pair.cpu.dropped == dropped);
-    assert(pair.device.alive == alive && pair.device.dropped == dropped);
+fn void check_counters(Pair* pair, uint alive, ulong dropped, ulong evicted = 0) @private {
+    assert(pair.cpu.alive == alive && pair.cpu.dropped == dropped && pair.cpu.evicted == evicted);
+    assert(pair.device.alive == alive && pair.device.dropped == dropped && pair.device.evicted == evicted);
 }
 
 fn void sort_by_spawn(ParticleSystem* system, uint[] order) @private {
@@ -343,8 +349,9 @@ fn void check_records(
     Pair* pair,
     uint alive,
     ulong dropped,
+    ulong evicted,
 ) @private {
-    check_counters(pair, alive, dropped);
+    check_counters(pair, alive, dropped, evicted);
     char[] copied = fixture.renderer.read_buffer(fixture.copied)!!;
     BillboardRecord* device_records = (BillboardRecord*)copied.ptr;
     uint device_count = *(uint*)(copied.ptr + CAPACITY * BillboardRecord::size);
@@ -372,7 +379,7 @@ fn void test_gpu_particles_follow_the_cpu_reference() @test {
     Pair pair = add_pair(&fixture)!!;
     uint steps = STEPS + render::FRAMES_IN_FLIGHT;
     for (uint step = 0; step < steps; step++) {
-        queue_bursts(&pair, step);
+        queue_bursts(&pair, step, BURSTS[..]);
         particle::update(&fixture.scene, step < STEPS ? STEP_SECONDS : 0, WIND);
         record_frame(
             fixture: &fixture,
