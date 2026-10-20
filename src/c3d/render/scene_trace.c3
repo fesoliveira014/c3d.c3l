@@ -873,7 +873,12 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             continue;
         }
         if (pose.kind == TracePose.CUSTOM) {
-            bool ready = resolve_custom_trace_pose(renderer, record.material, pose)!;
+            bool ready = resolve_custom_trace_pose(
+                renderer:     renderer,
+                material:     record.material,
+                pose:         pose,
+                vertex_count: mirror.layout.vertex_count,
+            )!;
             if (!ready) {
                 renderer.stats.trace_skipped++;
                 continue;
@@ -977,8 +982,18 @@ fn void count_sway_at_rest(Renderer* renderer, Entity* last_counted, Entity enti
 }
 
 // The published trace-pose form's pipeline; a form the backend rejects leaves the row out.
-fn bool? resolve_custom_trace_pose(Renderer* renderer, MaterialId material, TracePoseSource* pose) @local {
+// A stage that does not declare the grid would pose only the first row of groups of a long row.
+fn bool? resolve_custom_trace_pose(
+    Renderer* renderer,
+    MaterialId material,
+    TracePoseSource* pose,
+    uint vertex_count,
+) @local {
     ShaderRes* published = &renderer.shaders[renderer.assets.material(material).data.custom.shader.index];
+    if (!published.desc.trace_pose_grid && pose_groups(vertex_count) > renderer.caps.max_compute_work_group_count.x) {
+        return c3d::UNSUPPORTED~;
+    }
+
     gpu::PipelineHandle? pipeline = custom_pipeline(renderer, published, trace_pose_pipeline_key(pose.batch != null));
     if (catch excuse = pipeline) {
         if (excuse == PIPELINE_REJECTED) return false;

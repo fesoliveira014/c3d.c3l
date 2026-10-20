@@ -10,9 +10,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Di
 };
 
 void main() {
+    uint index;
+    if (!trace_pose_index(index)) return;
+
     TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
-    uint index = gl_GlobalInvocationID.x;
-    if (index >= root.vertex_count) return;
 
     DisplaceParams params = DisplaceParams(CustomMaterialGpu(root.material).parameters);
 #ifdef INSTANCED

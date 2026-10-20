@@ -9,8 +9,8 @@
 // The drawn surface at the frame's time: the vertex stage's displacement of each rest vertex.
 void main() {
     TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
-    uint index = gl_GlobalInvocationID.x;
-    if (index >= root.vertex_count) return;
+    uint index;
+    if (!trace_pose_index(index)) return;
 
     CustomMaterialGpu material = CustomMaterialGpu(root.material);
     WaterParams params = WaterParams(material.parameters);

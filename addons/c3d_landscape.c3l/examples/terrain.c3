@@ -23,7 +23,7 @@ import imgui;
 import landscape_bounds;
 import landscape_ground;
 
-const uint AUTO_TRACE_LEVEL @local = uint::max; // the finest trace level a terrain of the chosen size can pose
+const uint AUTO_TRACE_LEVEL @local = uint::max; // the finest trace level within the ground's trace vertex budget
 const uint CRATE_CAPACITY @local = 256; // one node and one body each; the scene capacity lever
 const uint SCENE_NODE_CAPACITY @local = CRATE_CAPACITY + 16; // the collision windows' nodes come on top
 const uint COLLISION_WINDOW_CELLS @local = 256; // 65 k samples per window: one stroke re-cooks a few of them, not the map
