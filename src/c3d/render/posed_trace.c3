@@ -1209,6 +1209,17 @@ fn void? record_posed_builds(
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     if (!table.builds.len()) return;
+    $if $feat(MEASURE_MULTI_BUILD):
+        if (measure_multi_build) {
+            return record_posed_builds_multi(
+                renderer:       renderer,
+                commands:       commands,
+                scratch:        scratch,
+                batch:          batch,
+                builds_ordered: builds_ordered,
+            );
+        }
+    $endif
     time::Clock builds_started = clock::now();
     // Ray queries and top-level builds of earlier frames still read the bottom levels updated in place.
     gpu::Barrier readers_done = { .before = renderer.trace_stages, .after = { .acceleration_structure_build } };
@@ -1246,6 +1257,91 @@ fn void? record_posed_builds(
     }
     table.builds.clear();
     sway_measure_stop(SwayStage.BUILD_LOOP, builds_started);
+}
+
+// Measurement path: the updates of one batch go out as one multi-info call; builds stay per call.
+fn void? record_posed_builds_multi(
+    Renderer* renderer,
+    gpu::CommandList* commands,
+    gpu::GpuSpan scratch,
+    BuildBatch* batch,
+    gpu::Barrier* builds_ordered,
+) @local @feat(MEASURE_MULTI_BUILD) {
+    PosedTraceTable* table = &renderer.posed_trace;
+    time::Clock builds_started = clock::now();
+    gpu::Barrier readers_done = { .before = renderer.trace_stages, .after = { .acceleration_structure_build } };
+    gpu::cmd_barrier(commands, &readers_done)!;
+    usz count = (usz)table.builds.len();
+    usz queue_capacity = table.capacity;
+    @pool() {
+        gpu::AccelerationStructureGeometryBuildDesc[] geometries = alloc::new_array(
+            tmem,
+            gpu::AccelerationStructureGeometryBuildDesc,
+            (sz)count,
+        );
+        gpu::AccelerationStructureBuildDesc[] queued = alloc::new_array(
+            tmem,
+            gpu::AccelerationStructureBuildDesc,
+            (sz)queue_capacity,
+        );
+        usz queued_count;
+        foreach (index, &build : table.builds) {
+            PosedTraceRes* slot = &table.slots[build.slot];
+            GpuGeometry* mirror = &renderer.geometries[slot.geometry.index];
+            geometries[index] = {
+                .kind      = gpu::AccelerationStructureGeometryKind.TRIANGLES,
+                .triangles = {
+                    .vertices        = slot.positions,
+                    .vertex_stride   = PACKED_VEC3_BYTES,
+                    .vertex_count    = mirror.layout.vertex_count,
+                    .indices         = mirror.indices,
+                    .primitive_count = blas_primitive_count(&mirror.layout),
+                },
+            };
+            usz scratch_size = posed_build_scratch_size(table, build);
+            BuildRange range = batch.place(scratch_size);
+            $if $feat(MEASURE_ALIAS_SCRATCH): // negative control: every build shares one scratch range
+                range.offset = 0;
+            $endif
+            if (range.closes_batch) {
+                flush_posed_updates(renderer, commands, queued[:queued_count])!;
+                queued_count = 0;
+                gpu::cmd_barrier(commands, builds_ordered)!;
+            }
+            gpu::AccelerationStructureBuildDesc desc = {
+                .destination = slot.blas,
+                .geometries  = geometries[index:1],
+                .scratch     = scratch.checked_subspan(range.offset, scratch_size)!,
+            };
+            if (build.update) {
+                queued[queued_count++] = desc;
+                if (queued_count == queue_capacity) {
+                    flush_posed_updates(renderer, commands, queued[:queued_count])!;
+                    queued_count = 0;
+                }
+            } else {
+                time::Clock cmd_started = clock::now();
+                gpu::cmd_build_acceleration_structure(commands, &desc)!;
+                renderer.stats.blas_builds++;
+                sway_measure_stop(SwayStage.BUILD_CMD, cmd_started);
+            }
+        }
+        flush_posed_updates(renderer, commands, queued[:queued_count])!;
+    };
+    table.builds.clear();
+    sway_measure_stop(SwayStage.BUILD_LOOP, builds_started);
+}
+
+fn void? flush_posed_updates(
+    Renderer* renderer,
+    gpu::CommandList* commands,
+    gpu::AccelerationStructureBuildDesc[] queued,
+) @local @feat(MEASURE_MULTI_BUILD) {
+    if (!queued.len) return;
+    time::Clock cmd_started = clock::now();
+    gpu::cmd_update_acceleration_structures(commands, queued)!;
+    renderer.stats.blas_updates += (uint)queued.len;
+    sway_measure_stop(SwayStage.BUILD_CMD, cmd_started);
 }
 
 fn usz posed_build_scratch_size(PosedTraceTable* table, PosedBuild* build) @private {

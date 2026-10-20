@@ -63,10 +63,12 @@ def default_binary():
     return os.path.join(PACKAGE, "build", "vegetation.exe" if os.name == "nt" else "vegetation")
 
 
-def run_once(binary, kind, frames, extra):
+def run_once(binary, kind, frames, extra, multi_build):
     command = [binary, "--benchmark", str(frames), "--shadows", "traced", "--trace-sway"]
     if kind == "software":
         command.append("--trace-software")
+    if multi_build:
+        command.append("--measure-multi-build")
     command += extra
     result = subprocess.run(command, cwd=os.path.dirname(binary), capture_output=True, text=True)
     if result.returncode != 0:
@@ -155,6 +157,7 @@ def main():
     parser.add_argument("--binary", default=default_binary())
     parser.add_argument("--from-files", nargs="+", default=None, help="saved benchmark outputs instead of running")
     parser.add_argument("--segments", nargs="+", default=["still", "spin", "gust", "walk", "far", "edit"])
+    parser.add_argument("--multi-build", action="store_true", help="pass --measure-multi-build; needs the multi-build patch")
     parser.add_argument("extra", nargs="*")
     args = parser.parse_args()
 
@@ -163,7 +166,7 @@ def main():
     else:
         outputs = []
         for index in range(args.runs):
-            outputs.append(run_once(args.binary, args.kind, args.frames, args.extra))
+            outputs.append(run_once(args.binary, args.kind, args.frames, args.extra, args.multi_build))
             print(f"run {index + 1} done", file=sys.stderr)
     report(args.kind, [parse(lines) for lines in outputs], args.segments)
 

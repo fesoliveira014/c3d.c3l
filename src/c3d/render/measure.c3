@@ -102,12 +102,24 @@ struct SwayMeasure {
 }
 
 SwayMeasure sway_measure;
+bool measure_multi_build; // posed updates of one batch go out as one multi-info call; needs the MEASURE_MULTI_BUILD feature
 long sway_pair_ns;  // cost one nested timer adds to every enclosing interval
 long sway_empty_ns; // value an empty interval records: the timer's own cost in a leaf
 
 fn void sway_measure_stop(SwayStage stage, time::Clock started) {
     sway_measure.ns[stage.ordinal] += (long)started.to_now();
     sway_measure.calls[stage.ordinal]++;
+}
+
+<*
+ Host memory the command allocators reserve for a build of this many geometries; zero without the feature.
+*>
+fn usz sway_multi_build_scratch_bytes(uint geometries) {
+    $if $feat(MEASURE_MULTI_BUILD):
+        return (usz)geometries * COMMAND_BUFFERS_PER_FRAME * FRAMES_IN_FLIGHT * gpu::measure_scratch_bytes_per_geometry();
+    $else
+        return 0;
+    $endif
 }
 
 fn void sway_measure_reset() {

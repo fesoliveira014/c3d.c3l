@@ -72,7 +72,9 @@ const Vec2 STATS_PANEL_POSITION @local = { 16, 362 };
 const Vec2 STATS_PANEL_SIZE @local = { 440, 300 };
 const String[Segment::len] SEGMENT_NAMES @local = { "still", "spin", "gust", "walk", "far", "edit" };
 
-const Pass[7] REPORTED_PASSES @local = {
+const Pass[9] REPORTED_PASSES @local = {
+    Pass.TRACE_POSE,
+    Pass.ACCELERATION_BUILD,
     Pass.DEPTH_PREPASS,
     Pass.GBUFFER,
     Pass.SHADOW_ATLAS,
@@ -129,6 +131,7 @@ struct Options @local {
     bool          traced_shadows;
     bool          trace_sway;
     bool          software_trace; // measurement: no ray queries, so traced shadows take the software kind
+    bool          multi_build;    // measurement: posed updates of one batch go out as one multi-info call
     String        capture;
     bool          sky;
     bool          volumetric_fog;
@@ -486,6 +489,14 @@ fn Options? parse_options(String[] args) @local {
                 }
             case "--trace-sway": options.trace_sway = true;
             case "--trace-software": options.software_trace = true;
+            case "--measure-multi-build":
+                $if $feat(MEASURE_MULTI_BUILD):
+                    options.multi_build = true;
+                    render::measure_multi_build = true;
+                $else
+                    io::eprintn("--measure-multi-build needs the gpu.c3l multi-build patch and --define MEASURE_MULTI_BUILD");
+                    return c3d::UNSUPPORTED~;
+                $endif
             case "--capture": options.capture = option_value(args, &index)!;
             case "--size":
                 options.size = option_value(args, &index)!.to_uint()!;
@@ -513,6 +524,7 @@ fn Options? parse_options(String[] args) @local {
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.scatter_jobs && !options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (options.software_trace && !options.traced_shadows) return c3d::INVALID_ARGUMENT~;
+    if (options.multi_build && (options.software_trace || !options.trace_sway)) return c3d::INVALID_ARGUMENT~;
     if (options.trace_sway && (!options.traced_shadows || options.foliage != FoliageChoice.BOTH)) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -1118,6 +1130,16 @@ fn String foliage_name(FoliageChoice choice) @local {
     }
 }
 
+fn void print_multi_build(Options options) @local {
+    uint geometries = options.multi_build ? POSED_INSTANCE_CAPACITY : 1;
+    io::printfn(
+        "# multi_build=%s geometries_per_build=%d command_allocator_scratch_bytes=%d",
+        options.multi_build ? "on" : "off",
+        geometries,
+        render::sway_multi_build_scratch_bytes(geometries),
+    );
+}
+
 fn void print_header(Demo* demo, uint max_instance_batches) @local {
     Options options = demo.options;
     uint grass_cells = options.foliage != NONE ? grid_cells(demo.ground.extent, foliage::DEFAULT_CELL_SIZE) : 0;
@@ -1183,6 +1205,7 @@ fn bool? run_benchmark(Options options) @local {
     Demo demo = build_demo(options, &assets, &scene)!;
     render::sway_measure_calibrate();
     print_header(&demo, desc.max_instance_batches);
+    print_multi_build(options);
     bool scatter_gate = true;
     if (options.scatter_jobs) {
         foreach (&layer : active_layers(&demo)) {

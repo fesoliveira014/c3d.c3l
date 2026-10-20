@@ -1,0 +1,177 @@
+--- a/gpu/gpu.c3
++++ b/gpu/gpu.c3
+@@ -1912,6 +1912,22 @@
+     return gpu::internal::vk::vk_cmd_update_acceleration_structure(record, desc);
+ }
+ 
++<* Record in-place updates of several bottom levels as one command with one
++   build info per descriptor. The command allocator must reserve at least the sum
++   of their geometry counts. The command inserts no barrier.
++   @param commands : "Live recording token outside a render pass."
++   @param descs : "Borrowed destinations, matching dynamic inputs, and update scratch."
++   @return "Success, or a recoverable command, validation, ownership, range, capacity, support, or device fault." *>
++fn void? cmd_update_acceleration_structures(CommandList* commands, AccelerationStructureBuildDesc[] descs) {
++    gpu::internal::vk::CommandRecord* record =
++        gpu::internal::recording_command(commands)!;
++    return gpu::internal::vk::vk_cmd_update_acceleration_structures(record, descs);
++}
++
++fn usz measure_scratch_bytes_per_geometry() {
++    return gpu::internal::vk::measure_scratch_bytes_per_geometry();
++}
++
+ <* Record one GPU-ranged BLAS or TLAS build. The descriptor counts are CPU
+    maxima; each triangle `vertex_count` is the exact `maxVertex + 1` bound.
+    `ranges` begins with one packed AccelerationStructureIndirectBuildRange per
+--- a/gpu/internal/vk/acceleration_structure.c3
++++ b/gpu/internal/vk/acceleration_structure.c3
+@@ -114,6 +114,7 @@
+ acceleration_structure_build_info(
+     CommandRecord* record,
+     PreparedAccelerationStructureBuild* prepared,
++    uint first_geometry = 0,
+ ) {
+     vk::AccelerationStructureBuildGeometryInfoKHR build_info =
+         vk::acceleration_structure_build_geometry_info_khr()
+@@ -129,7 +130,7 @@
+             .set_dst_acceleration_structure(prepared.destination.native)
+             .set_geometries(
+                 record.scratch.acceleration_structure_geometries[
+-                    :prepared.geometry_count
++                    first_geometry:prepared.geometry_count
+                 ],
+             )
+             .set_scratch_data({ .device_address =
+@@ -422,6 +423,7 @@
+     gpu::AccelerationStructureBuildDesc* desc,
+     bool update,
+     bool indirect,
++    uint first_geometry = 0,
+ ) {
+     if (record == null || desc == null) return gpu::INVALID_ARGUMENT~;
+     VkDeviceState* state = record.device_state;
+@@ -444,9 +446,9 @@
+         == gpu::AccelerationStructureKind.TOP_LEVEL
+         ? 1
+         : (uint)destination.desc.geometries.len;
+-    if (required_geometry_count
++    if ((usz)first_geometry + required_geometry_count
+             > record.scratch.acceleration_structure_geometries.len
+-        || required_geometry_count
++        || (usz)first_geometry + required_geometry_count
+             > record.scratch.acceleration_structure_ranges.len
+         || (indirect && required_geometry_count
+             > record.scratch
+@@ -479,11 +481,11 @@
+                 .set_array_of_pointers(vk::FALSE)
+                 .set_data({ .device_address =
+                     (vk::DeviceAddress)instances.address });
+-        record.scratch.acceleration_structure_geometries[0] =
++        record.scratch.acceleration_structure_geometries[first_geometry] =
+             vk::acceleration_structure_geometry_khr()
+                 .set_geometry_type(vk::GeometryTypeKHR.INSTANCES_KHR)
+                 .set_geometry(geometry_data);
+-        record.scratch.acceleration_structure_ranges[0] = {
++        record.scratch.acceleration_structure_ranges[first_geometry] = {
+             .primitive_count = desc.instance_count,
+         };
+     } else {
+@@ -574,7 +576,7 @@
+                         )
+                         .set_index_data(index_address)
+                         .set_transform_data(transform_address);
+-                record.scratch.acceleration_structure_geometries[i] =
++                record.scratch.acceleration_structure_geometries[first_geometry + i] =
+                     vk::acceleration_structure_geometry_khr()
+                         .set_geometry_type(
+                             vk::GeometryTypeKHR.TRIANGLES_KHR,
+@@ -585,7 +587,7 @@
+                                 schema.flags,
+                             ),
+                         );
+-                record.scratch.acceleration_structure_ranges[i] = {
++                record.scratch.acceleration_structure_ranges[first_geometry + i] = {
+                     .primitive_count = input.triangles.primitive_count,
+                 };
+             } else {
+@@ -610,7 +612,7 @@
+                         .set_data({ .device_address =
+                             (vk::DeviceAddress)aabbs.address })
+                         .set_stride((vk::DeviceSize)input.aabbs.stride);
+-                record.scratch.acceleration_structure_geometries[i] =
++                record.scratch.acceleration_structure_geometries[first_geometry + i] =
+                     vk::acceleration_structure_geometry_khr()
+                         .set_geometry_type(vk::GeometryTypeKHR.AABBS_KHR)
+                         .set_geometry(geometry_data)
+@@ -619,7 +621,7 @@
+                                 schema.flags,
+                             ),
+                         );
+-                record.scratch.acceleration_structure_ranges[i] = {
++                record.scratch.acceleration_structure_ranges[first_geometry + i] = {
+                     .primitive_count = input.aabbs.primitive_count,
+                 };
+             }
+@@ -1457,6 +1459,62 @@
+     );
+ }
+ 
++fn void? vk_cmd_update_acceleration_structures(
++    CommandRecord* record,
++    gpu::AccelerationStructureBuildDesc[] descs,
++) {
++    if (descs.len == 0) return;
++    if (record.device_state == null
++        || record.device_state.acceleration_structure_operations == null
++        || record.device_state.acceleration_structure_operations.cmd_build == null) {
++        return gpu::UNSUPPORTED_FEATURE~;
++    }
++    AccelerationStructureBuildCommandOps ops = {
++        .user_data = record.device_state.acceleration_structure_operations,
++        .build = &acceleration_structure_build_command_real,
++    };
++    @pool() {
++        vk::AccelerationStructureBuildGeometryInfoKHR[] infos = alloc::new_array(
++            tmem,
++            vk::AccelerationStructureBuildGeometryInfoKHR,
++            (sz)descs.len,
++        );
++        vk::AccelerationStructureBuildRangeInfoKHR*[] range_pointers = alloc::new_array(
++            tmem,
++            vk::AccelerationStructureBuildRangeInfoKHR*,
++            (sz)descs.len,
++        );
++        uint first_geometry;
++        foreach (index, &desc : descs) {
++            PreparedAccelerationStructureBuild prepared =
++                prepare_acceleration_structure_build_mode(
++                    record:         record,
++                    desc:           desc,
++                    update:         true,
++                    indirect:       false,
++                    first_geometry: first_geometry,
++                )!;
++            infos[index] = acceleration_structure_build_info(record, &prepared, first_geometry);
++            range_pointers[index] = &record.scratch.acceleration_structure_ranges[first_geometry];
++            first_geometry += prepared.geometry_count;
++        }
++        record.scratch.acceleration_structure_geometry_count = first_geometry;
++        ops.build(
++            ops.user_data,
++            record.command_buffer,
++            (uint)descs.len,
++            infos.ptr,
++            range_pointers.ptr,
++        );
++    };
++}
++
++fn usz measure_scratch_bytes_per_geometry() {
++    return vk::AccelerationStructureGeometryKHR::size
++        + vk::AccelerationStructureBuildRangeInfoKHR::size
++        + uint::size;
++}
++
+ fn void? vk_cmd_build_acceleration_structure_indirect(
+     CommandRecord* record,
+     gpu::AccelerationStructureBuildDesc* desc,

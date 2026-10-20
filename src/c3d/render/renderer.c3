@@ -884,11 +884,15 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
             frames[slot].retire.free();
         }
     }
+    uint multi_build_geometries = 1;
+    $if $feat(MEASURE_MULTI_BUILD):
+        if (measure_multi_build) multi_build_geometries = max_posed_trace_instances;
+    $endif
     for (usz slot = 0; slot < FRAMES_IN_FLIGHT; slot++) {
         gpu::CommandAllocatorDesc allocator_desc = {
             .command_buffer_capacity                         = COMMAND_BUFFERS_PER_FRAME,
             .debug_name                                      = FRAME_ALLOCATOR_NAMES[slot],
-            .max_acceleration_structure_geometries_per_build = ray_queries ? 1 : 0,
+            .max_acceleration_structure_geometries_per_build = ray_queries ? multi_build_geometries : 0,
         };
         frames[slot].allocator = gpu::create_command_allocator(&device, graphics, &allocator_desc)!;
         frames[slot].retire.init(allocator, RETIRE_INITIAL_CAPACITY);
