@@ -1,6 +1,5 @@
 module c3d::particle;
 
-import c3d::maths;
 import std::math;
 
 const Vec3 GROUND_NORMAL @private = { 0, 1, 0 };
