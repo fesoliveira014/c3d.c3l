@@ -125,6 +125,17 @@ fn Aabb ParticleReach.bound(&self, ParticleSystemDesc* desc) {
     return bound;
 }
 
+<*
+ Scene-space box that holds every trail strip of the system, from the slices recorded so far.
+ @param [&in] desc : "The system's descriptor, with a trail."
+*>
+fn Aabb ParticleReach.trail_bound(&self, ParticleSystemDesc* desc) {
+    Aabb bound = self.bound(desc);
+    float half_width = 0.5f * desc.trail.width * peak_scale(&desc.trail.width_over_trail);
+    Vec3 margin = { half_width, half_width, half_width };
+    return { .min = bound.min - margin, .max = bound.max + margin };
+}
+
 fn Aabb emission_bounds(ParticleSystemDesc* desc) @private {
     float radius = desc.radius;
     switch (desc.shape) {

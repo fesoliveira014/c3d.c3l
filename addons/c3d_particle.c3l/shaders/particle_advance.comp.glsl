@@ -155,6 +155,38 @@ void collide_ground(StepRoot root, inout ParticleGpu particle) {
     respond_to_ground(root, particle, vec3(centre.x, plane, centre.z), radius);
 }
 
+// Mirrors record_trail_blocks, append_trail_point and drop_expired_trail_points in trail.c3.
+void record_trail(StepRoot root, uint index, ParticleGpu particle) {
+    uint size = root.trail_max_points;
+    uint base = index * size;
+    TrailHeaders headers = TrailHeaders(root.trail_headers_alt);
+    TrailPoints points = TrailPoints(root.trail_points_alt);
+    TrailDistances distances = TrailDistances(root.trail_distances_alt);
+    TrailHeaderGpu header = headers.values[index];
+
+    float clock = header.clock + root.seconds;
+    if (clock >= root.trail_interval) {
+        float distance = header.path_length;
+        if (header.count != 0u) {
+            distance += length(particle.position - points.values[base + particle_trail_slot(header, size, 0u)].xyz);
+        }
+        points.values[base + header.head] = vec4(particle.position, particle.age);
+        distances.values[base + header.head] = distance;
+        header.path_length = distance;
+        header.head = (header.head + 1u) % size;
+        header.count = min(header.count + 1u, size);
+        clock -= root.trail_interval;
+        if (clock >= root.trail_interval) clock = 0.0;
+    }
+    header.clock = clock;
+    while (header.count != 0u) {
+        uint oldest = base + particle_trail_slot(header, size, header.count - 1u);
+        if (particle.age - points.values[oldest].w <= root.trail_lifetime) break;
+        header.count--;
+    }
+    headers.values[index] = header;
+}
+
 // Advances the survivors and the newborns together, flags who lives and who draws, and books the admission.
 void main() {
     StepRoot root = StepRoot(DispatchRoot(pc.root_gpu).parameters);
@@ -192,6 +224,7 @@ void main() {
             live = particle.age < particle.lifetime;
         }
         alternate.values[index] = particle;
+        if (live && root.trail_max_points != 0u) record_trail(root, index, particle);
         bool drawn = live && particle_draw_extent(root, particle) != 0.0;
         flags = uvec4(live ? 1u : 0u, drawn ? 1u : 0u, 0u, 0u);
     }

@@ -71,7 +71,8 @@ ParticleGpu spawn_particle(StepRoot root, uvec2 ordinal) {
     return particle;
 }
 
-// Packs the survivors to the front of the alternate buffer, then appends the admitted newborns in ordinal order.
+// Packs the survivors and their trails to the front of the alternate buffer, then appends the admitted newborns in
+// ordinal order.
 void main() {
     StepRoot root = StepRoot(DispatchRoot(pc.root_gpu).parameters);
     ParticleControl control = ParticleControl(root.control);
@@ -85,12 +86,17 @@ void main() {
         if (flags.x != 0u) {
             uint slot = flags.z + ParticleTotals(root.totals).values[index / PARTICLE_GROUP].x;
             alternate.values[slot] = home.values[index];
+            if (root.trail_max_points != 0u) particle_copy_trail(root, true, index, slot);
         }
     }
     if (index < particle_emitted(root, control)) {
         uvec2 ordinal;
         ordinal.x = uaddCarry(control.spawn_low, index, ordinal.y);
         ordinal.y += control.spawn_high;
-        alternate.values[control.live_total + index] = spawn_particle(root, ordinal);
+        uint slot = control.live_total + index;
+        alternate.values[slot] = spawn_particle(root, ordinal);
+        if (root.trail_max_points != 0u) {
+            TrailHeaders(root.trail_headers_alt).values[slot] = TrailHeaderGpu(0u, 0u, 0.0, 0.0);
+        }
     }
 }

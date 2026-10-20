@@ -14,6 +14,18 @@ import std::math;
 const char[*] RECORD_COPY_STAGE @private = $embed("record_copy.comp.glsl");
 const uint COPY_GROUP @private = 64; // mirrored as local_size_x in record_copy.comp.glsl
 const uint CAPACITY @private = 256;
+const uint TRAIL_POINTS @private = 4;
+const float TRAIL_INTERVAL @private = 0.05f;
+const float TRAIL_LIFETIME_SECONDS @private = 0.2f;
+const float TRAIL_WIDTH @private = 0.1f;
+const float TRAIL_TILE_LENGTH @private = 0.5f;
+const float TRAIL_PARTICLE_LIFETIME_MIN @private = 0.3f; // some expire inside the run, so compaction moves strips
+const float TRAIL_PARTICLE_LIFETIME_MAX @private = 0.7f;
+const uint TRAIL_BURST @private = 64;
+const uint TRAIL_STEPS @private = 30;
+const uint TRAIL_SHIFT_AT @private = 24; // points stored before it are still inside the trail lifetime
+const float COLOR_TOLERANCE @private = 1e-4f;
+const uint RIBBON_RECORDS @private = CAPACITY * (TRAIL_POINTS + 1) + 1; // each particle's strip, then a break
 const uint TARGET_SIZE @private = 64;
 const float STEP_SECONDS @private = 1.0f / 60;
 const float LIFETIME_SECONDS @private = 0.52f; // the first burst expires in the step that admits the third
@@ -50,7 +62,7 @@ struct CopyRoot @private {
     ulong records;
     ulong count;
     ulong destination;
-    uint capacity;
+    uint words;
     uint _pad0;
 }
 $assert CopyRoot::size == 32;
@@ -62,6 +74,8 @@ struct Fixture @private {
     GpuParticles particles;
     ComputeShaderId copy_stage;
     BufferId copied;
+    BufferId copied_ribbons;
+    bool trailed; // the pair carries a trail, so the ribbon records are copied too
     MaterialId material;
     Node* camera;
     ViewId view;
@@ -95,6 +109,11 @@ fn void? create_fixture(Fixture* fixture) @private {
         .size = CAPACITY * BillboardRecord::size + uint::size,
         .usage = BufferUsage.READBACK,
         .debug_name = "particle_records",
+    })!;
+    fixture.copied_ribbons = fixture.renderer.create_buffer({
+        .size = RIBBON_RECORDS * scene::RIBBON_RECORD_BYTES + uint::size,
+        .usage = BufferUsage.READBACK,
+        .debug_name = "particle_trail_records",
     })!;
     ShaderId shader = particle::add_particle_shader(&fixture.assets)!;
     fixture.material = particle::add_particle_material(&fixture.assets, shader, { .color = { 1, 1, 1, 1 } })!;
@@ -137,8 +156,27 @@ fn ParticleSystemDesc reference_desc(MaterialId material) @private {
     return desc;
 }
 
-fn Pair? add_pair(Fixture* fixture) @private {
+fn void add_trail(ParticleSystemDesc* desc, MaterialId material) @private {
+    float[8] widths = { 1, 0.85f, 0.7f, 0.55f, 0.4f, 0.25f, 0.1f, 0 };
+    float[8] fade = { 1, 0.9f, 0.75f, 0.6f, 0.45f, 0.3f, 0.15f, 0 };
+    desc.lifetime = { .min = TRAIL_PARTICLE_LIFETIME_MIN, .max = TRAIL_PARTICLE_LIFETIME_MAX };
+    desc.trail = {
+        .max_points = TRAIL_POINTS,
+        .point_interval = TRAIL_INTERVAL,
+        .lifetime = TRAIL_LIFETIME_SECONDS,
+        .width = TRAIL_WIDTH,
+        .uv = TrailUv.TILE,
+        .tile_length = TRAIL_TILE_LENGTH,
+        .material = material,
+    };
+    desc.trail.width_over_trail.values = widths;
+    foreach (index, alpha : fade) desc.trail.color_over_trail.values[index] = { 1, 1, 1, alpha };
+}
+
+fn Pair? add_pair(Fixture* fixture, bool trailed = false) @private {
     ParticleSystemDesc desc = reference_desc(fixture.material);
+    if (trailed) add_trail(&desc, fixture.material);
+    fixture.trailed = trailed;
     Pair pair;
     pair.cpu = fixture.scene.get(fixture.scene.add_particle_system(desc)!, ParticleSystem);
     desc.execution = ParticleExecution.GPU;
@@ -147,23 +185,49 @@ fn Pair? add_pair(Fixture* fixture) @private {
     return pair;
 }
 
+fn void? copy_words(
+    Fixture* fixture,
+    CopyRoot root,
+    BufferId destination,
+) @private {
+    root.destination = (ulong)fixture.renderer.buffer_address(destination);
+    BufferId[1] writes = { destination };
+    fixture.renderer.dispatch({
+        .shader = fixture.copy_stage,
+        .root = ((char*)&root)[:CopyRoot::size],
+        .groups = { (root.words + COPY_GROUP - 1) / COPY_GROUP, 1, 1 },
+        .writes = writes[..],
+    })!;
+}
+
 fn void? copy_records(Fixture* fixture, ParticleSystem* system) @private {
     Renderer* renderer = &fixture.renderer;
     BillboardBatch* batch = fixture.scene.get(fixture.scene.node(system.draw_node), BillboardBatch);
     ulong records = (ulong)renderer.buffer_address(batch.device.buffer);
-    CopyRoot root = {
-        .records = records + batch.device.records_offset,
-        .count = records + batch.device.count_offset,
-        .destination = (ulong)renderer.buffer_address(fixture.copied),
-        .capacity = CAPACITY,
-    };
-    BufferId[1] writes = { fixture.copied };
-    renderer.dispatch({
-        .shader = fixture.copy_stage,
-        .root = ((char*)&root)[:CopyRoot::size],
-        .groups = { CAPACITY / COPY_GROUP, 1, 1 },
-        .writes = writes[..],
-    })!;
+    copy_words(
+        fixture: fixture,
+        root: {
+            .records = records + batch.device.records_offset,
+            .count = records + batch.device.count_offset,
+            .words = CAPACITY * BillboardRecord::size / uint::size,
+        },
+        destination: fixture.copied,
+    )!;
+}
+
+fn void? copy_trail_records(Fixture* fixture, ParticleSystem* system) @private {
+    Renderer* renderer = &fixture.renderer;
+    RibbonBatch* batch = fixture.scene.get(fixture.scene.node(system.trail_node), RibbonBatch);
+    ulong records = (ulong)renderer.buffer_address(batch.device.buffer);
+    copy_words(
+        fixture: fixture,
+        root: {
+            .records = records + batch.device.records_offset,
+            .count = records + batch.device.count_offset,
+            .words = RIBBON_RECORDS * scene::RIBBON_RECORD_BYTES / uint::size,
+        },
+        destination: fixture.copied_ribbons,
+    )!;
 }
 
 fn void? record_frame(
@@ -185,6 +249,7 @@ fn void? record_frame(
         wind: WIND,
     )!;
     copy_records(fixture, pair.device)!;
+    if (fixture.trailed) copy_trail_records(fixture, pair.device)!;
     if (kind == FrameKind.ABORTED) {
         renderer.render_view(&fixture.scene, fixture.camera, fixture.view)!;
         assert(@catch(renderer.end_frame()) == c3d::INVALID_ARGUMENT);
@@ -197,6 +262,7 @@ fn void? record_frame(
             alive: expected_alive,
             dropped: expected_dropped,
         );
+        if (fixture.trailed) check_trails(fixture, pair);
     }
     renderer.end_frame()!;
 }
@@ -215,6 +281,63 @@ fn void check_counters(Pair* pair, uint alive, ulong dropped) @private {
     assert(pair.device.alive == alive && pair.device.dropped == dropped);
 }
 
+fn void sort_by_spawn(ParticleSystem* system, uint[] order) @private {
+    foreach (slot, &entry : order[:system.alive]) *entry = (uint)slot;
+    for (uint filled = 1; filled < system.alive; filled++) {
+        uint moving = order[filled];
+        uint position = filled;
+        while (position > 0 && system.spawn[order[position - 1]] > system.spawn[moving]) {
+            order[position] = order[position - 1];
+            position--;
+        }
+        order[position] = moving;
+    }
+}
+
+fn void check_trails(Fixture* fixture, Pair* pair) @private {
+    ParticleSystem* cpu = pair.cpu;
+    char[] copied = fixture.renderer.read_buffer(fixture.copied_ribbons)!!;
+    RibbonPointGpu* device_points = (RibbonPointGpu*)copied.ptr;
+    uint device_count = *(uint*)(copied.ptr + RIBBON_RECORDS * scene::RIBBON_RECORD_BYTES);
+    assert(device_count == cpu.alive * (TRAIL_POINTS + 1));
+    assert(device_points[device_count].flags == scene::RIBBON_BREAK);
+
+    RibbonBatch* batch = fixture.scene.get(fixture.scene.node(cpu.trail_node), RibbonBatch);
+    uint[CAPACITY] starts;
+    uint strips;
+    foreach (index, &point : batch.points[:batch.count]) {
+        if (point.flags == scene::RIBBON_BREAK) starts[strips++] = (uint)index;
+    }
+    assert(strips == cpu.alive);
+
+    uint[CAPACITY] order;
+    sort_by_spawn(cpu, order[..]);
+    for (uint rank = 0; rank < cpu.alive; rank++) {
+        uint start = starts[order[rank]];
+        uint end = order[rank] + 1 < strips ? starts[order[rank] + 1] : batch.count;
+        uint stored = end - start - 1;
+        assert(stored > 0 && stored <= TRAIL_POINTS);
+        for (uint offset = 0; offset <= TRAIL_POINTS; offset++) {
+            RibbonPointGpu found = device_points[rank * (TRAIL_POINTS + 1) + offset];
+            if (offset > stored) {
+                assert(found.flags == scene::RIBBON_BREAK && found.position_width.w == 0);
+                continue;
+            }
+
+            RibbonPoint expected = batch.points[start + offset];
+            assert(found.flags == expected.flags);
+            for (usz axis = 0; axis < 3; axis++) {
+                assert(math::abs(found.position_width[axis] - expected.position[axis]) <= POSITION_TOLERANCE);
+            }
+            assert(math::abs(found.position_width.w - expected.width) <= SIZE_TOLERANCE);
+            assert(math::abs(found.v - expected.v) <= POSITION_TOLERANCE);
+            for (usz channel = 0; channel < 4; channel++) {
+                assert(math::abs(found.color[channel] - expected.color[channel]) <= COLOR_TOLERANCE);
+            }
+        }
+    }
+}
+
 fn void check_records(
     Fixture* fixture,
     Pair* pair,
@@ -231,16 +354,7 @@ fn void check_records(
     BillboardBatch* batch = fixture.scene.get(fixture.scene.node(cpu.draw_node), BillboardBatch);
     assert(batch.count == cpu.alive);
     uint[CAPACITY] order;
-    foreach (slot, &entry : order[:cpu.alive]) *entry = (uint)slot;
-    for (uint filled = 1; filled < cpu.alive; filled++) {
-        uint moving = order[filled];
-        uint position = filled;
-        while (position > 0 && cpu.spawn[order[position - 1]] > cpu.spawn[moving]) {
-            order[position] = order[position - 1];
-            position--;
-        }
-        order[position] = moving;
-    }
+    sort_by_spawn(cpu, order[..]);
     for (uint rank = 0; rank < cpu.alive; rank++) {
         BillboardRecord expected = batch.records[order[rank]];
         BillboardRecord found = device_records[rank];
@@ -376,4 +490,47 @@ fn void test_gpu_step_commits_after_frames_without_an_update() @test {
             expected_dropped: 0,
         )!!;
     }
+}
+
+fn void run_trail_steps(Fixture* fixture, Pair* pair, bool shifted) @private {
+    uint steps = TRAIL_STEPS + render::FRAMES_IN_FLIGHT;
+    for (uint step = 0; step < steps; step++) {
+        float dt = step < TRAIL_STEPS ? STEP_SECONDS : 0;
+        if (step == 0) {
+            pair.cpu.emit_burst(TRAIL_BURST);
+            pair.device.emit_burst(TRAIL_BURST);
+        }
+        if (shifted && step == TRAIL_SHIFT_AT) {
+            fixture.scene.shift_origin(SHIFT_OFFSET);
+            fixture.scene.shift_particles(SHIFT_OFFSET);
+            assert(fixture.scene.node(pair.device.trail_node).local.position == (Vec3){});
+            fixture.scene.update_world();
+        }
+        particle::update(&fixture.scene, dt, WIND);
+        record_frame(
+            fixture: fixture,
+            pair: pair,
+            dt: dt,
+            kind: step + 1 == steps ? FrameKind.FINAL : FrameKind.NORMAL,
+            expected_alive: pair.cpu.alive,
+            expected_dropped: 0,
+        )!!;
+    }
+    assert(pair.cpu.alive > 0 && pair.cpu.alive < TRAIL_BURST);
+}
+
+fn void test_gpu_trails_follow_the_cpu_reference() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Pair pair = add_pair(&fixture, trailed: true)!!;
+    run_trail_steps(&fixture, &pair, false);
+}
+
+fn void test_gpu_trails_follow_an_origin_shift() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Pair pair = add_pair(&fixture, trailed: true)!!;
+    run_trail_steps(&fixture, &pair, true);
 }
