@@ -21,7 +21,7 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
     assert(ecs::registered_type_count == 0);
     serial::register_core_codecs()!!;
     ExpectedPolicy[21] expected = {
-        { .slot = ecs::assigned_slot(Mesh)!!, .version = 2, .name = "c3d.Mesh",
+        { .slot = ecs::assigned_slot(Mesh)!!, .version = 3, .name = "c3d.Mesh",
             .identity = Mesh::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(Camera)!!, .version = 1, .name = "c3d.Camera",
             .identity = Camera::typeid, .component_description = true },

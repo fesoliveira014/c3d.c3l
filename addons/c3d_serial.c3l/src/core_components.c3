@@ -52,10 +52,11 @@ BinaryCompatibility[2] light_binary_compatibility @local = {
 };
 uint[2] light_text_default_versions @local = { 1, 2 };
 
-BinaryCompatibility[1] mesh_binary_compatibility @local = {
+BinaryCompatibility[2] mesh_binary_compatibility @local = {
     { .version = 1, .read = &read_mesh_v1, .upgrade = &upgrade_mesh_v1 },
+    { .version = 2, .read = &read_mesh_v2, .upgrade = &upgrade_mesh_v2 },
 };
-uint[1] mesh_text_default_versions @local = { 1 };
+uint[2] mesh_text_default_versions @local = { 1, 2 };
 
 <*
  Register portable core components and their semantic defaults.
@@ -285,6 +286,28 @@ fn void? upgrade_mesh_v1(Reader* reader, ReadContext* context, void* value) @loc
 fn void? read_mesh_v1(Reader* reader, ReadContext* context) @local {
     Mesh mesh;
     upgrade_mesh_v1(reader, context, &mesh)!;
+    attach_mesh(&mesh, context)!;
+}
+
+fn void? upgrade_mesh_v2(Reader* reader, ReadContext* context, void* value) @local {
+    MeshV2* legacy = context.read_value(MeshV2, reader)!;
+    *(Mesh*)value = {
+        .geometry = legacy.geometry,
+        .material = legacy.material,
+        .cast_shadow = legacy.cast_shadow,
+        .receive_shadow = legacy.receive_shadow,
+        .trace = legacy.trace,
+        .trace_only = legacy.trace_only,
+        .morph_weights = legacy.morph_weights,
+        .has_bounds_override = legacy.has_bounds_override,
+        .local_bounds = legacy.local_bounds,
+        .vertex_motion = legacy.vertex_motion,
+    };
+}
+
+fn void? read_mesh_v2(Reader* reader, ReadContext* context) @local {
+    Mesh mesh;
+    upgrade_mesh_v2(reader, context, &mesh)!;
     attach_mesh(&mesh, context)!;
 }
 
