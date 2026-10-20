@@ -77,10 +77,6 @@ vec3 step_reference_at_end(ClothRoot root, uint index, StepPass step) {
     return solved + (current - solved) * step.progress;
 }
 
-vec3 step_pin_target(ClothRoot root, uint index, StepPass step) {
-    return step_reference_at_end(root, index, step);
-}
-
 vec3 step_transport(ClothRoot root, uint index, StepPass step) {
     if ((root.features & CLOTH_FEATURE_TRANSPORT) == 0u) return vec3(0.0);
 
@@ -149,7 +145,7 @@ void step_predict(ClothRoot root, uint index, StepPass step) {
     StepVectors predicted = StepVectors(root.predicted);
     vec4 position = StepVectors(root.positions).values[index];
     if (position.w == 0.0) {
-        predicted.values[index] = vec4(step_pin_target(root, index, step), 0.0);
+        predicted.values[index] = vec4(step_reference_at_end(root, index, step), 0.0);
         return;
     }
 

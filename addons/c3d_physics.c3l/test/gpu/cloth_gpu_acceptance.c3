@@ -47,6 +47,7 @@ const Vec3 BREEZE @private = { 0, 0, 2 }; // m/s, across the hanging flag
 const float BREEZE_CAP @private = 1.8f; // m/s; below the breeze, so the cap applies
 const uint TRANSPORT_LEVELS @private = 4;
 const uint JOINT_COUNT @private = 2;
+const usz MAX_CONTROLS @private = 4; // soft, transport, wind and bends
 const float FEATURE_FLOOR @private = 4e-3f; // metres; twice the tolerance, so a missing feature cannot hide inside it
 
 struct Fixture @private {
@@ -342,7 +343,8 @@ fn void pose_owners(Fixture* fixture, Node*[] flags, uint step, bool skinned) @p
     if (skinned) {
         fixture.joints[0].local.position = { sway, POLE_HEIGHT, 0 };
         fixture.joints[0].local.rotation = yaw;
-        fixture.joints[1].local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, OWNER_MOTION * TIP_ROLL_SHARE * math::sin(2 * phase));
+        float roll = OWNER_MOTION * TIP_ROLL_SHARE * math::sin(2 * phase);
+        fixture.joints[1].local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, roll);
     } else {
         foreach (flag : flags) {
             flag.local.position = { sway, POLE_HEIGHT, 0 };
@@ -368,8 +370,6 @@ fn TwinResult compare_twins(Fixture* fixture, Node* host, Node* device, Vec3[] i
     }
     return result;
 }
-
-const usz MAX_CONTROLS @private = 4;
 
 // One option set per feature the case turns on, with that feature off.
 fn usz feature_controls(FlagOptions options, FlagOptions[] controls) @private {

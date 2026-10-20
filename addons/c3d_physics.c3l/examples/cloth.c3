@@ -1464,7 +1464,14 @@ fn void? run_interactive(Options options) @local {
         desc: { .validation = true, .gpu_timings = true },
     )!;
     defer render::destroy_renderer(&renderer);
-    if (options.gpu) cloth_gpu_hooks::attach(&demo.gpu, &demo.assets, demo.copy_count + 1, (demo.flag_columns + 1) * (demo.flag_rows + 1))!;
+    if (options.gpu) {
+        cloth_gpu_hooks::attach(
+            state:          &demo.gpu,
+            assets:         &demo.assets,
+            cloths:         demo.copy_count + 1,
+            particles_each: (demo.flag_columns + 1) * (demo.flag_rows + 1),
+        )!;
+    }
     defer cloth_gpu_hooks::detach(&demo.gpu, &renderer);
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -1720,7 +1727,14 @@ fn void? run_benchmark(Options options) @local {
     }
     Renderer renderer = created;
     defer render::destroy_renderer(&renderer);
-    if (options.gpu) cloth_gpu_hooks::attach(&demo.gpu, &demo.assets, demo.copy_count + 1, (demo.flag_columns + 1) * (demo.flag_rows + 1))!;
+    if (options.gpu) {
+        cloth_gpu_hooks::attach(
+            state:          &demo.gpu,
+            assets:         &demo.assets,
+            cloths:         demo.copy_count + 1,
+            particles_each: (demo.flag_columns + 1) * (demo.flag_rows + 1),
+        )!;
+    }
     defer cloth_gpu_hooks::detach(&demo.gpu, &renderer);
     if (hardware && !renderer.caps.ray_queries.enabled) {
         io::eprintn("Hardware tracing needs ray queries; this adapter or driver does not provide them.");

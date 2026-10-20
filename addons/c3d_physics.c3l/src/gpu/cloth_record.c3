@@ -91,9 +91,7 @@ struct StepRecorder @private {
     usz             payload_bytes; // zero when the cloth keeps its reference in matrices
 }
 
-<*
- Parameters of the small cloths of one update: roots at a fixed stride, then the reference pairs they stage.
-*>
+// Parameters of the small cloths of one update: roots at a fixed stride, then the reference pairs they stage.
 struct StepBatch @private {
     ClothRoot[]     roots;   // the leading cells of staging; parameters of workgroup i
     char[]          staging; // roots, then reference pairs; the fused shape borrows its start between batches

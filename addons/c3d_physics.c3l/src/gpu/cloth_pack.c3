@@ -340,7 +340,9 @@ fn Aabb write_tables(
     if ((features & FEATURE_SOFT) != 0) {
         float[] compliances = ((float*)&block[tables.soft])[:particles];
         compliances[..] = 0;
-        foreach (attachment : state.soft_attachments) compliances[attachment.particle] = attachment.effective_compliance;
+        foreach (attachment : state.soft_attachments) {
+            compliances[attachment.particle] = attachment.effective_compliance;
+        }
     }
     if ((features & FEATURE_TRANSPORT) != 0) {
         float[] weights = ((float*)&block[tables.transport])[:particles];

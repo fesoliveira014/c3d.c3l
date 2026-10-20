@@ -42,9 +42,6 @@ fn void? check_cloth_execution(
     $endif
 }
 
-<*
- Whether the device can project every constraint set of the cloth.
-*>
 fn bool device_colors_fit(ClothState* state) @private {
     if (!state.edge_colors) return false;
 
