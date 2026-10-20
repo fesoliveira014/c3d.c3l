@@ -2,7 +2,7 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 
-layout(location = 8) flat in uvec2 v_sort_order;
+layout(location = 9) flat in uvec2 v_sort_order;
 layout(location = 0) out vec4 out_color;
 
 layout(push_constant) uniform Push {

@@ -8,6 +8,8 @@ import gpu;
 import std::math;
 
 const uint BILLBOARD_VERTICES @private = 6;
+const usz BILLBOARD_ATLAS_BYTES @private = BillboardAtlasGpu::size; // precedes the records in the slot allocation
+$assert BILLBOARD_ATLAS_BYTES % STREAM_ALIGNMENT == 0;
 
 $assert BillboardFacing.CAMERA.ordinal == shader::BILLBOARD_CAMERA;
 $assert BillboardFacing.DIRECTIONAL.ordinal == shader::BILLBOARD_DIRECTIONAL;
@@ -28,8 +30,23 @@ fn void pack_billboard_records(BillboardGpu[] records, Mat4 node_world, Billboar
             .color = world.color,
             .rotation = world.rotation,
             .facing = (uint)batch.facing.ordinal,
+            .frame = world.frame,
         };
     }
+}
+
+fn BillboardAtlasGpu pack_billboard_atlas(BillboardAtlas atlas) @private {
+    return {
+        .columns = atlas.columns,
+        .rows = atlas.rows,
+        .frame_count = atlas.frame_count,
+        .inset = { atlas.inset.x, atlas.inset.y },
+    };
+}
+
+fn gpu::GpuAddress billboard_atlas_address(BillboardBatch* batch, gpu::GpuAddress records) @private {
+    if (batch.atlas.columns == 0) return (gpu::GpuAddress)0;
+    return (gpu::GpuAddress)((ulong)records - BILLBOARD_ATLAS_BYTES);
 }
 
 fn GpuGeometry*? acquire_billboard_geometry(Renderer* renderer) @private {
@@ -114,11 +131,13 @@ fn void? upload_billboard_records(
         slot: slot,
         capacity: (uint)batch.billboards.len,
         record_size: BillboardGpu::size,
+        header_size: BILLBOARD_ATLAS_BYTES,
     )!;
-    usz bytes = (usz)batch.count * BillboardGpu::size;
+    usz bytes = BILLBOARD_ATLAS_BYTES + (usz)batch.count * BillboardGpu::size;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
-    BillboardGpu[] records = ((BillboardGpu*)staging.bytes.ptr)[:batch.count];
+    *(BillboardAtlasGpu*)staging.bytes.ptr = pack_billboard_atlas(batch.atlas);
+    BillboardGpu[] records = ((BillboardGpu*)(staging.bytes.ptr + BILLBOARD_ATLAS_BYTES))[:batch.count];
     pack_billboard_records(records, maths::rebase(world, renderer.frame_origin), batch);
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });

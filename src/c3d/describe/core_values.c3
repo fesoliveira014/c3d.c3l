@@ -19,6 +19,7 @@ fn void? register_core_values() {
     register_reflected(LodLevel)!;
     register_reflected(LodDesc)!;
     register_reflected(LodEffects)!;
+    register_reflected(BillboardAtlas)!;
     register_reflected(Billboard)!;
     register_reflected(Mesh)!;
 }

@@ -77,6 +77,7 @@ const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64;
 const uint DRAW_TRACED_REFLECTION = 128;
 const uint DRAW_QUADTREE = 256;
+const uint DRAW_BILLBOARD_ATLAS = 512;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint GBUFFER_PROXY_SKIP_SHIFT = 16;
 const float GBUFFER_PROXY_SKIP_UNIT = 0.01;
@@ -939,7 +940,7 @@ struct BillboardGpu {
     Vec4f color;
     float rotation;
     uint  facing;
-    uint  _pad0;
+    float frame;
     uint  _pad1;
 }
 $assert BillboardGpu::size == 64;
@@ -948,8 +949,26 @@ $assert $reflect(BillboardGpu.direction_height).offset == 16;
 $assert $reflect(BillboardGpu.color).offset == 32;
 $assert $reflect(BillboardGpu.rotation).offset == 48;
 $assert $reflect(BillboardGpu.facing).offset == 52;
-$assert $reflect(BillboardGpu._pad0).offset == 56;
+$assert $reflect(BillboardGpu.frame).offset == 56;
 $assert $reflect(BillboardGpu._pad1).offset == 60;
+
+struct BillboardAtlasGpu {
+    uint  columns;
+    uint  rows;
+    uint  frame_count;
+    uint  _pad0;
+    Vec2f inset;
+    uint  _pad1;
+    uint  _pad2;
+}
+$assert BillboardAtlasGpu::size == 32;
+$assert $reflect(BillboardAtlasGpu.columns).offset == 0;
+$assert $reflect(BillboardAtlasGpu.rows).offset == 4;
+$assert $reflect(BillboardAtlasGpu.frame_count).offset == 8;
+$assert $reflect(BillboardAtlasGpu._pad0).offset == 12;
+$assert $reflect(BillboardAtlasGpu.inset).offset == 16;
+$assert $reflect(BillboardAtlasGpu._pad1).offset == 24;
+$assert $reflect(BillboardAtlasGpu._pad2).offset == 28;
 
 struct SwayGpu {
     Vec4f direction_amplitude;

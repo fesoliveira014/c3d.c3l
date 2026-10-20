@@ -80,6 +80,7 @@ const uint DRAW_SWAY_VERTEX_ALPHA = 32u;
 const uint DRAW_VERTEX_HISTORY_INVALID = 64u;
 const uint DRAW_TRACED_REFLECTION = 128u;
 const uint DRAW_QUADTREE = 256u;
+const uint DRAW_BILLBOARD_ATLAS = 512u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint GBUFFER_PROXY_SKIP_SHIFT = 16u;
 const float GBUFFER_PROXY_SKIP_UNIT = 0.01;
@@ -623,8 +624,18 @@ struct BillboardGpu {
     vec4 color;
     float rotation;
     uint facing;
-    uint _pad0;
+    float frame;
     uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer BillboardAtlasGpu {
+    uint columns;
+    uint rows;
+    uint frame_count;
+    uint _pad0;
+    vec2 inset;
+    uint _pad1;
+    uint _pad2;
 };
 
 struct SwayGpu {

@@ -53,6 +53,53 @@ fn void test_invalid_billboard_creation_leaves_node_capacity_available() @test {
     assert(scene.world.is_alive(node.id));
 }
 
+fn void test_billboard_atlas_rejects_bad_layouts() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&scene);
+    BillboardAtlas grid = { .columns = 2, .rows = 2, .frame_count = 4, .inset = { 0.01f, 0.02f } };
+    Billboard[1] values = { scene::BILLBOARD_DEFAULT };
+    Node* node = scene.add_billboards(material: {}, capacity: 1, billboards: values[..], atlas: grid)!!;
+    BillboardBatch* batch = scene.get(node, BillboardBatch);
+    uint revision = batch.revision;
+
+    values[0].frame = bitcast(0x7fc00000u, float);
+    assert(@catch(scene.set_billboards(node, values[..])) == c3d::INVALID_ARGUMENT);
+    values[0].frame = -0.5f;
+    assert(@catch(scene.set_billboards(node, values[..])) == c3d::INVALID_ARGUMENT);
+
+    BillboardAtlas bad = grid;
+    bad.rows = 0;
+    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
+    bad = grid;
+    bad.frame_count = 0;
+    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
+    bad.frame_count = 5;
+    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
+    bad = grid;
+    bad.inset.x = bitcast(0x7fc00000u, float);
+    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
+    bad = grid;
+    bad.inset.y = -0.01f;
+    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
+    bad = grid;
+    bad.inset.x = 0.25f;
+    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
+    assert(batch.revision == revision && batch.atlas.rows == 2 && batch.atlas.frame_count == 4);
+
+    values[0].frame = 1.5f;
+    assert(@catch(scene.add_billboards(material: {}, capacity: 1, billboards: values[..], atlas: bad))
+        == c3d::INVALID_ARGUMENT);
+    values[0].frame = -1;
+    assert(@catch(scene.add_billboards(material: {}, capacity: 1, billboards: values[..], atlas: grid))
+        == c3d::INVALID_ARGUMENT);
+    Node* spare = scene.add_node()!!;
+    assert(scene.world.is_alive(spare.id));
+
+    grid.frame_count = 3;
+    scene.set_billboard_atlas(node, grid)!!;
+    assert(batch.revision != revision && batch.atlas.frame_count == 3);
+}
+
 fn void test_billboard_bounds_cover_scaled_rotated_quads() @test {
     Scene scene = scene::create_scene(mem, { .max_nodes = 1 });
     defer scene::destroy_scene(&scene);
@@ -114,6 +161,7 @@ fn void test_billboard_packing_keeps_indices_and_handles_zero_dimensions() @test
     values[1].size = { 2, 4 };
     values[1].direction = { 0, 2, 0 };
     values[1].rotation = 0.7f;
+    values[1].frame = 2.5f;
     BillboardBatch batch = { .billboards = values[..], .count = 2, .facing = BillboardFacing.DIRECTIONAL };
     BillboardGpu[2] records;
     render::pack_billboard_records(records[..], matrix::IDENTITY4, &batch);
@@ -122,7 +170,7 @@ fn void test_billboard_packing_keeps_indices_and_handles_zero_dimensions() @test
     assert(records[1].position_width == (Vec4){ -3, 0, -2, 2 });
     assert(records[1].direction_height == (Vec4){ 0, 1, 0, 4 });
     assert(records[1].rotation == 0.7f);
-    assert(records[0]._pad0 == 0 && records[1]._pad1 == 0);
+    assert(records[0].frame == 0 && records[1].frame == 2.5f && records[1]._pad1 == 0);
 }
 
 fn void test_billboard_array_updates_allocate_nothing() @test {

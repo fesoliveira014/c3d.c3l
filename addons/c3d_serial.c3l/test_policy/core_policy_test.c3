@@ -43,7 +43,7 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
             .identity = MediumVolume::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(InstancedMesh)!!, .version = 4, .name = "c3d.InstancedMesh",
             .identity = InstanceAuthoring::typeid },
-        { .slot = ecs::assigned_slot(BillboardBatch)!!, .version = 1, .name = "c3d.BillboardBatch",
+        { .slot = ecs::assigned_slot(BillboardBatch)!!, .version = 2, .name = "c3d.BillboardBatch",
             .identity = BillboardAuthoring::typeid },
         { .slot = ecs::assigned_slot(LodGroup)!!, .phase = BINDINGS, .version = 3,
             .name = "c3d.LodGroup", .identity = LodAuthoring::typeid },

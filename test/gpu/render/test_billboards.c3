@@ -9,6 +9,7 @@ import c3d::maths;
 import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
+import c3d::shader::compile;
 import std::math;
 
 const uint BILLBOARD_TARGET_SIZE @private = 64;
@@ -16,6 +17,19 @@ const float BILLBOARD_VIEW_HEIGHT @private = 4;
 const float BILLBOARD_PIXEL_TOLERANCE @private = 0.02f;
 const uint BILLBOARD_TEST_CAPACITY @private = 16;
 const Vec4 BILLBOARD_WHITE @private = { 1, 1, 1, 1 };
+const uint ATLAS_TEXELS @private = 128;
+const uint ATLAS_CELL_TEXELS @private = ATLAS_TEXELS / 2;
+const uint ATLAS_PADDING_TEXELS @private = 8; // 2^(m-1) for the four mip levels the minified draw can sample
+const uint ATLAS_CUT_TEXELS @private = 2 * ATLAS_PADDING_TEXELS; // an inset that leaves only the art in view
+const uint ATLAS_SHOWN_CELL @private = 2;
+const uint ATLAS_COLOR_BYTES @private = 3;
+const uint ATLAS_TEXEL_BYTES @private = 4;
+const float ATLAS_FULL_SIZE @private = BILLBOARD_VIEW_HEIGHT; // one texel per pixel
+const float ATLAS_MINIFIED_SIZE @private = BILLBOARD_VIEW_HEIGHT / 4; // four texels per pixel
+const uint ATLAS_COVERED_MINIMUM @private = 100;
+const float ATLAS_COLOR_TOLERANCE @private = 0.02f;
+const float ATLAS_BLEND_TOLERANCE @private = 1.0f / 255;
+const char[*] BILLBOARD_FRAME_FRAGMENT @private = $embed("billboard_frame.frag.glsl");
 
 struct BillboardScene @private {
     Scene scene;
@@ -387,5 +401,107 @@ fn void test_billboard_aborted_upload_is_retried() @test {
     Vec4[] pixels = read_float_target(&fixture, target.targets[0])!!;
     defer free(pixels);
     check_billboard_pixel(billboard_pixel(pixels), BILLBOARD_WHITE);
+    check_validation(&fixture.renderer);
+}
+
+fn TextureId? add_padded_atlas_texture(Fixture* fixture, char[] colors) @private {
+    char[] pixels = mem::new_array(char, (usz)ATLAS_TEXELS * ATLAS_TEXELS * ATLAS_TEXEL_BYTES);
+    defer free(pixels);
+    for (uint y = 0; y < ATLAS_TEXELS; y++) {
+        for (uint x = 0; x < ATLAS_TEXELS; x++) {
+            uint cell = (y / ATLAS_CELL_TEXELS) * 2 + x / ATLAS_CELL_TEXELS;
+            uint local_x = x % ATLAS_CELL_TEXELS;
+            uint local_y = y % ATLAS_CELL_TEXELS;
+            bool art = local_x >= ATLAS_PADDING_TEXELS && local_x < ATLAS_CELL_TEXELS - ATLAS_PADDING_TEXELS
+              && local_y >= ATLAS_PADDING_TEXELS && local_y < ATLAS_CELL_TEXELS - ATLAS_PADDING_TEXELS;
+            char[] texel = pixels[(y * ATLAS_TEXELS + x) * ATLAS_TEXEL_BYTES:ATLAS_TEXEL_BYTES];
+            texel[:ATLAS_COLOR_BYTES] = colors[cell * ATLAS_COLOR_BYTES:ATLAS_COLOR_BYTES];
+            texel[ATLAS_COLOR_BYTES] = art ? 255 : 0;
+        }
+    }
+    TextureDesc desc = material::texture_2d_desc(ATLAS_TEXELS, ATLAS_TEXELS, PixelFormat.RGBA8_UNORM);
+    return fixture.assets.add_texture(desc, pixels);
+}
+
+fn void check_atlas_cell(Vec4[] pixels, Vec3 expected) @private {
+    uint covered;
+    foreach (pixel : pixels) {
+        assert(math::is_finite(pixel.w));
+        if (pixel.w <= 1.0f / 255) continue;
+        covered++;
+        for (uint channel = 0; channel < 3; channel++) {
+            assert(math::abs(pixel[channel] / pixel.w - expected[channel]) <= ATLAS_COLOR_TOLERANCE);
+        }
+    }
+    assert(covered >= ATLAS_COVERED_MINIMUM);
+    check_billboard_pixel(billboard_pixel(pixels), { expected.x, expected.y, expected.z, 1 });
+}
+
+fn void test_billboard_atlas_selects_cells_without_bleed_and_blends_frames() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    char[12] colors = { 230, 26, 26, 26, 204, 26, 26, 51, 230, 230, 204, 26 };
+    TextureId texture = add_padded_atlas_texture(&fixture, colors[..])!!;
+    Billboard[1] values = { scene::BILLBOARD_DEFAULT };
+    values[0].frame = ATLAS_SHOWN_CELL;
+    BillboardAtlas atlas = {
+        .columns = 2,
+        .rows = 2,
+        .frame_count = 4,
+        .inset = { 0.5f / ATLAS_TEXELS, 0.5f / ATLAS_TEXELS },
+    };
+    BillboardScene target = create_billboard_scene(&fixture, values[..])!!;
+    defer destroy_billboard_scene(&fixture, &target);
+    target.scene.set_billboard_atlas(target.node, atlas)!!;
+
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.alpha_mode = AlphaMode.BLEND;
+    common.depth_write = false;
+    BasicParams params = {
+        .color = { 1, 1, 1, 1 },
+        .map = material::texture_slot(texture, asset::SAMPLER_LINEAR_CLAMP),
+    };
+    MaterialId textured = fixture.assets.add_material(material::basic(params, common))!!;
+    target.scene.get(target.node, BillboardBatch).material = textured;
+    Vec3 cell_color;
+    for (usz channel = 0; channel < ATLAS_COLOR_BYTES; channel++) {
+        cell_color[channel] = (float)colors[ATLAS_SHOWN_CELL * ATLAS_COLOR_BYTES + channel] / 255;
+    }
+
+    float[2] sizes = { ATLAS_FULL_SIZE, ATLAS_MINIFIED_SIZE };
+    foreach (size : sizes) {
+        values[0].size = { size, size };
+        target.scene.set_billboards(target.node, values[..])!!;
+        render_billboard_frames(&fixture, &target)!!;
+        Vec4[] pixels = read_float_target(&fixture, target.targets[0])!!;
+        defer free(pixels);
+        check_atlas_cell(pixels, cell_color);
+    }
+
+    atlas.inset = { (float)ATLAS_CUT_TEXELS / ATLAS_TEXELS, (float)ATLAS_CUT_TEXELS / ATLAS_TEXELS };
+    target.scene.set_billboard_atlas(target.node, atlas)!!;
+    values[0].size = { ATLAS_FULL_SIZE, ATLAS_FULL_SIZE };
+    target.scene.set_billboards(target.node, values[..])!!;
+    render_billboard_frames(&fixture, &target)!!;
+    Vec4[] cut = read_float_target(&fixture, target.targets[0])!!;
+    defer free(cut);
+    foreach (pixel : cut) check_billboard_pixel(pixel, { cell_color.x, cell_color.y, cell_color.z, 1 });
+
+    ShaderDesc desc = {
+        .fragment = compile::compile_glsl(tmem, (String)BILLBOARD_FRAME_FRAGMENT[..], ShaderStage.FRAGMENT)!!,
+    };
+    ShaderId shader = fixture.assets.add_shader(&desc)!!;
+    target.scene.get(target.node, BillboardBatch).material = fixture.assets.add_material(material::custom(
+        shader: shader,
+        common: common,
+    ))!!;
+    values[0].size = { 2, 2 };
+    values[0].frame = 1.5f;
+    target.scene.set_billboards(target.node, values[..])!!;
+    render_billboard_frames(&fixture, &target)!!;
+    Vec4[] blend = read_float_target(&fixture, target.targets[0])!!;
+    defer free(blend);
+    assert(math::abs(billboard_pixel(blend).x - 0.5f) <= ATLAS_BLEND_TOLERANCE);
     check_validation(&fixture.renderer);
 }

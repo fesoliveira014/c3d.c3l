@@ -490,6 +490,9 @@ fn void? record_raster_view(
                     candidate:    candidate,
                     geometry:     geometry,
                 )!;
+                gpu::GpuAddress records = candidate_instanced(candidate)
+                  ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0;
+                if (candidate.billboards) effects = billboard_atlas_address(candidate.billboards, records);
                 usz index;
                 switch (list) {
                     case GBUFFER: index = gbuffer_filled++;
@@ -531,8 +534,7 @@ fn void? record_raster_view(
                     .skin      = posed.active ? (gpu::GpuAddress)0 : resolve_candidate_skin(renderer, candidate)!,
                     .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
                     .posed     = posed,
-                    .instance_data  = candidate_instanced(candidate)
-                      ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
+                    .instance_data  = records,
                     .effects   = effects,
                     .front_face = !candidate.billboards && model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
