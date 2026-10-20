@@ -25,7 +25,7 @@ fn void test_every_particle_component_has_one_expected_serialization_policy() @t
         assert(policies == 1);
         if (slot == authoring) {
             assert(entry.described && !entry.transient && entry.codec.name == "particle_system");
-            assert(entry.codec.phase == VALUE && entry.codec.version == 5);
+            assert(entry.codec.phase == VALUE && entry.codec.version == 6);
             assert(entry.described.type.descriptor.identity == ParticleAuthoring::typeid);
         } else {
             assert(slot == runtime && entry.transient && !entry.described && !entry.codec.name.len);

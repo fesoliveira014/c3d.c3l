@@ -95,6 +95,13 @@ fn void create_fixture(Fixture* fixture, ParticleRenderMode mode, uint capacity 
             .blend = true,
         };
     }
+    desc.turbulence = {
+        .strength = 1.5f,
+        .frequency = 0.25f,
+        .octaves = 2,
+        .period = 12,
+        .scroll = { 0.5f, -1, 0.25f },
+    };
     fixture.source.attach_particle_system(fixture.root, desc)!!;
     fixture.source.get(fixture.root, ParticleSystem).emitting = false;
 }
@@ -180,10 +187,16 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(particle::ParticleAuthoringV4)!!.layout == 0xbc9869b807205e38);
     assert(serial::described_type(ParticleFlipbook)!!.version == 1);
     assert(serial::described_type(ParticleFlipbook)!!.layout == 0x3ff56ab69bece737);
-    assert(serial::described_type(ParticleSystemDesc)!!.version == 5);
-    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x9112174200c2df34);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 5);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0x35b8ed9f357f1cbe);
+    assert(serial::described_type(particle::ParticleSystemDescV5)!!.version == 5);
+    assert(serial::described_type(particle::ParticleSystemDescV5)!!.layout == 0x9112174200c2df34);
+    assert(serial::described_type(particle::ParticleAuthoringV5)!!.version == 5);
+    assert(serial::described_type(particle::ParticleAuthoringV5)!!.layout == 0x35b8ed9f357f1cbe);
+    assert(serial::described_type(ParticleTurbulence)!!.version == 1);
+    assert(serial::described_type(ParticleTurbulence)!!.layout == 0x3a1f2d4e38ebc210);
+    assert(serial::described_type(ParticleSystemDesc)!!.version == 6);
+    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x07763ae500c62112);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 6);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0x5cdb9677e6a87b8c);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("particle_system") && schema.contains("emitting"));
@@ -192,6 +205,7 @@ fn void test_serial_layout_registration() @test {
         assert(schema.contains("sub_emitters") && schema.contains("inherit_velocity") && schema.contains("max_events"));
         assert(schema.contains("collision") && schema.contains("ground_height") && schema.contains("BOUNCE"));
         assert(schema.contains("flipbook") && schema.contains("random_start") && schema.contains("OVER_LIFE"));
+        assert(schema.contains("turbulence") && schema.contains("octaves") && schema.contains("scroll"));
     };
 }
 
@@ -248,6 +262,10 @@ fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @tes
                     assert(flipbook.inset == (Vec2){ 0.001f, 0.002f } && flipbook.mode == FPS);
                     assert(flipbook.fps == 12.5f && flipbook.random_start && flipbook.blend);
                 }
+                ParticleTurbulence turbulence = system.desc.turbulence;
+                assert(turbulence.strength == 1.5f && turbulence.frequency == 0.25f);
+                assert(turbulence.octaves == 2 && turbulence.period == 12);
+                assert(turbulence.scroll == (Vec3){ 0.5f, -1, 0.25f });
                 assert(system.desc.color_over_life.values[7] == source.desc.color_over_life.values[7]);
                 assert(restored.first_child && restored.first_child.name == "authored-child");
                 assert(fixture.destination.count(BillboardBatch) == 0 && fixture.destination.count(InstancedMesh) == 0);

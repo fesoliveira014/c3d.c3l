@@ -13,6 +13,16 @@ import std::math::random;
 const uint LIFETIME_TABLE_ENTRIES = 8; // 32 bytes per scalar table; one lerp per sample
 
 <*
+ Most octaves a turbulence field can sum.
+*>
+const uint MAX_TURBULENCE_OCTAVES = 3; // each octave adds one curl evaluation per particle per step
+
+<*
+ Most lattice cells in one tile of a turbulence field.
+*>
+const uint MAX_TURBULENCE_PERIOD = 65536; // keeps the octave lattices inside the 32-bit cell index
+
+<*
  Maximum simulated duration of one update.
 *>
 const float MAX_PARTICLE_STEP_SECONDS = 0.1f; // caps hitch integration; excess wall time is dropped
@@ -188,6 +198,18 @@ struct ParticleFlipbook {
 }
 
 <*
+ Divergence-free air motion that particles follow through their drag; zero strength disables it.
+ A particle with no drag ignores it.
+*>
+struct ParticleTurbulence {
+    float strength; // metres per second of air velocity at the first octave
+    float frequency; // lattice cells per metre
+    uint octaves; // 1 to MAX_TURBULENCE_OCTAVES; each doubles the frequency and halves the strength
+    uint period; // lattice cells per tile, so the field repeats every period / frequency metres
+    Vec3 scroll; // metres per second that the pattern drifts
+}
+
+<*
  Immutable emission, simulation and draw configuration of one system.
 *>
 struct ParticleSystemDesc {
@@ -219,6 +241,7 @@ struct ParticleSystemDesc {
     uint max_events; // event queue capacity; 0 disables events
     ParticleCollision collision;
     ParticleFlipbook flipbook;
+    ParticleTurbulence turbulence;
 }
 
 <*
@@ -251,6 +274,7 @@ struct ParticleSystem {
     ParticleCollisionFn collision_cast;
     void* collision_context;
     double emit_accumulator;
+    double turbulence_time; // seconds this system has stepped; the turbulence pattern drifts with it
     Sfc32Random random;
     Entity draw_node;
     bool emitting;
@@ -515,6 +539,7 @@ fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
     }
     check_particle_collision(&desc.collision)!;
     check_particle_flipbook(&desc.flipbook, desc.render_mode)!;
+    check_particle_turbulence(&desc.turbulence)!;
 }
 
 fn void? check_particle_collision(ParticleCollision* collision) @private {
@@ -540,4 +565,17 @@ fn void? check_particle_flipbook(ParticleFlipbook* flipbook, ParticleRenderMode 
     if (flipbook.mode == FlipbookMode.FPS && !(math::is_finite(flipbook.fps) && flipbook.fps > 0)) {
         return c3d::INVALID_ARGUMENT~;
     }
+}
+
+fn void? check_particle_turbulence(ParticleTurbulence* turbulence) @private {
+    float[5] finite = {
+        turbulence.strength, turbulence.frequency, turbulence.scroll.x, turbulence.scroll.y, turbulence.scroll.z,
+    };
+    foreach (value : finite) if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
+    if (turbulence.strength < 0) return c3d::INVALID_ARGUMENT~;
+    if (turbulence.strength == 0) return;
+
+    if (turbulence.frequency <= 0) return c3d::INVALID_ARGUMENT~;
+    if (!turbulence.octaves || turbulence.octaves > MAX_TURBULENCE_OCTAVES) return c3d::INVALID_ARGUMENT~;
+    if (!turbulence.period || turbulence.period > MAX_TURBULENCE_PERIOD) return c3d::INVALID_ARGUMENT~;
 }
