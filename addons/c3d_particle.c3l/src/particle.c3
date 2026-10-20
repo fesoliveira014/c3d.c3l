@@ -22,9 +22,13 @@ const float MAX_PARTICLE_STEP_SECONDS = 0.1f; // caps hitch integration; excess 
 *>
 const Vec3 PARTICLE_GRAVITY = { 0, -9.81f, 0 };
 
-const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 56 KiB pool for a small effect; draw arrays are additional
+<*
+ Sub-emitters one system can carry.
+*>
+const uint MAX_SUB_EMITTERS = 4; // each adds one trigger test per raised event
+
+const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 64 KiB pool for a small effect; draw arrays are additional
 const usz PARTICLE_FLOAT_STREAMS @private = 5;
-const uint SEED_BYTE_BITS @private = 8;
 
 <*
  Volume and direction distribution of new particles.
@@ -54,6 +58,24 @@ enum ParticleSaturation {
 }
 
 <*
+ Occurrence in a particle's life that a sub-emitter reacts to.
+*>
+enum ParticleTrigger {
+    DEATH,
+    IMPACT,
+    BIRTH,
+}
+
+<*
+ Reason a particle left its pool.
+*>
+enum ParticleEventCause {
+    EXPIRED,
+    EVICTED,
+    IMPACT,
+}
+
+<*
  Closed interval for an emitted scalar value.
 *>
 struct ParticleRange {
@@ -73,6 +95,29 @@ struct LifetimeTable {
 *>
 struct LifetimeColorTable {
     Vec4[LIFETIME_TABLE_ENTRIES] values;
+}
+
+<*
+ Another system that emits where this system's particles are born, die or hit.
+*>
+struct SubEmitter {
+    ParticleTrigger trigger;
+    Entity target; // another particle system's node, inside the same exported subtree when serialized
+    uint count; // particles per event
+    float inherit_velocity; // share of the parent particle's velocity added to each child, [0, 1]
+    bool on_evict; // DEATH also fires for evicted particles; off bounds cascades
+}
+
+<*
+ Queued occurrence that the sub-emitters of a system react to.
+*>
+struct ParticleEvent {
+    ParticleTrigger trigger;
+    ParticleEventCause cause; // read only for DEATH
+    uint parent_seed;
+    ulong index; // position in the system's event sequence; distinguishes repeated events of one particle
+    Vec3 position;
+    Vec3 velocity;
 }
 
 <*
@@ -102,6 +147,9 @@ struct ParticleSystemDesc {
     float gravity_scale;
     float drag;
     float stretch;
+    SubEmitter[MAX_SUB_EMITTERS] sub_emitters;
+    uint sub_emitter_count;
+    uint max_events; // event queue capacity; 0 disables events
 }
 
 <*
@@ -123,6 +171,12 @@ struct ParticleSystem {
     ulong next_spawn;
     ulong dropped;
     ulong evicted;
+    ParticleEvent[] events;
+    uint event_count;
+    uint event_due; // events raised by this system's last step; later entries wait for the next update
+    ulong next_event;
+    ulong dropped_events; // events lost to a full queue
+    ulong skipped_events; // sub-emitter deliveries whose target is dead, not a particle system or not prepared
     double emit_accumulator;
     Sfc32Random random;
     Entity draw_node;
@@ -190,23 +244,22 @@ fn void? prepare(Scene* scene, Node* emitter) {
     if (system.is_prepared()) return;
     ParticleSystemDesc desc = system.desc;
     check_particle_desc(&desc)!;
-    void*? block = alloc::malloc_try(scene.allocator, (sz)particle_pool_bytes(desc.capacity));
+    void*? block = alloc::malloc_try(scene.allocator, (sz)particle_pool_bytes(desc.capacity, desc.max_events));
     if (catch block) return c3d::CAPACITY_EXCEEDED~;
     system.block = block;
     defer catch alloc::free(scene.allocator, system.block);
     usz cursor;
-    system.position = @carve_stream(Vec3, &system, &cursor);
-    system.velocity = @carve_stream(Vec3, &system, &cursor);
-    system.age = @carve_stream(float, &system, &cursor);
-    system.lifetime = @carve_stream(float, &system, &cursor);
-    system.size = @carve_stream(float, &system, &cursor);
-    system.rotation = @carve_stream(float, &system, &cursor);
-    system.spin = @carve_stream(float, &system, &cursor);
-    system.seed = @carve_stream(uint, &system, &cursor);
-    system.spawn = @carve_stream(ulong, &system, &cursor);
-    char[uint::size] seed_bytes;
-    foreach (index, &value : seed_bytes) *value = (char)(desc.seed >> (index * SEED_BYTE_BITS));
-    system.random.set_seed(seed_bytes[..]);
+    system.position = @carve_stream(Vec3, &system, &cursor, desc.capacity);
+    system.velocity = @carve_stream(Vec3, &system, &cursor, desc.capacity);
+    system.age = @carve_stream(float, &system, &cursor, desc.capacity);
+    system.lifetime = @carve_stream(float, &system, &cursor, desc.capacity);
+    system.size = @carve_stream(float, &system, &cursor, desc.capacity);
+    system.rotation = @carve_stream(float, &system, &cursor, desc.capacity);
+    system.spin = @carve_stream(float, &system, &cursor, desc.capacity);
+    system.seed = @carve_stream(uint, &system, &cursor, desc.capacity);
+    system.spawn = @carve_stream(ulong, &system, &cursor, desc.capacity);
+    system.events = @carve_stream(ParticleEvent, &system, &cursor, desc.max_events);
+    seed_random(&system.random, desc.seed);
     Node* child;
     if (desc.render_mode == ParticleRenderMode.MESH) {
         child = scene.add_instanced_mesh(
@@ -266,6 +319,7 @@ fn void Scene.shift_particles(&self, Vec3 offset) {
     self.@each(ParticleSystem; entity, system) {
         if (system.is_prepared()) {
             for (uint index = 0; index < system.alive; index++) system.position[index] -= offset;
+            for (uint index = 0; index < system.event_count; index++) system.events[index].position -= offset;
             self.node(system.draw_node).local = maths::TRANSFORM_IDENTITY;
         }
     };
@@ -308,19 +362,20 @@ fn usz particle_align(usz cursor, usz alignment) @private {
     return (cursor + alignment - 1) & ~(alignment - 1);
 }
 
-fn usz particle_pool_bytes(uint capacity) @private {
+fn usz particle_pool_bytes(uint capacity, uint max_events) @private {
     usz cursor = (usz)capacity * Vec3::size;
     cursor = particle_align(cursor, Vec3::alignment) + (usz)capacity * Vec3::size;
     cursor = particle_align(cursor, float::alignment) + (usz)capacity * PARTICLE_FLOAT_STREAMS * float::size;
     cursor = particle_align(cursor, uint::alignment) + (usz)capacity * uint::size;
-    return particle_align(cursor, ulong::alignment) + (usz)capacity * ulong::size;
+    cursor = particle_align(cursor, ulong::alignment) + (usz)capacity * ulong::size;
+    return particle_align(cursor, ParticleEvent::alignment) + (usz)max_events * ParticleEvent::size;
 }
 
-macro @carve_stream($Type, ParticleSystem* system, usz* cursor) @private {
+macro @carve_stream($Type, ParticleSystem* system, usz* cursor, usz count) @private {
     $assert $Type::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
     usz offset = particle_align(*cursor, $Type::alignment);
-    *cursor = offset + (usz)system.desc.capacity * $Type::size;
-    return (($Type*)((char*)system.block + offset))[:system.desc.capacity];
+    *cursor = offset + count * $Type::size;
+    return (($Type*)((char*)system.block + offset))[:count];
 }
 
 fn void free_particle_system(Entity entity, void* component, void* user) @private {
@@ -339,7 +394,9 @@ fn bool valid_particle_color(Vec4 color) @private {
 }
 
 fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
-    if (!desc.capacity || particle_pool_bytes(desc.capacity) > (usz)sz::max) return c3d::INVALID_ARGUMENT~;
+    if (!desc.capacity || particle_pool_bytes(desc.capacity, desc.max_events) > (usz)sz::max) {
+        return c3d::INVALID_ARGUMENT~;
+    }
     ParticleRange[5] ranges = { desc.lifetime, desc.speed, desc.size, desc.rotation, desc.spin };
     foreach (range : ranges) if (!valid_particle_range(range)) return c3d::INVALID_ARGUMENT~;
     if (desc.lifetime.min <= 0 || desc.speed.min < 0 || desc.size.min < 0) return c3d::INVALID_ARGUMENT~;
@@ -357,5 +414,12 @@ fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
     }
     foreach (color : desc.color_over_life.values) {
         if (!valid_particle_color(color)) return c3d::INVALID_ARGUMENT~;
+    }
+    if (desc.sub_emitter_count > MAX_SUB_EMITTERS || (desc.sub_emitter_count && !desc.max_events)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    foreach (sub_emitter : desc.sub_emitters[:desc.sub_emitter_count]) {
+        float share = sub_emitter.inherit_velocity;
+        if (!math::is_finite(share) || share < 0 || share > 1) return c3d::INVALID_ARGUMENT~;
     }
 }
