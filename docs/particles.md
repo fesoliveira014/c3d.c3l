@@ -165,10 +165,12 @@ The pool splits into blocks of 1,024 particles, and each fork runs one block per
 
 Collision raises events in visit order, so a callback or a sub-emitter keeps collision serial. Publication counts the
 particles each block draws, prefixes the counts serially, then writes each block into its own range of the draw
-array, which keeps the compaction and order of a serial pass. Expiry, admission, emission, events, sub-emitter
-deliveries and trail publication stay serial, as does everything outside `update`. A range reads and writes only
-its own blocks, so every hook, partition and range order produces the same pools, counters and draw arrays byte for byte. The
-hook must return only after every range has finished, and the data it hands to each range lives until it returns.
+array, which keeps the compaction and order of a serial pass. A zero hook, or a pool of one block, runs every block in
+one call and in order, so publication skips the counting and carries the draw slot from block to block. Expiry,
+admission, emission, events, sub-emitter deliveries and trail publication stay serial, as does everything outside
+`update`. A range reads and writes only its own blocks, so every hook, partition and range order produces the same
+pools, counters and draw arrays byte for byte. The hook must return only after every range has finished, and the data
+it hands to each range lives until it returns.
 
 ## Saturation
 

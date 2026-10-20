@@ -6,14 +6,21 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
+struct DrawSlots @private {
+    bool carried; // one call visits every block in order, so the next slot carries across blocks
+    uint total; // draws written
+}
+
 struct BillboardJob @private {
     ParticleSystem* system;
     BillboardBatch* batch;
+    DrawSlots slots;
 }
 
 struct MeshJob @private {
     ParticleSystem* system;
     InstancedMesh* batch;
+    DrawSlots slots;
 }
 
 <*
@@ -106,8 +113,7 @@ fn void publish_billboards(
     ParallelFor parallel,
 ) @private {
     BillboardBatch* batch = scene.get(node, BillboardBatch);
-    BillboardJob job = { .system = system, .batch = batch };
-    uint written = assign_draw_slots(system, parallel);
+    BillboardJob job = { .system = system, .batch = batch, .slots = assign_draw_slots(system, parallel) };
 
     run_blocks(
         parallel: parallel,
@@ -116,8 +122,8 @@ fn void publish_billboards(
         blocks: block_count(system.alive),
     );
 
-    bool changed = written || batch.count;
-    batch.count = written;
+    bool changed = job.slots.total || batch.count;
+    batch.count = job.slots.total;
     if (changed) scene.mark_billboards_dirty(node);
 }
 
@@ -128,8 +134,7 @@ fn void publish_meshes(
     ParallelFor parallel,
 ) @private {
     InstancedMesh* batch = scene.get(node, InstancedMesh);
-    MeshJob job = { .system = system, .batch = batch };
-    uint written = assign_draw_slots(system, parallel);
+    MeshJob job = { .system = system, .batch = batch, .slots = assign_draw_slots(system, parallel) };
 
     run_blocks(
         parallel: parallel,
@@ -138,8 +143,8 @@ fn void publish_meshes(
         blocks: block_count(system.alive),
     );
 
-    bool changed = written || batch.count;
-    batch.count = written;
+    bool changed = job.slots.total || batch.count;
+    batch.count = job.slots.total;
     if (changed) scene.mark_instances_dirty(node);
 }
 
@@ -147,8 +152,10 @@ fn float draw_extent(ParticleSystem* system, uint index, float life) @private {
     return system.size[index] * system.desc.size_over_life.sample(life);
 }
 
-fn uint assign_draw_slots(ParticleSystem* system, ParallelFor parallel) @private {
+fn DrawSlots assign_draw_slots(ParticleSystem* system, ParallelFor parallel) @private {
     uint blocks = block_count(system.alive);
+    if (blocks_run_in_order(parallel, blocks)) return { .carried = true };
+
     run_blocks(
         parallel: parallel,
         range: &count_drawn_blocks,
@@ -162,7 +169,7 @@ fn uint assign_draw_slots(ParticleSystem* system, ParallelFor parallel) @private
         *offset = total;
         total += drawn;
     }
-    return total;
+    return { .total = total };
 }
 
 fn void count_drawn_blocks(void* data, uint first, uint count) @private {
@@ -184,9 +191,11 @@ fn void write_billboard_blocks(void* data, uint first, uint count) @private {
     BillboardBatch* batch = job.batch;
     ParticleFlipbook* flipbook = &system.desc.flipbook;
     bool stretched = system.desc.render_mode == ParticleRenderMode.STRETCHED;
+    uint written;
     for (uint block = first; block < first + count; block++) {
         ParticleSpan span = particle_span(system.alive, block);
-        uint written = system.block_offsets[block];
+        if (!job.slots.carried) written = system.block_offsets[block];
+
         for (uint index = span.begin; index < span.end; index++) {
             float life = system.age[index] / system.lifetime[index];
             float width = draw_extent(system, index, life);
@@ -220,15 +229,18 @@ fn void write_billboard_blocks(void* data, uint first, uint count) @private {
             };
         }
     }
+    if (job.slots.carried) job.slots.total = written;
 }
 
 fn void write_mesh_blocks(void* data, uint first, uint count) @private {
     MeshJob* job = data;
     ParticleSystem* system = job.system;
     InstancedMesh* batch = job.batch;
+    uint written;
     for (uint block = first; block < first + count; block++) {
         ParticleSpan span = particle_span(system.alive, block);
-        uint written = system.block_offsets[block];
+        if (!job.slots.carried) written = system.block_offsets[block];
+
         for (uint index = span.begin; index < span.end; index++) {
             float life = system.age[index] / system.lifetime[index];
             float size = draw_extent(system, index, life);
@@ -242,6 +254,7 @@ fn void write_mesh_blocks(void* data, uint first, uint count) @private {
             batch.colors[written++] = particle_color(system, index, life);
         }
     }
+    if (job.slots.carried) job.slots.total = written;
 }
 
 fn bool draw_has_owner(Scene* scene, Entity child, ParticleDrawOwner* owner) @private {

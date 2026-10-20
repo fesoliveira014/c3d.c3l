@@ -17,14 +17,18 @@ fn ParticleSpan particle_span(uint alive, uint block) @private {
     return { .begin = (uint)begin, .end = (uint)math::min(begin + PARTICLE_BLOCK, (ulong)alive) };
 }
 
-// A single block has nothing to split, so it skips the fork's synchronization.
+// A single block has nothing to split, and a zero hook runs every block in one call, in order.
+fn bool blocks_run_in_order(ParallelFor parallel, uint blocks) @private {
+    return blocks <= 1 || !parallel.run;
+}
+
 fn void run_blocks(
     ParallelFor parallel,
     ParallelRangeFn range,
     void* data,
     uint blocks,
 ) @private {
-    if (blocks <= 1) {
+    if (blocks_run_in_order(parallel, blocks)) {
         range(data, 0, blocks);
         return;
     }
