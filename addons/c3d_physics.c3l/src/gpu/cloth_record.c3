@@ -185,7 +185,7 @@ fn void? record_batch(GpuCloths* cloths, Renderer* renderer) @private {
     StepBatch* batch = &cloths.batch;
     usz count = batch.count;
     batch.count = 0;
-    if (!count) return;
+    if (!count || !renderer.frame_open) return; // an earlier fault closed the frame and took the batch with it
 
     BufferId[2] state_writes = { cloths.positions, cloths.work };
     renderer.dispatch({

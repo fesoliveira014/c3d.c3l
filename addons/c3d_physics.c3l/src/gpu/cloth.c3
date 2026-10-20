@@ -120,6 +120,7 @@ fn void destroy_gpu_cloths(GpuCloths* cloths, Renderer* renderer) {
 <*
  Record the due steps of every prepared GPU cloth.
  An aborted frame is replayed; one followed by FRAMES_IN_FLIGHT frames without an update counts as applied.
+ A fault that closes the frame ends the update and is returned.
  @param [&inout] cloths : "Retires the ranges of cloths it no longer sees."
  @param [&inout] renderer : "Frame open, with no dispatch recorded yet."
  @param [&inout] assets : "Holds the output geometry of every cloth."
@@ -159,6 +160,7 @@ fn void? update(GpuCloths* cloths, Renderer* renderer, AssetStore* assets, Scene
         if (!failure) failure = upload_failure;
     } else {
         foreach (&slot : cloths.slots) {
+            if (!renderer.frame_open) break; // a dispatch fault closed the frame; the first fault is returned below
             if (!slot.cloth.generation || slot.stamp != cloths.stamp) continue;
 
             if (catch excuse = step_cloth(
