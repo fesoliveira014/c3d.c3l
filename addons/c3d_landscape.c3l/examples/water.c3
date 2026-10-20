@@ -222,6 +222,8 @@ struct TileTerm @local {
     float phase;
 }
 
+float debug_ripple_scale @local = 1; // measurement: multiplies the ripple map's periods per metre
+
 struct Options @local {
     bool        benchmark;
     bool        split;
@@ -245,6 +247,16 @@ struct Options @local {
     bool        dive;
     bool        simulated;  // bodies simulate their surface; ripples come from the R key, a shot or the benchmark
     bool        spectral;   // bodies draw a spectrum the GPU evolves; the wind sets it
+    bool        debug_one_wave;
+    bool        debug_no_floor;
+    bool        debug_ratio_floor;
+    bool        debug_keep_floor;
+    bool        debug_taa;
+    bool        debug_print_waves;
+    float       debug_cell_scale;
+    float       debug_roughness;
+    float       debug_ripple_scale;
+    uint        debug_frames;
     float       ripple_age; // seconds a shot lets its ripple spread
     float       dive_at;    // share of the descent a shot stands at; negative follows the clock
     float       wind_speed;
@@ -418,7 +430,7 @@ fn MaterialId? add_ripples(AssetStore* assets) @local {
     StandardParams params = material::STANDARD_PARAMS_DEFAULT;
     params.normal_map = material::texture_slot(
         texture:   normal_map,
-        transform: { .scale = { RIPPLE_UV_SCALE, RIPPLE_UV_SCALE } },
+        transform: { .scale = { RIPPLE_UV_SCALE * debug_ripple_scale, RIPPLE_UV_SCALE * debug_ripple_scale } },
     );
     return assets.add_material(material::standard(params), "water/ripple_material");
 }
@@ -660,6 +672,11 @@ fn void? add_body(
         desc.reflection_distortion = POND_DISTORTION;
         desc.refraction_strength = POND_REFRACTION;
     }
+    if (demo.options.debug_cell_scale > 0) {
+        desc.cell_size *= demo.options.debug_cell_scale;
+        if (demo.options.ocean) desc.extent *= demo.options.debug_cell_scale; // keeps the chunk count within its limit
+    }
+    if (demo.options.debug_roughness > 0) desc.roughness = demo.options.debug_roughness;
     desc.ripples = demo.options.ripples ? demo.ripples : (MaterialId){};
     desc.foam = demo.foam;
     desc.march_reflections = demo.options.reflection != Reflection.ENV;
@@ -859,6 +876,27 @@ fn void? apply_sea_state(Demo* demo, Vec3 wind, float transition_seconds) @local
             transition_seconds: transition_seconds,
         )!;
         body.desc = demo.scene.get(body.node, Water).desc;
+        if (demo.options.debug_print_waves) {
+            io::eprintfn(
+                "waves: cell_size %.4f extent %.1f roughness %.3f count %d",
+                body.desc.cell_size,
+                body.desc.extent,
+                body.desc.roughness,
+                (int)body.desc.wave_count,
+            );
+            foreach (index, &wave : body.desc.waves[:body.desc.wave_count]) {
+                io::eprintfn(
+                    "  wave %d: amplitude %.5f wavelength %.4f cells %.3f direction %.3f,%.3f steepness %.4f",
+                    (int)index,
+                    wave.amplitude,
+                    wave.wavelength,
+                    wave.wavelength / body.desc.cell_size,
+                    wave.direction.x,
+                    wave.direction.y,
+                    wave.steepness,
+                );
+            }
+        }
     }
 }
 
@@ -1373,6 +1411,16 @@ fn Options? parse_options(String[] args) @local {
             case "--ripple-age":
                 options.ripple_age = option_value(args, &index)!.to_float()!;
                 if (!(options.ripple_age >= 0 && options.ripple_age <= MAX_RIPPLE_AGE)) return c3d::INVALID_ARGUMENT~;
+            case "--debug-one-wave": options.debug_one_wave = true;
+            case "--debug-no-floor": options.debug_no_floor = true;
+            case "--debug-ratio-floor": options.debug_ratio_floor = true;
+            case "--debug-keep-floor": options.debug_keep_floor = true;
+            case "--debug-taa": options.debug_taa = true;
+            case "--debug-print-waves": options.debug_print_waves = true;
+            case "--debug-cell-scale": options.debug_cell_scale = option_value(args, &index)!.to_float()!;
+            case "--debug-roughness": options.debug_roughness = option_value(args, &index)!.to_float()!;
+            case "--debug-ripple-scale": options.debug_ripple_scale = option_value(args, &index)!.to_float()!;
+            case "--debug-frames": options.debug_frames = option_value(args, &index)!.to_uint()!;
             case "--sea-state": options.sea_state = true;
             case "--ocean": options.ocean = true;
             case "--dive":
@@ -2324,7 +2372,7 @@ fn void? run_shot(Options options) @local {
         desc:     render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM),
     )!;
     ViewDesc view_desc = main_view_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options);
-    view_desc.post.anti_aliasing = AntiAliasing.NONE;
+    if (!options.debug_taa) view_desc.post.anti_aliasing = AntiAliasing.NONE;
     ViewId main_view = render::create_view(renderer: &renderer, desc: view_desc)!;
     Scene scene = create_demo_scene(options);
     defer scene::destroy_scene(&scene);
@@ -2375,7 +2423,8 @@ fn void? run_shot(Options options) @local {
     renderer.prepare_scene(&scene)!;
 
     uint lead_frames = (uint)math::round(options.ripple_age / TIME_STEP);
-    for (uint frame = 0; frame < lead_frames + SHOT_FRAMES; frame++) {
+    uint shot_frames = options.debug_frames ? options.debug_frames : SHOT_FRAMES;
+    for (uint frame = 0; frame < lead_frames + shot_frames; frame++) {
         step_scene(
             demo:     &demo,
             renderer: &renderer,
@@ -2426,6 +2475,14 @@ fn int main(String[] args) {
         return 1;
     }
     Options options = parsed;
+    if (options.debug_ripple_scale > 0) debug_ripple_scale = options.debug_ripple_scale;
+    water::sea_debug = {
+        .one_wave        = options.debug_one_wave,
+        .no_floor        = options.debug_no_floor,
+        .ratio_floor     = options.debug_ratio_floor,
+        .floor_cell_size = options.debug_keep_floor ? water::default_water_desc().cell_size : 0,
+        .fetch_scale     = options.ocean && options.debug_cell_scale > 0 ? 1 / options.debug_cell_scale : 0,
+    };
     if (options.shot.len) {
         if (catch excuse = run_shot(options)) {
             io::eprintfn("water shot failed: %s", excuse);

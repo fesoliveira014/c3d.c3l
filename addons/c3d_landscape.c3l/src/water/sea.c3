@@ -18,6 +18,17 @@ const float SEA_CHOP @private = 2; // crest shift over amplitude, as the default
 const float SEA_STEEPNESS_LIMIT @private = 0.9f; // below the cusp at 1, so the mean stays valid at any fetch
 const float SEA_SHORTEST_WAVELENGTH @private = 1; // metres: application geometry carries no cell size to bound it
 
+// Measurement switches for the example's debug options; never on main.
+struct SeaDebug {
+    bool  one_wave;        // the peak band only
+    bool  no_floor;        // the bands keep their shares, below the floor too
+    bool  ratio_floor;     // the whole table lifts until the shortest band reaches the floor
+    float floor_cell_size; // metres: the floor counts cells of this size instead of the body's; zero keeps the body's
+    float fetch_scale;     // multiplies the fetch; zero keeps it
+}
+
+SeaDebug sea_debug;
+
 <*
  Where a sea-state blend stands between set_sea_state and its last upload.
 *>
@@ -180,20 +191,28 @@ fn Wave[MAX_WAVES] sea_waves(
     float horizontal_scale = maths::transform_dir(world, { direction.x, 0, direction.y }).length();
     float vertical_scale = maths::transform_dir(world, { 0, 1, 0 }).length();
     float speed = min(wind_velocity.length(), SEA_WIND_LIMIT);
+    float floor_cell_size = sea_debug.floor_cell_size > 0 ? sea_debug.floor_cell_size : desc.cell_size;
     float shortest = SEA_SHORTEST_WAVELENGTH;
     if (desc.mode == WaterMode.OCEAN) {
-        shortest = max(shortest, FADE_FULL_CELLS * desc.cell_size);
+        shortest = max(shortest, FADE_FULL_CELLS * floor_cell_size);
     } else if (!desc.geometry.generation) {
-        shortest = max(shortest, NYQUIST_CELLS * desc.cell_size);
+        shortest = max(shortest, NYQUIST_CELLS * floor_cell_size);
     }
 
     float significant_height;
     float peak_wavelength;
     if (speed > 0) {
         float fetch = fetch_length(rest_min, rest_max, direction) * horizontal_scale;
+        if (sea_debug.fetch_scale > 0) fetch *= sea_debug.fetch_scale;
         SeaScales scales = sea_scales(speed, fetch);
         significant_height = scales.significant_height;
         peak_wavelength = SEA_GRAVITY * scales.peak_period * scales.peak_period / (2 * (float)math::PI);
+    }
+
+    float lift = 1;
+    if (sea_debug.ratio_floor && peak_wavelength > 0) {
+        float shortest_band = SEA_BANDS[MAX_WAVES - 1].wavelength_share * peak_wavelength / horizontal_scale;
+        lift = max(1.0f, shortest / shortest_band);
     }
 
     Wave[MAX_WAVES] waves;
@@ -201,7 +220,9 @@ fn Wave[MAX_WAVES] sea_waves(
         SeaBand band = SEA_BANDS[index];
         float angle = heading + math::deg_to_rad(band.spread_degrees);
         wave.amplitude = band.amplitude_share * significant_height / vertical_scale;
-        wave.wavelength = max(band.wavelength_share * peak_wavelength / horizontal_scale, shortest);
+        if (sea_debug.one_wave && index > 0) wave.amplitude = 0;
+        wave.wavelength = band.wavelength_share * peak_wavelength * lift / horizontal_scale;
+        if (!sea_debug.no_floor && !sea_debug.ratio_floor) wave.wavelength = max(wave.wavelength, shortest);
         wave.speed = math::sqrt(SEA_GRAVITY * wave.wavelength / (2 * (float)math::PI * horizontal_scale));
         wave.direction = { math::cos(angle), math::sin(angle) };
         wave.steepness = SEA_CHOP * 2 * (float)math::PI * MAX_WAVES * wave.amplitude / wave.wavelength;
