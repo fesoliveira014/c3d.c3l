@@ -17,6 +17,8 @@ const uint DEFAULT_CONTACT_CANDIDATES = 8192;
 const uint DEFAULT_CONTACTS = 4096;
 <* Distance advances allowed for one candidate path. *>
 const uint DEFAULT_CCD_ITERATIONS = 64;
+const float MAX_CONTACT_PUSH_FRACTION @private = 0.25f; // of the shortest edge between resets; more can fold a hinge
+const uint MAX_START_CONTACT_ROUNDS @private = 64; // rounds of fresh push bounds a starting penetration may need
 
 <* Stage of the last contact failure. *>
 enum ClothContactStage : uint {
@@ -136,6 +138,28 @@ fn ContactProjection? evaluate_contact(
     }
 }
 
+fn void reset_contact_push(ClothState* state) @private {
+    state.push_totals[..] = (Vec3){};
+    state.push_bounded[..] = false;
+}
+
+fn Vec3 bounded_correction(ClothState* state, uint particle, Vec3 position, Vec3 target) @local {
+    uint base = state.particle_bases.len ? state.particle_bases[particle] : particle;
+    float limit = state.push_limits[base];
+    Vec3 total = state.push_totals[particle] + (target - position);
+    float length = total.length();
+    if (!(length > limit)) {
+        state.push_totals[particle] = total;
+        return target;
+    }
+
+    total *= limit / length;
+    Vec3 bounded = position + (total - state.push_totals[particle]);
+    state.push_totals[particle] = total;
+    state.push_bounded[particle] = true;
+    return bounded;
+}
+
 fn usz? contact_pass(
     PhysicsWorld* world,
     ClothState* state,
@@ -186,6 +210,8 @@ fn usz? contact_pass(
         if (projection.residual <= state.desc.collisions.contact_tolerance) continue;
 
         result.unresolved++;
+        if (state.push_bounded[candidate.particle]) continue;
+
         if (count == state.contacts.len) return c3d::CAPACITY_EXCEEDED~;
         state.contacts[count++] = {
             .candidate = (uint)index,
@@ -203,11 +229,22 @@ fn usz? contact_pass(
             continue;
         }
         Vec3* position = &positions[candidate.particle];
-        if (*position == contact.original) {
-            *position = contact.corrected;
-        } else {
-            *position = evaluate_contact(world: world, state: state, candidate: candidate, position: *position, correct: true)!.corrected;
+        Vec3 target = contact.corrected;
+        if (*position != contact.original) {
+            target = evaluate_contact(
+                world:     world,
+                state:     state,
+                candidate: candidate,
+                position:  *position,
+                correct:   true,
+            )!.corrected;
         }
+        *position = bounded_correction(
+            state:    state,
+            particle: candidate.particle,
+            position: *position,
+            target:   target,
+        );
     }
     if (count) {
         filter_displacement(
@@ -227,6 +264,30 @@ fn void? resolve_contacts(PhysicsWorld* world, ClothState* state, Vec3[] positio
         if (contact_pass(world: world, state: state, positions: positions, apply: true)! == 0) return;
     }
     if (contact_pass(world: world, state: state, positions: positions, apply: false)! == 0) return;
+    state.contact_result.stage = ClothContactStage.RESOLVE;
+    return CONTACT_UNRESOLVED~;
+}
+
+fn void? resolve_start_contacts(PhysicsWorld* world, ClothState* state) @private {
+    if (state.desc.collisions.continuous) {
+        state.sweep_start[..] = state.positions[..];
+        prepare_body_motions(state, false)!;
+    }
+    filter_displacement(
+        world:    world,
+        state:    state,
+        start:    state.positions,
+        proposed: state.positions,
+        begin:    0,
+        end:      1,
+    )!;
+    place_shapes(state, 1)!;
+
+    for (uint round = 0; round < MAX_START_CONTACT_ROUNDS; round++) {
+        reset_contact_push(state);
+        resolve_contacts(world, state, state.positions)!;
+        if (state.contact_result.unresolved == 0) return reseed_hinge_angles(state);
+    }
     state.contact_result.stage = ClothContactStage.RESOLVE;
     return CONTACT_UNRESOLVED~;
 }
