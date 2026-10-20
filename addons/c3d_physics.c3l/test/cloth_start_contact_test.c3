@@ -21,6 +21,8 @@ const float ARM_BONE_HALF_LENGTH @private = 0.3f;
 const float ARM_BONE_TILT_RADIANS @private = 0.35f; // from vertical, towards the cape plane
 const float ARM_BONE_DEPTH_BEHIND_CAPE @private = 0.03f;
 const uint START_CONTACT_UPDATES @private = 20;
+const float SKINNED_BALL_RADIUS @private = 1.2f; // metres; deeper than one push bound from every corner of the unit quad
+const float SKINNED_BALL_DEPTH @private = 0.3f; // metres behind the quad, so the push also bends it
 
 fn Geometry cape_grid(Allocator allocator) @private {
     uint side = CAPE_COLUMNS + 1;
@@ -97,4 +99,52 @@ fn void test_cloth_starting_in_contact_recovers() @test {
     for (uint vertex = 0; vertex < (CAPE_COLUMNS + 1) * (CAPE_ROWS + 1); vertex++) {
         assert(segment_distance(published_world(&fixture, node, vertex), start, end) >= expanded - CONTACT_TOLERANCE);
     }
+}
+
+fn void test_skinned_cloth_starting_in_contact_prepares_clear() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+
+    GeometryId source = add_skinned_quad(&fixture);
+    SkeletonId skeleton = add_two_joint_skeleton(&fixture);
+    Node* root_joint = fixture.scene.add_node(name: "root_joint")!!;
+    Node* tip_joint = fixture.scene.add_node(root_joint, "tip_joint")!!;
+    Node* owner = add_cloth_node(&fixture, source);
+    Node*[] joints = alloc::new_array(mem, Node*, 2);
+    joints[0] = root_joint;
+    joints[1] = tip_joint;
+    fixture.scene.add(owner, (SkinBinding){ .skeleton = skeleton, .joints = joints });
+    fixture.scene.update_world();
+
+    Vec3 centre = { 0.5f, -0.5f, -SKINNED_BALL_DEPTH };
+    ColliderDesc ball = sphere(SKINNED_BALL_RADIUS, centre);
+    Node* body = add_body_node(&fixture, (&ball)[:1], kind: STATIC);
+    Entity[1] colliders = { body.id };
+    ClothDesc desc = cloth::default_cloth_desc();
+    desc.bend_mode = DIHEDRAL;
+    desc.colliders = colliders[..];
+    fixture.scene.attach_cloth(&fixture.assets, owner, desc)!!;
+    fixture.physics.update(0);
+    cloth::prepare(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   owner,
+        world:  &fixture.physics,
+    )!!;
+
+    ClothState* state = fixture.scene.get(owner, Cloth).state;
+    float reach = SKINNED_BALL_RADIUS + desc.thickness;
+    foreach (position : state.positions) assert((position - centre).length() >= reach - CONTACT_TOLERANCE);
+
+    ClothHinge* hinge = &state.hinges[0];
+    Vec3[4] points = {
+        state.positions[hinge.p0],
+        state.positions[hinge.p1],
+        state.positions[hinge.p2],
+        state.positions[hinge.p3],
+    };
+    assert(math::abs(cloth::evaluate_hinge_angle(points)!! - hinge.last_angle) <= POSITION_TOLERANCE);
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(!state.contact_result.failure);
 }

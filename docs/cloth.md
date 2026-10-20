@@ -277,6 +277,14 @@ Contact is therefore soft against constraints that pull a particle back by more 
 substep. A taut pinned cloth cut by a surface it cannot clear stays partly inside it, and
 the publication shows it at most one bound out of the surface.
 
+Cloth that publishes during preparation (skinned cloth and `CrowdCloth`) resolves a
+starting penetration first: it repeats the bounded push, one fresh bound per round and up to 64
+rounds, with no structural passes between rounds. It then recomputes each hinge's tracked
+angle from the resolved positions, so the first update starts clear and its certification
+begins from angles that match. A penetration that outlasts the rounds fails preparation with
+`CONTACT_UNRESOLVED`. Ordinary cloth prepares without a world, publishes nothing
+at preparation and clears a starting penetration over its first updates.
+
 ## Self-contact and seams
 
 ```c3
@@ -366,7 +374,7 @@ unvisited work as checked.
 | Fault | Meaning |
 | --- | --- |
 | `c3d::CAPACITY_EXCEEDED` | Binding, candidate or contact storage is full; `stage` identifies the buffer. |
-| `cloth::CONTACT_UNRESOLVED` | A contact within its push bound stayed unresolved after the final passes. |
+| `cloth::CONTACT_UNRESOLVED` | A contact within its push bound stayed unresolved after the final passes, or a starting penetration outlasted its rounds. |
 | `cloth::CONTACT_NONCONVERGENT` | A CCD advance stalled or exhausted its iteration bound. |
 | `cloth::CONTACT_PRECISION_EXCEEDED` | Arithmetic, correction or float publication cannot establish the configured tolerance. |
 | `cloth::BEND_UNRESOLVED` | A dihedral hinge collapsed, became non-finite, or turned half a revolution within one substep. |

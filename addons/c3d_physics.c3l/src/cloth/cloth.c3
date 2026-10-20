@@ -435,6 +435,7 @@ fn void? initial_cloth_publication(
     state.contact_result.stage = ClothContactStage.BINDINGS;
     sample_bodies(world.scene, state);
 
+    resolve_start_contacts(world, state)!;
     prepare_publication(world, state, false)!;
 
     state.contact_result.stage = ClothContactStage.PUBLICATION;
