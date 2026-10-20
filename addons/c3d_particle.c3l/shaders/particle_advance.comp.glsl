@@ -211,7 +211,7 @@ void main() {
         control.pool_count = pool;
         control.dropped_low = uaddCarry(control.dropped_low, root.requested - emitted, carry);
         control.dropped_high += carry;
-        control.evicted_low = uaddCarry(control.evicted_low, control.live_total - survivors, carry);
+        control.evicted_low = uaddCarry(control.evicted_low, particle_evicted(root, control), carry);
         control.evicted_high += carry;
         control.spawn_low = uaddCarry(control.spawn_low, emitted + control.delivered, carry);
         control.spawn_high += carry;
