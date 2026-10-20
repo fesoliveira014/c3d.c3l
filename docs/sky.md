@@ -397,9 +397,34 @@ box ranges are never read from it. Inside the boxes:
 **Clip planes.** In a view with a clip plane the box spans start at the plane's crossing, so the medium applies only on
 the kept side and the segment before the plane gets neither medium nor air, as for the fog.
 
+**Sun on surfaces.** A surface inside a box takes the sun through the medium. When the view keeps a medium, the fog
+sun's packed light carries `LIGHT_MEDIUM_SHADOW`, and `light_casts_shadow` is true for it even without shadow layers.
+`shadow_visibility` and `shadow_transmittance` multiply that light's visibility by
+`exp(−Σ σt · h / max(n · s, MEDIUM_SUN_COSINE_FLOOR))` per channel, summed over the kept boxes that hold the point. `h`,
+`n` and `s` are the in-scatter's, so a surface and the in-scatter share one column. Boxes that overlap at the point
+multiply, a point outside every box gets 1, and a sun at or below a box's top face gets the floored column, which is zero
+in every channel that absorbs. The water surface sits above its box and gets 1.
+
+- **Receivers.** Callers of `shadow_transmittance` get the column per channel, so a surface darkens with the medium's
+  tint: forward Standard, Physical and Toon, the deferred lighting resolve, terrain, water, impostors and custom stages
+  built on `shade_standard_surface` or `evaluate_standard_lights`.
+- **Channel mean.** Callers of the float `shadow_visibility` get the mean of the three channels, so they darken without
+  the tint. The built-in one is the `DIRECT_SHADOWED` particle stage; custom stages that call it, such as the examples'
+  `tint` and `pulse`, are the others.
+- **Couplings.** Only a surface that receives shadows gets the term: a draw without `DRAW_RECEIVE_SHADOW` is lit as in
+  air, and `DIRECT_SHADOWED` particles ignore the flag. Only a view that takes height fog gets it: media are selected for a camera with `ViewCamera.height_fog` on, which
+  is every view but a reflection capture, with no `HeightFog` component needed. Only the media the view keeps count,
+  the nearest four.
+- **No term.** The froxel volume clears the flag from its copy of the sun: media replace the air in their boxes, and a
+  froxel sample inside a box can stand for air outside it. Traced reflection and probe hits and the path tracer
+  call neither shadow function. `DIRECT` particles call neither, so they are lit as in air.
+
 **Cost.** Each fogged pixel does one box test per kept volume and up to nine sub-intervals, five of them air.
 `MAX_VIEW_MEDIA` is the lever. A traced hit marches the atmosphere on each air sub-interval, twice for those that do
-not start at the origin.
+not start at the origin. In a view that keeps a medium, each shaded fragment that receives the fog sun's shadow also
+runs up to `MAX_VIEW_MEDIA` box tests of three dot products, one column per box holding it and one `exp`, whether or
+not the sun has a shadow map. A view without media pays one flag test per light that casts shadows, and the froxel
+volume one flag clear.
 
 ## Clouds
 
@@ -527,7 +552,8 @@ records no pass and allocates no map.
   view is destroyed or its images are reallocated.
 - **Not shadowed.** The path tracer, traced reflection and probe-update hits, and the atmosphere's lighting cubes do not see the
   map, as they do not see the clouds. Reflection captures render without clouds and so without their shadow. Mirror and
-  clip-plane views have a map of their own.
+  clip-plane views have a map of their own. Traced hits, probes and the path tracer take no [medium](#medium-volumes)
+  column either.
 
 ### Cloud temporal accumulation
 
@@ -704,7 +730,8 @@ sky example does under `--path-traced`.
   is approximate, because the froxel sub-range divides by a transmittance floored at 1e-4.
 - The medium's sun term has no occluder shadowing, and the column ignores rays that leave through a side face near the
   box edges. Each box's column counts that box's extinction only, so an overlap does not attenuate the other box's sun.
-- Surfaces inside a medium are lit as in air; the medium attenuates the view path only.
+- The sun's column on a surface ignores rays that leave through a side face, so it over-attenuates near the box's
+  side faces, as the in-scatter does.
 - Probe updates, reflection captures and the path tracer take no media.
 - Readers that write no depth take the fog of what is behind them; blended Physical transmission is
   one.

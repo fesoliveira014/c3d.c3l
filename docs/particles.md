@@ -382,7 +382,9 @@ Empty/hidden batches make no draw or snapshot request.
   the particle system, on top of AMBIENT. The stage walks the clustered light
   list when the frame has clusters and the flat list otherwise.
 - **DIRECT_SHADOWED** is DIRECT with each light multiplied by its shadow-map and
-  cloud-shadow visibility at the particle's position.
+  cloud-shadow visibility at the particle's position, and, for the sun in a view
+  with a [medium](sky.md#medium-volumes), by the mean of the medium's sun column
+  there.
 
 `ParticleMaterialParams.normal` selects what a lit particle presents to the
 lights and to the indirect illumination. AMBIENT, DIRECT and DIRECT_SHADOWED read
@@ -416,11 +418,13 @@ correspondingly higher intensity. The indirect term of AMBIENT, DIRECT and
 DIRECT_SHADOWED uses the SPHERICAL normal under SPHERICAL and the camera axis under
 CAMERA and VOLUME.
 
-DIRECT_SHADOWED reads the shadow atlas and the cloud shadows only. The stage is
-compiled without ray-traced shadows, so a light whose only shadow is ray traced
-contributes unshadowed, in views that trace shadows too. Particles cast no
-shadow, and the stage ignores the receive-shadow flag, which billboard draws never
-carry: the lighting mode is the opt-in.
+DIRECT_SHADOWED reads the shadow atlas, the cloud shadows and the medium's sun
+column only. The column takes the mean of its channels, so a particle inside a
+medium dims without taking the medium's tint. A DIRECT particle inside a medium
+is lit as in air. The stage is compiled without ray-traced shadows, so a light
+whose only shadow is ray traced contributes unshadowed, in views that trace
+shadows too. Particles cast no shadow, and the stage ignores the receive-shadow
+flag, which billboard draws never carry: the lighting mode is the opt-in.
 
 DIRECT adds one light loop per covered pixel, and DIRECT_SHADOWED adds a shadow
 lookup per shadow-casting light in that loop. The cost therefore grows with the
