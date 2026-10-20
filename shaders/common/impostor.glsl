@@ -4,6 +4,7 @@
 #include "gbuffer.glsl"
 #include "buffer_reference.glsl"
 #include "instance_effects.glsl"
+#include "instance_world.glsl"
 
 GPU_DECLARE_READONLY_ARRAY_REF(ImpostorInstances, InstanceGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(ImpostorIndices, uint);
@@ -57,7 +58,9 @@ mat3 impostor_basis(vec3 direction) {
 }
 
 InstanceGpu impostor_instance(DrawRoot draw, uint source) {
-    if (draw.instance_data != 0ul) return ImpostorInstances(draw.instance_data).values[source];
+    if (draw.instance_data != 0ul) {
+        return instance_to_world(draw, ImpostorInstances(draw.instance_data).values[source]);
+    }
     InstanceGpu instance;
     instance.model = draw.model;
     instance.normal_0 = vec4(draw.normal_0.xyz, LodPartGpu(draw.lod_part).seed);
