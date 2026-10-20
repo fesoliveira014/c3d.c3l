@@ -6,16 +6,39 @@ import c3d::ecs;
 import c3d::scene;
 import c3d::serial;
 
-const ulong HEIGHT_FIELD_WINDOWS_LAYOUT @private = 0xcf98f73f7a381f48;
+const ulong HEIGHT_FIELD_WINDOWS_LAYOUT @private = 0xc9feb6e8cef3819b;
+const ulong HEIGHT_FIELD_WINDOWS_V1_LAYOUT @private = 0xcf98f73f7a381f48;
+
+struct HeightFieldWindowsAuthoringV1 @private {
+    uint           window_cells;
+    ColliderDescV2 collider;
+}
 
 struct HeightFieldWindowsAuthoring @private {
     uint         window_cells;
     ColliderDesc collider;
 }
 
+serial::BinaryCompatibility[1] height_field_windows_binary_compatibility @private = {
+    { .version = 1, .read = &read_height_field_windows_v1 },
+};
+uint[1] height_field_windows_text_default_versions @private = { 1 };
+
 fn void? register_height_field_windows_codec() @private {
+    describe::register_reflected(HeightFieldWindowsAuthoringV1)!;
     describe::register_reflected(HeightFieldWindowsAuthoring)!;
-    register_physics_value(HeightFieldWindowsAuthoring, HEIGHT_FIELD_WINDOWS_LAYOUT, &defaults_height_field_windows)!;
+    serial::register_described_type(
+        $Type: HeightFieldWindowsAuthoringV1,
+        version: 1,
+        layout: HEIGHT_FIELD_WINDOWS_V1_LAYOUT,
+        defaults: &defaults_height_field_windows_v1,
+    )!;
+    serial::register_described_type(
+        $Type: HeightFieldWindowsAuthoring,
+        version: 2,
+        layout: HEIGHT_FIELD_WINDOWS_LAYOUT,
+        defaults: &defaults_height_field_windows,
+    )!;
     serial::register_described_owner(HeightFieldWindows, HeightFieldWindowsAuthoring, {
         .name = "height_field_windows",
         .phase = OWNER,
@@ -23,9 +46,13 @@ fn void? register_height_field_windows_codec() @private {
         .project = &project_height_field_windows,
         .validate = &validate_height_field_windows,
         .attach = &attach_height_field_windows,
+        .binary_compatibility = height_field_windows_binary_compatibility[..],
+        .text_default_versions = height_field_windows_text_default_versions[..],
     })!;
     serial::register_transient(HeightFieldWindowOwner, &collect_height_field_window)!;
 }
+
+fn void defaults_height_field_windows_v1(void* value) @private => *(HeightFieldWindowsAuthoringV1*)value = {};
 
 fn void defaults_height_field_windows(void* value) @private {
     *(HeightFieldWindowsAuthoring*)value = { .collider = default_collider_desc(HEIGHT_FIELD) };
@@ -52,6 +79,17 @@ fn void? attach_height_field_windows(void* value, serial::ReadContext* context) 
         collider:     &source.collider,
         window_cells: source.window_cells,
     )!;
+}
+
+// Windows saved before neighbours existed regenerate without neighbour maps.
+fn void? read_height_field_windows_v1(serial::Reader* reader, serial::ReadContext* context) @private {
+    HeightFieldWindowsAuthoringV1* legacy = context.read_value(HeightFieldWindowsAuthoringV1, reader)!;
+    HeightFieldWindowsAuthoring source = {
+        .window_cells = legacy.window_cells,
+        .collider     = collider_of_v2(&legacy.collider),
+    };
+    validate_height_field_windows(&source, context)!;
+    attach_height_field_windows(&source, context)!;
 }
 
 // The window nodes and their bodies regenerate on load, so only the owner and the template are written.

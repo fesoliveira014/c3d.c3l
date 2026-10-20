@@ -33,6 +33,10 @@ fn TextureId add_map(Fixture* fixture) @private {
     return fixture.assets.add_texture(desc, ((char*)&samples)[:samples.len * ushort::size], "terrain_heights")!!;
 }
 
+fn void assert_no_neighbours(HeightField* field) @private {
+    foreach (&neighbour : field.neighbours) assert(!neighbour.texture.generation && !neighbour.material_indices.len);
+}
+
 fn void test_height_field_windows_round_trip_regenerates_the_windows_once() @test {
     foreach (text_mode : (bool[2]){ false, true }) {
         @pool() {
@@ -165,6 +169,7 @@ fn void test_height_field_v1_body_loads_with_a_zero_window() @test {
             HeightFieldWindow window = collider.height_field.window;
             assert(!window.x && !window.z && !window.count_x && !window.count_z);
             assert(collider.local.scale == (Vec3){ 2, 3, 4 } && collider.density == 7 && collider.filter.group == 5);
+            assert_no_neighbours(&collider.height_field);
         };
     }
 }
@@ -201,6 +206,7 @@ fn void test_height_field_v2_body_keeps_its_window() @test {
             HeightFieldWindow window = collider.height_field.window;
             assert(!window.x && !window.z && window.count_x == 1 && window.count_z == 1);
             assert(collider.local.scale == (Vec3){ 2, 3, 4 } && collider.density == 7 && collider.filter.group == 5);
+            assert_no_neighbours(&collider.height_field);
         };
     }
 }
@@ -219,6 +225,7 @@ fn void test_height_field_windows_v1_owner_regenerates_its_windows() @test {
             assert(windows.window_cells == WINDOW_CELLS && windows.nodes.len == WINDOW_COUNT);
             assert(c3d::same_id(windows.collider.height_field.texture, map));
             assert(windows.collider.local.scale == (Vec3){ 2, 10, 2 });
+            assert_no_neighbours(&windows.collider.height_field);
             assert(fixture.destination.count(PhysicsBody) == WINDOW_COUNT);
         };
     }

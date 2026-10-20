@@ -43,13 +43,14 @@ fn void CopyFailure.release(&self, void* pointer, bool aligned) @dynamic {
 fn void test_physics_serial_registration() @test {
     physics::register_serial_codecs()!!;
     assert(serial::described_type(CollisionFilter)!!.layout == 0xada86db77bf9d58b);
-    assert(serial::described_type(ColliderDesc)!!.layout == 0xf3ffcc18d6404c63);
-    assert(serial::described_type(physics::BodyAuthoring)!!.layout == 0xc7083025384ef72b);
+    assert(serial::described_type(ColliderDesc)!!.layout == 0x8571e64c7c13f15c);
+    assert(serial::described_type(physics::BodyAuthoring)!!.layout == 0x78275c55924a1b97);
     assert(serial::described_type(physics::JointAuthoring)!!.layout == 0x448b33882e32ee3e);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("physics_body") && schema.contains("physics_joint"));
         assert(schema.contains("height_field") && schema.contains("face_materials") && schema.contains("window"));
+        assert(schema.contains("neighbours"));
         assert(schema.contains("height_field_windows") && schema.contains("window_cells"));
     };
 }
@@ -88,6 +89,10 @@ fn void test_physics_body_both_formats_copy_all_nested_authoring() @test {
                 collider.half_extents = { 2, 3, 4 };
                 collider.geometry = fixture.geometry;
                 collider.height_field = { .heights = &heights, .count_x = 2, .count_z = 2, .texture = fixture.texture };
+                collider.height_field.neighbours[HeightFieldSide.POSITIVE_Z.ordinal] = {
+                    .texture          = fixture.texture,
+                    .material_indices = &material_indices,
+                };
                 collider.children = &children;
                 collider.density = 456;
                 collider.explosion_scale = 1.75f;
@@ -140,6 +145,10 @@ fn void test_physics_body_both_formats_copy_all_nested_authoring() @test {
                 assert(collider.children.ptr != original.colliders[index].children.ptr);
                 assert(collider.children[1].material_indices == material_indices[..]);
                 assert(collider.height_field.heights == heights[..]);
+                HeightFieldNeighbour beyond = collider.height_field.neighbours[HeightFieldSide.POSITIVE_Z.ordinal];
+                assert(c3d::same_id(beyond.texture, fixture.texture));
+                assert(beyond.material_indices == material_indices[..]);
+                assert(!collider.height_field.neighbours[HeightFieldSide.NEGATIVE_X.ordinal].texture.generation);
                 assert((ulong)collider.material.id == ulong::max);
             }
             Buoyancy* buoyancy = fixture.destination.get(restored, Buoyancy);
