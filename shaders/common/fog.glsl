@@ -6,11 +6,10 @@
 #include "gbuffer.glsl"
 #include "irradiance.glsl"
 #include "atmosphere.glsl"
+#include "medium.glsl"
 
 const float FOG_SERIES_THRESHOLD = 1e-2; // mirrored as FOG_SERIES_THRESHOLD in height_fog.c3
 const float FOG_TRANSMITTANCE_FLOOR = 1e-4; // divides a segment's aerial perspective; below it the segment reads opaque
-const float MEDIUM_SUN_COSINE_FLOOR = 1e-4; // keeps a grazing sun's column finite, so a clear channel stays 1
-const float MEDIUM_PARALLEL_EPSILON = 1e-9; // a ray this close to a box slab's plane never crosses it
 const uint FOG_AIR_PIXEL = 0u; // air from the froxel volume and the aerial perspective table of a camera pixel
 const uint FOG_AIR_ANALYTIC = 1u; // air from analytic height fog and a marched atmosphere, for a ray from anywhere
 
@@ -251,36 +250,6 @@ vec3 medium_ambient_color(FrameRoot frame) {
     return frame.ambient.rgb;
 }
 
-// Where a ray enters and leaves a medium's box within [near, far]; the exit precedes the entry for a miss.
-vec2 medium_span(MediumGpu medium, vec3 origin, vec3 direction, float near, float far) {
-    vec3 box_origin = vec3(
-        dot(medium.world_to_local_0.xyz, origin) + medium.world_to_local_0.w,
-        dot(medium.world_to_local_1.xyz, origin) + medium.world_to_local_1.w,
-        dot(medium.world_to_local_2.xyz, origin) + medium.world_to_local_2.w
-    );
-    vec3 box_direction = vec3(
-        dot(medium.world_to_local_0.xyz, direction),
-        dot(medium.world_to_local_1.xyz, direction),
-        dot(medium.world_to_local_2.xyz, direction)
-    );
-
-    vec3 lower = -medium.extent_anisotropy.xyz;
-    vec3 upper = vec3(medium.extent_anisotropy.x, 0.0, medium.extent_anisotropy.z);
-    float enter = near;
-    float leave = far;
-    for (int axis = 0; axis < 3; axis++) {
-        if (abs(box_direction[axis]) < MEDIUM_PARALLEL_EPSILON) {
-            if (box_origin[axis] < lower[axis] || box_origin[axis] > upper[axis]) return vec2(far, near);
-            continue;
-        }
-        float first = (lower[axis] - box_origin[axis]) / box_direction[axis];
-        float second = (upper[axis] - box_origin[axis]) / box_direction[axis];
-        enter = max(enter, min(first, second));
-        leave = min(leave, max(first, second));
-    }
-    return vec2(enter, leave);
-}
-
 // The integral over a span of exp(e), as e runs linearly between two values that are at most zero.
 vec3 fog_exponential_integral(vec3 exponent_start, vec3 exponent_end, float span) {
     return span * exp(max(exponent_start, exponent_end)) * fog_rise_factors(abs(exponent_end - exponent_start));
@@ -320,16 +289,14 @@ FogTerms medium_interval(
     for (uint index = 0u; index < MAX_VIEW_MEDIA; index++) {
         if ((covering & (1u << index)) == 0u) continue;
         MediumGpu medium = set.media[index];
-        vec4 height_row = medium.world_to_local_1;
-        float scale = length(height_row.xyz);
-        vec3 up = height_row.xyz / scale;
+        vec3 up = medium_up(medium);
         float sun_cosine = dot(up, to_sun);
         if (sun_cosine <= 0.0) continue;
 
-        float below_top = -(dot(height_row.xyz, origin + direction * from) + height_row.w) / scale;
+        float below_top = medium_below_top(medium, origin + direction * from);
         float depth_start = max(below_top, 0.0);
         float depth_end = max(depth_start - dot(up, direction) * span, 0.0);
-        vec3 column = (medium.absorption.xyz + medium.scattering.xyz) / max(sun_cosine, MEDIUM_SUN_COSINE_FLOOR);
+        vec3 column = medium_sun_column(medium, sun_cosine);
         vec3 reach = fog_exponential_integral(-column * depth_start, -column * depth_end - optical_depth, span);
         float phase = fog_phase(phase_cosine, medium.extent_anisotropy.w);
         terms.inscatter += medium.scattering.xyz * phase * sun_illuminance * reach;

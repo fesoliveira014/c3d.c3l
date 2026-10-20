@@ -96,6 +96,8 @@ vec3 slice_inscatter(
     vec3 radiance = fog_ambient_color(frame, sky, direction);
     if (root.sun_light != 0u) {
         LightGpu sun = LightArray(frame.lights).values[root.sun_light - 1u];
+        // Media replace the air in their boxes; a froxel sample inside one can stand for air outside it.
+        sun.flags &= ~LIGHT_MEDIUM_SHADOW;
         // A froxel has no surface: a zero normal keeps ShadowGpu.normal_bias out of the sample point.
         float visibility = shadow_visibility(frame, sun, position, vec3(0.0), view_depth);
         float phase = fog_phase(-dot(direction, sun.direction_cos_outer.xyz), sky.fog_anisotropy);
@@ -185,6 +187,8 @@ void main() {
     vec3 radiance = fog_ambient_color(frame, sky, direction);
     if (root.sun_light != 0u) {
         LightGpu sun = LightArray(frame.lights).values[root.sun_light - 1u];
+        // Media replace the air in their boxes; a froxel sample inside one can stand for air outside it.
+        sun.flags &= ~LIGHT_MEDIUM_SHADOW;
         // A froxel has no surface: a zero normal keeps ShadowGpu.normal_bias out of the sample point.
         float visibility = shadow_visibility(frame, sun, position, vec3(0.0), view_depth);
         float phase = fog_phase(-dot(direction, sun.direction_cos_outer.xyz), sky.fog_anisotropy);

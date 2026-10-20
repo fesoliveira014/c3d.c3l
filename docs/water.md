@@ -1036,8 +1036,9 @@ store.
 - **References**: the ripple material contributes its normal map only; foam shows only with a foam reference;
   `uv0` is the rest position in metres.
 - **Lighting**: the sun lights glints and foam. The water body's own colour is the medium's in-scatter: the ambient
-  and the sun through the column above each point, with no occluder shadowing and no indirect light. Surfaces under
-  water are lit as in air ([medium limits](sky.md#limits)), so the bed takes no sun attenuation.
+  and the sun through the column above each point, with no occluder shadowing and no indirect light. A bed that
+  receives shadows takes the sun through the water from the box's top ([sun on surfaces](sky.md#medium-volumes)); the
+  band between the surface and the top is not counted.
 - **Waterline**: the medium's top lies `total amplitude + MEDIUM_SKIN` under the rest plane, under the deepest trough,
   and the mirror's side test is the rest plane. A camera in the band from the box's top to a crest (`amplitude + skin`
   under the rest plane to `amplitude` over it) can stand under the water and outside the medium, unfogged, and its mirror

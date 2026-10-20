@@ -1061,6 +1061,7 @@ root CubePreviewRoot {
 const uint LIGHT_RT_SHADOW = 1;
 const uint LIGHT_VOLUMETRIC = 2;
 const uint LIGHT_CLOUD_SHADOW = 4; // the cloud layer's shadow multiplies this light's visibility
+const uint LIGHT_MEDIUM_SHADOW = 8; // the media's sun column multiplies this light's visibility
 
 struct LightGpu {
     vec4 position_range;
