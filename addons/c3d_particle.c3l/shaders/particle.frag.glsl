@@ -15,6 +15,7 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
+layout(location = 8) in vec3 v_billboard;
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -36,7 +37,14 @@ void main() {
     ParticleParams params = ParticleParams(material.parameters);
     material_mip_bias = frame.mip_bias;
     vec4 color = v_color * params.color;
-    if (custom_slot_present(material, 0u)) color *= sample_custom_map(material, 0u, v_uv0, v_uv1);
+    if (custom_slot_present(material, 0u)) {
+        // Under a sprite sheet UV0 is the current cell and UV1 the next, whatever set the slot reads.
+        vec4 texel = sample_custom_map(material, 0u, v_uv0, v_uv0);
+        if ((draw.flags & DRAW_BILLBOARD_ATLAS) != 0u) {
+            texel = mix(texel, sample_custom_map(material, 0u, v_uv1, v_uv1), v_billboard.z);
+        }
+        color *= texel;
+    }
     if (params.soft_distance > 0.0) {
         color.a *= clamp(scene_depth_gap(frame, gl_FragCoord) / params.soft_distance, 0.0, 1.0);
     }
