@@ -78,6 +78,7 @@ fn GpuStepPlan plan_gpu_step(
     if (system.emitting) accumulator += (double)system.desc.rate * seconds;
     double whole = math::floor(accumulator);
     uint128 requested = (uint128)whole + system.pending_burst;
+
     state.pending = {
         .recorded = true,
         .frame = frame,
@@ -93,6 +94,7 @@ fn GpuStepPlan plan_gpu_step(
         wind: wind,
         seconds: seconds,
     );
+
     Vec3 shift;
     for (usz axis = 0; axis < 3; axis++) shift[axis] = (float)(state.shift_requested[axis] - state.shift_applied[axis]);
     double[<3>] drift = (double[<3>]){
@@ -100,6 +102,7 @@ fn GpuStepPlan plan_gpu_step(
         (double)system.desc.turbulence.scroll.y,
         (double)system.desc.turbulence.scroll.z,
     } * state.pending.turbulence_time;
+
     return {
         .seconds = seconds,
         .requested = (uint)math::min(requested, (uint128)uint::max),

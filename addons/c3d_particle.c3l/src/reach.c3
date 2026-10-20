@@ -7,9 +7,9 @@ import std::math;
 <*
  Slices of one lifetime that a reach keeps apart.
 *>
-const uint REACH_SLOTS = 8; // 400 bytes of bounds per system; a particle's start leaves its slice at most one slice late
+const uint REACH_SLOTS = 8; // 400 bytes per system; a start leaves the reach at most one slice late
 
-const float TURBULENCE_CURL_BOUND @private = 8.5f; // curl length at unit strength; the supremum over every gradient choice is 8.386
+const float TURBULENCE_CURL_BOUND @private = 8.5f; // curl length at unit strength; the supremum is 8.386
 
 <*
  Where the emitter and the air have been during one slice of time.

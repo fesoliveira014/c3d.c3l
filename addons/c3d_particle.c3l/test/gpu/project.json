@@ -5,6 +5,11 @@
   "wincrt": "static",
   "output": "../../../../build/particle_acceptance",
   "targets": {
-    "particle_acceptance": {"type": "test", "sources": ["particle_acceptance.c3"]}
+    "particle_acceptance": {"type": "test", "sources": ["particle_acceptance.c3"]},
+    "particle_gpu_acceptance": {
+      "type": "test",
+      "sources": ["gpu_acceptance.c3"],
+      "features": ["C3D_SHADER_COMPILER", "C3D_PARTICLE_GPU"]
+    }
   }
 }
