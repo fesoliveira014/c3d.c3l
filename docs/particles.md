@@ -759,24 +759,20 @@ are cached. This records the cost of that shared conversion without adding a
 second representation or an executor. It excludes emission, upload, sorting
 and rendering, and does not replace the default-scene measurement above.
 
-The same stress case with the [range kernels](#parallel-update), on an Intel Core i9-14900K (32 logical CPUs) under
-WSL2, C3 0.8.3 `-O3`, as medians of three runs of 300 updates after 60 warm-up updates. "Before" is the build before the
-range kernels and the counter draws; the other columns run the kernels inline or on a `c3d_job` pool.
+The same stress case with the [range kernels](#parallel-update), at 100,000 live particles on a native Windows x64
+host with an NVIDIA GeForce RTX 4090, C3 0.8.3 `-O3`. "Before" is the build without the range kernels and the counter
+draws. The other columns run the kernels inline or on a `c3d_job` pool. "Update, bounds and copy" adds the uncached
+billboard bounds and the record copy (the record packing, in the "Before" column) to the update.
 
 | CPU operation | Before | Inline | 4 workers | 8 workers |
 | --- | ---: | ---: | ---: | ---: |
-| Simulation and draw publication | 0.632 ms | 0.888 ms | 0.409 ms | 0.428 ms |
-| Uncached billboard bounds | 2.636 ms | 2.664 ms | 2.642 ms | 2.630 ms |
-| Billboard packing (before), record copy (after) | 0.855 ms | 0.400 ms | 0.390 ms | 0.377 ms |
-| Update plus packing or copy | 1.487 ms | 1.288 ms | 0.799 ms | 0.805 ms |
+| Update alone | 0.605 ms | 0.860 ms | 0.272 ms | 0.235 ms |
+| Update, bounds and copy | 1.460 ms | 1.430 ms | 0.793 ms | 0.755 ms |
 
-Inline, the update costs more than before. Publication now counts the drawn particles in a first pass and writes
-64-byte records directly, and the record copy that follows costs less than the packing it replaces. The update stops
-improving between four and eight workers; the serial passes (expiry and admission) and the cost of each fork bound it,
-and were not measured separately. Bounds are not forked. At 100,000 particles (98 blocks) a hook halves the update.
-In the default `--benchmark` scene, whose largest pool holds eight blocks, `--workers 8` raised the update from
-0.13 ms to 0.44 ms. The example checksum is identical for 0, 4 and 8 workers. The counter draws changed it from
-1710.039694 to 1706.511658, and serialized data is unaffected.
+Bounds are not forked. The serial passes (expiry and admission) and the cost of each fork bound the gain from more
+workers; they are not measured separately. A pool of at most one block runs inline whatever the hook. In the default
+`--benchmark` scene, with about 4.1k sparks, the update costs 0.088 ms before the kernels, 0.118 ms inline and 0.089 ms
+with 8 workers. The example checksum is identical for every worker count.
 
 Windows acceptance passed all 17 particle CPU tests and six Vulkan cases, with
 validation. Native Linux compilation and the earlier 16 CPU tests passed in WSL
