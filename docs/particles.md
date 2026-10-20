@@ -1,13 +1,13 @@
-# CPU particles
+# Particles
 
 Particle rendering shares the [frame origin](large_world.md) selected through
 `FrameInfo.reference_position`. Billboard/mesh packing, soft depth and fog use
 relative shader coordinates. Simulation positions, seeds and emitter state keep
 their existing spaces; changing the reference does not move the simulation.
 
-The optional `c3d_particle` package supplies fixed-pool CPU simulation and particle
-effect materials. It publishes ordinary core [billboard batches](billboards.md)
-or [mesh instances](instancing.md). Core owns rendering, culling and sorting.
+The optional `c3d_particle` package supplies fixed-pool particle simulation, on the CPU or, in a build that enables
+`C3D_PARTICLE_GPU`, on the [GPU](#gpu-execution), and particle effect materials. It publishes ordinary core
+[billboard batches](billboards.md) or [mesh instances](instancing.md). Core owns rendering, culling and sorting.
 
 Select `c3d_particle` alongside core in the consumer project, with the normal
 renderer/platform dependencies needed by the application. The package itself
@@ -85,10 +85,11 @@ scene.update_world();
 particle::update(&scene, delta_seconds, wind_velocity);
 ```
 
-Update steps every system, runs the [sub-emitters](#events-and-sub-emitters), then publishes the
+Update steps every CPU system, runs the [sub-emitters](#events-and-sub-emitters), then publishes the
 draws and trails, so particles spawned by events are drawn in the same update. A trailing
 `ParallelFor` runs the [range kernels](#parallel-update) on worker threads.
-Render every camera afterward. Rendering does not advance the simulation.
+A system whose `execution` is `GPU` is not stepped here; [`particle::gpu::update`](#gpu-execution) steps it after
+`begin_frame`. Render every camera afterward. Rendering does not advance the simulation.
 `wind_velocity` is application-owned world-space air velocity in metres/second.
 Hidden emitters continue simulating. Their WORLD/identity draw child inherits
 visibility and subtree lifetime; update explicitly copies the emitter's layer
@@ -171,6 +172,92 @@ admission, emission, events, sub-emitter deliveries and trail publication stay s
 `update`. A range reads and writes only its own blocks, so every hook, partition and range order produces the same
 pools, counters and draw arrays byte for byte. The hook must return only after every range has finished, and the data
 it hands to each range lives until it returns.
+
+## GPU execution
+
+`ParticleSystemDesc.execution` selects the processor that steps a system: `CPU`, the default, or `GPU`. It is
+immutable after `prepare`. The GPU path exists in builds that enable `C3D_PARTICLE_GPU`, which adds the module
+`c3d::particle::gpu`; without the feature, preparing a GPU system faults `c3d::UNSUPPORTED`, and so does a refused
+feature below. The module imports `c3d::render` and records through `Renderer.dispatch`; it creates buffers only through
+`Renderer.create_buffer` and never imports `gpu`. The `particles_gpu` example builds with the feature, and
+`particles --gpu` selects GPU execution for every system the subset below supports.
+
+```c3
+GpuParticles gpu = gpu::create_gpu_particles(mem, &assets)!;
+defer gpu::destroy_gpu_particles(&gpu, &renderer);
+
+scene.update_world();
+particle::update(&scene, delta_seconds, wind_velocity);
+renderer.begin_frame()!;
+gpu::update(&gpu, &renderer, &scene, delta_seconds, wind_velocity)!;
+// render_view and finish_view for each camera, then end_frame
+```
+
+`create_gpu_particles` adds the six compute stages to the store, once per store, and takes the number of systems the
+context simulates, `DEFAULT_MAX_SYSTEMS` (16) by default. Each GPU system owns one renderer buffer, created at its
+first update, and the context owns one more for the counters; the renderer holds 64 application buffers in all, and a
+system past the context's limit faults `CAPACITY_EXCEEDED`. `update` retires the buffer of a system whose node died;
+`destroy_gpu_particles` retires the rest, so destroy the context before the renderer.
+
+The application calls `update` once per frame, after `update_world` and before the views render. Each system records
+one step: the queued origin shift (only after a rebase), expiry, a prefix scan, admission with spawning, advance and
+collision, a second scan, and publication. Every dispatch covers the system's capacity; there is no indirect dispatch.
+The pool stays in spawn order. A system's buffer holds 208 bytes per particle: two copies of the particle state, the
+scan scratch and one billboard record. The draw child is a core `DEVICE` [billboard batch](billboards.md#device-batches)
+over the same buffer, so every view culls and sorts the records the compute stages wrote, and no record is uploaded or
+copied by the CPU.
+
+### Supported subset
+
+- Supported: every emitter shape, rate and bursts; gravity, drag, wind and turbulence; lifetime tables, colour and
+  flipbooks; BILLBOARD and STRETCHED draw modes; REFUSE saturation; and `CollisionResponse` BOUNCE, STICK or DIE against
+  `ground_plane`.
+- Refused with `UNSUPPORTED` at prepare: trails, sub-emitters, MESH draws, `DROP_OLDEST` and a collision response
+  without `ground_plane`. `ParticleSystem.set_collision` requires a CPU system, because the callback is application
+  code.
+
+### Counters and latency
+
+The simulation state lives on the device. `alive` and `dropped` are read back from a `READBACK` buffer and reach the CPU
+`FRAMES_IN_FLIGHT` frames late; both read 0 before the first copy, and a frame without a copy keeps the previous
+values. Nothing waits for the device.
+
+### Aborted frames
+
+A step's CPU bookkeeping (the emission accumulator, the consumed burst, the queued shift and the bound) commits only
+when `Renderer.frame_was_submitted` confirms the frame that recorded it. A frame that aborts never runs its
+dispatches, so the next `update` steps again from the committed state and takes the same burst. Call `update` once per
+frame.
+
+### Rebasing
+
+`Scene.shift_particles(offset)` queues the shift for a GPU system. The next `update` subtracts it from every live
+particle before the step. Turbulence stays fixed to world points: the CPU reduces the world shift and the scroll drift
+to one tile in double precision, and the stages evaluate the field in float.
+
+### Determinism and tolerance
+
+Both paths draw every spawned value from `spawn_hash`, which `particle_random.glsl` mirrors by name, so a CPU and a GPU
+system with one descriptor spawn the same particles. They differ only by floating-point order: the stages use float
+where the CPU uses double for the spawn samples and the flipbook, and the device's sine, cosine and fused operations.
+Replay is deterministic on one device and driver; there is no bit equality across devices, drivers or compilers.
+The acceptance case compares positions within 1e-3 m and sizes within 1e-5 m.
+
+### Bounds
+
+The CPU never reads the device records, so it bounds them from the descriptor. A `ParticleReach` keeps the union of
+the emitter's placed shape for each of `REACH_SLOTS` (8) slices of the last `lifetime.max` seconds, and `update`
+sets the draw child's bounds override to that union grown by:
+
+- `speed.max` times `lifetime.max`;
+- the fall `½·|g|·T·(T + 0.1 s)` along gravity, one-sided;
+- with non-zero drag, the winds of the last lifetime times `T`, one-sided, and the turbulence speed bound times `T`,
+  where the bound is the curl supremum 8.5 times the octave amplitudes;
+- the largest drawn half-extent, from the size tables and the stretch;
+- for a ground-plane response, the plane's height and one collision radius above it.
+
+The box is conservative and grows with lifetime and turbulence strength. It only decides whether core culls the whole
+batch; each record is still culled on the GPU. Moving the emitter widens it over the next lifetime.
 
 ## Saturation
 
@@ -301,7 +388,7 @@ through it by rounding, and a particle that starts under the plane and moves dow
 
 ### Callback
 
-`ParticleSystem.set_collision(cast, context)` installs a `ParticleCollisionFn`. The system calls it with the
+`ParticleSystem.set_collision(cast, context)` installs a `ParticleCollisionFn` on a CPU system. The system calls it with the
 segment of a particle's move in scene space and the collision radius, and it fills a `ParticleHit` and returns
 true when a sphere of that radius meets a surface. `point` is the contact point on the surface, `normal` has unit
 length and faces the particle, and `fraction` is the position of the hit along the segment. The package does not
@@ -643,6 +730,8 @@ A disabled trail reads only the finiteness and sign rules.
 ```powershell
 python scripts/build.py --example particles
 python scripts/build.py --target particles --opt O3
+python scripts/build.py --target particles_gpu --opt O3
+addons/c3d_particle.c3l/build/particles_gpu.exe --benchmark --gpu --frames 300
 addons/c3d_particle.c3l/build/particles.exe --benchmark --frames 300
 addons/c3d_particle.c3l/build/particles.exe --stress --frames 300
 ```
@@ -651,6 +740,13 @@ Linux uses `build/particles` without `.exe`. The window shows smoke, additive
 stretched sparks and mesh debris, with emitting/burst controls, wind, smoke
 lighting/soft distance, spark blending and a second camera. Validation is always
 enabled. `--frames N` closes an interactive smoke test after N frames.
+
+`--gpu` gives the smoke, sparks and embers systems GPU execution where the [subset](#supported-subset) allows it,
+so `--sparks` and `--trails` keep the sparks on the CPU, and the debris stays on the CPU as a mesh. It needs the
+`particles_gpu` build, which enables `C3D_PARTICLE_GPU`, and applies to the window and to `--benchmark`, which then
+prints `execution,gpu`, the `gpu_particle_ms` of the custom compute pass, and `not_applicable` for the CPU-only
+`sparks_bounds_ms` and `sparks_copy_ms`. With `--collide` the sparks collide with the ground plane only. The flag
+does not combine with `--stress`.
 
 `--sparks` adds a smoke system that each dying spark feeds through a `DEATH`
 sub-emitter, and shows its live count with the event counters. It applies to the
