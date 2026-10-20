@@ -56,7 +56,8 @@ aggregate cache is library-owned. Component pointers are short-lived ECS borrows
   application buffer from `Renderer.create_buffer`. Every record is relative to `Renderer.frame_origin`, which the writer
   subtracts. `Scene.set_billboard_device` attaches a `BillboardDevice` naming the buffer, the byte offsets of the records
   and of the count word, and the capacity, which must equal the batch's. The records offset is a multiple of 16, the
-  count offset a multiple of 4, and the buffer holds both. Core does not check them.
+  count offset a multiple of 4, and the buffer holds both. `set_billboard_device` requires the two alignments; core does not
+  check the buffer size.
 
 A RECORDS or DEVICE batch is drawn without its node's world matrix, so its node must keep an identity world; a WORLD
 child with an identity pose does. Records are not validated: the owner keeps them finite. Passing `billboards` with
