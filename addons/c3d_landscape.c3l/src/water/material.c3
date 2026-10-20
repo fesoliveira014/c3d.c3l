@@ -4,13 +4,19 @@ import c3d;
 import c3d::asset;
 import c3d::geometry;
 import c3d::landscape @public;
+import c3d::landscape::terrain @public;
 import c3d::material;
 import c3d::maths;
+import c3d::scene;
 import std::math;
 
 const uint REFLECTION_SLOT @private = 0; // mirrored as WATER_REFLECTION_SLOT in landscape/water_reflection.glsl
 const uint RIPPLE_REFERENCE @private = 0; // mirrored as WATER_RIPPLES in water.frag.glsl
 const uint FOAM_REFERENCE @private = 1; // mirrored as WATER_FOAM in water.frag.glsl
+const uint SIMULATION_SLOT @private = 1; // mirrored as WATER_SIMULATION_SLOT in landscape/water_simulation.glsl
+const uint SPECTRAL_DISPLACEMENT_SLOT @private = 1; // mirrored as WATER_SPECTRAL_DISPLACEMENT_SLOT in water_spectral.glsl
+const uint SPECTRAL_SLOPE_SLOT @private = 2; // mirrored as WATER_SPECTRAL_SLOPE_SLOT in water_spectral.glsl
+const uint SPECTRAL_PREVIOUS_SLOT @private = 3; // mirrored as WATER_SPECTRAL_PREVIOUS_SLOT in water_spectral.glsl
 const uint QUAD_INDICES @private = 6;
 const float DIRECTION_TOLERANCE @private = 0.001f; // unit directions written by hand or read from files
 const float NYQUIST_CELLS @private = 2; // grid cells per wavelength below which a wave aliases
@@ -38,6 +44,7 @@ fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
     }
     // The inversion converges while the horizontal map contracts: its Jacobian is at most the mean steepness.
     if (desc.wave_count && !(steepness_sum < (float)desc.wave_count)) return c3d::INVALID_ARGUMENT~;
+    bool aliasing_applies = desc.wave_model == WaterWaveModel.GERSTNER;
     if (desc.mode == WaterMode.OCEAN) {
         if (desc.geometry.generation) return c3d::INVALID_ARGUMENT~;
         if (!(desc.extent > 0) || !math::is_finite(desc.extent)) return c3d::INVALID_ARGUMENT~;
@@ -45,7 +52,9 @@ fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
         if (!(desc.extent / (desc.cell_size * (float)OCEAN_CHUNK_CELLS) <= (float)MAX_OCEAN_CHUNKS)) {
             return c3d::INVALID_ARGUMENT~;
         }
-        if (desc.wave_count && !(shortest >= FADE_FULL_CELLS * desc.cell_size)) return c3d::INVALID_ARGUMENT~;
+        if (aliasing_applies && desc.wave_count && !(shortest >= FADE_FULL_CELLS * desc.cell_size)) {
+            return c3d::INVALID_ARGUMENT~;
+        }
     } else if (desc.geometry.generation) {
         if (!assets.geometries.is_live(desc.geometry)) return c3d::INVALID_ID~;
         Aabb bounds = assets.geometries.get(desc.geometry).data.bounds;
@@ -54,8 +63,12 @@ fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
         if (!(desc.extent > 0) || !math::is_finite(desc.extent)) return c3d::INVALID_ARGUMENT~;
         if (!(desc.cell_size > 0) || !math::is_finite(desc.cell_size)) return c3d::INVALID_ARGUMENT~;
         if (!(desc.extent / desc.cell_size <= MAX_GRID_CELLS)) return c3d::INVALID_ARGUMENT~;
-        if (desc.wave_count && !(shortest >= NYQUIST_CELLS * desc.cell_size)) return c3d::INVALID_ARGUMENT~;
+        if (aliasing_applies && desc.wave_count && !(shortest >= NYQUIST_CELLS * desc.cell_size)) {
+            return c3d::INVALID_ARGUMENT~;
+        }
     }
+    if (desc.wave_model == WaterWaveModel.SIMULATED) check_simulation(desc)!;
+    if (desc.wave_model == WaterWaveModel.SPECTRAL) check_spectrum(&desc.spectrum)!;
     Vec3 absorption = desc.absorption_color;
     if (!(absorption.x > 0 && absorption.y > 0 && absorption.z > 0)) return c3d::INVALID_ARGUMENT~;
     if (!(absorption.x <= 1 && absorption.y <= 1 && absorption.z <= 1)) return c3d::INVALID_ARGUMENT~;
@@ -75,10 +88,47 @@ fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
     return check_reference(assets, desc.foam);
 }
 
+// A simulated body steps over the built grid, so it takes neither application geometry nor an ocean.
+fn void? check_simulation(WaterDesc* desc) @private {
+    if (desc.mode == WaterMode.OCEAN || desc.geometry.generation) return c3d::INVALID_ARGUMENT~;
+    float cells = (float)simulation_cells(desc);
+    if (!(cells >= MIN_SIMULATION_CELLS && cells <= MAX_SIMULATION_CELLS)) return c3d::INVALID_ARGUMENT~;
+    float speed = desc.simulation.wave_speed;
+    float damping = desc.simulation.damping;
+    if (!(speed > 0) || !math::is_finite(speed)) return c3d::INVALID_ARGUMENT~;
+    if (!(damping > 0) || !math::is_finite(damping)) return c3d::INVALID_ARGUMENT~;
+    if (!(simulation_substeps(desc) <= MAX_SIMULATION_SUBSTEPS)) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? check_spectrum(WaterSpectrum* spectrum) @private {
+    if (!(spectrum.patch_size > 0) || !math::is_finite(spectrum.patch_size)) return c3d::INVALID_ARGUMENT~;
+    if (!(spectrum.choppiness >= 0) || !math::is_finite(spectrum.choppiness)) return c3d::INVALID_ARGUMENT~;
+}
+
+fn bool same_spectrum(WaterSpectrum* first, WaterSpectrum* second) @private {
+    return first.seed == second.seed && first.patch_size == second.patch_size
+        && first.choppiness == second.choppiness;
+}
+
+fn void? check_authoring(Scene* scene, AssetStore* assets, WaterDesc* desc) @private {
+    check_desc(assets, desc)!;
+    return check_ground(scene, desc);
+}
+
+fn void? check_ground(Scene* scene, WaterDesc* desc) @private {
+    if (!desc.ground.generation) return;
+    if (!scene.world.is_alive(desc.ground)) return c3d::INVALID_ID~;
+    if (!scene.world.has(desc.ground, Terrain)) return c3d::INVALID_ARGUMENT~;
+}
+
 fn void? check_reference(AssetStore* assets, MaterialId reference) @private {
     if (!reference.generation) return;
     if (!assets.materials.is_live(reference)) return c3d::INVALID_ID~;
     if (assets.materials.get(reference).data.kind != MaterialKind.STANDARD) return c3d::INVALID_ARGUMENT~;
+}
+
+fn TextureSlot field_slot(TextureId texture) @private {
+    return material::texture_slot(texture, asset::SAMPLER_LINEAR_REPEAT);
 }
 
 fn TextureSlot reflection_slot(uint view_slot) @private {
@@ -174,8 +224,35 @@ fn Aabb rest_bounds(AssetStore* assets, WaterDesc* desc) @private {
     return { .min = { -half, 0, -half }, .max = { half, 0, half } };
 }
 
-// Displacement leaves the rest bounds by the total amplitude in y and the largest crest shift in x and z.
-fn Aabb drawn_bounds(Aabb rest, Wave[] waves) @private {
-    Vec3 growth = { largest_shift(waves), total_amplitude(waves), largest_shift(waves) };
+// Displacement leaves the rest bounds by the reach of the surface.
+fn Aabb drawn_bounds(
+    Aabb rest,
+    WaterDesc* desc,
+    Wave[] waves,
+    float envelope,
+) @private {
+    Vec3 growth = surface_reach(desc, waves, envelope);
     return { .min = rest.min - growth, .max = rest.max + growth };
+}
+
+// What the drawn surface leaves its rest bounds by: the total amplitude in y and the largest crest shift in x and z,
+// the clamp of a simulated height, or the envelope of a spectral one in y and its choppiness times that in x and z.
+fn Vec3 surface_reach(WaterDesc* desc, Wave[] waves, float envelope) @private {
+    if (desc.wave_model == WaterWaveModel.SIMULATED) return { 0, SIMULATION_MAX_HEIGHT, 0 };
+    if (desc.wave_model == WaterWaveModel.SPECTRAL) {
+        float shift = desc.spectrum.choppiness * envelope;
+        return { shift, envelope, shift };
+    }
+    return { largest_shift(waves), total_amplitude(waves), largest_shift(waves) };
+}
+
+fn float spectral_envelope(WaterRuntime* runtime) @private => runtime.spectral ? runtime.spectral.envelope : 0;
+
+// The metres under the rest plane the surface can reach now: the medium's offset and the mirror's clip plane follow it.
+// A simulated body reaches as far as its largest height since it woke, so a calm pond keeps its water fogged; a
+// spectral one as far as the envelope of the spectrum it is blending toward or has reached.
+fn float vertical_reach(WaterRuntime* runtime) @private {
+    if (runtime.simulation) return runtime.simulation.reach;
+    if (runtime.spectral) return runtime.spectral.envelope;
+    return total_amplitude(bounding_waves(runtime));
 }

@@ -28,6 +28,14 @@ const char[*] WATER_V2_BINARY @private = $embed("fixtures/water_v2.bin");
 const char[*] WATER_V2_TEXT @private = $embed("fixtures/water_v2.json");
 const char[*] WATER_V3_BINARY @private = $embed("fixtures/water_v3.bin");
 const char[*] WATER_V3_TEXT @private = $embed("fixtures/water_v3.json");
+const char[*] WATER_V4_BINARY @private = $embed("fixtures/water_v4.bin");
+const char[*] WATER_V4_TEXT @private = $embed("fixtures/water_v4.json");
+const float V4_DEPTH @private = 12.5f; // the depth the fixtures were written with
+const float POND_SPEED @private = 5;
+const float POND_DAMPING @private = 0.75f;
+const uint SPECTRUM_SEED @private = 7;
+const float PATCH_SIZE @private = 128;
+const float CHOPPINESS @private = 0.5f;
 
 fn void test_serial_layout_registration() @test {
     landscape::register_serial_codecs()!!;
@@ -44,8 +52,11 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(landscape::FoliageAuthoring)!!.layout == 0xbf8d67f654870b2c);
     assert(serial::described_type(landscape::FoliageAuthoringV2)!!.layout == 0x797c3ed45915c1ed);
     assert(serial::described_type(Wave)!!.layout == 0xb7ea583c7a255cb9);
-    assert(serial::described_type(WaterDesc)!!.version == 4);
-    assert(serial::described_type(WaterDesc)!!.layout == 0x80dcad9164b35ea9);
+    assert(serial::described_type(WaterDesc)!!.version == 5);
+    assert(serial::described_type(WaterDesc)!!.layout == 0x778206e41e29aa24);
+    assert(serial::described_type(WaterSimulation)!!.layout == 0x2c6503594d42a697);
+    assert(serial::described_type(WaterSpectrum)!!.layout == 0x28afc5f2289d18ba);
+    assert(serial::described_type(landscape::WaterDescV4)!!.layout == 0x80dcad9164b35ea9);
     assert(serial::described_type(landscape::WaterDescV3)!!.layout == 0x90996b184cb03fab);
     assert(serial::described_type(landscape::WaterDescV2)!!.layout == 0x718815cf64669e4e);
     assert(serial::described_type(landscape::WaterDescV1)!!.layout == 0x74434d01389bb922);
@@ -202,6 +213,73 @@ fn void test_water_v3_fixtures_read_as_a_body_with_the_default_depth() @test {
             WaterDesc* desc = &fixture.destination.get(lake, Water).desc;
             assert(desc.roughness == 0.2f && desc.wave_count == 3 && desc.max_mirrors == 2 && desc.trace);
             assert(desc.mode == WaterMode.BODY && desc.depth == water::DEFAULT_WATER_DEPTH);
+        };
+    }
+}
+
+fn void test_water_v4_fixtures_read_as_gerstner_with_their_depth() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(
+                fixture:   &fixture,
+                allocator: mem,
+                capacity:  32,
+                with_lod:  false,
+            );
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? WATER_V4_TEXT[..] : WATER_V4_BINARY[..];
+            Node* lake = decode(&fixture, bytes, text_mode)!!;
+            WaterDesc* desc = &fixture.destination.get(lake, Water).desc;
+            assert(desc.roughness == 0.2f && desc.wave_count == 3 && desc.trace);
+            assert(desc.mode == WaterMode.BODY && desc.depth == V4_DEPTH);
+            assert(desc.wave_model == WaterWaveModel.GERSTNER && !desc.ground.generation);
+            WaterDesc defaults = water::default_water_desc();
+            assert(desc.simulation.wave_speed == defaults.simulation.wave_speed);
+            assert(desc.simulation.damping == defaults.simulation.damping);
+            assert(desc.spectrum.seed == defaults.spectrum.seed && desc.spectrum.patch_size == defaults.spectrum.patch_size);
+        };
+    }
+}
+
+fn void test_simulated_water_round_trips_with_its_ground() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(
+                fixture:   &fixture,
+                allocator: mem,
+                capacity:  32,
+                with_lod:  true,
+            );
+            defer destroy_fixture(&fixture);
+
+            WaterDesc* authored = &fixture.source.get(fixture.water_node, Water).desc;
+            authored.wave_model = SIMULATED;
+            authored.wave_count = 0;
+            authored.extent = 8;
+            authored.cell_size = 0.5f;
+            authored.simulation = { .wave_speed = POND_SPEED, .damping = POND_DAMPING };
+            authored.spectrum = { .seed = SPECTRUM_SEED, .patch_size = PATCH_SIZE, .choppiness = CHOPPINESS };
+            authored.ground = fixture.terrain_node.id;
+            char[] bytes = encode(&fixture.source, &fixture.assets, fixture.root, text_mode)!!;
+
+            Node* restored = decode(&fixture, bytes, text_mode)!!;
+            Node* ground = child_named(restored, "ground");
+            Node* lake = child_named(restored, "water");
+            WaterDesc* desc = &fixture.destination.get(lake, Water).desc;
+            assert(desc.wave_model == WaterWaveModel.SIMULATED && desc.extent == 8 && desc.cell_size == 0.5f);
+            assert(desc.simulation.wave_speed == POND_SPEED && desc.simulation.damping == POND_DAMPING);
+            assert(desc.spectrum.seed == SPECTRUM_SEED && desc.spectrum.patch_size == PATCH_SIZE);
+            assert(desc.spectrum.choppiness == CHOPPINESS);
+            assert(c3d::same_id(desc.ground, ground.id), "the ground reference was not remapped");
+            assert(!water::is_prepared(&fixture.destination, lake));
+
+            // The ground stays out of the export, which then names a node it does not hold.
+            assert(@catch(encode(&fixture.source, &fixture.assets, fixture.water_node, text_mode)));
+            prepare_all(&fixture.destination, &fixture.assets, restored);
+            assert(water::is_prepared(&fixture.destination, lake));
         };
     }
 }

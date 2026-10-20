@@ -29,7 +29,10 @@ const ulong WAVE_LAYOUT @private = 0xb7ea583c7a255cb9;
 const ulong WATER_V1_LAYOUT @private = 0x74434d01389bb922;
 const ulong WATER_V2_LAYOUT @private = 0x718815cf64669e4e;
 const ulong WATER_V3_LAYOUT @private = 0x90996b184cb03fab;
-const ulong WATER_LAYOUT @private = 0x80dcad9164b35ea9;
+const ulong WATER_V4_LAYOUT @private = 0x80dcad9164b35ea9;
+const ulong WATER_SIMULATION_LAYOUT @private = 0x2c6503594d42a697;
+const ulong WATER_SPECTRUM_LAYOUT @private = 0x28afc5f2289d18ba;
+const ulong WATER_LAYOUT @private = 0x778206e41e29aa24;
 
 struct TerrainDescV1 @private {
     TextureId  height_map;
@@ -144,12 +147,38 @@ struct WaterDescV3 @private {
     bool                   trace;
 }
 
-serial::BinaryCompatibility[3] water_binary_compatibility @local = {
+struct WaterDescV4 @private {
+    Wave[water::MAX_WAVES] waves;
+    uint                   wave_count;
+    GeometryId             geometry;
+    float                  extent;
+    float                  cell_size;
+    Vec3                   absorption_color;
+    float                  absorption_distance;
+    Vec3                   scatter_color;
+    float                  roughness;
+    float                  refraction_strength;
+    float                  reflection_distortion;
+    float                  foam_depth;
+    float                  foam_crest;
+    float                  ripple_drift;
+    MaterialId             ripples;
+    MaterialId             foam;
+    bool                   march_reflections;
+    uint                   max_mirrors;
+    uint                   reflection_view_slot;
+    bool                   trace;
+    WaterMode              mode;
+    float                  depth;
+}
+
+serial::BinaryCompatibility[4] water_binary_compatibility @local = {
     { .version = 1, .read = &read_water_v1 },
     { .version = 2, .read = &read_water_v2 },
     { .version = 3, .read = &read_water_v3 },
+    { .version = 4, .read = &read_water_v4 },
 };
-uint[3] water_text_default_versions @local = { 1, 2, 3 };
+uint[4] water_text_default_versions @local = { 1, 2, 3, 4 };
 
 struct TerrainSetAuthoring @private {
     uint  texels;
@@ -285,10 +314,19 @@ fn void? register_serial_codecs() {
         layout: WATER_V3_LAYOUT,
         defaults: &defaults_water_v3,
     )!;
+    describe::register_reflected(WaterDescV4)!;
+    serial::register_described_type(
+        $Type: WaterDescV4,
+        version: 4,
+        layout: WATER_V4_LAYOUT,
+        defaults: &defaults_water_v4,
+    )!;
+    register_value(WaterSimulation, WATER_SIMULATION_LAYOUT, &defaults_water_simulation)!;
+    register_value(WaterSpectrum, WATER_SPECTRUM_LAYOUT, &defaults_water_spectrum)!;
     describe::register_reflected(WaterDesc)!;
     serial::register_described_type(
         $Type: WaterDesc,
-        version: 4,
+        version: 5,
         layout: WATER_LAYOUT,
         defaults: &defaults_water,
     )!;
@@ -322,7 +360,7 @@ fn void? register_serial_codecs() {
     })!;
     serial::register_described_owner(Water, WaterDesc, {
         .name = "water",
-        .phase = VALUE,
+        .phase = OWNER,
         .collect = &collect_water,
         .project = &project_water,
         .validate = &validate_water,
@@ -451,6 +489,12 @@ fn void defaults_foliage(void* value) @private {
 }
 fn void defaults_wave(void* value) @private => *(Wave*)value = {};
 fn void defaults_water(void* value) @private => *(WaterDesc*)value = water::default_water_desc();
+fn void defaults_water_simulation(void* value) @private {
+    *(WaterSimulation*)value = water::default_water_desc().simulation;
+}
+fn void defaults_water_spectrum(void* value) @private {
+    *(WaterSpectrum*)value = water::default_water_desc().spectrum;
+}
 
 fn void defaults_water_v1(void* value) @private {
     *(WaterDescV1*)value = water_desc_v1(water::default_water_desc());
@@ -533,6 +577,65 @@ fn WaterDescV3 water_desc_v3(WaterDesc desc) @private {
         .reflection_view_slot  = desc.reflection_view_slot,
         .trace                 = desc.trace,
     };
+}
+
+fn void defaults_water_v4(void* value) @private {
+    *(WaterDescV4*)value = water_desc_v4(water::default_water_desc());
+}
+
+fn WaterDescV4 water_desc_v4(WaterDesc desc) @private {
+    return {
+        .waves                 = desc.waves,
+        .wave_count            = desc.wave_count,
+        .geometry              = desc.geometry,
+        .extent                = desc.extent,
+        .cell_size             = desc.cell_size,
+        .absorption_color      = desc.absorption_color,
+        .absorption_distance   = desc.absorption_distance,
+        .scatter_color         = desc.scatter_color,
+        .roughness             = desc.roughness,
+        .refraction_strength   = desc.refraction_strength,
+        .reflection_distortion = desc.reflection_distortion,
+        .foam_depth            = desc.foam_depth,
+        .foam_crest            = desc.foam_crest,
+        .ripple_drift          = desc.ripple_drift,
+        .ripples               = desc.ripples,
+        .foam                  = desc.foam,
+        .march_reflections     = desc.march_reflections,
+        .max_mirrors           = desc.max_mirrors,
+        .reflection_view_slot  = desc.reflection_view_slot,
+        .trace                 = desc.trace,
+        .mode                  = desc.mode,
+        .depth                 = desc.depth,
+    };
+}
+
+fn WaterDesc water_desc_from_v4(WaterDescV4 legacy) @private {
+    WaterDesc desc = water_desc_from_v3({
+        .waves                 = legacy.waves,
+        .wave_count            = legacy.wave_count,
+        .geometry              = legacy.geometry,
+        .extent                = legacy.extent,
+        .cell_size             = legacy.cell_size,
+        .absorption_color      = legacy.absorption_color,
+        .absorption_distance   = legacy.absorption_distance,
+        .scatter_color         = legacy.scatter_color,
+        .roughness             = legacy.roughness,
+        .refraction_strength   = legacy.refraction_strength,
+        .reflection_distortion = legacy.reflection_distortion,
+        .foam_depth            = legacy.foam_depth,
+        .foam_crest            = legacy.foam_crest,
+        .ripple_drift          = legacy.ripple_drift,
+        .ripples               = legacy.ripples,
+        .foam                  = legacy.foam,
+        .march_reflections     = legacy.march_reflections,
+        .max_mirrors           = legacy.max_mirrors,
+        .reflection_view_slot  = legacy.reflection_view_slot,
+        .trace                 = legacy.trace,
+    });
+    desc.mode = legacy.mode;
+    desc.depth = legacy.depth;
+    return desc;
 }
 
 fn WaterDesc water_desc_from_v3(WaterDescV3 legacy) @private {
@@ -764,7 +867,7 @@ fn void? project_foliage(void* component, void* value, serial::WriteContext* con
 
 fn void? project_water(void* component, void* value, serial::WriteContext* context) @private {
     *(WaterDesc*)value = ((Water*)component).desc;
-    water::check_desc(context.assets, (WaterDesc*)value)!;
+    water::check_authoring(context.scene, context.assets, (WaterDesc*)value)!;
 }
 
 fn void? validate_terrain(void* value, serial::ReadContext* context) @private {
@@ -801,7 +904,18 @@ fn void? validate_foliage(void* value, serial::ReadContext* context) @private {
 
 fn void? validate_water(void* value, serial::ReadContext* context) @private {
     if (context.has_component(Mesh) || context.has_component(InstancedMesh)) return c3d::INVALID_ARGUMENT~;
-    water::check_desc(context.assets, (WaterDesc*)value)!;
+    WaterDesc* desc = value;
+    water::check_desc(context.assets, desc)!;
+    if (!desc.ground.generation) return;
+    if (!context.scene.world.is_alive(desc.ground)) return c3d::INVALID_ID~;
+    bool terrain_present;
+    uint terrain_slot = ecs::slot_of(Terrain)!;
+    foreach (index, node : context.nodes) {
+        if (c3d::same_id(node.id, desc.ground)) {
+            terrain_present = (context.component_masks[index] & ecs::slot_bit(terrain_slot)) != 0;
+        }
+    }
+    if (!terrain_present) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void? attach_terrain(void* value, serial::ReadContext* context) @private {
@@ -895,6 +1009,13 @@ fn void? read_water_v2(serial::Reader* reader, serial::ReadContext* context) @pr
 fn void? read_water_v3(serial::Reader* reader, serial::ReadContext* context) @private {
     WaterDescV3* legacy = context.read_value(WaterDescV3, reader)!;
     WaterDesc desc = water_desc_from_v3(*legacy);
+    validate_water(&desc, context)!;
+    attach_water(&desc, context)!;
+}
+
+fn void? read_water_v4(serial::Reader* reader, serial::ReadContext* context) @private {
+    WaterDescV4* legacy = context.read_value(WaterDescV4, reader)!;
+    WaterDesc desc = water_desc_from_v4(*legacy);
     validate_water(&desc, context)!;
     attach_water(&desc, context)!;
 }

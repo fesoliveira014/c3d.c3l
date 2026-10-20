@@ -73,6 +73,15 @@ enum WaterMode {
 }
 
 <*
+ How a water body's surface is computed.
+*>
+enum WaterWaveModel {
+    GERSTNER,  // WaterDesc.waves, evaluated in the vertex stage
+    SPECTRAL,  // a wind sea's spectrum, evolved and transformed on the GPU by water_gpu::update
+    SIMULATED, // a damped wave equation stepped on the CPU over the built grid's vertices
+}
+
+<*
  What update_mirror did to a mirror slot.
 *>
 enum MirrorState {
@@ -89,6 +98,23 @@ struct Wave {
     float speed;      // metres per second along direction
     Vec2  direction;  // unit
     float steepness;  // share of the largest horizontal crest shift; the mean over the waves stays below 1
+}
+
+<*
+ A damped wave equation on the built grid's vertex lattice.
+*>
+struct WaterSimulation {
+    float wave_speed; // metres per second; finite and positive
+    float damping;    // 1/s: the decay rate of the surface's velocity; finite and positive
+}
+
+<*
+ A spectrum of wave components, tiled across the surface.
+*>
+struct WaterSpectrum {
+    uint  seed;       // initial amplitudes and phases
+    float patch_size; // metres covered by one tile of the spectrum
+    float choppiness; // horizontal displacement scale
 }
 
 <*
@@ -117,6 +143,10 @@ struct WaterDesc {
     bool            trace;                 // scene traces see the displaced surface, posed again every frame
     WaterMode       mode;                  // OCEAN builds its chunks: no geometry or trace
     float           depth;                 // metres below the rest plane the body reaches; finite and positive
+    WaterWaveModel  wave_model;            // GERSTNER draws waves; SIMULATED steps simulation over the built grid
+    WaterSimulation simulation;            // read by SIMULATED
+    WaterSpectrum   spectrum;              // read by SPECTRAL
+    Entity          ground;                // optional terrain node: SIMULATED cells it stands above are dry
 }
 
 <*
@@ -130,16 +160,19 @@ struct Water {
  Checked desc, material, grid, mirror cameras, medium node and clip plane of a water body, written by the library.
 *>
 struct WaterRuntime {
-    WaterDesc           desc;        // checked preparation or set_desc snapshot; later Water edits never reach it
-    MaterialId          material;    // owned; removed with the runtime
-    GeometryId          grid;        // the built grid, shared per store key, or the desc's geometry
-    Entity[MAX_MIRRORS] mirrors;     // root camera nodes by slot; zero where none stands
-    Entity              medium_node; // child of the body carrying its MediumVolume; owned, removed with the runtime
-    Plane               clip_plane;  // world; the mirror views' ViewDesc.clip_plane
-    Vec2                rest_min;    // node-local XZ of the rest surface
+    WaterDesc           desc;           // checked preparation or set_desc snapshot; later Water edits never reach it
+    MaterialId          material;       // owned; removed with the runtime
+    GeometryId          grid;           // the built grid, shared per store key, or the desc's geometry
+    Entity[MAX_MIRRORS] mirrors;        // root camera nodes by slot; zero where none stands
+    Entity              medium_node;    // child of the body carrying its MediumVolume; owned, removed with the runtime
+    Plane               clip_plane;     // world; the mirror views' ViewDesc.clip_plane
+    Vec2                rest_min;       // node-local XZ of the rest surface
     Vec2                rest_max;
-    SeaBlend            sea;         // the sea-state blend set_sea_state started; idle without one
-    OceanState          ocean;       // zero for a BODY
+    SeaBlend            sea;            // the sea-state blend set_sea_state started; idle without one
+    OceanState          ocean;          // zero for a BODY
+    SimulationState*    simulation;     // owned; null unless the wave model is SIMULATED
+    SpectralState*      spectral;       // owned; null unless the wave model is SPECTRAL
+    float               spectral_bound; // metres: how far the twin may stand from the drawn surface; zero otherwise
 }
 
 <*
@@ -170,6 +203,12 @@ fn WaterDesc default_water_desc() {
         .march_reflections     = true,
         .max_mirrors           = 1,
         .depth                 = DEFAULT_WATER_DEPTH,
+        .simulation            = { .wave_speed = DEFAULT_WAVE_SPEED, .damping = DEFAULT_DAMPING },
+        .spectrum              = {
+            .seed       = DEFAULT_SPECTRUM_SEED,
+            .patch_size = DEFAULT_PATCH_SIZE,
+            .choppiness = DEFAULT_CHOPPINESS,
+        },
     };
 }
 
@@ -191,7 +230,7 @@ fn void? register_water(Scene* scene, AssetStore* assets) {
  @param [&inout] scene : "Registered with register_water."
  @param [&inout] assets : "The store given to register_water."
  @param [&in] node : "World matrix current; the mirror excludes its layers."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require scene.world.is_registered(WaterRuntime)
  @require !scene.has(node, Mesh) && !scene.has(node, InstancedMesh)
  @require !scene.has(node, Water) && !scene.has(node, WaterRuntime)
@@ -228,7 +267,7 @@ fn void? attach_water(
     Node* node,
     WaterDesc desc,
 ) {
-    check_desc(assets, &desc)!;
+    check_authoring(scene, assets, &desc)!;
     scene.add(node, (Water){ .desc = desc });
 }
 
@@ -245,13 +284,17 @@ fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, WaterRuntime);
  @param [&inout] scene : "Registered; node world matrix current."
  @param [&inout] assets : "The store given to register_water."
  @param [&in] node : "Carries Water."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require scene.has(node, Water)
 *>
 fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     if (is_prepared(scene, node)) return;
     WaterDesc desc = scene.get(node, Water).desc;
-    check_desc(assets, &desc)!;
+    check_authoring(scene, assets, &desc)!;
+    $if !$feat(C3D_LANDSCAPE_GPU):
+        if (desc.wave_model == WaterWaveModel.SPECTRAL) return c3d::UNSUPPORTED~;
+    $endif
+
     bool shader_created, grid_created;
     ShaderId shader = water_shader(assets, &shader_created)!;
     defer catch if (shader_created) assets.remove_shader(shader);
@@ -268,6 +311,22 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         )!;
     }
     defer catch if (grid_created) assets.remove_geometry(surface);
+    Aabb rest = rest_bounds(assets, &desc);
+    SimulationState* simulation;
+    if (desc.wave_model == WaterWaveModel.SIMULATED) simulation = create_simulation(assets, &desc)!;
+    defer catch if (simulation) release_simulation(assets, simulation);
+    SpectralState* spectral;
+    if (desc.wave_model == WaterWaveModel.SPECTRAL) {
+        spectral = create_spectral(
+            assets:   assets,
+            desc:     &desc,
+            rest_min: { rest.min.x, rest.min.z },
+            rest_max: { rest.max.x, rest.max.z },
+        )!;
+    }
+    defer catch if (spectral) release_spectral(assets, spectral);
+    float envelope = spectral ? spectral.envelope : 0;
+
     OceanState layout = ocean ? ocean_layout(&desc) : (OceanState){};
     WaterParams params = pack_params(&desc, {});
     if (ocean) {
@@ -279,8 +338,15 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
         );
         params.previous = params.waves;
     }
+    if (spectral) params.field_offset = field_offset(&desc, maths::inverse_affine(node.world), layout.anchor);
     TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
     slots[REFLECTION_SLOT] = reflection_slot(desc.reflection_view_slot);
+    if (simulation) slots[SIMULATION_SLOT] = material::texture_slot(simulation.texture);
+    if (spectral) {
+        slots[SPECTRAL_DISPLACEMENT_SLOT] = field_slot(spectral.displacement);
+        slots[SPECTRAL_SLOPE_SLOT] = field_slot(spectral.slope);
+        slots[SPECTRAL_PREVIOUS_SLOT] = field_slot(spectral.previous);
+    }
     MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
     common.double_sided = true;
     MaterialId owned = assets.add_material(material::custom(
@@ -299,6 +365,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             desc:     &desc,
             surface:  surface,
             material: owned,
+            envelope: envelope,
         )!;
     }
     defer catch if (ocean) scene.remove_component(node, InstancedMesh);
@@ -307,7 +374,6 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
     Entity[MAX_MIRRORS] mirrors;
     add_mirrors(scene, node.id, mirrors[:desc.max_mirrors])!;
 
-    Aabb rest = rest_bounds(assets, &desc);
     if (!ocean) {
         scene.add(node, (Mesh){
             .geometry            = surface,
@@ -315,21 +381,38 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
             .receive_shadow      = true,
             .trace               = desc.trace,
             .has_bounds_override = true,
-            .local_bounds        = drawn_bounds(rest, desc.waves[:desc.wave_count]),
+            .local_bounds        = drawn_bounds(
+                rest:     rest,
+                desc:     &desc,
+                waves:    desc.waves[:desc.wave_count],
+                envelope: envelope,
+            ),
         });
     }
     scene.add(node, (WaterRuntime){
-        .desc        = desc,
-        .material    = owned,
-        .grid        = surface,
-        .mirrors     = mirrors,
-        .medium_node = medium_node.id,
-        .clip_plane  = mirror_clip_plane(node.world, total_amplitude(desc.waves[:desc.wave_count])),
-        .rest_min    = { rest.min.x, rest.min.z },
-        .rest_max    = { rest.max.x, rest.max.z },
-        .ocean       = layout,
+        .desc           = desc,
+        .material       = owned,
+        .grid           = surface,
+        .mirrors        = mirrors,
+        .medium_node    = medium_node.id,
+        .rest_min       = { rest.min.x, rest.min.z },
+        .rest_max       = { rest.max.x, rest.max.z },
+        .ocean          = layout,
+        .simulation     = simulation,
+        .spectral       = spectral,
+        .spectral_bound = spectral ? spectral.bound : 0,
     });
-    write_medium(scene, node, scene.get(node, WaterRuntime));
+    WaterRuntime* runtime = scene.get(node, WaterRuntime);
+    runtime.clip_plane = mirror_clip_plane(node.world, vertical_reach(runtime));
+    if (simulation) {
+        follow_ground(
+            scene:   scene,
+            assets:  assets,
+            node:    node,
+            runtime: runtime,
+        );
+    }
+    write_medium(scene, node, runtime);
 }
 
 <*
@@ -337,7 +420,7 @@ fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
  @param [&inout] scene : "Registered; prepared owners remain unchanged."
  @param [&inout] assets : "Receives generated resources during preparation."
  @param [in] root : "Null selects the scene root; root is included."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
     if (!root) root = scene.root;
@@ -359,7 +442,8 @@ fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
  Replace a water body's desc; the grid is rebuilt only when its shape changed.
  Ends a running sea-state blend and writes the body's MediumVolume again.
  Invalidates Camera pointers when max_mirrors shrinks.
- An ocean keeps its mode, extent and cell size; remove and add the body to change them.
+ An ocean keeps its mode, extent and cell size, and a simulated body its extent and cell size; remove and add the
+ body to change them. No body changes its wave model.
  @param [&inout] scene
  @param [&inout] assets : "The store given to register_water."
  @param [&in] node : "Carries a water body."
@@ -372,11 +456,13 @@ fn void? set_desc(
     Node* node,
     WaterDesc desc,
 ) {
-    check_desc(assets, &desc)!;
+    check_authoring(scene, assets, &desc)!;
     WaterRuntime* runtime = scene.get(node, WaterRuntime);
     bool ocean = runtime.desc.mode == WaterMode.OCEAN;
-    if (desc.mode != runtime.desc.mode) return c3d::INVALID_ARGUMENT~;
-    if (ocean && (desc.extent != runtime.desc.extent || desc.cell_size != runtime.desc.cell_size)) {
+    bool fixed_grid = ocean || runtime.simulation || runtime.spectral;
+    if (desc.mode != runtime.desc.mode || desc.wave_model != runtime.desc.wave_model) return c3d::INVALID_ARGUMENT~;
+    if (runtime.spectral && !same_spectrum(&desc.spectrum, &runtime.desc.spectrum)) return c3d::INVALID_ARGUMENT~;
+    if (fixed_grid && (desc.extent != runtime.desc.extent || desc.cell_size != runtime.desc.cell_size)) {
         return c3d::INVALID_ARGUMENT~;
     }
 
@@ -403,6 +489,9 @@ fn void? set_desc(
         );
     }
     *params = pack_params(&desc, before);
+    if (runtime.spectral && move.moved) {
+        params.field_offset = field_offset(&desc, move.inverse, runtime.ocean.anchor);
+    }
     if (ocean) {
         anchor_changed_waves(
             params:  params,
@@ -426,11 +515,12 @@ fn void? set_desc(
     write_medium(scene, node, runtime);
     if (ocean) {
         place_ocean_bounds(
-            scene: scene,
-            node:  node,
-            ocean: &runtime.ocean,
-            desc:  &runtime.desc,
-            waves: desc.waves[:desc.wave_count],
+            scene:    scene,
+            node:     node,
+            ocean:    &runtime.ocean,
+            desc:     &runtime.desc,
+            waves:    desc.waves[:desc.wave_count],
+            envelope: spectral_envelope(runtime),
         );
         return;
     }
@@ -438,7 +528,12 @@ fn void? set_desc(
     Mesh* mesh = scene.get(node, Mesh);
     mesh.geometry = surface;
     mesh.trace = desc.trace;
-    mesh.local_bounds = drawn_bounds(rest, desc.waves[:desc.wave_count]);
+    mesh.local_bounds = drawn_bounds(
+        rest:     rest,
+        desc:     &desc,
+        waves:    desc.waves[:desc.wave_count],
+        envelope: spectral_envelope(runtime),
+    );
 }
 
 <*
@@ -494,7 +589,8 @@ fn void release_mirror(Scene* scene, Entity body, uint slot) {
 }
 
 <*
- Tear down removed water bodies, scroll the ripples with the wind, advance sea-state blends and re-anchor oceans.
+ Tear down removed water bodies, scroll the ripples with the wind, step simulations, advance sea-state blends and
+ re-anchor oceans.
  Invalidates Mesh, InstancedMesh and WaterRuntime pointers when a Water was removed.
  @param [&inout] scene : "World matrices current; pending water is skipped unchanged."
  @param [&inout] assets : "The store given to register_water."
@@ -529,6 +625,25 @@ fn void update(
             time:    time,
             move:    move,
         );
+        if (runtime.spectral) {
+            advance_spectral(
+                scene:   scene,
+                assets:  assets,
+                node:    node,
+                runtime: runtime,
+                time:    time,
+                move:    move,
+            );
+        }
+        if (runtime.simulation) {
+            advance_simulation(
+                scene:   scene,
+                assets:  assets,
+                node:    node,
+                runtime: runtime,
+                time:    time,
+            );
+        }
     };
 }
 
@@ -537,6 +652,8 @@ fn void remove_runtime(Entity entity, void* component, void* user) @private {
     WaterRuntime* runtime = component;
     AssetStore* assets = user;
     assets.remove_material(runtime.material);
+    if (runtime.simulation) release_simulation(assets, runtime.simulation);
+    if (runtime.spectral) release_spectral(assets, runtime.spectral);
 }
 
 // Hooks cannot remove a sibling component or another node, so orphans are torn down here.

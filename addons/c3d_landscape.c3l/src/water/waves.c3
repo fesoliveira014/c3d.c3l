@@ -9,6 +9,8 @@ import c3d::scene;
 import std::math;
 
 const uint MARCH_FLAG @private = 1; // mirrored as WATER_MARCH in landscape/water_waves.glsl
+const uint SIMULATED_FLAG @private = 2; // mirrored as WATER_SIMULATED in landscape/water_waves.glsl
+const uint SPECTRAL_FLAG @private = 4; // mirrored as WATER_SPECTRAL in landscape/water_waves.glsl
 
 <*
  One wave as the vertex stage reads it, packed from a Wave.
@@ -39,23 +41,28 @@ struct WaterParams @private {
     uint               flags;
     float              cell_size; // metres between the finest vertices of an ocean; zero for a body
     float              roughness;
-    float              _pad0;
-    float              _pad1;
-    float              _pad2;
+    uint               grid_texels;  // vertices along a simulated body's side; zero otherwise
+    float              grid_spacing; // metres between them
+    float              field_scale;  // field coordinates per metre of a spectral body; zero otherwise
+    Vec2               field_offset; // field coordinates of the node-local origin
+    Vec2               _pad0;
 }
 
-$assert WaterParams::size == 336;
+$assert WaterParams::size == 352;
 
 <*
  World-space copy of one water body's waves and pose at the moment it was taken.
+ A simulated body's view borrows its grid: it answers the surface of the last update until the body is removed.
 *>
 struct SurfaceView {
-    WaveGpu[MAX_WAVES] waves;
-    uint               wave_count;
-    Vec2               rest_min;         // node-local XZ of the rest surface
-    Vec2               rest_max;
-    Mat4               world;            // node world matrix when the view was taken
-    Mat4               local_from_world;
+    WaveGpu[SPECTRAL_TWIN_WAVES] waves;            // a spectral body's twin components, or the Gerstner waves
+    uint                         wave_count;
+    float                        period;           // seconds a spectral surface repeats after; zero otherwise
+    Vec2                         rest_min;         // node-local XZ of the rest surface
+    Vec2                         rest_max;
+    Mat4                         world;            // node world matrix when the view was taken
+    Mat4                         local_from_world;
+    SimulationState*             simulation;       // borrowed from the body; null unless the wave model is SIMULATED
 }
 
 <*
@@ -95,20 +102,23 @@ fn SurfaceView? surface_view(Scene* scene, AssetStore* assets, Entity node) {
     // The pool read keeps the store read-only; AssetStore.material takes it as inout.
     WaterParams* params = (WaterParams*)assets.materials.get(runtime.material).data.custom.param_block.ptr;
     Mat4 world = scene.node(node).world;
-    return {
-        .waves            = params.waves,
+    SurfaceView view = {
         .wave_count       = params.wave_count,
         .rest_min         = runtime.rest_min,
         .rest_max         = runtime.rest_max,
         .world            = world,
         .local_from_world = maths::inverse_affine(world),
+        .simulation       = runtime.simulation,
     };
+    view.waves[:MAX_WAVES] = params.waves[..];
+    if (runtime.spectral) fill_spectral_view(runtime, view.local_from_world, &view);
+    return view;
 }
 
 <*
  World height of the drawn surface on the vertical through a point.
  @param [&in] view
- @param time : "Seconds; the FrameInfo.time the surface is drawn at."
+ @param time : "Seconds; the FrameInfo.time the surface is drawn at; a simulated surface ignores it."
  @return? NOT_FOUND
 *>
 fn float? sample_surface(
@@ -117,17 +127,19 @@ fn float? sample_surface(
     float world_z,
     double time,
 ) {
+    if (view.simulation) return simulated_height(view, world_x, world_z);
+
     Vec3 local = maths::transform_point(view.local_from_world, { world_x, 0, world_z });
-    float drawn_time = shader_time(time);
+    float drawn_time = view_time(view, time);
     RestPoint rest = rest_point(view, local, drawn_time)!;
     WaveGpu[] waves = view.waves[:view.wave_count];
     return maths::transform_point(view.world, { local.x, wave_height(waves, rest.point, drawn_time), local.z }).y;
 }
 
 <*
- Sample height, normal and orbital velocity of the surface at a world point and time.
+ Sample height, normal and velocity of the surface at a world point and time.
  @param [&in] view
- @param time : "Seconds; the FrameInfo.time the surface is drawn at."
+ @param time : "Seconds; the FrameInfo.time the surface is drawn at; a simulated surface ignores it."
  @return? NOT_FOUND
 *>
 fn WaterSample? sample_surface_detail(
@@ -136,8 +148,10 @@ fn WaterSample? sample_surface_detail(
     float world_z,
     double time,
 ) {
+    if (view.simulation) return simulated_detail(view, world_x, world_z);
+
     Vec3 local = maths::transform_point(view.local_from_world, { world_x, 0, world_z });
-    float drawn_time = shader_time(time);
+    float drawn_time = view_time(view, time);
     RestPoint rest = rest_point(view, local, drawn_time)!;
     WaveGpu[] waves = view.waves[:view.wave_count];
     SurfaceFrame frame = wave_frame(waves, rest.point, drawn_time);
@@ -174,6 +188,14 @@ fn RestPoint? rest_point(SurfaceView* view, Vec3 local, float drawn_time) @priva
 
 // Twin of write_frame_root's (float)info.time in render/view.c3: queries see the time the stage sees.
 fn float shader_time(double time) @private => (float)time;
+
+// A spectral surface repeats after its period: its frequencies are whole cycles of it, so the time folds exactly.
+fn float view_time(SurfaceView* view, double time) @private {
+    if (!(view.period > 0)) return shader_time(time);
+
+    double cycles = time / view.period;
+    return (float)((cycles - math::floor(cycles)) * view.period);
+}
 
 // Twin of water_wave_angle in landscape/water_waves.glsl.
 fn float wave_angle(WaveGpu* wave, Vec2 rest, float time) @private {
@@ -225,17 +247,25 @@ fn WaterParams pack_params(WaterDesc* desc, WaterParams kept) @private {
     WaterParams params = {
         .scroll_origin         = kept.scroll_origin,
         .scroll_velocity       = kept.scroll_velocity,
-        .wave_count            = desc.wave_count,
+        .wave_count            = desc.wave_model == WaterWaveModel.GERSTNER ? desc.wave_count : 0,
         .scroll_time           = kept.scroll_time,
         .refraction_strength   = desc.refraction_strength,
         .reflection_distortion = desc.reflection_distortion,
         .foam_depth            = desc.foam_depth,
         .foam_crest            = desc.foam_crest,
-        .flags                 = desc.march_reflections ? MARCH_FLAG : 0,
+        .flags                 = (desc.march_reflections ? MARCH_FLAG : 0)
+            | (desc.wave_model == WaterWaveModel.SIMULATED ? SIMULATED_FLAG : 0)
+            | (desc.wave_model == WaterWaveModel.SPECTRAL ? SPECTRAL_FLAG : 0),
         .cell_size             = desc.mode == WaterMode.OCEAN ? desc.cell_size : 0,
         .roughness             = desc.roughness,
+        .field_offset          = kept.field_offset,
     };
-    for (uint index = 0; index < desc.wave_count; index++) {
+    if (desc.wave_model == WaterWaveModel.SIMULATED) {
+        params.grid_texels = simulation_cells(desc) + 1;
+        params.grid_spacing = simulation_spacing(desc);
+    }
+    if (desc.wave_model == WaterWaveModel.SPECTRAL) params.field_scale = 1 / desc.spectrum.patch_size;
+    for (uint index = 0; index < params.wave_count; index++) {
         params.waves[index] = pack_wave(&desc.waves[index], desc.wave_count);
         params.waves[index].phase_offset = kept.waves[index].phase_offset;
     }

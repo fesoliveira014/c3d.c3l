@@ -18,15 +18,15 @@ import std::math;
 
 const char[*] READBACK_SOURCE @local = $embed("water_readback.comp.glsl");
 const uint READBACK_POINTS @local = 64; // mirrored as WATER_READBACK_POINTS in water_readback.comp.glsl
-const uint TWIN_SIZE @local = 129; // odd: the centre pixel's ray is the optical axis
-const uint TWIN_GRID @local = 7; // 49 surface samples across the central 80 % of the view
-const float TWIN_FOV_DEGREES @local = 20; // 7 m of water at 20 m, 5.4 cm per pixel
-const Vec3 TWIN_CAMERA_POSITION @local = { 0, 20, 0 };
-const float TWIN_EXTENT @local = 12.8f;
-const float TWIN_CELL_SIZE @local = 0.05f; // triangulation error under 0.2 mm on the 2 m wave
-const float SURFACE_TOLERANCE @local = 0.01f; // metres, the render and physics contract
-const Vec3 OCEAN_POSITION @local = { 1.7f, 0, -2.3f }; // off the origin, so the anchor's fold is not zero
-const float OCEAN_SPLIT_PIXELS @local = 16; // small: the whole 12.8 m ocean draws at its finest level
+const uint TWIN_SIZE @private = 129; // odd: the centre pixel's ray is the optical axis
+const uint TWIN_GRID @private = 7; // 49 surface samples across the central 80 % of the view
+const float TWIN_FOV_DEGREES @private = 20; // 7 m of water at 20 m, 5.4 cm per pixel
+const Vec3 TWIN_CAMERA_POSITION @private = { 0, 20, 0 };
+const float TWIN_EXTENT @private = 12.8f;
+const float TWIN_CELL_SIZE @private = 0.05f; // triangulation error under 0.2 mm on the 2 m wave
+const float SURFACE_TOLERANCE @private = 0.01f; // metres, the render and physics contract
+const Vec3 OCEAN_POSITION @private = { 1.7f, 0, -2.3f }; // off the origin, so the anchor's fold is not zero
+const float OCEAN_SPLIT_PIXELS @private = 16; // small: the whole 12.8 m ocean draws at its finest level
 const float LEVELS_CELL_SIZE @local = 0.1f; // 6.4 m chunks
 const uint LEVELS_CHUNKS @local = 16; // five levels over 102.4 m
 const Vec3 LEVELS_CAMERA @local = { -30, 3, -30 }; // in a corner of the ocean: the nearer levels cover a quarter plane
@@ -92,12 +92,30 @@ const float MISS_TOLERANCE @local = 0.03f; // relative; half-float storage and t
 const float HALF_FLOAT_STEP @local = 0.0005f; // absolute floor of the comparison, near zero
 const uint VELOCITY_SIZE @local = 65;
 const Vec3 VELOCITY_CAMERA_POSITION @local = { 0, 20, 0 };
-const double VELOCITY_STEP @local = 0.1;
+const double VELOCITY_STEP @private = 0.1;
 const uint SETTLE_FRAMES @local = 8;
 const uint VELOCITY_ROW_SAMPLES @local = 9;
 const float VELOCITY_TOLERANCE @local = 0.01f; // encoded units, about two and a half 8-bit steps
 const float MIN_VELOCITY_ENCODED @local = 0.03f; // every sample moves well above the tolerance
 const uint BISECTION_STEPS @local = 60;
+const float SIMULATED_CELL_SIZE @local = 0.4f; // 32 cells over the twin's extent
+const float RIPPLE_SPEED @local = 6; // metres per second
+const float RIPPLE_DAMPING @local = 0.2f; // per second: the ripple is still strong after a second
+const float RIPPLE_RADIUS @local = 1.5f;
+const float RIPPLE_STRENGTH @local = 6; // metres per second at the centre
+const double[3] RIPPLE_TIMES @local = { 0.5, 1.0, 1.5 }; // seconds after the impulse
+const float RIPPLE_MINIMUM @local = 0.02f; // metres: the ripple stands visibly off the rest plane somewhere in the grid
+const uint RIPPLE_FRAMES @local = 12; // velocity frames after the impulse
+const double RIPPLE_FRAME @local = 1.0 / 30; // seconds: two fixed steps and one update per frame
+const uint RIPPLE_VELOCITY_SIZE @local = 129;
+const Vec3 RIPPLE_CAMERA_POSITION @local = { 0, 2.5f, 5.5f }; // from the side, where a lift moves the image
+const float RIPPLE_FOV_DEGREES @local = 40;
+const uint RIPPLE_ROW_SAMPLES @local = 13;
+const int RIPPLE_FIRST_COLUMN @local = 12;
+const int RIPPLE_COLUMN_STEP @local = 8;
+const float RIPPLE_VELOCITY_TOLERANCE @local = 0.01f; // encoded units: a third of a pixel, over two 8-bit steps
+const float MIN_RIPPLE_VELOCITY @local = 0.02f; // encoded units: twice the tolerance, so a missing previous fails
+const float SIMULATION_FLOOR @local = 2; // metres under the rest plane: below any simulated height
 const float SEA_BLEND_SECONDS @local = 0.3f;
 const float SEA_VELOCITY_TOLERANCE @local = 0.02f; // encoded units: twice the steady case's; measures 0.0096
 const double SEA_START_TIME @local = 1000; // seconds: large, so the offsets and the phase products are not near zero
@@ -109,9 +127,9 @@ const uint TRACE_GROUP_SIZE @local = 8; // mirrored as local_size_x and _y in tr
 const uint RASTER_HIT @local = 1; // mirrored as RASTER_HIT in trace_probe.comp.glsl
 const uint TRACE_HIT @local = 2; // mirrored as TRACE_HIT in trace_probe.comp.glsl
 const uint PROBE_SIZE @local = 64;
-const usz PROBE_PIXELS @local = PROBE_SIZE * PROBE_SIZE;
+const usz PROBE_PIXELS @private = PROBE_SIZE * PROBE_SIZE;
 const usz PROBE_RESULT_BYTES @local = PROBE_PIXELS * TraceProbeResult::size;
-const usz COVERAGE_MINIMUM @local = PROBE_PIXELS * 9 / 10; // the whole view looks at water
+const usz COVERAGE_MINIMUM @private = PROBE_PIXELS * 9 / 10; // the whole view looks at water
 const float PROBE_CELL_SIZE @local = 0.2f; // ten cells to the shortest choppy wavelength
 const double[3] PROBE_TIMES @local = { 0.5, 1.0, 1.5 }; // seconds; half a second moves wave 0 by a tenth of a cycle
 const double SHADOW_PROBE_TIME @local = 2;
@@ -174,7 +192,7 @@ struct TraceProbeResult @local {
 }
 $assert TraceProbeResult::size == 16;
 
-struct TraceProbe @local {
+struct TraceProbe @private {
     ViewId             view;
     Node*              camera;
     BufferId           output;
@@ -184,13 +202,13 @@ struct TraceProbe @local {
     TraceKind          kind;
 }
 
-struct TraceAgreement @local {
+struct TraceAgreement @private {
     usz   covered;  // pixels where the drawn and the traced surface both answer
     usz   mismatch; // pixels where only one does
     float worst;    // largest distance between the two over covered pixels, in metres
 }
 
-struct Fixture @local {
+struct Fixture @private {
     AssetStore         assets;
     Scene              scene;
     PhysicsWorld       physics;
@@ -201,7 +219,7 @@ struct Fixture @local {
     gpu::MappedGpuSpan readback;
 }
 
-fn void? create_fixture(Fixture* fixture, bool ray_queries = false) @local {
+fn void? create_fixture(Fixture* fixture, bool ray_queries = false) @private {
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
     fixture.scene.background = { .kind = COLOR, .color = { 0, 0, 0, 1 } };
@@ -244,7 +262,7 @@ fn void? create_fixture(Fixture* fixture, bool ray_queries = false) @local {
     fixture.readback = gpu::allocate_mapped_memory(&fixture.renderer.device, &readback_desc)!;
 }
 
-fn void destroy_fixture(Fixture* fixture) @local {
+fn void destroy_fixture(Fixture* fixture) @private {
     render::wait_frames(&fixture.renderer)!!;
     gpu::GpuAllocation allocation = fixture.readback.span.allocation();
     gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
@@ -254,7 +272,7 @@ fn void destroy_fixture(Fixture* fixture) @local {
     asset::destroy_asset_store(&fixture.assets);
 }
 
-fn void check_validation(Renderer* renderer) @local {
+fn void check_validation(Renderer* renderer) @private {
     DebugEntry[render::DEBUG_LOG_ENTRIES] entries;
     usz count = renderer.log.recent(entries[..]);
     foreach (entry : entries[:count]) {
@@ -263,7 +281,7 @@ fn void check_validation(Renderer* renderer) @local {
     }
 }
 
-fn WaterDesc surface_desc(Wave[] waves, float extent, float cell_size) @local {
+fn WaterDesc surface_desc(Wave[] waves, float extent, float cell_size) @private {
     WaterDesc desc = water::default_water_desc();
     desc.waves[:waves.len] = waves[..];
     desc.wave_count = (uint)waves.len;
@@ -276,7 +294,7 @@ fn WaterDesc surface_desc(Wave[] waves, float extent, float cell_size) @local {
     return desc;
 }
 
-fn Node* add_water_node(Fixture* fixture, WaterDesc desc, Vec3 position = {}) @local {
+fn Node* add_water_node(Fixture* fixture, WaterDesc desc, Vec3 position = {}) @private {
     Node* node = fixture.scene.add_node(name: "water")!!;
     node.local.position = position;
     node.layers = WATER_LAYER;
@@ -296,7 +314,7 @@ fn Node* add_camera_node(
     Vec3 position,
     Vec3 forward,
     Vec3 up,
-) @local {
+) @private {
     Node* node = fixture.scene.add_camera(camera::perspective_deg(fov_degrees, 0.5f, 100))!!;
     node.local.position = position;
     node.local.rotation = maths::look_rotation(forward.normalize(), up);
@@ -317,14 +335,14 @@ fn Node* add_emissive_box(Fixture* fixture, Vec3 position, Vec3 size) @local {
     return node;
 }
 
-fn ViewId add_view(Fixture* fixture, uint size, AntiAliasing anti_aliasing = AntiAliasing.NONE) @local {
+fn ViewId add_view(Fixture* fixture, uint size, AntiAliasing anti_aliasing = AntiAliasing.NONE) @private {
     RenderTargetId target = render::create_render_target(&fixture.renderer, render::render_target_desc(size, size))!!;
     ViewDesc desc = render::texture_view_desc(target);
     desc.post.anti_aliasing = anti_aliasing;
     return render::create_view(&fixture.renderer, desc)!!;
 }
 
-fn void? record_readback(Fixture* fixture, DispatchTexture source, int[<2>][] pixels) @local {
+fn void? record_readback(Fixture* fixture, DispatchTexture source, int[<2>][] pixels) @private {
     Renderer* renderer = &fixture.renderer;
     ReadbackRoot root = { .output = renderer.buffer_address(fixture.output), .point_count = (uint)pixels.len };
     root.pixels[:pixels.len] = pixels[..];
@@ -348,13 +366,20 @@ fn void? record_readback(Fixture* fixture, DispatchTexture source, int[<2>][] pi
     return gpu::cmd_barrier(&renderer.commands, &host_read);
 }
 
-fn Vec4[] read_texels(Fixture* fixture, usz count) @local {
+fn Vec4[] read_texels(Fixture* fixture, usz count) @private {
     render::wait_frames(&fixture.renderer)!!;
     gpu::invalidate_mapped_span(&fixture.renderer.device, fixture.readback.span)!!;
     return ((ReadbackOutput*)fixture.readback.bytes.ptr).texels[:count];
 }
 
-fn void update_water(Fixture* fixture, double time) @local {
+// Evolves the spectral bodies' fields, in the build that has the module that does.
+fn void? update_fields(Fixture* fixture) @private {
+    $if $feat(C3D_LANDSCAPE_GPU):
+        return evolve_fields(fixture);
+    $endif
+}
+
+fn void update_water(Fixture* fixture, double time) @private {
     fixture.scene.update_world();
     water::update(
         scene:         &fixture.scene,
@@ -373,11 +398,12 @@ fn Vec4[]? render_and_read(
     int[<2>][] pixels,
     bool depth,
     Vec3 reference = {},
-) @local {
+) @private {
     Renderer* renderer = &fixture.renderer;
     update_water(fixture, time);
     renderer.begin_frame({ .time = time, .delta = (float)VELOCITY_STEP, .reference_position = reference })!;
     defer catch render::abort_frame(renderer);
+    update_fields(fixture)!;
     renderer.render_view(&fixture.scene, viewing, view)!;
     record_readback(fixture, depth ? render::read_view_depth(view) : render::read_view_color(view), pixels)!;
     renderer.finish_view(view)!;
@@ -385,7 +411,7 @@ fn Vec4[]? render_and_read(
     return read_texels(fixture, pixels.len);
 }
 
-fn CameraMatrices matrices_of(Fixture* fixture, Node* camera_node, uint size) @local {
+fn CameraMatrices matrices_of(Fixture* fixture, Node* camera_node, uint size) @private {
     return camera::derive_matrices(*fixture.scene.get(camera_node, Camera), camera_node.world, { size, size });
 }
 
@@ -394,7 +420,7 @@ fn Vec3 unproject(
     int[<2>] pixel,
     uint size,
     float depth,
-) @local {
+) @private {
     Vec2 uv = { ((float)pixel.x + 0.5f) / size, ((float)pixel.y + 0.5f) / size };
     Vec4 world = matrices.inv_view_proj * (Vec4){ uv.x * 2 - 1, 1 - uv.y * 2, depth, 1 };
     return world.xyz / world.w;
@@ -1583,7 +1609,7 @@ fn ComputeShaderId? add_probe_shader(Fixture* fixture, String[] defines) @local 
     return fixture.assets.add_compute_shader(&desc);
 }
 
-fn TraceProbe? create_trace_probe(Fixture* fixture, Node* camera, bool ray_queries) @local {
+fn TraceProbe? create_trace_probe(Fixture* fixture, Node* camera, bool ray_queries) @private {
     Renderer* renderer = &fixture.renderer;
     String kind = ray_queries ? "SCENE_TRACE_RAY_QUERY" : "SCENE_TRACE_BVH";
     String[1] all_rays = { kind };
@@ -1607,7 +1633,7 @@ fn TraceProbe? create_trace_probe(Fixture* fixture, Node* camera, bool ray_queri
     };
 }
 
-fn void destroy_trace_probe(Fixture* fixture, TraceProbe* probe) @local {
+fn void destroy_trace_probe(Fixture* fixture, TraceProbe* probe) @private {
     render::wait_frames(&fixture.renderer)!!;
     gpu::GpuAllocation allocation = probe.readback.span.allocation();
     gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
@@ -1657,12 +1683,13 @@ fn void? trace_frame(
     TraceProbe* probe,
     double time,
     bool shadow_rays = false,
-) @local {
+) @private {
     Renderer* renderer = &fixture.renderer;
     update_water(fixture, time);
 
     renderer.begin_frame({ .time = time, .delta = (float)VELOCITY_STEP })!;
     defer catch render::abort_frame(renderer);
+    update_fields(fixture)!;
     renderer.render_view(&fixture.scene, probe.camera, probe.view)!;
     gpu::GpuAddress trace_scene = renderer.prepare_scene_trace(&fixture.scene, probe.kind)!;
     record_probe(
@@ -1681,7 +1708,7 @@ fn TraceProbeResult[] read_probe(Fixture* fixture, TraceProbe* probe) @local {
     return ((TraceProbeResult*)probe.readback.bytes.ptr)[:PROBE_PIXELS];
 }
 
-fn TraceAgreement trace_agreement(Fixture* fixture, TraceProbe* probe) @local {
+fn TraceAgreement trace_agreement(Fixture* fixture, TraceProbe* probe) @private {
     TraceAgreement agreement;
     foreach (&result : read_probe(fixture, probe)) {
         bool raster = (result.flags & RASTER_HIT) != 0;
@@ -2003,6 +2030,245 @@ fn void test_water_mirror_is_not_darkened_by_its_own_medium() @test {
             float miss = math::abs(found - expected[channel]);
             assert(miss <= tolerance, "pixel %d, channel %d: %f, not %f", index, channel, found, expected[channel]);
         }
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn WaterDesc ripple_desc() @local {
+    WaterDesc desc = surface_desc((Wave[]){}, TWIN_EXTENT, SIMULATED_CELL_SIZE);
+    desc.wave_model = SIMULATED;
+    desc.simulation = { .wave_speed = RIPPLE_SPEED, .damping = RIPPLE_DAMPING };
+    return desc;
+}
+
+fn void drop_ripple(Fixture* fixture, Node* water_node) @local {
+    water::add_impulse(
+        scene:          &fixture.scene,
+        node:           water_node.id,
+        world_position: {},
+        radius:         RIPPLE_RADIUS,
+        strength:       RIPPLE_STRENGTH,
+    )!!;
+}
+
+// Runs the fixed rate up to the time, so a frame's state does not depend on how many frames render.
+fn void run_ripple_to(Fixture* fixture, double* time, double until) @local {
+    while (*time + 1.0 / water::SIMULATION_RATE <= until) update_water(fixture, *time += 1.0 / water::SIMULATION_RATE);
+    update_water(fixture, *time = until);
+}
+
+fn void test_simulated_surface_matches_the_cpu_twin() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Node* water_node = add_water_node(&fixture, ripple_desc());
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: TWIN_FOV_DEGREES,
+        position:    TWIN_CAMERA_POSITION,
+        forward:     { 0, -1, 0 },
+        up:          { 0, 0, -1 },
+    );
+    ViewId view = add_view(&fixture, TWIN_SIZE);
+    CameraMatrices matrices = matrices_of(&fixture, camera_node, TWIN_SIZE);
+    SurfaceView surface = water::surface_view(&fixture.scene, &fixture.assets, water_node.id)!!;
+
+    int[<2>][TWIN_GRID * TWIN_GRID] pixels;
+    int margin = (int)TWIN_SIZE / 10;
+    foreach (index, &pixel : pixels) {
+        int step = ((int)TWIN_SIZE - 2 * margin) / ((int)TWIN_GRID - 1);
+        *pixel = { margin + (int)(index % TWIN_GRID) * step, margin + (int)(index / TWIN_GRID) * step };
+    }
+
+    double time;
+    update_water(&fixture, time);
+    drop_ripple(&fixture, water_node);
+    float largest;
+    foreach (until : RIPPLE_TIMES) {
+        run_ripple_to(&fixture, &time, until);
+        Vec4[] depths = render_and_read(
+            fixture:  &fixture,
+            viewing:  camera_node,
+            view:     view,
+            time:     time,
+            pixels:   pixels[..],
+            depth:    true,
+        )!!;
+        foreach (index, pixel : pixels) {
+            Vec3 drawn = unproject(
+                matrices: &matrices,
+                pixel:    pixel,
+                size:     TWIN_SIZE,
+                depth:    depths[index].x,
+            );
+            float twin = water::sample_surface(
+                view:    &surface,
+                world_x: drawn.x,
+                world_z: drawn.z,
+                time:    time,
+            )!!;
+            assert(math::abs(drawn.y - twin) <= SURFACE_TOLERANCE, "drawn %f, twin %f at %f s", drawn.y, twin, time);
+            largest = max(largest, math::abs(twin));
+        }
+    }
+    assert(largest >= RIPPLE_MINIMUM, "the surface stayed flat: %f", largest);
+    check_validation(&fixture.renderer);
+}
+
+fn SimulationState* copy_state(SimulationState* live) @local {
+    SimulationState* copy = alloc::new(mem, SimulationState);
+    *copy = *live;
+    copy.height = alloc::new_array(mem, float, (sz)live.height.len);
+    copy.height[..] = live.height[..];
+    copy.prior = alloc::new_array(mem, float, (sz)live.prior.len);
+    copy.prior[..] = live.prior[..];
+    return copy;
+}
+
+fn void free_state(SimulationState* state) @local {
+    alloc::free(mem, state.height.ptr);
+    alloc::free(mem, state.prior.ptr);
+    alloc::free(mem, state);
+}
+
+// The rest point whose drawn position lies on the pixel's ray, by bisection from above the surface to below it.
+fn Vec2 rest_over_ray(SurfaceView* view, Vec3 origin, Vec3 direction) @local {
+    float low = 0;
+    float high = (-SIMULATION_FLOOR - origin.y) / direction.y;
+    for (uint step = 0; step < BISECTION_STEPS; step++) {
+        float middle = (low + high) / 2;
+        Vec3 point = origin + direction * middle;
+        float height = water::sample_surface(
+            view:    view,
+            world_x: point.x,
+            world_z: point.z,
+            time:    0,
+        ) ?? -SIMULATION_FLOOR;
+        if (point.y > height) {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    Vec3 hit = origin + direction * ((low + high) / 2);
+    return { hit.x, hit.z };
+}
+
+fn void test_simulated_velocity_follows_a_ripple() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Node* water_node = add_water_node(&fixture, ripple_desc());
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: RIPPLE_FOV_DEGREES,
+        position:    RIPPLE_CAMERA_POSITION,
+        forward:     (Vec3){ 0, 0, 0 } - RIPPLE_CAMERA_POSITION,
+        up:          { 0, 1, 0 },
+    );
+    ViewId view = add_view(&fixture, RIPPLE_VELOCITY_SIZE, AntiAliasing.TAA);
+    ViewDesc desc = fixture.renderer.views.get(view).desc;
+    desc.post.taa_params.debug = TaaDebug.VELOCITY;
+    render::configure_view(&fixture.renderer, view, desc)!!;
+    CameraMatrices matrices = matrices_of(&fixture, camera_node, RIPPLE_VELOCITY_SIZE);
+    SimulationState* live = fixture.scene.get(water_node, WaterRuntime).simulation;
+    SurfaceView current_view = water::surface_view(&fixture.scene, &fixture.assets, water_node.id)!!;
+
+    int[<2>][RIPPLE_ROW_SAMPLES] pixels;
+    int row = (int)RIPPLE_VELOCITY_SIZE / 2;
+    foreach (index, &pixel : pixels) *pixel = { RIPPLE_FIRST_COLUMN + RIPPLE_COLUMN_STEP * (int)index, row };
+
+    double time;
+    update_water(&fixture, time);
+    drop_ripple(&fixture, water_node);
+    SimulationState* previous = copy_state(live);
+    SimulationState* current = copy_state(live);
+    defer free_state(previous);
+    defer free_state(current);
+    Vec4[] velocities;
+    for (uint frame = 0; frame < RIPPLE_FRAMES; frame++) {
+        time = (double)(frame + 1) * RIPPLE_FRAME;
+        velocities = render_and_read(
+            fixture: &fixture,
+            viewing: camera_node,
+            view:    view,
+            time:    time,
+            pixels:  pixels[..],
+            depth:   false,
+        )!!;
+        free_state(previous);
+        previous = current;
+        current = copy_state(live);
+    }
+
+    SurfaceView previous_view = current_view;
+    previous_view.simulation = previous;
+    current_view.simulation = current;
+    float scale = (float)RIPPLE_VELOCITY_SIZE / (2 * (float)shader::TAA_DEBUG_VELOCITY_RANGE);
+    uint moving;
+    foreach (index, pixel : pixels) {
+        Vec3 far_point = unproject(
+            matrices: &matrices,
+            pixel:    pixel,
+            size:     RIPPLE_VELOCITY_SIZE,
+            depth:    0.5f,
+        );
+        Vec3 direction = far_point - RIPPLE_CAMERA_POSITION;
+        Vec2 rest = rest_over_ray(&current_view, RIPPLE_CAMERA_POSITION, direction);
+        float height_now = water::sample_surface(
+            view:    &current_view,
+            world_x: rest.x,
+            world_z: rest.y,
+            time:    0,
+        ) ?? 0;
+        float height_before = water::sample_surface(
+            view:    &previous_view,
+            world_x: rest.x,
+            world_z: rest.y,
+            time:    0,
+        ) ?? 0;
+        Vec2 motion = uv_of(&matrices, { rest.x, height_now, rest.y })
+            - uv_of(&matrices, { rest.x, height_before, rest.y });
+        Vec2 expected = { 0.5f + motion.x * scale, 0.5f + motion.y * scale };
+        if (math::abs(expected.y - 0.5f) >= MIN_RIPPLE_VELOCITY) moving++;
+        Vec4 velocity = velocities[index];
+        float error_x = math::abs(velocity.x - expected.x);
+        float error_y = math::abs(velocity.y - expected.y);
+        assert(error_x <= RIPPLE_VELOCITY_TOLERANCE, "x %f against %f", velocity.x, expected.x);
+        assert(error_y <= RIPPLE_VELOCITY_TOLERANCE, "y %f against %f", velocity.y, expected.y);
+    }
+    assert(moving >= RIPPLE_ROW_SAMPLES / 2, "only %d samples move", moving);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_traced_simulated_water_agrees_with_the_drawn_surface() @test {
+    Fixture fixture;
+    create_fixture(&fixture, false)!!;
+    defer destroy_fixture(&fixture);
+    WaterDesc desc = ripple_desc();
+    desc.trace = true;
+    Node* water_node = add_water_node(&fixture, desc);
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: TWIN_FOV_DEGREES,
+        position:    TWIN_CAMERA_POSITION,
+        forward:     { 0, -1, 0 },
+        up:          { 0, 0, -1 },
+    );
+    TraceProbe probe = create_trace_probe(&fixture, camera_node, false)!!;
+    defer destroy_trace_probe(&fixture, &probe);
+
+    double time;
+    update_water(&fixture, time);
+    drop_ripple(&fixture, water_node);
+    foreach (until : RIPPLE_TIMES) {
+        run_ripple_to(&fixture, &time, until);
+        trace_frame(&fixture, &probe, time)!!;
+        assert(fixture.renderer.stats.trace_posed_instances == 1 && fixture.renderer.stats.trace_poses == 1);
+
+        TraceAgreement agreement = trace_agreement(&fixture, &probe);
+        assert(agreement.covered >= COVERAGE_MINIMUM && agreement.mismatch == 0);
+        assert(agreement.worst <= SURFACE_TOLERANCE, "worst %f at %f s", agreement.worst, time);
     }
     check_validation(&fixture.renderer);
 }

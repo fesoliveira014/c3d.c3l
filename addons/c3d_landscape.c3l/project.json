@@ -32,7 +32,7 @@
     },
     "landscape_test": {
       "type": "test",
-      "sources": [ "test/terrain_test.c3", "test/foliage_test.c3", "test/water_test.c3", "test/setup_test.c3" ],
+      "sources": [ "test/terrain_test.c3", "test/foliage_test.c3", "test/water_test.c3", "test/simulation_test.c3", "test/setup_test.c3" ],
       "dependencies": [
         "c3d_landscape",
         "c3d_physics",
@@ -50,6 +50,12 @@
         "ufbx",
         "shaderc"
       ]
+    },
+    "landscape_gpu_test": {
+      "type": "test",
+      "sources": [ "test/spectral_test.c3" ],
+      "features": ["C3D_LANDSCAPE_GPU"],
+      "dependencies": ["c3d_landscape", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"]
     },
     "terrain": {
       "type": "executable",
@@ -97,7 +103,38 @@
     },
     "water": {
       "type": "executable",
-      "sources": [ "examples/water.c3", "examples/landscape_ground.c3", "examples/landscape_foliage.c3" ],
+      "sources": [
+        "examples/water.c3",
+        "examples/landscape_ground.c3",
+        "examples/landscape_foliage.c3",
+        "examples/landscape_water_cpu.c3"
+      ],
+      "dependencies": [
+        "c3d_landscape",
+        "c3d_physics",
+        "c3d",
+        "gpu",
+        "vk",
+        "vma",
+        "spvreflect",
+        "sdl3",
+        "c3imgui",
+        "c3cg",
+        "b3",
+        "cgltf",
+        "ufbx",
+        "shaderc"
+      ]
+    },
+    "water_gpu": {
+      "type": "executable",
+      "sources": [
+        "examples/water.c3",
+        "examples/landscape_ground.c3",
+        "examples/landscape_foliage.c3",
+        "examples/landscape_water_gpu.c3"
+      ],
+      "features": ["C3D_LANDSCAPE_GPU"],
       "dependencies": [
         "c3d_landscape",
         "c3d_physics",

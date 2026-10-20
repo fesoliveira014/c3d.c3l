@@ -21,10 +21,15 @@ come from referenced Standard materials; the application's wind scrolls the ripp
 wind into the waves ([Sea state](#sea-state)). A CPU twin of the stage answers world-space height queries, and
 `update_mirror` places a mirror camera per water body and viewing view for the reflection the application renders.
 `WaterDesc.mode = OCEAN` draws the surface as a quadtree of chunks that each view selects, with waves anchored to the
-world instead of the node ([Ocean](#ocean)).
+world instead of the node ([Ocean](#ocean)). `WaterDesc.wave_model` chooses how a body's heights are computed:
+`GERSTNER` by default, `SIMULATED` for a damped wave equation stepped on the CPU that ripples when the application drops
+an impulse ([Simulated surface](#simulated-surface)), and `SPECTRAL` for a wind sea's spectrum, which a GPU module
+evolves and transforms every frame ([Spectral surface](#spectral-surface)).
 
-The module imports the standard library, core (`c3d`), `c3d::landscape` (its SPIR-V) and
-`c3d::landscape::terrain` (a query predicate); it never imports `gpu`, `c3d::render` or `c3d::physics`.
+The module imports the standard library, core (`c3d`), `c3d::landscape` (its SPIR-V and hash helpers) and
+`c3d::landscape::terrain` (a query predicate); it never imports `gpu`, `c3d::render` or `c3d::physics`. A second module
+of the package, `c3d::landscape::water_gpu`, exists only under the `C3D_LANDSCAPE_GPU` feature and imports `c3d::render`
+to record the spectral surface's passes ([Spectral surface](#spectral-surface)).
 Buoyancy lives in the physics add-on ([buoyancy](buoyancy.md)); the application connects the two by installing
 `fluid_sample` ([Buoyancy](#buoyancy)). Core never imports the module.
 
@@ -49,7 +54,9 @@ for failure, retry and shared-asset ownership.
 ## Select the package
 
 Select `c3d_landscape` as for [terrain](terrain.md#select-the-package). Water needs nothing else; the example
-and an application that installs `fluid_sample` on a physics world also select `c3d_physics` and `b3`.
+and an application that installs `fluid_sample` on a physics world also select `c3d_physics` and `b3`. A `SPECTRAL`
+body also needs the `C3D_LANDSCAPE_GPU` feature (`-D C3D_LANDSCAPE_GPU`) and the GPU dependencies the package's
+other targets list; without it `prepare` faults `UNSUPPORTED` and water stays scene-layer code.
 
 ## Calling order
 
@@ -84,6 +91,9 @@ water::update(
     wind_velocity: wind,
     time:          now,
 );
+// with C3D_LANDSCAPE_GPU, inside the open frame, before prepare_scene_trace and any view that draws the water
+renderer.begin_frame(info)!;
+water_gpu::update(&renderer, &scene, &assets)!;
 MirrorState mirror_state = water::update_mirror(
     scene:          &scene,
     body:           lake.id,
@@ -109,13 +119,19 @@ scene.update_world();
   keeps the old desc, the payload, the material revision, the mesh and the grid. `WaterRuntime.desc` holds the
   checked copy; `update`, the mirror and the queries read it, so an edit of `Water.desc` itself has no effect
   until it goes through `set_desc`. It ends a running sea-state blend, applies the desc's waves at once and writes
-  the [medium](#underwater) again. An ocean keeps its `mode`, `extent` and `cell_size`: a change faults `INVALID_ARGUMENT` and leaves the body as it was.
+  the [medium](#underwater) again. An ocean keeps its `mode`, `extent` and `cell_size`, a simulated or spectral body its
+  `extent` and `cell_size`, a spectral body its `spectrum` and every body its `wave_model`: a change faults
+  `INVALID_ARGUMENT` and leaves the body as it was.
 - `set_sea_state(scene, assets, node, wind_velocity, transition_seconds)` sets the waves from a wind
   ([Sea state](#sea-state)). It writes the target into `Water.desc` and `WaterRuntime.desc` and returns; the
-  next `update` starts the blend.
+  next `update` starts the blend. A `SPECTRAL` body takes it as a new spectrum ([Spectral surface](#spectral-surface)),
+  after `prepare` only. It faults `UNSUPPORTED` for a `SIMULATED` body and for pending `SPECTRAL` water.
+- `add_impulse(scene, node, world_position, radius, strength)` pushes a simulated body's surface down at a point
+  ([Impulses](#impulses)).
 - `update` runs every frame with the `FrameInfo.time` the frame renders with. It tears down removed water
   bodies, with their mirror cameras and medium nodes, scrolls the ripples, keeps each medium node on its body's layers,
-  advances sea-state blends and re-anchors oceans whose node moved. It places no mirror and takes no camera; the material reads its reflection from a view texture,
+  advances sea-state blends, steps simulated bodies, moves the clock and blend of spectral ones and re-anchors oceans
+  whose node moved. It places no mirror and takes no camera; the material reads its reflection from a view texture,
   so no target is set on the body.
 - `update_mirror(scene, body, slot, viewing_camera)` places the mirror camera of one slot of one body for one
   viewing camera ([The mirror](#the-mirror)) and returns `PLACED`, or `BELOW` when the viewing camera is under the rest
@@ -123,6 +139,8 @@ scene.update_world();
   may run before or after `update_world`; the body's world matrix is read as the last `update_world` left it.
 - `release_mirror(scene, body, slot)` frees the slot's camera node, for a viewing view that goes away. The next
   `update_mirror` of that slot adds the camera again.
+- `water_gpu::update(renderer, scene, assets)` records every spectral body's evolution and transforms into the open
+  frame ([Spectral surface](#spectral-surface)). It exists under `C3D_LANDSCAPE_GPU`.
 - `surface_view` copies a water body's waves and pose; take it after `update` and `set_desc`, before
   `physics.update`, so buoyancy follows a desc edit in the same frame.
 
@@ -130,14 +148,15 @@ scene.update_world();
 
 `default_water_desc()` is a clear lake with two calm crossing waves (0.12 m at 6 m, 1.2 m/s along x; 0.07 m at
 3.5 m, 0.9 m/s along (0.6, 0.8); steepness 0.5 each), `DEFAULT_CELL_SIZE`, no extent, the march on, one mirror slot, view texture 0 and no
-references. Every rule below is a fault, not a contract: descs come from files as well as code.
+references. Its `simulation` is `DEFAULT_WAVE_SPEED` (3 m/s) and `DEFAULT_DAMPING` (0.5/s), and its `spectrum` is
+`DEFAULT_SPECTRUM_SEED`, `DEFAULT_PATCH_SIZE` (256 m) and `DEFAULT_CHOPPINESS` (1). Every rule below is a fault, not a contract: descs come from files as well as code.
 
 | Field | Rule |
 | --- | --- |
-| `waves`, `wave_count` | At most `MAX_WAVES` (4). Per wave: amplitude ≥ 0, wavelength > 0, finite speed, a unit direction within 0.001, steepness ≥ 0 |
+| `waves`, `wave_count` | At most `MAX_WAVES` (4). Per wave: amplitude ≥ 0, wavelength > 0, finite speed, a unit direction within 0.001, steepness ≥ 0. A `SIMULATED` or `SPECTRAL` body draws none of them |
 | steepness | Σ steepness < `wave_count`: the mean steepness stays below 1 (one wave may pass 1 when others are lower) |
 | `geometry` | Zero builds a grid; else a live geometry whose bounds lie at y = 0. An ocean takes none |
-| `extent`, `cell_size` | A built grid only: both positive and finite, at most `MAX_GRID_CELLS` (512) cells per side, every wavelength at least two cells. An ocean: both positive and finite, at most `MAX_OCEAN_CHUNKS` (256) chunks of `cell_size * OCEAN_CHUNK_CELLS` per side, every wavelength at least four cells of the finest level |
+| `extent`, `cell_size` | A built grid only: both positive and finite, at most `MAX_GRID_CELLS` (512) cells per side, every wavelength at least two cells (a `SIMULATED` or `SPECTRAL` body has no wavelengths to check). An ocean: both positive and finite, at most `MAX_OCEAN_CHUNKS` (256) chunks of `cell_size * OCEAN_CHUNK_CELLS` per side, every wavelength at least four cells of the finest level (a `SPECTRAL` body has none to check) |
 | `absorption_color`, `absorption_distance` | Transmittance after the distance, each channel in (0, 1]; the distance positive and finite. They set the [medium](#underwater)'s absorption; 1 on every channel is clear water, with no medium |
 | `scatter_color` | Non-negative and finite: the single-scattering albedo of the medium, clamped to `MAX_SCATTER_ALBEDO` (0.98) |
 | `roughness` | In [0, 1] |
@@ -152,6 +171,10 @@ references. Every rule below is a fault, not a contract: descs come from files a
 | `trace` | Scene traces see the displaced surface, posed every frame ([Scene traces](#scene-traces)); off by default; an ocean cannot trace |
 | `mode` | `BODY` (default) or `OCEAN` ([Ocean](#ocean)) |
 | `depth` | Positive and finite metres below the rest plane (`DEFAULT_WATER_DEPTH`, 40 m, by default): where the [medium](#underwater)'s box ends. Water not deeper than its troughs has no medium |
+| `wave_model` | `GERSTNER` (default), `SIMULATED` or `SPECTRAL` ([Wave models](#wave-models)). Without `C3D_LANDSCAPE_GPU`, `prepare` faults `UNSUPPORTED` for `SPECTRAL` |
+| `simulation` | Read by `SIMULATED`: `wave_speed` in m/s and `damping` in 1/s, each positive and finite. `SIMULATED` is refused (`INVALID_ARGUMENT`) with `OCEAN`, with application geometry, with fewer than `MIN_SIMULATION_CELLS` (16) or more than `MAX_SIMULATION_CELLS` (256) cells per side, and where `wave_speed` needs more than `MAX_SIMULATION_SUBSTEPS` (8) substeps per fixed step ([Stepping](#stepping)) |
+| `spectrum` | Read by `SPECTRAL`: `patch_size` positive and finite metres per tile, `choppiness` non-negative and finite, and a `seed` of any value ([Spectral surface](#spectral-surface)) |
+| `ground` | Zero, or a node carrying `Terrain`: the terrain whose high ground a `SIMULATED` body treats as dry ([Dry cells](#dry-cells)). A dead node faults `INVALID_ID`, a node without `Terrain` `INVALID_ARGUMENT` |
 
 ## Surface geometry
 
@@ -169,8 +192,24 @@ the rest position in metres.
 
 An [ocean](#ocean) draws instances of one shared unit chunk instead of a grid. For a body, `Mesh.local_bounds` is the
 rest bounds grown by the total amplitude in y and by the sum of the waves' horizontal crest shifts in x and z, always
-as a bounds override. The mesh casts no shadow, receives shadows and
+as a bounds override; a `SIMULATED` body grows it by `SIMULATION_MAX_HEIGHT` in y alone, and a `SPECTRAL` body by its
+envelope in y and its choppiness times the envelope in x and z ([Bounds and the twin](#bounds-and-the-twin)). The mesh casts no shadow, receives shadows and
 traces only with `WaterDesc.trace` ([Scene traces](#scene-traces)).
+
+## Wave models
+
+`WaterDesc.wave_model` says how the surface's heights are computed. It is separate from `mode`, which says which
+geometry carries them, and a body keeps its model: `set_desc` faults `INVALID_ARGUMENT` on a change.
+
+| Model | Surface | Agrees with its CPU twin within |
+| --- | --- | --- |
+| `GERSTNER` | `waves`, summed in the vertex stage ([Waves](#waves)) | 1 cm, `residual` reporting the inversion's remaining step |
+| `SIMULATED` | A damped wave equation over the built grid ([Simulated surface](#simulated-surface)) | 1 cm: the twin reads the grid the stage draws, so only float rounding separates them, and `residual` is 0 |
+| `SPECTRAL` | A JONSWAP sea, evolved and inverse-transformed on the GPU ([Spectral surface](#spectral-surface)) | The bound `WaterRuntime.spectral_bound` reports, a statistical contract: exceeded at about 0.3 % of points |
+
+A `SPECTRAL` body is accepted as pending authoring without the `C3D_LANDSCAPE_GPU` feature, and its `spectrum` fields
+are kept, saved and loaded, but `prepare` faults `UNSUPPORTED` there. `waves` stays the `GERSTNER` array: the other
+models ignore it.
 
 ## Waves
 
@@ -212,8 +251,8 @@ The steps converge while the mean steepness stays below 1, which validation enfo
 steepness, the rest point a query returns is within `residual · k / (1 − k)` of the true one, and the height
 within the waves' height slope `Σ a · 2π / λ` times that. `WaterSample.residual` is the length of the last step
 in metres. Any query can stop at the cap before it reaches the tolerance, whatever the steepness; its residual
-then says how far it stopped, and the bound above covers both cases. The drawn surface agrees with `sample_surface`
-within 1 cm; the device test checks it.
+then says how far it stopped, and the bound above covers both cases. The drawn surface of a `GERSTNER` body agrees
+with `sample_surface` within 1 cm; the device test checks it.
 
 ## Surface detail
 
@@ -336,6 +375,235 @@ rendered every frame reads a previous set newer than its previous time, for the 
 that reaches the target, so the previous waves catch up with the current ones. After that a steady frame uploads
 nothing for water ([Ripples and wind](#ripples-and-wind)). `set_desc` ends a blend: it applies the desc's waves at
 once, keeps each wave's `φ`, and copies the waves into the previous set.
+
+## Simulated surface
+
+`wave_model = SIMULATED` draws the heights `u` of a damped wave equation `u_tt = c² ∇²u − γ u_t` on the vertices of
+the built grid, with `c` the `simulation.wave_speed` and `γ` the `simulation.damping`. The heights are node-local
+metres above the rest plane, stepped on the CPU, so buoyancy and queries read exactly what is drawn.
+
+```c3
+WaterDesc desc = water::default_water_desc();
+desc.wave_model = SIMULATED;
+desc.wave_count = 0;
+desc.extent = 120;
+desc.cell_size = 1.25f;
+desc.simulation = { .wave_speed = 8, .damping = 0.3f };
+desc.ground = ground.id; // optional: the terrain whose high ground is dry
+water::add_water(
+    scene:  &scene,
+    assets: &assets,
+    node:   lake,
+    desc:   desc,
+)!;
+// at any point of the frame: a push at a world point
+water::add_impulse(
+    scene:          &scene,
+    node:           lake.id,
+    world_position: point,
+    radius:         3,
+    strength:       10,
+)!;
+// once per frame, as for every body: it steps the grid and uploads it
+water::update(
+    scene:         &scene,
+    assets:        &assets,
+    wind_velocity: wind,
+    time:          now,
+);
+```
+
+- **Grid.** The lattice is the built grid's vertices: `ceil(extent / cell_size)` cells per side, at least
+  `MIN_SIMULATION_CELLS` (16) and at most `MAX_SIMULATION_CELLS` (256), at `extent / cells` metres. A simulated body takes
+  no ocean and no application geometry. The state is allocated at `prepare` and freed with the body: three float
+  arrays and a mask, 66,049 vertices at most.
+- **Stepping.** `update` accumulates the frame's time and runs whole fixed steps of `1 / SIMULATION_RATE` (60 Hz), so
+  the stepped state follows the simulated time and not the frame rate. A step runs the substeps the CFL bound needs,
+  `ceil(c / (SIMULATION_RATE · CFL_LIMIT · spacing))` with `CFL_LIMIT` 0.5 under the five-point stencil's stability
+  limit of 0.707; `check_desc` refuses a speed or a spacing that needs more than `MAX_SIMULATION_SUBSTEPS` (8). Each
+  substep adds the stencil's force to every wet vertex's speed, scales the speed by `exp(−γ · dt)` and moves the height
+  by the speed (leapfrog). At most `MAX_SIMULATION_STEPS_PER_UPDATE` (4) steps run per update and the time beyond them
+  is dropped, so a hitch slows the ripple and cannot spiral. The first `update` of a body only reads the time.
+- **Drawn heights.** The stage draws the last two steps interpolated by the share of a step the accumulator holds:
+  `prior + (height − prior) · fraction`. They go to an `RGBA32_FLOAT` store texture of `(cells + 1)²` texels that the body
+  owns, the red channel this frame's drawn heights and the green channel the previous frame's, so motion vectors are
+  per frame (the store has no two-channel float format; blue and alpha are unused). An awake frame rewrites the texture
+  in place and marks it dirty, 16 bytes per vertex: 150,544 bytes for the 120 m lake at the default cell size and
+  1,056,784 at 256 cells. The GPU image is created once.
+- **Vertex stage.** A simulated vertex `texelFetch`es its own texel, found from its vertex index, with no filtering.
+  Its normal is the normalised `(−∂u/∂x, 1, −∂u/∂z)` of the neighbouring texels' central differences, one-sided at the
+  grid's edges, and its previous position comes from the green channel. There is no crest factor, so no wave foam;
+  shore foam works as for any body. The [trace pose](#scene-traces) fetches the same texture, so a traced body follows
+  the ripple.
+- **Walls.** The grid's edges and its dry cells reflect like the walls of a pool: a wet vertex counts a neighbour that is
+  past the edge or dry as its own height. There is no sponge layer.
+- **Bound and reach.** Heights are clamped to `±SIMULATION_MAX_HEIGHT` (1 m), and that clamp takes the place of the
+  Gerstner amplitude in `Mesh.local_bounds`. The [medium](#underwater)'s offset and the mirror's clip plane follow the
+  body's reach instead: the largest height magnitude since it woke (`SimulationState.reach`), 0 for a calm pond and again
+  after it settles. A step that raises the reach writes the medium node again, so a calm pond is fogged from its
+  surface, and a ripple moves the box's top and the clip plane down to the deepest trough it has drawn and no further.
+
+### Dry cells
+
+With `ground` set, a vertex is dry where the terrain's height under it is at or above the body's rest plane (the world
+height of the node), and a vertex off the terrain's extent is wet. A dry vertex holds zero height and speed, draws
+flat under the ground and acts as a wall. The mask is built at `prepare` from `terrain::height_view`, so the terrain
+is prepared first; a body prepared before its ground gets the mask on the first `update` that finds the terrain
+prepared. `update` follows edits: it re-masks only the vertices a `terrain::refreshed_since` rectangle covers (reported
+through `terrain::mark_dirty`), and the whole grid when the terrain gives no rectangle for the revision or when either
+node moved. A `ground` that has died, lost its `Terrain` or `TerrainRuntime`, or tilted drops the mask: every vertex is
+wet again until a usable ground returns. Wet vertices keep their heights through a re-mask; the ones that turn dry are
+zeroed.
+
+### Settling
+
+A body settles when every wet vertex has `|u| < SETTLED_HEIGHT` (0.5 mm) and `|u_t| < SETTLED_SPEED` (2 mm/s). The
+grid then snaps to rest, one more upload draws it exactly flat, and stepping and uploads stop: a settled body costs
+the ground check per `update` and uploads nothing, and `add_impulse` wakes it. Damping above `2π · c / extent`, the lowest
+standing wave's critical value, slows the decay of the long waves instead of speeding it: a pond settles fastest near
+that value.
+
+### Impulses
+
+`add_impulse(scene, node, world_position, radius, strength)` lowers the speed of the wet vertices within `radius`
+metres of the point by `strength · (1 − q²)²` m/s, with `q` the distance over the radius, so `strength` is the downward
+speed at the centre of a smooth bump. The sum of the push is returned to the rest of the surface as a uniform rise in
+speed, so the body returns to its rest level instead of keeping a dent. It wakes the body. It faults `INVALID_ID` for a
+dead node, a node without prepared water or a body that is not `SIMULATED`, and `INVALID_ARGUMENT` for a position that is
+not finite, a radius that is not finite and positive or a strength that is not finite or is negative. A point whose
+bump meets no wet vertex, and a strength of 0, do nothing. The node carries no scale: radii are world metres.
+
+### Queries
+
+`surface_view` of a simulated body borrows its grid: the view answers the surface of the last `update` until the body
+is removed, so take it after `update` and use it on the thread that steps, unlike the value views of the other
+models. `sample_surface` and `sample_surface_detail` ignore `time`. They interpolate the drawn heights on the
+mesh's own triangles, the diagonal from `(x + 1, z)` to `(x, z + 1)` of each cell, so the answer is the drawn surface.
+`normal` blends the three vertices' normals as the rasteriser does, `velocity` is vertical and is the slope in time of
+the interpolation, `(u − prior) / dt`, and `residual` is 0. A point off the grid is `NOT_FOUND`. `fluid_sample` works
+unchanged.
+
+## Spectral surface
+
+`wave_model = SPECTRAL` draws a wind sea from a spectrum of waves. The heights come from a field of `SPECTRAL_SIZE²`
+(256²) texels that the GPU evolves to the frame's time and inverse-transforms, so every texel is a sum of up to 65,536
+waves, and the vertex stage samples the field, tiled across the body. The module that records the passes,
+`c3d::landscape::water_gpu`, exists under the `C3D_LANDSCAPE_GPU` feature; the scene-layer module keeps the spectrum, the
+CPU twin and the bounds, and never imports `gpu` or `c3d::render`.
+
+```c3
+// build with -D C3D_LANDSCAPE_GPU
+WaterDesc desc = water::default_water_desc();
+desc.wave_model = SPECTRAL;
+desc.wave_count = 0;
+desc.mode = OCEAN;
+desc.extent = 20000;
+desc.spectrum = { .seed = 7, .patch_size = 256, .choppiness = 1 };
+water::add_water(
+    scene:  &scene,
+    assets: &assets,
+    node:   sea,
+    desc:   desc,
+)!;
+water::set_sea_state(
+    scene:              &scene,
+    assets:             &assets,
+    node:               sea.id,
+    wind_velocity:      { 12, 0 },
+    transition_seconds: 4,
+)!;
+// every frame: water::update(...) first, then inside the open frame
+renderer.begin_frame(info)!;
+water_gpu::update(&renderer, &scene, &assets)!;
+// prepare_scene_trace, then the views that draw the water
+```
+
+- **Spectrum.** The sea follows the wind and fetch relations of the [sea state](#sea-state): the same `Hs` and `Tp` for a
+  wind over the rest rectangle's chord, which is the built grid's, an ocean's or the application geometry's bounds. Its
+  frequency shape is JONSWAP (peak enhancement 3.3, widths 0.07 and 0.09) normalised to `Hs / 4` of height deviation,
+  spread by cosine squared about the wind over the half plane it travels into, with deep-water dispersion
+  `ω = √(g k)`. The spectrum is built on the lattice of wave vectors `2π · (n, m) / patch_size`, in the node's local
+  frame: its heading is the wind in that frame and node scale scales the surface with it. The lattice samples a narrow
+  peak coarsely, so the amplitudes are scaled until their variance is the share of the sea's that the lattice and the cut
+  leave in band: the height deviation stays `Hs / 4` however the patch falls on the peak. A fetch the body's size limits
+  gives a small sea, as for the four waves: a 120 m lake at 20 m/s has `Hs` 0.11 m and `λp` 1 m.
+- **Band.** Components with a wavelength under four texels (`patch_size / 256` each) are dropped, because the field's
+  bilinear sampling holds them badly; a built grid also drops wavelengths under two cells, an ocean under four cells of
+  its finest level, so a drawn vertex never carries a wave its lattice aliases. The default `patch_size` of 256 m keeps
+  waves from 4 m, and a patch should hold several peak wavelengths.
+- **Gaussians and the seed.** Each texel's amplitude is a pair of unit normal values from `spectrum.seed` by a PCG hash
+  and Box-Muller, times the amplitude the spectrum gives it, so the same seed always draws the same sea and another
+  seed another. The pairs are uploaded once, in a 1 MiB `RGBA32_FLOAT` table image; its other two channels hold the
+  amplitudes of the spectrum a blend leaves and of the one it reaches.
+- **Time.** A component's frequency is rounded to a whole number of cycles of `SPECTRAL_PERIOD` (1,000 s), so the field
+  repeats exactly after it and the phase of any time is `fract(steps · fract(t / 1000 s))`, good to a milliradian at any
+  time and with no float growth. The rounding moves a frequency by at most 3 mrad/s.
+- **Passes.** `water_gpu::update` records `DISPATCHES_PER_BODY` (18) compute dispatches for each spectral body, once per
+  frame, whatever the number of views: the evolution `h(k, t) = h0(k) e^(−iωt) + conj(h0(−k)) e^(iωt)` and its derived
+  fields; an inverse radix-2 Stockham transform of three complex fields, eight dispatches along x and eight along z;
+  and a split into the displacement `(dx, dy, dz)` with choppiness `λ`, the slope along x and z and the displacement of
+  the frame before. The fields pack as `height + i·dx`, `dz + i·slope_x` and `slope_z`, so three complex transforms
+  carry the five real ones. The stages are one set of compute shaders per store, added on the first call under
+  `c3d_landscape/water_spectrum_*`.
+- **Images.** The body owns seven store textures made at `prepare`: the table, the displacement, its previous frame and
+  the slope as `RGBA16_FLOAT` 256² images of 0.5 MiB each, and four `RGBA32_FLOAT` 1 MiB work images. That is 6.5 MiB
+  of device memory a body; the store has no one-channel float format, so the table and the work images spend four
+  channels. The displacement image is rewritten in place and its previous frame kept by the split pass, so no material
+  slot swaps.
+- **Vertex stage.** A vertex samples the displacement and slope at `local_xz / patch_size` (plus half a texel, so a
+  texel centre is its lattice point) with a repeating linear sampler, so the tiles of the field meet at the patch edge
+  and a body or an ocean wider than the patch repeats it. The drawn point is `(x + dx, dy, z + dz)`; the normal is
+  `(−slope_x, 1, −slope_z)` normalised, without the horizontal map's Jacobian; the motion vector comes from the
+  previous image sampled at the same coordinates. There is no crest factor, so no wave foam. The [trace
+  pose](#scene-traces) samples the same images, so a traced surface follows the field and the frame's passes run before
+  `prepare_scene_trace`.
+- **Ocean.** An [ocean](#ocean) samples the field at coordinates anchored to the world: the fraction of
+  `inverse(node) · position / patch_size`, folded in a double each time the node moves, so crests stay in the world as
+  the node follows the camera, as for the four waves. Every level samples the finest field: a vertex coarser than the
+  waves it samples under-resolves them, and the farthest levels shimmer where the four-wave stage fades its short waves
+  by level.
+- **Sea state.** `set_sea_state` builds the amplitudes of the new wind and fetch from the same Gaussians. The spectrum
+  reached so far (the blend of the two sides by its share now) becomes the left side of the table, the new one the right,
+  the share restarts at zero and the 1 MiB table is uploaded once. Every frame the evolution mixes the two sides by the
+  share, which `update` advances over `transition_seconds`, so a transition is continuous, phase-consistent and costs
+  no upload per frame: the alternative of rebuilding the spectrum on the CPU each frame would upload 1 MiB a frame
+  for a transition's length. A second call during a transition starts from the state drawn then. Without a sea state the
+  wind is `DEFAULT_SPECTRAL_WIND` (8 m/s along local +X); the call needs prepared water and faults `UNSUPPORTED` on pending
+  water, since the wind lives in the prepared state.
+- **First frame.** The images hold nothing until the first `water_gpu::update` writes them. Call it before the first view
+  that draws or traces the body; its first frame has no motion (the previous image is the current).
+
+### Bounds and the twin
+
+The CPU twin keeps the `SPECTRAL_TWIN_WAVES` (64) strongest components of the spectrum, ranked by the variance each
+adds, as Gerstner terms: a component with wave vector `k`, amplitude `A`, phase `φ` and choppiness `λ` draws
+`A cos(k·x − ωt + φ)` and shifts the point by `−λ A sin(…) · k̂`, which is a wave of the Gerstner form with the crest shift
+`λ A`. `surface_view` copies them into the view, so `sample_surface`, `sample_surface_detail` and `fluid_sample` run the
+converged inversion of [Height queries](#height-queries) over them, with the repeat period folding the time. A query
+sums 64 components in each of up to eight inversion steps, so it costs about the ratio of the component counts more than
+the four waves'; `SPECTRAL_TWIN_WAVES` is the lever, and a smaller count also widens the bound. A
+`SurfaceView` therefore holds 64 waves of 32 bytes and is 2,208 bytes for every model, and stays a value several threads
+may query. The normal is the twin's Jacobian normal, a little steeper than the drawn slope-only normal.
+
+`WaterRuntime.spectral_bound` is the standard deviation of the omitted components' height, which the twin does not
+carry, times `SPECTRAL_BOUND_SIGMAS` (3). It is computed at `prepare` from the realised amplitudes and again at each
+`set_sea_state` (over the larger of the two sides, so it bounds every state of the blend) and when a blend ends, and it is
+zero for another model. **The contract is statistical**: the drawn surface differs from `sample_surface` by more than
+the bound at about 0.3 % of points, where the omitted waves add up against the twin, and by less than the bound plus the
+resolution of the field (half-float storage, bilinear sampling and the triangles between vertices) elsewhere. The
+`GERSTNER` and `SIMULATED` contract of 1 cm is not kept: sixty-four components of a sea over a 65,536-texel lattice
+carry its larger part and no more, so the bound is the honest measure and it grows with the sea; narrower spectra
+(a patch near the peak wavelength, a cut that leaves few lattice vectors) leave a small bound, and a wholly represented
+spectrum reports 0.
+
+`SPECTRAL_ENVELOPE_SIGMAS` (5) times the spectrum's height deviation is the envelope of the height: the bound of
+`Mesh.local_bounds` and of an ocean's node boxes (with its choppiness times it in x and z), and the reach that sets the
+[medium](#underwater)'s offset and the mirror's clip plane. It follows the spectrum the way the sea state does: while a
+blend runs it spans the larger of the two sides, and when the blend ends it falls to the new sea's, so a calm sea after
+a storm leaves the medium's top `MEDIUM_SKIN` under the rest plane and not under the storm's troughs. The field repeats,
+so its 65,536 texels are every height the body draws (a bilinear sample stays between them), and the deepest of that many
+Gaussian samples is about `√(2 ln 65,536)` = 4.7 deviations: five spans it, though a seed whose deepest texel lies past
+five can pass the envelope. `Mesh.local_bounds` are what culling and shadows read.
 
 ## Ocean
 
@@ -531,9 +799,15 @@ mirror.
 
 `update_mirror(scene, body, slot, viewing_camera)` sets the slot's camera node's `local` to the viewing camera's
 reflected across the image of the node's local XZ plane, gives it the viewing camera's lens with the water node's
-layers removed, and writes `WaterRuntime.clip_plane`: the rest plane lowered by the total amplitude, so everything
-above the deepest trough stays. The plane belongs to the body, so every slot of it is the same. The application
-owns the targets, the views and the order.
+layers removed, and writes `WaterRuntime.clip_plane`: the rest plane lowered by the total amplitude (a simulated
+body's reach), so everything above the deepest trough stays. The plane belongs to the body, so every slot of it is the
+same. The application owns the targets, the views and the order.
+
+**Bodies do not reflect each other.** A mirror camera is the viewing camera reflected across its body's rest plane, so
+it looks from under that plane, and the clip plane keeps only what lies above it. Another level body is then either
+below the plane and clipped, or above it and seen from its underside, never from the side that reflects, and the
+mirror view is given no view textures. Level water cannot reflect another level body's top surface, so a mirror
+never holds another body's reflection: the library builds no chain of mirrors, no depth cap and no cycle check.
 
 A viewing camera under the rest plane has nothing to reflect: the surface seen from under the water reads no mirror
 ([Underwater](#underwater)). `update_mirror` then returns `BELOW`, leaves the slot's camera pose and
@@ -691,13 +965,22 @@ store.
 | `register_water` | `c3d::CAPACITY_EXCEEDED` | No component type slot left |
 | `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included, `max_mirrors` outside [1, `MAX_MIRRORS`], `reflection_view_slot` at `MAX_VIEW_TEXTURES` or above, a `depth` that is not positive and finite); application geometry off y = 0; an ocean with geometry, with `trace`, wider than `MAX_OCEAN_CHUNKS` chunks, or with a wave under four finest cells; a reference that is not `STANDARD`; a shared key naming another asset kind |
 | `set_desc` | `c3d::INVALID_ARGUMENT` | A `mode`, and for an ocean an `extent` or `cell_size`, that differs from the prepared body's |
-| `add_water`, `set_desc` | `c3d::INVALID_ID` | A dead geometry or reference |
+| `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | `SIMULATED` with an ocean or application geometry, outside 16 to 256 cells per side, with a speed or damping that is not positive and finite, or with a speed that needs more than `MAX_SIMULATION_SUBSTEPS`; a `ground` without `Terrain` |
+| `add_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | `SPECTRAL` with a `patch_size` that is not positive and finite, or a `choppiness` that is negative or not finite |
+| `add_water`, `set_desc` | `c3d::INVALID_ID` | A dead geometry, reference or `ground` |
+| `add_water`, `prepare` | `c3d::UNSUPPORTED` | A `SPECTRAL` body in a build without `C3D_LANDSCAPE_GPU` |
+| `set_desc` | `c3d::INVALID_ARGUMENT` | A `wave_model`, a spectral body's `spectrum`, and for a simulated or spectral body an `extent` or `cell_size`, that differs from the prepared body's |
+| `add_impulse` | `c3d::INVALID_ID` | A dead node, a node without prepared water, or a body that is not `SIMULATED` |
+| `add_impulse` | `c3d::INVALID_ARGUMENT` | A position that is not finite, a radius that is not finite and positive, a strength that is not finite or is negative |
 | `add_water`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool full, or no scene node left for the medium's node or the mirrors |
 | `update_mirror` | `c3d::INVALID_ID` | A dead body, a node without prepared water or a dead viewing camera |
 | `update_mirror` | `c3d::INVALID_ARGUMENT` | The viewing camera's local transform is not finite |
 | `update_mirror` | `c3d::CAPACITY_EXCEEDED` | No scene node left to add the camera of a slot freed by `release_mirror` |
 | `set_sea_state` | `c3d::INVALID_ID` | A dead entity, no `Water`, or pending water whose geometry was removed |
 | `set_sea_state` | `c3d::INVALID_ARGUMENT` | A non-finite wind, a negative or non-finite transition |
+| `set_sea_state` | `c3d::UNSUPPORTED` | A `SIMULATED` body, or `SPECTRAL` water that is still pending |
+| `water_gpu::update` | `c3d::CAPACITY_EXCEEDED` | The store has no room for the three compute stages |
+| `water_gpu::update` | those of `AssetStore.add_compute_shader` and `Renderer.dispatch` | Inherited unchanged, the `gpu::` faults among them |
 | `surface_view` | `c3d::INVALID_ID` | Dead entity, no water body, the owned material removed |
 | `sample_surface`, `sample_surface_detail`, `fluid_sample` | `NOT_FOUND` | The point's rest position lies outside the rest rectangle |
 
@@ -733,6 +1016,17 @@ store.
   is `t · c / λ` in float ([Time](#time)); a sea state's offsets carry the same limit.
 - **Query accuracy**: the inversion stops at 0.1 mm or after 8 steps; `residual` reports where it stopped, and
   the drawn surface agrees within 1 cm.
+- **Simulated surface**: a built grid of 16 to 256 cells per side, with no ocean, no horizontal motion and no wave foam;
+  walls reflect and there is no sponge, so a ripple returns from the edges; `SIMULATION_MAX_HEIGHT` bounds the heights
+  and the mesh's bounds, and the medium and the clip plane follow the reach; the view borrows the grid; the dry mask
+  follows reported terrain edits only ([Dry cells](#dry-cells)); at most four steps run per update. Each awake frame
+  uploads the whole texture ([Simulated surface](#simulated-surface)).
+- **Spectral surface**: a 256² field per body (6.5 MiB of device memory and 18 dispatches a frame), a spectrum that is
+  fixed for the body's life, a sea built from the body's fetch (a lake's is centimetres), no wave foam, and a drawn
+  surface that agrees with its twin by a statistical bound instead of 1 cm ([Bounds and the twin](#bounds-and-the-twin)).
+  Waves under four texels or under the lattice's cells are dropped, and the finest field is sampled by every ocean
+  level. The wind and the spectrum are node-local, node scale scales the sea, and a spectral body needs the
+  `C3D_LANDSCAPE_GPU` build and one `water_gpu::update` a frame ([Spectral surface](#spectral-surface)).
 - **Transforms**: drawing takes any node transform (waves scale and rotate with the node; the mirror reflects
   across the image of the local XZ plane); queries require translation plus rotation about Y.
 - **One body per lake**: the waves of a `BODY` are node-local, so two bodies do not match at a shared edge. Two
@@ -748,7 +1042,8 @@ store.
   and the mirror's side test is the rest plane. A camera in the band from the box's top to a crest (`amplitude + skin`
   under the rest plane to `amplitude` over it) can stand under the water and outside the medium, unfogged, and its mirror
   follows the plane's side, not the waves'. The water between the surface and the box's top is not absorbed: a bed seen
-  through a crest misses up to about twice the amplitude of absorption.
+  through a crest misses up to about twice the amplitude of absorption. A simulated body's amplitude is its reach, the
+  largest height magnitude since it woke: the box's top is `MEDIUM_SKIN` under the rest plane while the pond is calm.
 - **Underwater views**: no light shafts and no caustics. The window and the reflection show this view's snapshot and the
   environment elsewhere, so near the frame's edge the window changes from the snapshot to the environment. The surface
   shows no glints or foam from below.
@@ -776,7 +1071,7 @@ at `MIRROR_RENDER_SCALE` with the lines above. `--crates 16|256` drops 1 m crate
 expects still water).
 
 Right drag looks, WASD moves, F flies, B raises the ground under the camera (the ground collider re-cooks when
-the key lifts). The panel switches the reflection source, the mirror's resolution, the waves (calm or zero),
+the key lifts), and with `--waves simulated` (without `--dive`) R drops a ripple where the camera looks. The panel switches the reflection source, the mirror's resolution, the waves (calm or zero),
 the ripples, the wind heading and speed, and shows the crates' mean submerged fraction, the physics step time,
 scene snapshots and upload bytes; the view stats table shows each view's passes with `--gpu-timings`, and the
 targets panel previews the mirror and capture targets.
@@ -803,6 +1098,24 @@ own layer bit like the lake. Each frame its node follows the camera in steps of 
 `--sea-state`, so the waves are the JONSWAP sea of `--wind` (the 20 km body has a fully developed sea; try `--wind
 12`) and the wind controls blend them in four seconds. There is no basin, grass, tree or crate, and no `--split` or
 `--traced`. `--shot FILE.png --size 1025` renders it headless, and `--benchmark` runs the segments over the sea.
+
+`--waves simulated` (default `gerstner`) makes every body [simulated](#simulated-surface). The 120 m lake is 96 cells
+per side at the default cell size, with wave speed 8 m/s, damping 0.3/s, the terrain as its `ground` so the shore
+reflects ripples, and `reflection_distortion` 0.4 and `refraction_strength` 0.1 so the gentle slopes of a ripple bend
+the reflection and the bed. It does not combine with `--ocean` or `--sea-state`, and the calm-waves switch is not shown.
+R drops a ripple of 3 m radius and 10 m/s where the camera looks, on every body the ray meets; the ground brush
+(B) dries and wets cells as it moves the shore. With `--shot FILE.png`, a ripple falls 40 m west of the lake's centre on
+the first frame, the camera stands 12 m west of the centre at 3 m looking west, and `--ripple-age SECONDS` (at most
+30, 0 by default) lets that much simulated time pass before the eight frames the shot renders.
+
+`--waves spectral` makes every body [spectral](#spectral-surface). It needs the gated build, `python3 scripts/build.py
+--example water_gpu` (the `water` target faults at the option with that hint), which adds `-D C3D_LANDSCAPE_GPU` and one
+call of `water_gpu::update` inside each frame before its views. It implies `--sea-state`, so `--wind` and the panel's
+wind controls set the spectrum, blended over four seconds. The lake is 0.5 m cells with a 32 m patch, because the fetch of
+a 120 m lake raises waves of a metre at most: `--wind 20` is its storm (`Hs` 0.11 m, `λp` 1.1 m), and the default 6 m/s
+sea lies almost wholly under the lattice's cut and draws nearly flat. With `--ocean` the body is the 20 km sea at the
+default cell size and a 256 m patch, where `--wind 3` and `--wind 20` are the calm and the storm. The panel shows the twin's bound. `--shot FILE.png` writes the frame; it combines with `--ocean`,
+`--dive` and `--traced` (not with an ocean).
 
 `--split` draws two viewing cameras side by side in the same output, each with its own viewport, terrain levels,
 mirror views and targets, and adds a second water body: a 60 m pool on the flattest ground whose water lies at
@@ -837,7 +1150,24 @@ last frame's shadow sets), `buoyancy_us` (the physics step time per fixed step i
 - `gate crates_at_density_line`: every crate's submerged fraction over the settle segment's last 60 frames lies
   within 0.02 of 0.6. With no crates (`--ocean`) it prints `skipped: no crates` and does not fail the run.
 
-Switches: `--split`, `--gpu-timings` (build with `python3 scripts/build.py --target water --opt O3 --define
+With `--waves spectral` the waves segment sets the storm wind (18 m/s, blended over four seconds) and the settle segment a
+zero wind (over one second), so the table uploads twice; the header adds `# spectrum sigma envelope bound twin_waves`, each
+segment prints `spectral segment=<name> dispatches=<n> record_us median=<m> p99=<p> table_upload_frames=<n>
+table_upload_bytes=<b>` (the dispatches of the last frame, the CPU time `water_gpu::update` took to record them, and the
+frames and bytes of the table's uploads), and with `--gpu-timings` `gpu_ms view=frame pass=CUSTOM_COMPUTE`, the field's
+passes. `gate spectral_dispatches` exits 1 when a frame records other than 18 dispatches a body.
+
+With `--waves simulated` the waves segment starts with a ripple dropped at the lake's centre, and the settle segment
+raises the pond's wave speed to 60 m/s and its damping to 3.2/s through `set_desc`, so the ripple rings out inside the
+segment. Each segment prints `simulation segment=<name> upload_frames=<n> update_us median=<m> p99=<p> upload_bytes=<b>`:
+the frames that uploaded the simulation's texture, the CPU time of `water::update` on those frames and the bytes of one
+upload. `gate steady_uploads` holds as before (the still segment has no ripple, so the body is asleep), and a third
+gate exits 1 when it fails:
+
+- `gate simulation_uploads_stop_once_settled`: after the waves segment starts, the body reports settled in some frame
+  and every later frame uploads nothing for the simulation.
+
+Switches: `--split`, `--waves gerstner|simulated`, `--ripple-age SECONDS`, `--gpu-timings` (build with `python3 scripts/build.py --target water --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--validation`, `--shading
 forward|deferred`, `--size 1025|2049|4097`, `--reflection planar|march|env` (march: no target; env: no target
 and the march off), `--mirror-scale 0.5|1`, `--crates 16|256`, `--ssgi` (SSGI on the main view),

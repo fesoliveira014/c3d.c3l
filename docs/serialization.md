@@ -509,7 +509,8 @@ check ordinary registration with and without navigation.
 
 ## Landscape, particle and audio adapters
 
-Terrain and Water restore complete descriptors in VALUE, with no generated
+Terrain restores its complete descriptor in VALUE and Water in OWNER, so a
+`ground` reference already carries Terrain; neither creates a generated
 material, batch or mirror. TerrainSet and TerrainTile restore their authored
 fields in VALUE; the set's neighbour links are runtime state, rebuilt when the
 tiles prepare. Foliage restores its ground reference and copied
@@ -522,8 +523,10 @@ morphing and tracing off, version 2 payloads no morphing and tracing off, and
 version 3 payloads tracing off. The Foliage payload is version 3, which adds
 `trace_sway`. Version 2 added `rules.slope_normal`; version 1 payloads in both
 encodings read `FACE` and no swayed tracing, and version 2 payloads read no swayed tracing.
-The Water payload is version 4, which adds `mode` and `depth`; versions 1, 2 and 3 read as a
-`BODY` with the default depth, and a body's `trace` and mirror fields as before. An ocean's
+The Water payload is version 5, which adds `wave_model`, `simulation`, `spectrum` and `ground`; version 4
+added `mode` and `depth`. Versions 1 to 4 read as `GERSTNER` with the default `simulation` and `spectrum` and no
+`ground`; versions 1, 2 and 3 also read as a `BODY` with the default depth, and a body's `trace` and mirror fields as
+before. A `ground` is a node reference: it must name a Terrain node of the exported subtree, or the write faults. An ocean's
 generated `InstancedMesh` is omitted like a body's `Mesh`, and a prepared body's medium node, with its `MediumVolume`,
 is omitted: preparation adds it again from the desc.
 Foliage cells, water mirrors and a terrain's trace grid are omitted only through
@@ -531,9 +534,10 @@ verified ownership.
 See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).
 
 ParticleSystem restores its descriptor and emitting flag in VALUE. The payload is
-version 3. Version 2 added `saturation` and version 3 adds the sub-emitters and
-`max_events`; older payloads in both encodings read `REFUSE` and no sub-emitters.
-Sub-emitter targets are same-subtree entity references. Its pool, event queue,
+version 4. Version 2 added `saturation`, version 3 the sub-emitters and
+`max_events`, and version 4 adds `collision`; older payloads in both encodings
+read `REFUSE`, no sub-emitters and no collision. The collision callback is
+runtime-only. Sub-emitter targets are same-subtree entity references. Its pool, event queue,
 random state, counters and draw child restart through explicit preparation.
 A generated draw child selected without its owner is rejected. See
 [particle serialization](../addons/c3d_particle.c3l/src/serial/README.md).
