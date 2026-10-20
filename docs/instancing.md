@@ -70,6 +70,52 @@ Change the count with `resize_instances(node, count)`, which fills new slots wit
 
 The instance index is the array position. It is not a generational identity: it moves when the application reorders or resizes.
 
+## Device batches
+
+`InstancedMesh.source` selects where a batch's draw data lives. `TRANSFORMS`, the default, is everything above. `DEVICE`
+draws the node-local `InstanceGpu` records and the live count that compute wrote into a renderer buffer, so the CPU
+neither packs nor reads them. `Scene.add_instanced_mesh(source: InstanceSource.DEVICE)` makes the batch with
+`capacity` slots and no live instance; `Scene.set_instance_device(node, device, local_bounds)` attaches the buffer:
+
+```c3
+scene.set_instance_device(
+    node,
+    {
+        .buffer         = buffer,
+        .records_offset = records_offset,
+        .count_offset   = count_offset,
+        .capacity       = capacity,
+    },
+    bound,
+);
+```
+
+`InstanceDevice` holds `capacity` records of `scene::INSTANCE_RECORD_BYTES` (128) at `records_offset`, a multiple of
+16, and one `uint` count word at `count_offset`, a multiple of 4. A count past `capacity` draws every slot. A compute stage
+packs a record with `pack_instance_record` from the public `instance_record.glsl` ([custom shaders](custom_shaders.md)),
+which mirrors the packing of host batches: an affine model, a color and a seed in [0, 1).
+
+- **Culling and shadows.** Every pass culls a DEVICE batch at its capacity and skips the slots at or past the count word:
+  the view, its depth prepass and every shadow layer, so `cast_shadow` holds with no CPU count. The per-instance box
+  test and the sway and fade of the batch apply as for any batch. The cull dispatch always runs, with an open frustum
+  when the view has `instance_culling` off, because the slots past the count hold stale records. A range the cull arena
+  cannot hold draws nothing and counts in `Stats.cull_overflows`, or in `sort_overflows` for a blended batch.
+- **Bounds.** `set_instance_device` sets `has_bounds_override` and `local_bounds`. The box must contain every instance
+  the buffer can hold, geometry included, because extraction culls the whole batch against it. Unlike a host batch, a
+  DEVICE batch with an override still culls each instance.
+- **Records.** They must not mirror space: records are drawn as one range, so a negative scale draws with the wrong
+  winding. The node's world applies to them as to any batch, and motion vectors follow the node alone, because a DEVICE
+  batch keeps no per-instance history.
+- **Lifetime.** A destroyed buffer skips the draw and counts in `Stats.dangling_refs`. A `Renderer.dispatch` that names
+  the buffer in `DispatchDesc.writes` orders its writes before every later cull and draw of the frame. A batch with no
+  attached buffer draws nothing.
+- **Not supported.** A quadtree (`set_instance_quadtree` faults `UNSUPPORTED`), a `LodGroup`, a crowd and serialization
+  (writing the batch faults `UNSUPPORTED`). Picking and `SceneIndex` skip the batch.
+- **Host mirror.** `add_instanced_mesh(mirror: true)` allocates `transforms` and `colors` at `capacity` for a DEVICE
+  batch, which its owner may fill and mark with `mark_instances_dirty`. Scene tracing reads them and nothing else does:
+  `trace` and `count` apply to the mirror as to a host batch, so the traced instances are as late as the owner makes
+  them. Without it, a DEVICE batch is not traced.
+
 ## Drawing
 
 - **Culling.** Extraction culls the batch as a whole against the bound of all live instances, or `local_bounds` when `has_bounds_override` is set; [instance culling](#instance-culling) then culls each instance on the GPU. The bound of all live instances is kept node-local on the batch (`InstancedMesh.aggregate`, written by the library). It is computed over every live instance once per revision and geometry revision, except that a range mark only grows it (see [Batches](#batches)), and transformed by the node's world each frame; the batch's [sway](#sway-and-distance-fade) then grows the world box by its reach along each axis, for computed and override bounds alike. Under a rotated node it is the box of that box, looser than a per-instance merge, and the looseness grows with the batch's extent: for a batch about 5.7 units long under a node turned 45 degrees, the shadow cascade's depth range grew by up to 1.3%. `cast_shadow` and `receive_shadow` apply to every instance.
@@ -92,7 +138,7 @@ Records are relative to the batch node: a batch whose node or ancestor moves, or
 
 - **Passes.** Each culling pass runs one compute dispatch per listed range: the view (with its uploads, before its shadow atlas and passes), its depth prepass, and all of its shadow layers in one stage before the shadow atlas. The velocity pass and the forward and deferred passes of a view read the view's ranges and dispatch nothing. `Pass.INSTANCE_CULL` times the dispatches. `Pass.INSTANCE_SORT` times the sort steps of [blended batches](#blended-batches), which run in the view's culling pass only, after its cull dispatches.
 - **Dispatch size.** A range of any instance count culls in one dispatch. Its groups of 64 instances wrap into rows of groups past the device's group count along x (at least 65,535, so 4,194,240 instances), and the cull shader folds the rows back into one index, so no dispatch-size bound limits a batch below its instance capacity. [LOD](lod.md) selection, quadtree selection and the sort steps wrap the same way.
-- **Bounds.** An instance is tested as the eight corners of a local box under its world matrix against each plane, which is tighter than the world box extraction tests. The local box is the geometry bound for a plain batch and the crowd's `pose_bounds` for a crowd part. A batch with `has_bounds_override` that is not a crowd part is drawn unculled: its override bounds the batch, not one instance. A blended one still lists every instance, through open planes. A swaying batch widens each plane by its sway amplitude, and a fading batch drops the instances whose collapse is complete.
+- **Bounds.** An instance is tested as the eight corners of a local box under its world matrix against each plane, which is tighter than the world box extraction tests. The local box is the geometry bound for a plain batch and the crowd's `pose_bounds` for a crowd part. A batch with `has_bounds_override` that is not a crowd part or a [DEVICE batch](#device-batches) is drawn unculled: its override bounds the batch, not one instance. A blended one still lists every instance, through open planes. A swaying batch widens each plane by its sway amplitude, and a fading batch drops the instances whose collapse is complete.
 - **Index space.** A culled range draws `gl_InstanceIndex` over its visible list; on a blended range it is the draw rank, 0 farthest. Built-in stages and `write_mesh_outputs` map it back with `instance_source(draw)`; a custom instanced vertex stage that reads per-instance data itself must do the same ([Custom shaders](custom_shaders.md)).
 - **Memory.** Each frame slot owns one device-local arena of `RendererDesc.instance_cull_bytes` (default `INSTANCE_CULL_ARENA_BYTES`, 16 MiB), so culling reserves `FRAMES_IN_FLIGHT x instance_cull_bytes` of device memory once the first range is listed, which a blended batch does with culling off too. A culling pass first places one 32-byte indirect command per listed range, then each range's visible list of 4 bytes per instance; a blended range's list is followed by its sort keys, `8 * pow2(n)` bytes for `n` instances. List and keys are placed all or nothing per range; a range whose list does not fit keeps its unused command slot, and a stage whose commands do not fit sends every listed range to the fallback. A range that does not fit is drawn unculled and counted in `Stats.cull_overflows` (`Stats.sort_overflows` for a blended range); nothing faults. `instancing` at 99,856 instances uses about 400 KB per culling pass; a blended range of 100,000 instances takes 1,448,608 B per view and frame slot.
 - **Turning it off.** `instance_culling = false` restores the CPU-written arguments and draws every instance of opaque and masked batches. Blended ranges still list, with open planes, and sort.
@@ -155,7 +201,7 @@ scene.get(node, InstancedMesh).trace = false;
 scene.set_instance_quadtree(node, parents[..], 96, 0.25f)!;
 ```
 
-`Scene.set_instance_quadtree` copies `parents` into arrays the component owns, allocated from the scene's allocator on first use and freed with the component, builds the leaf mask (an instance no other instance names as parent), counts the tree's levels (`InstanceQuadtree.depth_count`, the longest chain of ancestors plus one) and advances `InstanceQuadtree.revision`, which record edits never advance. It returns the batch to the sphere rule (`SPHERE_PIXELS`) and drops any level bounds, because they describe one topology. Empty `parents` disable the mode. It faults `INVALID_ARGUMENT` when `check_instance_quadtree` rejects the topology or the thresholds: the length differs from the live count, a parent is out of range, the parents form a cycle, an instance has more than `MAX_QUADTREE_DEPTH` (8) ancestors, or `split_pixels` or `hysteresis` is negative or not finite. It faults `UNSUPPORTED` while the batch has `trace` set, one of its instances mirrors space or its node carries a `LodGroup`.
+`Scene.set_instance_quadtree` copies `parents` into arrays the component owns, allocated from the scene's allocator on first use and freed with the component, builds the leaf mask (an instance no other instance names as parent), counts the tree's levels (`InstanceQuadtree.depth_count`, the longest chain of ancestors plus one) and advances `InstanceQuadtree.revision`, which record edits never advance. It returns the batch to the sphere rule (`SPHERE_PIXELS`) and drops any level bounds, because they describe one topology. Empty `parents` disable the mode. It faults `INVALID_ARGUMENT` when `check_instance_quadtree` rejects the topology or the thresholds: the length differs from the live count, a parent is out of range, the parents form a cycle, an instance has more than `MAX_QUADTREE_DEPTH` (8) ancestors, or `split_pixels` or `hysteresis` is negative or not finite. It faults `UNSUPPORTED` while the batch has `trace` set, one of its instances mirrors space, its node carries a `LodGroup` or the batch is DEVICE.
 
 - **Rule.** A leaf never splits. Any other node splits when its size exceeds `split_pixels`; a node that split in the view's previous rendering stays split until its size falls below `split_pixels / (1 + hysteresis)`. A node draws when every ancestor splits and it does not.
 - **Size.** The projected height, in pixels of the view's working extent (`render_scale` included), of the sphere that bounds the geometry under the instance matrix: the sphere through the corners of the geometry's bound, centred on the bound's centre, with the radius taken from the lengths of the matrix axes. Turning a node never changes its size. A shear under-bounds the sphere, which a size for level selection tolerates. It is infinite at the sphere's centre, so a node around the camera splits. A [LOD group](lod.md#size-sphere) sizes by the same sphere, with its sway reach added.

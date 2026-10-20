@@ -49,6 +49,9 @@ breaks them, or a negative or non-finite `frame`, faults `INVALID_ARGUMENT`. Wri
 `RECORDS` or `DEVICE` faults `c3d::UNSUPPORTED`: its records are world-space draw data that an owner regenerates, as the
 particle package does, or live in a renderer buffer.
 
+InstancedMesh follows the same rule: writing a batch whose `source` is `DEVICE` faults `c3d::UNSUPPORTED`, because its
+records live in a renderer buffer.
+
 RibbonBatch restores in the VALUE phase like BillboardBatch, at version 1: the material, the capacity and the live
 points, with unused points restarting at `RIBBON_POINT_DEFAULT`. Reading and writing apply the point rules of
 `Scene.set_ribbons`, so a non-finite value, a negative `width` or an unknown flag bit faults `INVALID_ARGUMENT`. Writing a
