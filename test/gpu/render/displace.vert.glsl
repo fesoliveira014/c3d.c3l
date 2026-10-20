@@ -17,7 +17,7 @@ void main() {
     DisplaceParams params = DisplaceParams(material.parameters);
     uint index = uint(gl_VertexIndex);
 #ifdef INSTANCED
-    float instance_x = InstanceArray(draw.instance_data).values[instance_source(draw)].model[3].x;
+    float instance_x = world_instance(draw, instance_source(draw)).model[3].x;
 #else
     float instance_x = 0.0;
 #endif

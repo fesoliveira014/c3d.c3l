@@ -530,7 +530,10 @@ Foliage cells, water mirrors and a terrain's trace grid are omitted only through
 verified ownership.
 See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).
 
-ParticleSystem restores its descriptor and emitting flag in VALUE. Its pool,
+ParticleSystem restores its descriptor and emitting flag in VALUE. The payload is
+version 3. Version 2 added `saturation` and version 3 adds the sub-emitters and
+`max_events`; older payloads in both encodings read `REFUSE` and no sub-emitters.
+Sub-emitter targets are same-subtree entity references. Its pool, event queue,
 random state, counters and draw child restart through explicit preparation.
 A generated draw child selected without its owner is rejected. See
 [particle serialization](../addons/c3d_particle.c3l/src/serial/README.md).

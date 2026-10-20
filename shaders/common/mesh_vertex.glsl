@@ -14,6 +14,7 @@
 #endif
 
 #include "instance_effects.glsl"
+#include "instance_world.glsl"
 GPU_DECLARE_READONLY_ARRAY_REF(LodPreviousArray, LodHistoryGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(InstanceArray, InstanceGpu);
 #ifdef INSTANCED
@@ -50,6 +51,27 @@ uint instance_source(DrawRoot draw) {
 // The source of a crowd record: its palette and morph row, and its posed slot.
 uint logical_source(DrawRoot draw) {
     return uint(InstanceArray(draw.instance_data).values[instance_source(draw)].normal_2.w);
+}
+
+// The batch record of an instance in world space: model, normal rows, seed, parity, source index and colour.
+InstanceGpu world_instance(DrawRoot draw, uint source) {
+    return instance_to_world(draw, InstanceArray(draw.instance_data).values[source]);
+}
+#endif
+
+#if defined(VELOCITY) && defined(INSTANCED)
+// The world model the view drew an instance with last time. An instance without a previous matrix did not change,
+// so draw.prev_model carries only the batch node's motion.
+mat4 previous_world_model(DrawRoot draw, uint source, mat4 current_world) {
+    PreviousPoseGpu previous_pose = PreviousPoseGpu(draw.previous_pose);
+    mat4 previous_world;
+    if (previous_pose.instances != 0ul
+        && source >= previous_pose.instances_first && source < previous_pose.instances_end) {
+        previous_world = PreviousInstanceArray(previous_pose.instances).values[source - previous_pose.instances_first];
+    } else {
+        previous_world = draw.prev_model * current_world;
+    }
+    return previous_world;
 }
 #endif
 
@@ -201,7 +223,7 @@ void write_mesh_outputs(
 ) {
 #ifdef INSTANCED
     uint source = instance_source(draw);
-    InstanceGpu instance = InstanceArray(draw.instance_data).values[source];
+    InstanceGpu instance = world_instance(draw, source);
 #else
     InstanceGpu instance;
     instance.model = draw.model;
@@ -259,15 +281,7 @@ void write_mesh_outputs(
 
         previous_instance = reject_history != 0.0 ? instance.model : LodPreviousArray(part.previous).values[source].model;
     } else {
-        // An instance without a previous matrix did not change, so prev_model carries only the batch node's motion.
-        PreviousPoseGpu previous_pose = PreviousPoseGpu(draw.previous_pose);
-        if (previous_pose.instances != 0ul
-            && source >= previous_pose.instances_first && source < previous_pose.instances_end) {
-            previous_instance = PreviousInstanceArray(previous_pose.instances)
-                .values[source - previous_pose.instances_first];
-        } else {
-            previous_instance = draw.prev_model * model;
-        }
+        previous_instance = previous_world_model(draw, source, model);
     }
 #endif
     if (draw.lod_part != 0ul) {

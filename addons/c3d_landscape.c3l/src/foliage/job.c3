@@ -274,7 +274,6 @@ fn bool same_rules(ScatterRules* first, ScatterRules* second) @private {
 fn bool is_rebased(Mat4 before, Mat4 after, Vec3 shift) @private {
     Mat4 expected = before;
     expected.m03 -= shift.x;
-    expected.m13 -= shift.y;
     expected.m23 -= shift.z;
     Vec3 drift = maths::translation(after) - maths::translation(expected);
     if (math::abs(drift).max() > REBASE_TOLERANCE) return false;
