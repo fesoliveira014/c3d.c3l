@@ -597,6 +597,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     float quadtree_world_scale;
     uint64_t quadtree_params;
     uint64_t quadtree_depths;
+    mat4 node_world;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer InstanceSortRoot {

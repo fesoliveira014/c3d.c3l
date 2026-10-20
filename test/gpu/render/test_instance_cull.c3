@@ -149,6 +149,58 @@ fn void test_culled_batch_draws_only_survivors() @test {
     check_validation(renderer);
 }
 
+const uint NODE_PROBES @private = 8;
+
+fn void check_node_renders_like_pre_composed_placements(Transform placement) @private {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    DeformedScene placed = create_line_scene(&fixture, fixture.plain, sunlit: true)!!;
+    defer scene::destroy_scene(&placed.scene);
+    DeformedScene composed = create_line_scene(&fixture, fixture.plain, sunlit: true)!!;
+    defer scene::destroy_scene(&composed.scene);
+    InstancedMesh* batch = composed.scene.get(composed.mesh, InstancedMesh);
+    foreach (&transform : batch.transforms[:batch.count]) {
+        *transform = maths::transform_from_affine(placement.to_mat4().mul(transform.to_mat4()))!!;
+    }
+    composed.scene.mark_instances_dirty(composed.mesh);
+
+    render_scene_and_sample(&fixture, &placed)!!;
+    render_scene_and_sample(&fixture, &placed)!!;
+    Uploads steady = frame_uploads(renderer);
+    placed.mesh.local = placement;
+    render_scene_and_sample(&fixture, &placed)!!;
+    check_uploads(renderer, steady);
+
+    uint background = render_scene_and_sample(&fixture, &placed, BACKGROUND_UV)!!;
+    uint covered;
+    for (uint probe = 0; probe < NODE_PROBES; probe++) {
+        Vec2 uv = { 0.15f + 0.1f * (float)probe, 0.5f };
+        uint found = render_scene_and_sample(&fixture, &placed, uv)!!;
+        check_near_pixel(found, render_scene_and_sample(&fixture, &composed, uv)!!);
+        if (found != background) covered++;
+    }
+    assert(covered > 1 && covered < NODE_PROBES);
+    check_validation(renderer);
+}
+
+fn void test_moved_batch_node_renders_like_pre_composed_placements() @test {
+    check_node_renders_like_pre_composed_placements({
+        .position = { 1.2f, 0.1f, -0.3f },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 9),
+        .scale    = { 1, 1, 1 },
+    });
+}
+
+fn void test_mirrored_batch_node_renders_like_pre_composed_placements() @test {
+    check_node_renders_like_pre_composed_placements({
+        .position = { 0.2f, 0, 0 },
+        .rotation = maths::TRANSFORM_IDENTITY.rotation,
+        .scale    = { -1, 1, 1 },
+    });
+}
+
 fn void test_cull_overflow_draws_unculled() @test {
     Fixture fixture;
     create_fixture(mem, &fixture, instance_cull_bytes: OVERFLOW_ARENA_BYTES)!!;
@@ -435,6 +487,34 @@ fn void test_moving_batch_node_velocity_matches_per_instance() @test {
     check_near_pixel(node_motion, per_instance);
     uint at_rest = settle_at_rest(&fixture, &line)!!;
     assert(node_motion != at_rest);
+    check_validation(&fixture.renderer);
+}
+
+fn uint? move_single_box(Fixture* fixture, DeformedScene* single) @private {
+    enable_taa(fixture, fixture.view, debug: TaaDebug.VELOCITY)!;
+    single.mesh.local.position.x = 0;
+    uint pixel;
+    for (uint frame = 0; frame < SETTLE_FRAMES; frame++) {
+        single.mesh.local.position.x += LINE_STEP;
+        pixel = render_scene_and_sample(fixture, single)!;
+    }
+    return pixel;
+}
+
+fn void test_moving_batch_node_velocity_matches_a_moving_mesh() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    DeformedScene line = create_line_scene(&fixture, fixture.plain)!!;
+    defer scene::destroy_scene(&line.scene);
+    DeformedScene single = create_single_box_scene(&fixture, fixture.box, fixture.plain, false)!!;
+    defer scene::destroy_scene(&single.scene);
+    single.mesh.local.scale = { LINE_SCALE, LINE_SCALE, LINE_SCALE };
+
+    uint batch_velocity = move_line_node(&fixture, &line, false)!!;
+    uint mesh_velocity = move_single_box(&fixture, &single)!!;
+    check_near_pixel(batch_velocity, mesh_velocity);
+    assert(batch_velocity != settle_at_rest(&fixture, &line)!!);
     check_validation(&fixture.renderer);
 }
 

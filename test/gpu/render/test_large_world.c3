@@ -443,7 +443,7 @@ fn void test_relative_traced_and_temporal_effects_match_completed_views() @test 
     }
 }
 
-fn void test_relative_instance_uploads_share_views_and_recover_after_abort() @test {
+fn void test_relative_batches_upload_no_records_across_crossings_and_recover_after_abort() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -455,7 +455,7 @@ fn void test_relative_instance_uploads_share_views_and_recover_after_abort() @te
     )!!;
     defer scene::destroy_scene(&target.scene);
     target.mesh.visible = false;
-    Node* batch_node = add_parity_batch(&target, fixture.box, fixture.plain, 0)!!;
+    (void)add_parity_batch(&target, fixture.box, fixture.plain, 0)!!;
     target.scene.root.local.position = DISTANT_OFFSET;
     Renderer* renderer = &fixture.renderer;
     for (uint warm = 0; warm < render::FRAMES_IN_FLIGHT + 1; warm++) {
@@ -464,8 +464,6 @@ fn void test_relative_instance_uploads_share_views_and_recover_after_abort() @te
     Uploads steady = frame_uploads(renderer);
     render_relative_pair(&fixture, &target, DISTANT_OFFSET + (Vec3){ 1, 0, 1 })!!;
     check_uploads(renderer, steady);
-    InstancedMesh* batch = target.scene.get(batch_node, InstancedMesh);
-    Uploads crossing = { .count = steady.count + 1, .bytes = steady.bytes + batch.count * (uint)InstanceGpu::size };
     for (uint recovery = 0; recovery < 2; recovery++) {
         render_relative_pair(&fixture, &target, DISTANT_OFFSET)!!;
         renderer.begin_frame({ .reference_position = DISTANT_OFFSET + REFERENCE_CROSSING })!!;
@@ -474,16 +472,16 @@ fn void test_relative_instance_uploads_share_views_and_recover_after_abort() @te
         render::abort_frame(renderer);
         Vec3 resume = recovery == 0 ? DISTANT_OFFSET : DISTANT_OFFSET + REFERENCE_CROSSING;
         render_relative_pair(&fixture, &target, resume)!!;
-        // Aborting invalidates the material stamp alongside the resident record.
+        // Aborting invalidates the material stamp; the batch's records do not depend on the reference.
         check_uploads(renderer, {
-            .count = crossing.count + 1,
-            .bytes = crossing.bytes + (uint)render::MATERIAL_STRIDE,
+            .count = steady.count + 1,
+            .bytes = steady.bytes + (uint)render::MATERIAL_STRIDE,
         });
         render_relative_pair(&fixture, &target, resume)!!;
         check_uploads(renderer, steady);
     }
     render_relative_pair(&fixture, &target, DISTANT_OFFSET)!!;
-    check_uploads(renderer, crossing);
+    check_uploads(renderer, steady);
     check_validation(renderer);
 }
 
@@ -594,7 +592,7 @@ fn void test_relative_lod_history_keeps_static_velocity_across_reference_changes
             render::wait_frames(renderer)!!;
             uint color = read_pixel(&fixture);
             assert((color & 0xff) > 10 || ((color >> 8) & 0xff) > 10 || ((color >> 16) & 0xff) > 10);
-            if (frame == 3) assert(renderer.stats.uploads == (mode == 2 || mode == 4 ? 1 : 0));
+            if (frame == 3) assert(renderer.stats.uploads == 0);
             gpu::invalidate_mapped_span(&renderer.device, readback.span)!!;
             if (frame == 0 || frame == 5) continue;
             Vec4 velocity = lod_velocity_pixel(readback, CENTER_UV);

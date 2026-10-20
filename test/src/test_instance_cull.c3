@@ -79,6 +79,41 @@ fn void test_instance_visible_is_tighter_than_the_world_aabb() @test {
     assert(maths::frustum_intersects_aabb(&frustum, maths::aabb_transform(TURNED_SLAB, model)));
 }
 
+fn void test_instance_visible_composes_the_node_world() @test {
+    Frustum frustum = infinite_frustum();
+    Random random = { .state = SEED };
+    Transform node = {
+        .position = { 6, 0, -12 },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 5),
+        .scale    = { 1.5f, 1.5f, 1.5f },
+    };
+    Mat4 node_world = node.to_mat4();
+    Aabb local_bounds = { .min = { -0.5f, -0.5f, -0.5f }, .max = { 0.5f, 0.5f, 0.5f } };
+    uint visible;
+    uint moved;
+    for (uint index = 0; index < RANDOM_CASES; index++) {
+        Vec3 axis = next_point(&random, -1, 1) + (Vec3){ 0, 0.01f, 0 };
+        Transform placement = {
+            .position = next_point(&random, -20, 20),
+            .rotation = quaternion::from_axis_angle{float}(axis.normalize(), next_float(&random, 0, 2 * math::PI)),
+            .scale    = next_point(&random, 0.2f, 3),
+        };
+        Mat4 local = placement.to_mat4();
+        bool composed = render::instance_visible(
+            frustum:      &frustum,
+            local_bounds: local_bounds,
+            model:        local,
+            node_world:   node_world,
+        );
+        bool pre_composed = render::instance_visible(&frustum, local_bounds, node_world.mul(local));
+        assert(composed == pre_composed);
+        if (composed) visible++;
+        if (composed != render::instance_visible(&frustum, local_bounds, local)) moved++;
+    }
+    assert(visible > 0 && visible < RANDOM_CASES);
+    assert(moved > 0);
+}
+
 fn void test_instance_visible_margin_admits_reaching_instances() @test {
     Frustum frustum = infinite_frustum();
     Mat4 model = slab_beside_right_plane();
