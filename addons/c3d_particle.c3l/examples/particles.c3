@@ -350,14 +350,23 @@ fn void? cycle_smoke_look(Demo* demo, Input* input) @local {
     if (changed) apply_smoke_params(demo)!;
 }
 
-fn ParticleExecution execution_for(Options options, ParticleSystemDesc* desc) @local {
-    if (!options.gpu) return ParticleExecution.CPU;
-
-    ParticleCollision* collision = &desc.collision;
-    bool needs_callback = collision.response != CollisionResponse.NONE && !collision.ground_plane;
-    bool supported = !desc.trail.max_points && !desc.sub_emitter_count && !needs_callback
-        && desc.render_mode != ParticleRenderMode.MESH && desc.saturation == ParticleSaturation.REFUSE;
-    return supported ? ParticleExecution.GPU : ParticleExecution.CPU;
+fn Node*? add_system(
+    Demo* demo,
+    Options options,
+    ParticleSystemDesc desc,
+    String name,
+) @local {
+    if (options.gpu) {
+        desc.execution = ParticleExecution.GPU;
+        Node*? added = demo.scene.add_particle_system(desc, name: name);
+        if (catch excuse = added) {
+            if (excuse != c3d::UNSUPPORTED) return excuse~;
+        } else {
+            return added;
+        }
+        desc.execution = ParticleExecution.CPU;
+    }
+    return demo.scene.add_particle_system(desc, name: name);
 }
 
 fn Demo? create_demo(Options options) @local {
@@ -489,8 +498,12 @@ fn Demo? create_demo(Options options) @local {
     }
     float[8] opacity = { 0, 0.7f, 1, 1, 0.9f, 0.6f, 0.3f, 0 };
     foreach (index, alpha : opacity) smoke.color_over_life.values[index] = { 1, 1, 1, alpha };
-    smoke.execution = execution_for(options, &smoke);
-    demo.emitters[0] = demo.scene.add_particle_system(smoke, name: "smoke")!;
+    demo.emitters[0] = add_system(
+        demo: &demo,
+        options: options,
+        desc: smoke,
+        name: "smoke",
+    )!;
     demo.emitters[0].local.position = options.lit_smoke ? LIT_SMOKE_POSITION : (Vec3){ -3, 0.15f, 0 };
 
     if (options.sparks) {
@@ -508,6 +521,7 @@ fn Demo? create_demo(Options options) @local {
         puff.gravity_scale = -0.05f;
         puff.size_over_life.values = { 0.6f, 1, 1.5f, 2, 2.6f, 3, 3.4f, 3.8f };
         foreach (index, alpha : opacity) puff.color_over_life.values[index] = { 1, 1, 1, alpha };
+        // Deliveries write the target's CPU pool, so a sub-emitter target keeps CPU execution.
         demo.spark_puffs = demo.scene.add_particle_system(puff, name: "spark smoke")!;
     }
 
@@ -547,8 +561,12 @@ fn Demo? create_demo(Options options) @local {
         sparks.collision.ground_plane = true;
         sparks.collision.max_queries = options.capacity; // one ray per spark, so none wait
     }
-    sparks.execution = execution_for(options, &sparks);
-    demo.emitters[1] = demo.scene.add_particle_system(sparks, name: "sparks")!;
+    demo.emitters[1] = add_system(
+        demo: &demo,
+        options: options,
+        desc: sparks,
+        name: "sparks",
+    )!;
     demo.emitters[1].local.position = { 0, 0.2f, 0 };
 
     ParticleSystemDesc debris = particle::default_particle_system_desc();
@@ -591,8 +609,12 @@ fn Demo? create_demo(Options options) @local {
         embers.turbulence = ember_turbulence();
         float[8] glow = { 0, 1, 1, 0.9f, 0.7f, 0.5f, 0.25f, 0 };
         foreach (index, alpha : glow) embers.color_over_life.values[index] = { 1, 1, 1, alpha };
-        embers.execution = execution_for(options, &embers);
-        demo.embers = demo.scene.add_particle_system(embers, name: "embers")!;
+        demo.embers = add_system(
+        demo: &demo,
+        options: options,
+        desc: embers,
+        name: "embers",
+    )!;
         demo.embers.local.position = EMBER_POSITION;
     }
 
