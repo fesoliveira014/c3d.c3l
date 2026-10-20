@@ -444,11 +444,11 @@ solved anchors.
 ## Parallel staging
 
 `PhysicsWorld.set_parallel(ParallelFor)` lets the application run cloth staging on its own worker
-threads. `ParallelFor` holds a function `run(context, range, data, count, batch)` and its `context`: `run`
-calls `range(data, first, count)` over `[0, count)` in batches of `batch` items, in any order and
-concurrently, and returns only after every range finished. A zero `ParallelFor` (the default, or
-`set_parallel({})`) stages on the calling thread. Physics imports no job library; `ParallelRangeFn` has
-`c3d::job::RangeFn`'s signature, so a `JobPool` adapter is a few lines:
+threads. `c3d::ParallelFor`, declared in core, holds a function `run(context, range, data, count, batch)`
+and its `context`: `run` calls `range(data, first, count)` over `[0, count)` in batches of `batch` items,
+in any order and concurrently, and returns only after every range finished. A zero `ParallelFor` (the
+default, or `set_parallel({})`) stages on the calling thread. Physics imports no job library;
+`c3d::ParallelRangeFn` has `c3d::job::RangeFn`'s signature, so a `JobPool` adapter is a few lines:
 
 ```c3
 fn void run_on_pool(

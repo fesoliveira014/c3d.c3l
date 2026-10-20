@@ -229,17 +229,12 @@ fn Weld[]? build_breakable_graph(
         .bounds = bounds,
         .candidates = candidates,
     };
-    if (world.parallel.run) {
-        world.parallel.run(
-            context: world.parallel.context,
-            range:   &evaluate_breakable_pairs,
-            data:    &job,
-            count:   (uint)pair_count,
-            batch:   BREAKABLE_PAIR_BATCH,
-        );
-    } else {
-        evaluate_breakable_pairs(&job, 0, (uint)pair_count);
-    }
+    world.parallel.for_ranges(
+        range: &evaluate_breakable_pairs,
+        data:  &job,
+        count: (uint)pair_count,
+        batch: BREAKABLE_PAIR_BATCH,
+    );
 
     BreakableEdgeCandidate[] found = candidates[:job.candidate_count];
     if (!in_breakable_pair_order(found)) sort::mergesort(found, &compare_breakable_candidates);
