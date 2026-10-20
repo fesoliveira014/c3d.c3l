@@ -237,6 +237,7 @@ fn void adopt_counters(
     system.dropped = (ulong)words[1] | ((ulong)words[2] << 32);
     system.dropped_events = (ulong)words[4] | ((ulong)words[5] << 32);
     system.skipped_events = (ulong)words[6] | ((ulong)words[7] << 32);
+    system.evicted = (ulong)words[8] | ((ulong)words[9] << 32);
 }
 
 fn void? step_system(

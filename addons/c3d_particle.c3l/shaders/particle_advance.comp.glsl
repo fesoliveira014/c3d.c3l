@@ -203,7 +203,7 @@ void main() {
     uint index = gl_GlobalInvocationID.x;
     if (index >= root.capacity) return;
 
-    uint survivors = control.live_total;
+    uint survivors = particle_kept(root, control);
     uint emitted = particle_emitted(root, control);
     uint pool = survivors + emitted;
     if (index == 0u) {
@@ -211,6 +211,8 @@ void main() {
         control.pool_count = pool;
         control.dropped_low = uaddCarry(control.dropped_low, root.requested - emitted, carry);
         control.dropped_high += carry;
+        control.evicted_low = uaddCarry(control.evicted_low, particle_evicted(root, control), carry);
+        control.evicted_high += carry;
         control.spawn_low = uaddCarry(control.spawn_low, emitted + control.delivered, carry);
         control.spawn_high += carry;
     }

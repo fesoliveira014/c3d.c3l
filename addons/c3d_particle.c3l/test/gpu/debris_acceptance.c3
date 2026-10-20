@@ -237,7 +237,7 @@ fn void test_gpu_debris_follow_the_cpu_reference() @test {
     uint steps = STEPS + render::FRAMES_IN_FLIGHT;
     for (uint step = 0; step < steps; step++) {
         float dt = step < STEPS ? STEP_SECONDS : 0;
-        queue_bursts(&pair, step);
+        queue_bursts(&pair, step, BURSTS[..]);
         particle::update(&fixture.scene, dt, WIND);
         Renderer* renderer = &fixture.renderer;
         renderer.begin_frame()!!;

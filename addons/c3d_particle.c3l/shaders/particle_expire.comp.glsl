@@ -33,6 +33,8 @@ void main() {
         control.dropped_events_high = 0u;
         control.skipped_events_low = 0u;
         control.skipped_events_high = 0u;
+        control.evicted_low = 0u;
+        control.evicted_high = 0u;
     }
     if (index >= root.capacity) return;
 

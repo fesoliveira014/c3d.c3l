@@ -119,6 +119,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer St
     uint delivery_valid; // zero when the target cannot take children, so the events are only counted
     uint mesh; // nonzero when the records are InstanceGpu
     uint64_t mirror; // host mirror of a traced mesh system; zero without one
+    uint evict_accept; // sub-emitters that react to the DEATH of an evicted particle, one bit each
+    uint evicts; // nonzero under DROP_OLDEST
+    uint _pad6;
+    uint _pad7;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleControl {
@@ -137,6 +141,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleCon
     uint dropped_events_high;
     uint skipped_events_low;
     uint skipped_events_high;
+    uint evicted_low;
+    uint evicted_high;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleStates {
@@ -243,10 +249,14 @@ ParticleEvents particle_events(StepRoot root, uint half_index) {
     return ParticleEvents(root.events + uint64_t(half_index) * uint64_t(root.event_capacity) * PARTICLE_EVENT_BYTES);
 }
 
-// Keeps one event for the sub-emitters that react to the trigger. An event past the capacity is counted when the
-// step publishes.
-void particle_raise_event(StepRoot root, ParticleControl control, ParticleGpu particle, uint trigger) {
-    uint accepted = root.event_accept[trigger];
+// Keeps one event for the sub-emitters in accepted. An event past the capacity is counted when the step publishes.
+void particle_append_event(
+    StepRoot root,
+    ParticleControl control,
+    ParticleGpu particle,
+    uint trigger,
+    uint accepted
+) {
     if (accepted == 0u) return;
 
     uint half_index = control.step & 1u;
@@ -265,9 +275,33 @@ void particle_raise_event(StepRoot root, ParticleControl control, ParticleGpu pa
     );
 }
 
-// Admitted particles of this step; the free slots after the survivors bound it.
+// Keeps one event for the sub-emitters that react to the trigger.
+void particle_raise_event(StepRoot root, ParticleControl control, ParticleGpu particle, uint trigger) {
+    particle_append_event(root, control, particle, trigger, root.event_accept[trigger]);
+}
+
+// The DEATH of an evicted particle reaches only the sub-emitters that opt in.
+void particle_raise_eviction(StepRoot root, ParticleControl control, ParticleGpu particle) {
+    particle_append_event(root, control, particle, PARTICLE_TRIGGER_DEATH, root.evict_accept);
+}
+
+// Survivors that DROP_OLDEST removes to make room for the requests: the oldest, never more than the survivors, so
+// the newborns of the step are never among them. Mirrors evict_oldest in step.c3.
+uint particle_evicted(StepRoot root, ParticleControl control) {
+    if (root.evicts == 0u) return 0u;
+
+    uint free_slots = root.capacity - control.live_total;
+    return root.requested > free_slots ? min(root.requested - free_slots, control.live_total) : 0u;
+}
+
+// Survivors that stay in the pool, at the front of the alternate buffer.
+uint particle_kept(StepRoot root, ParticleControl control) {
+    return control.live_total - particle_evicted(root, control);
+}
+
+// Admitted particles of this step; the free slots after the kept survivors bound it.
 uint particle_emitted(StepRoot root, ParticleControl control) {
-    return min(root.requested, root.capacity - control.live_total);
+    return min(root.requested, root.capacity - particle_kept(root, control));
 }
 
 #endif
