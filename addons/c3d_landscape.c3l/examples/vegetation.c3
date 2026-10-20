@@ -20,6 +20,7 @@ import c3d::spatial;
 import imgui;
 import landscape_foliage;
 import landscape_ground;
+import landscape_scatter;
 
 const uint FIXED_NODES @local = 16; // root, terrain, sun, camera and two layer nodes, with room to spare
 const uint TRACE_INSTANCE_CAPACITY @local = 16384; // traced trees at every map size; 3.4 MiB of trace table
@@ -135,6 +136,8 @@ struct Options @local {
     float         tree_fade_end;
     uint          width;
     uint          height;
+    bool          scatter_jobs;
+    uint          workers;
 }
 
 struct Layer @local {
@@ -382,7 +385,10 @@ fn RendererDesc renderer_desc(Options options, bool validation, ZString applicat
 
 fn Scene create_demo_scene(Options options) @local {
     float extent = (float)(options.size - 1) * landscape_ground::CELL_SIZE;
-    return scene::create_scene(mem, { .max_nodes = scene_node_budget(options, extent) });
+    uint nodes = scene_node_budget(options, extent);
+    // A detached scatter of the grass layer holds its cells beside the serial layer's.
+    if (options.scatter_jobs && options.foliage != NONE) nodes += grid_cells(extent, foliage::DEFAULT_CELL_SIZE);
+    return scene::create_scene(mem, { .max_nodes = nodes });
 }
 
 fn double percentile(double[] samples, float share) @local {
@@ -491,6 +497,9 @@ fn Options? parse_options(String[] args) @local {
             case "--tree-fade-end":
                 options.tree_fade_end = option_value(args, &index)!.to_float()!;
                 if (!(options.tree_fade_end > 0)) return c3d::INVALID_ARGUMENT~;
+            case "--workers":
+                options.scatter_jobs = true;
+                options.workers = option_value(args, &index)!.to_uint()!;
             case "--sky": options.sky = true;
             case "--volumetric-fog": options.volumetric_fog = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
@@ -499,6 +508,7 @@ fn Options? parse_options(String[] args) @local {
         }
     }
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
+    if (options.scatter_jobs && !options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (options.trace_sway && (!options.traced_shadows || options.foliage != FoliageChoice.BOTH)) {
         return c3d::INVALID_ARGUMENT~;
     }
@@ -1107,6 +1117,22 @@ fn bool? run_benchmark(Options options) @local {
 
     Demo demo = build_demo(options, &assets, &scene)!;
     print_header(&demo, desc.max_instance_batches);
+    bool scatter_gate = true;
+    if (options.scatter_jobs) {
+        foreach (&layer : active_layers(&demo)) {
+            landscape_scatter::ScatterSubject subject = {
+                .scene     = &scene,
+                .assets    = &assets,
+                .ground    = demo.ground.node,
+                .desc      = layer.desc,
+                .reference = layer.node,
+                .name      = layer.name,
+                .serial_ms = layer.scatter_ms,
+            };
+            if (!landscape_scatter::report_scatter_jobs(&subject, options.workers)!) scatter_gate = false;
+        }
+        io::printfn("gate scatter_job_identical %s", scatter_gate ? "pass" : "fail");
+    }
     pose_segment(
         demo:           &demo,
         segment:        Segment.STILL,
@@ -1138,7 +1164,8 @@ fn bool? run_benchmark(Options options) @local {
         result:   &result,
     )!;
     render::wait_frames(&renderer)!;
-    return print_results(&demo, &result);
+    bool frames_pass = print_results(&demo, &result);
+    return frames_pass && scatter_gate;
 }
 
 // ----------------------------------------------------------------------------- capture
@@ -1240,7 +1267,8 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--trace-sway] [--size 1025|2049|4097] [--foliage both|grass|none] "
-              "[--tree-fade-end METRES] [--width W] [--height H] [--capture FILE.png] [--sky] [--volumetric-fog].");
+              "[--tree-fade-end METRES] [--width W] [--height H] [--capture FILE.png] [--sky] [--volumetric-fog] "
+              "[--workers N, with --benchmark].");
         }
         return 1;
     }
