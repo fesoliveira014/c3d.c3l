@@ -610,11 +610,11 @@ fn Demo? create_demo(Options options) @local {
         float[8] glow = { 0, 1, 1, 0.9f, 0.7f, 0.5f, 0.25f, 0 };
         foreach (index, alpha : glow) embers.color_over_life.values[index] = { 1, 1, 1, alpha };
         demo.embers = add_system(
-        demo: &demo,
-        options: options,
-        desc: embers,
-        name: "embers",
-    )!;
+            demo: &demo,
+            options: options,
+            desc: embers,
+            name: "embers",
+        )!;
         demo.embers.local.position = EMBER_POSITION;
     }
 
