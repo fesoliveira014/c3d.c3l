@@ -39,6 +39,13 @@ a count change, reset, re-enabling and an aborted frame, the
 `ASSET_DATA_UNAVAILABLE` fault for released positions, and the per-frame
 `Stats.vertex_history_bytes` count.
 
+`test_vertex_stage_reads_texture_writes_made_earlier_in_the_frame` draws a custom material whose vertex stage fetches a
+store texture that the same frame wrote by a dispatch, by a region upload and by the first upload of a new texture; the
+box is in view only when the fetched red is one. Backend synchronization validation does not observe sampled reads through
+the descriptor heap, so a missing vertex-stage barrier fails no assertion here; the case checks the fetched value and that
+no validation error is logged. The barrier itself shows in a `VK_LAYER_LUNARG_api_dump` capture, where the image barrier
+that returns a store texture to the sampled state names the vertex, fragment and compute stages.
+
 The auto-exposure cases in `test_auto_exposure.c3` render constant-luminance backgrounds into float targets and
 read each rendering's adapted value from the view's readback. They check the GLSL adaptation against its C3 twin
 within 1e-4 relative over a sequence of 0, 1/144 to 0.5 s steps and luminance changes, and the delayed
