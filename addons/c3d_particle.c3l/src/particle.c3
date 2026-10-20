@@ -20,7 +20,7 @@ const uint MAX_TURBULENCE_OCTAVES = 3; // each octave adds one curl evaluation p
 <*
  Most lattice cells in one tile of a turbulence field.
 *>
-const uint MAX_TURBULENCE_PERIOD = 65536; // keeps the octave lattices inside the 32-bit cell index
+const uint MAX_TURBULENCE_PERIOD = uint::max >> MAX_TURBULENCE_OCTAVES; // period << octaves stays inside 32 bits
 
 <*
  Maximum simulated duration of one update.
@@ -199,7 +199,7 @@ struct ParticleFlipbook {
 
 <*
  Divergence-free air motion that particles follow through their drag; zero strength disables it.
- A particle with no drag ignores it.
+ A system with zero drag ignores it.
 *>
 struct ParticleTurbulence {
     float strength; // metres per second of air velocity at the first octave

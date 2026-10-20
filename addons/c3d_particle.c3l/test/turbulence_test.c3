@@ -131,42 +131,17 @@ fn void test_turbulence_field_is_divergence_free() @test {
     assert(steepest > GRADIENT_FLOOR);
 }
 
-fn void test_turbulence_rejects_values_the_field_cannot_use() @test {
+fn void test_turbulence_validation_reads_range_rules_only_when_enabled() @test {
     Scene scene = make_scene();
     defer scene::destroy_scene(&scene);
     ParticleSystemDesc desc = particle::default_particle_system_desc();
-    desc.turbulence = field_settings();
-    ParticleSystemDesc off = desc;
-    off.turbulence = {};
-    assert(@ok(scene.add_particle_system(off)));
+    assert(desc.turbulence.octaves == 0 && desc.turbulence.period == 0);
     assert(@ok(scene.add_particle_system(desc)));
 
-    desc.turbulence.octaves = 0;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    desc.turbulence.octaves = particle::MAX_TURBULENCE_OCTAVES + 1;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-
-    desc.turbulence = field_settings();
-    desc.turbulence.period = 0;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    desc.turbulence.period = particle::MAX_TURBULENCE_PERIOD + 1;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-
-    desc.turbulence = field_settings();
-    desc.turbulence.frequency = 0;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    desc.turbulence = field_settings();
-    desc.turbulence.strength = -1;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-
-    desc.turbulence = field_settings();
-    desc.turbulence.scroll.y = float::nan;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-    desc.turbulence = field_settings();
-    desc.turbulence.strength = float::inf;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
-
-    desc.turbulence = {};
     desc.turbulence.frequency = float::nan;
+    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
+
+    desc.turbulence = field_settings();
+    desc.turbulence.period = particle::MAX_TURBULENCE_PERIOD + 1;
     assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
 }

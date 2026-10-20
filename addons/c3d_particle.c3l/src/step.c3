@@ -73,6 +73,7 @@ fn void step(
             time: system.turbulence_time,
         );
     }
+
     for (index = 0; index < system.alive; index++) {
         Vec3 velocity = system.velocity[index] + acceleration_step;
         Vec3 air = wind;

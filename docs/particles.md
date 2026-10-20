@@ -446,7 +446,7 @@ world point therefore sees the same air velocity before and after an origin reba
 shifted position. `Scene.shift_particles` needs no further call.
 
 Drag blends the velocity toward `wind` + the turbulence velocity, by the same `min(1, drag x dt)` share as before.
-**A particle with no drag ignores turbulence** and wind alike. A higher drag follows the swirl more closely.
+**A system with zero drag ignores turbulence** and wind alike. A higher drag follows the swirl more closely.
 The blend is convex, so turbulence alone never takes a particle faster than the air.
 
 The field takes no draw from the system's random stream and depends only on position and time, so equal seeds emit
