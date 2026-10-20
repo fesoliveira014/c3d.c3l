@@ -27,6 +27,8 @@ const Vec3 PARTICLE_GRAVITY = { 0, -9.81f, 0 };
 *>
 const uint MAX_SUB_EMITTERS = 4; // each adds one trigger test per raised event
 
+const uint DEFAULT_COLLISION_QUERIES @private = 256; // callback casts per step; each is one world query
+const float DEFAULT_IMPACT_SPEED @private = 1; // above the 0.98 m/s gravity adds in the longest step
 const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 56 KiB pool for a small effect; draw arrays are additional
 const usz PARTICLE_FLOAT_STREAMS @private = 5;
 
@@ -76,6 +78,35 @@ enum ParticleEventCause {
 }
 
 <*
+ What a particle does when its path meets a surface.
+*>
+enum CollisionResponse {
+    NONE,
+    BOUNCE,
+    STICK,
+    DIE,
+}
+
+<*
+ Hit of a particle's path against the world.
+*>
+struct ParticleHit {
+    Vec3 point; // on the surface, not the particle centre
+    Vec3 normal; // unit length, facing the particle
+    float fraction; // along the path, [0, 1]
+}
+
+<*
+ Sweep a sphere along a particle path and report the first hit.
+ @param context : "The pointer given to ParticleSystem.set_collision."
+ @param from : "Scene-space start of the path."
+ @param to : "Scene-space end of the path; never equal to from."
+ @param [&out] out : "Written only when the cast returns true."
+ @return "Whether the sphere met a surface."
+*>
+alias ParticleCollisionFn = fn bool(void* context, Vec3 from, Vec3 to, float radius, ParticleHit* out);
+
+<*
  Closed interval for an emitted scalar value.
 *>
 struct ParticleRange {
@@ -121,6 +152,20 @@ struct ParticleEvent {
 }
 
 <*
+ How a system's particles meet the world.
+*>
+struct ParticleCollision {
+    CollisionResponse response;
+    float restitution; // share of the normal speed kept by a bounce, [0, 1]
+    float friction; // share of the tangent speed lost by a bounce, [0, 1]
+    float radius_scale; // drawn particle size to collision radius
+    bool ground_plane; // collide with the plane at ground_height without the callback
+    float ground_height; // world height; the horizontal-only origin rebase never moves it
+    uint max_queries; // callback casts per step; the rest wait, see ParticleSystem.query_cursor
+    float impact_speed; // least speed into the surface that raises IMPACT, metres per second
+}
+
+<*
  Immutable emission, simulation and draw configuration of one system.
 *>
 struct ParticleSystemDesc {
@@ -150,6 +195,7 @@ struct ParticleSystemDesc {
     SubEmitter[MAX_SUB_EMITTERS] sub_emitters;
     uint sub_emitter_count;
     uint max_events; // event queue capacity; 0 disables events
+    ParticleCollision collision;
 }
 
 <*
@@ -177,6 +223,10 @@ struct ParticleSystem {
     ulong next_event;
     ulong dropped_events;
     ulong skipped_events; // sub-emitter deliveries whose target is dead, not a particle system or not prepared
+    ulong collision_skips; // particles that waited out a step because the callback budget ran out
+    uint query_cursor; // pool index where the next step starts its callback queries; wraps
+    ParticleCollisionFn collision_cast;
+    void* collision_context;
     double emit_accumulator;
     Sfc32Random random;
     Entity draw_node;
@@ -193,6 +243,17 @@ struct ParticleDrawOwner @private {
 *>
 fn void ParticleSystem.emit_burst(&self, uint count) {
     self.pending_burst = count > ulong::max - self.pending_burst ? ulong::max : self.pending_burst + count;
+}
+
+<*
+ Install the cast the system's particles collide through; a null cast removes it.
+ The cast runs on the calling thread inside particle::update.
+ @param context : "Passed to every cast; must outlive the system or be cleared first."
+ @require self.is_prepared()
+*>
+fn void ParticleSystem.set_collision(&self, ParticleCollisionFn cast, void* context) {
+    self.collision_cast = cast;
+    self.collision_context = context;
 }
 
 <*
@@ -341,6 +402,12 @@ fn ParticleSystemDesc default_particle_system_desc() {
         .size = { .min = 1, .max = 1 },
         .color_min = { 1, 1, 1, 1 },
         .color_max = { 1, 1, 1, 1 },
+        .collision = {
+            .restitution = 0.5f,
+            .radius_scale = 0.5f,
+            .max_queries = DEFAULT_COLLISION_QUERIES,
+            .impact_speed = DEFAULT_IMPACT_SPEED,
+        },
     };
     desc.size_over_life.values[..] = 1;
     desc.color_over_life.values[..] = (Vec4){ 1, 1, 1, 1 };
@@ -421,5 +488,21 @@ fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
     foreach (sub_emitter : desc.sub_emitters[:desc.sub_emitter_count]) {
         float share = sub_emitter.inherit_velocity;
         if (!math::is_finite(share) || share < 0 || share > 1) return c3d::INVALID_ARGUMENT~;
+    }
+    check_particle_collision(&desc.collision)!;
+}
+
+fn void? check_particle_collision(ParticleCollision* collision) @private {
+    float[2] shares = { collision.restitution, collision.friction };
+    foreach (share : shares) {
+        if (!math::is_finite(share) || share < 0 || share > 1) return c3d::INVALID_ARGUMENT~;
+    }
+    float[2] nonnegative = { collision.radius_scale, collision.impact_speed };
+    foreach (value : nonnegative) {
+        if (!math::is_finite(value) || value < 0) return c3d::INVALID_ARGUMENT~;
+    }
+    if (!math::is_finite(collision.ground_height)) return c3d::INVALID_ARGUMENT~;
+    if (collision.response != CollisionResponse.NONE && !collision.ground_plane && !collision.max_queries) {
+        return c3d::INVALID_ARGUMENT~;
     }
 }

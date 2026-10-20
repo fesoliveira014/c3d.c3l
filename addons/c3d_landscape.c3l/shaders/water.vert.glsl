@@ -4,6 +4,7 @@
 #include "mesh_vertex.glsl"
 #include "quadtree_morph.glsl"
 #include "landscape/water_waves.glsl"
+#include "landscape/water_simulation.glsl"
 
 #ifdef INSTANCED
 GPU_DECLARE_READONLY_ARRAY_REF(WaterDepthArray, uint);
@@ -103,7 +104,8 @@ void main() {
     DrawRoot draw = DrawRoot(pc.vertex_root_gpu);
     GeometryRoot geometry = GeometryRoot(draw.geometry);
     FrameRoot frame = FrameRoot(draw.frame);
-    WaterParams params = WaterParams(CustomMaterialGpu(draw.material).parameters);
+    CustomMaterialGpu material = CustomMaterialGpu(draw.material);
+    WaterParams params = WaterParams(material.parameters);
 
 #ifdef INSTANCED
     // The chunk's shape comes from its record, not the instance matrix: only the node's motion is object motion.
@@ -140,7 +142,11 @@ void main() {
 #else
     MeshVertexInput vertex = pull_mesh_vertex(geometry, uint(gl_VertexIndex));
     vec2 rest = vertex.position.xz;
-    WaterSurfacePoint point = water_surface_point(params, rest, frame.jitter_time.z);
+    bool simulated = (params.flags & WATER_SIMULATED) != 0u;
+    uint grid_texture = material.slots[WATER_SIMULATION_SLOT].texture_index;
+    WaterSurfacePoint point = simulated
+        ? water_simulated_point(params, grid_texture, uint(gl_VertexIndex), rest)
+        : water_surface_point(params, rest, frame.jitter_time.z);
     vertex.position = point.position;
     vertex.normal = point.normal;
     vertex.tangent = vec4(point.tangent, 1.0);
@@ -148,7 +154,9 @@ void main() {
     vertex.uv1 = rest;
     vertex.color = vec4(1.0, 1.0, 1.0, point.crest);
 #ifdef VELOCITY
-    vec3 previous = water_previous_position(params, rest, frame.previous_time);
+    vec3 previous = simulated
+        ? water_simulated_previous_position(params, grid_texture, uint(gl_VertexIndex), rest)
+        : water_previous_position(params, rest, frame.previous_time);
     write_mesh_outputs(vertex, previous, draw, frame, geometry);
 #else
     write_mesh_outputs(vertex, draw, frame, geometry);
