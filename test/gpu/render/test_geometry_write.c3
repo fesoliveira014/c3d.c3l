@@ -2,6 +2,7 @@ module c3d::render::acceptance;
 
 import c3d;
 import c3d::asset;
+import c3d::geometry;
 import c3d::maths;
 import c3d::render @public;
 import c3d::scene;
@@ -119,6 +120,14 @@ fn void test_geometry_write_moves_the_draw_and_reports_its_velocity() @test {
     check_step(moved, vertex_step_velocity(&target, VERTEX_STEP));
     assert(renderer.stats.upload_bytes == 0 && renderer.stats.vertex_history_bytes == 0);
     check_still(render_displaced_frame(&target, &probe, shader, 0)!!);
+
+    fixture.assets.release_geometry_cpu(target.geometry);
+    check_step(
+        render_displaced_frame(&target, &probe, shader, VERTEX_STEP)!!,
+        vertex_step_velocity(&target, VERTEX_STEP),
+    );
+    check_still(render_displaced_frame(&target, &probe, shader, 0)!!);
+    fixture.assets.geometry(target.geometry).data = geometry::plane(fixture.assets.allocator, QUAD_SIZE, QUAD_SIZE);
 
     uint home = sample_displaced_frame(&target, shader, 0)!!;
     uint away = sample_displaced_frame(&target, shader, OFFSCREEN_OFFSET)!!;
