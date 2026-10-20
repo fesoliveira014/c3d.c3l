@@ -216,6 +216,7 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
         bool requested = hardware ? trace.hardware_requested : trace.software_requested;
         if (same_frame && requested) return trace.root;
 
+        time::Clock prepare_started = gather_start();
         if (hardware) {
             trace.hardware_requested = true;
         } else {
@@ -232,6 +233,7 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
             record_trace_poses(self, &self.commands)!;
         }
         if (trace.hardware_requested) record_acceleration_builds(self, &self.commands)!;
+        gather_stop(GatherStage.PREPARE, prepare_started);
         return trace.root;
     }
 
@@ -353,9 +355,12 @@ fn TraceCollection collect_trace_instances(
     AssetStore* assets,
     Vec3 origin = {},
 ) @private {
+    time::Clock allocate_started = gather_start();
     bool[] group_live = alloc::new_array(allocator, bool, (sz)scene.nodes.len);
     defer alloc::free(allocator, group_live.ptr);
+    gather_stop(GatherStage.COLLECT_ALLOCATE, allocate_started);
 
+    time::Clock capacity_started = gather_start();
     usz capacity = scene.count(Mesh);
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         group_live[entity.index] = spatial::lod_group_is_live(
@@ -371,11 +376,18 @@ fn TraceCollection collect_trace_instances(
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         capacity += batch.count;
     };
+    gather_stop(GatherStage.COLLECT_CAPACITY, capacity_started);
+
+    allocate_started = gather_start();
+    gather_count(GatherCounter.RECORD_CAPACITY, (long)capacity);
     TraceCollection collection = {
         .records = alloc::new_array(allocator, TraceInstance, (sz)capacity),
         .poses   = alloc::new_array(allocator, TracePoseSource, (sz)capacity),
     };
+    gather_stop(GatherStage.COLLECT_ALLOCATE_ROWS, allocate_started);
+
     usz count;
+    time::Clock mesh_started = gather_start();
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
         if (node.visible_effective && mesh.trace && !spatial::animated_lod_owns_node(scene, node)) {
@@ -426,7 +438,11 @@ fn TraceCollection collect_trace_instances(
             }
         }
     };
+    gather_stop(GatherStage.COLLECT_MESH_PASS, mesh_started);
+
+    time::Clock batch_pass_started = gather_start();
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
+        time::Clock batch_started = gather_start();
         Node* node = scene.node(entity);
         if (node.visible_effective && batch.trace && batch.count && !spatial::animated_lod_owns_node(scene, node)) {
             TracePoseSource source = crowd_part_source(
@@ -458,6 +474,7 @@ fn TraceCollection collect_trace_instances(
                 }
 
                 foreach (uint index, transform : batch.transforms[:batch.count]) {
+                    time::Clock row_started = gather_row_start();
                     TraceInstance record = trace_record(
                         assets:            assets,
                         entity:            entity,
@@ -479,10 +496,15 @@ fn TraceCollection collect_trace_instances(
                     }
                     collection.records[count] = record;
                     collection.poses[count++] = source;
+                    gather_row_stop(GatherStage.COLLECT_BATCH_ROW, row_started);
                 }
             }
         }
+        gather_stop(GatherStage.COLLECT_BATCH, batch_started);
     };
+    gather_stop(GatherStage.COLLECT_BATCH_PASS, batch_pass_started);
+
+    time::Clock lod_started = gather_start();
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
         LodGroupState* state = group.state;
@@ -530,6 +552,7 @@ fn TraceCollection collect_trace_instances(
 
                     collected |= state.count > 0;
                     for (uint instance = 0; instance < state.count; instance++) {
+                        time::Clock row_started = gather_row_start();
                         Mat4 placement = state.mode == LodMode.INSTANCED
                           ? state.transforms[instance].to_mat4() : matrix::IDENTITY4;
                         Mat4 local = state.animated
@@ -565,15 +588,20 @@ fn TraceCollection collect_trace_instances(
 
                         collection.records[count] = record;
                         collection.poses[count++] = pose;
+                        gather_row_stop(GatherStage.COLLECT_LOD_ROW, row_started);
                     }
                 }
                 if (collected && state.effects.sway.amplitude != 0 && !sway_posed) collection.sway_at_rest++;
             }
         }
     };
+    gather_stop(GatherStage.COLLECT_LOD_PASS, lod_started);
+
     collection.records = collection.records[:count];
     collection.poses = collection.poses[:count];
+    time::Clock sway_last_started = gather_start();
     sway_rows_last(allocator, &collection);
+    gather_stop(GatherStage.COLLECT_SWAY_LAST, sway_last_started);
     return collection;
 }
 
@@ -698,25 +726,34 @@ fn void free_rt(Renderer* renderer) @private {
 fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     time::Clock started = clock::now();
     defer renderer.stats.trace_build_ms += elapsed_ms(started);
+    time::Clock gather_started = gather_start();
+    defer gather_stop(GatherStage.GATHER, gather_started);
     acquire_scene_trace(renderer)!;
     renderer.posed_trace.begin_epoch(renderer.frame_open ? renderer.frame_index + 1 : 0);
 
+    time::Clock collect_started = gather_start();
     TraceCollection collection = collect_trace_instances(
         allocator: tmem,
         scene: scene,
         assets: renderer.assets,
         origin: renderer.frame_origin,
     );
+    gather_stop(GatherStage.COLLECT, collect_started);
     renderer.stats.dangling_refs += collection.dangling;
     renderer.stats.trace_sway_at_rest = collection.sway_at_rest;
+    time::Clock resolve_started = gather_start();
     TraceInstance[] records = resolve_trace_instances(renderer, &collection, scene.identity)!;
+    gather_stop(GatherStage.RESOLVE, resolve_started);
     if (records.len > renderer.max_trace_instances) return c3d::CAPACITY_EXCEEDED~;
 
     SceneTrace* trace = &renderer.scene_trace;
     RtContext* rt = &renderer.rt;
+    time::Clock rows_compare_started = gather_start();
     bool same_set = trace.scene == scene.identity && trace.baseline_count == records.len
       && trace.origin == renderer.frame_origin;
     bool rows_unchanged = same_set && records_equal(trace.baseline[:records.len], records, TraceInstance::size);
+    gather_stop(GatherStage.COMPARE_ROWS, rows_compare_started);
+    time::Clock prefix_compare_started = gather_start();
     bool top_level_unchanged = top_level_reusable(
         trace:   trace,
         rt:      rt,
@@ -724,6 +761,7 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
         scene:   scene.identity,
         origin:  renderer.frame_origin,
     );
+    gather_stop(GatherStage.COMPARE_PREFIX, prefix_compare_started);
 
     uint tlas_index;
     if (trace.hardware_requested && records.len) {
@@ -742,7 +780,9 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     }
 
     if (!rows_unchanged) {
+        time::Clock write_started = gather_start();
         write_top_level(renderer, scene, records, tlas_index)!;
+        gather_stop(GatherStage.WRITE_TOP_LEVEL, write_started);
     } else if (tlas_index != trace.tlas_index) {
         write_trace_root(renderer, tlas_index)!;
     }
@@ -799,6 +839,7 @@ fn void? acquire_scene_trace(Renderer* renderer) @local {
 }
 
 fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection* collection, ulong scene) @local {
+    time::Clock setup_started = gather_start();
     begin_material_scope(renderer);
     defer end_material_scope(renderer);
     bool software = renderer.scene_trace.software_requested;
@@ -813,8 +854,11 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
     PosedSwayBatch sway_batch;
     usz kept;
     Entity sway_rest_node;
+    gather_stop(GatherStage.RESOLVE_SETUP, setup_started);
     foreach (index, &record : records) {
+        time::Clock classify_started = gather_row_start();
         TracePoseSource* pose = &collection.poses[index];
+        gather_count_pose(pose.kind);
         bool posed_row = pose.kind != TracePose.REST;
         GeometryAsset* asset_record = renderer.assets.geometry(record.geometry);
         GpuGeometry* mirror = &renderer.geometries[record.geometry.index];
@@ -864,14 +908,18 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             hardware_source = TraceSource.REUSE;
         }
         bool unavailable = (software && source == TraceSource.SKIP) || (hardware && hardware_source == TraceSource.SKIP);
+        gather_row_stop(GatherStage.RESOLVE_CLASSIFY, classify_started);
         if (unavailable) {
             renderer.stats.trace_skipped++;
             continue;
         }
 
+        time::Clock resources_started = gather_row_start();
         mirror = resolve_geometry(renderer, record.geometry)!;
         MaterialRes* material = resolve_material(renderer, record.material)!;
-        if (!published_stage_matches(renderer, record.material, pose)) {
+        bool stage_matches = published_stage_matches(renderer, record.material, pose);
+        gather_row_stop(GatherStage.RESOLVE_RESOURCES, resources_started);
+        if (!stage_matches) {
             renderer.stats.trace_skipped++;
             continue;
         }
@@ -917,6 +965,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                         renderer.stats.trace_posed_overflow++;
                         continue;
                     }
+                    time::Clock fallback_started = gather_row_start();
                     if (pose.kind == TracePose.SWAY) count_sway_at_rest(renderer, &sway_rest_node, record.entity);
                     // No free slot: the row traces through the shared geometry, rebuilt per revision.
                     posed_row = false;
@@ -926,6 +975,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                         proven:         proven,
                         streams:        cpu_present || geometry_current(renderer, record.geometry),
                     );
+                    gather_row_stop(GatherStage.RESOLVE_FALLBACK, fallback_started);
                     if (hardware && hardware_source == TraceSource.SKIP) {
                         renderer.stats.trace_skipped++;
                         continue;
@@ -935,6 +985,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                 }
             }
         }
+        time::Clock finish_started = gather_row_start();
         if (hardware && hardware_source == TraceSource.BUILD && !posed_row) {
             resolve_blas(renderer, mirror, asset_record)!;
         }
@@ -960,7 +1011,12 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             renderer.stats.trace_posed_instances++;
             renderer.stats.trace_posed_shared++;
         } else if (pose.kind == TracePose.SWAY) {
-            if (!sway_batch.holds(pose)) sway_batch.close(renderer, records)!;
+            if (!sway_batch.holds(pose)) {
+                time::Clock close_started = gather_start();
+                sway_batch.close(renderer, records)!;
+                gather_stop(GatherStage.RESOLVE_CLOSE, close_started);
+            }
+            time::Clock join_started = gather_row_start();
             sway_batch.join(
                 renderer:     renderer,
                 slot_index:   slot,
@@ -969,6 +1025,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
                 mirror:       mirror,
                 record_index: (uint)kept,
             )!;
+            gather_row_stop(GatherStage.RESOLVE_JOIN, join_started);
             renderer.stats.trace_posed_instances++;
         } else {
             resolve_posed_instance(
@@ -982,9 +1039,15 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             )!;
             renderer.stats.trace_posed_instances++;
         }
+        gather_row_stop(GatherStage.RESOLVE_FINISH, finish_started);
+        time::Clock compact_started = gather_row_start();
         records[kept++] = *record;
+        gather_row_stop(GatherStage.RESOLVE_COMPACT, compact_started);
     }
+    time::Clock close_last_started = gather_start();
     sway_batch.close(renderer, records)!;
+    gather_stop(GatherStage.RESOLVE_CLOSE_LAST, close_last_started);
+    gather_count(GatherCounter.ROWS_KEPT, (long)kept);
     return records[:kept];
 }
 
@@ -1162,6 +1225,7 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
         rt.current_holds_set = true;
         rt.build_pending = false;
         renderer.stats.tlas_builds++;
+        gather_count(GatherCounter.TLAS_BUILDS);
     }
     // A later batch in the same frame reuses this slot's scratch.
     gpu::Barrier built = {
@@ -1174,9 +1238,12 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
 }
 
 fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, gpu::GpuSpan scratch) @local {
+    time::Clock record_started = gather_start();
+    defer gather_stop(GatherStage.TLAS_RECORD, record_started);
     SceneTrace* trace = &renderer.scene_trace;
     RtContext* rt = &renderer.rt;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    time::Clock pack_started = gather_start();
     usz bytes = trace.baseline_count * gpu::AccelerationStructureInstance::size;
     gpu::MappedGpuSpan instances = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     gpu::AccelerationStructureInstance* packed = (gpu::AccelerationStructureInstance*)instances.bytes.ptr;
@@ -1188,6 +1255,7 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
         );
         packed[row] = gpu::make_acceleration_structure_instance(&renderer.device, &desc)!;
     }
+    gather_stop(GatherStage.TLAS_PACK, pack_started);
     gpu::AccelerationStructureBuildDesc build = {
         .destination    = rt.top_levels[rt.build_target].tlas,
         .instances      = instances.span,
@@ -1266,12 +1334,26 @@ fn uint count_trace_proxies(TraceInstance[] records) @private {
 
 fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] records, uint tlas_index) @local {
     SceneTrace* trace = &renderer.scene_trace;
+    gather_count(GatherCounter.WRITE_TOP_LEVEL_CALLS);
+    time::Clock identity_started = gather_start();
+    long serial_rows;
+    GatherWrite write_class = GatherWrite.NEW_SET;
+    $if $feat(MEASURE_GATHER):
+        bool same_set = trace.scene == scene.identity && trace.baseline_count == records.len
+          && trace.origin == renderer.frame_origin;
+        if (same_set) write_class = gather_classify_write(trace.baseline[:records.len], records, &serial_rows);
+    $endif
+    gather_stop(GatherStage.IDENTITY_CHECK, identity_started);
+
+    time::Clock bvh_started = gather_start();
     Bvh top;
+    Aabb[] boxes;
     if (records.len) {
-        Aabb[] boxes = alloc::alloc_array(tmem, Aabb, (sz)records.len);
+        boxes = alloc::alloc_array(tmem, Aabb, (sz)records.len);
         foreach (index, &record : records) boxes[index] = record.bounds;
         top = bvh::build_box_bvh(tmem, boxes, TOP_LEVEL_BUILD)!;
     }
+    gather_stop(GatherStage.WRITE_TOP_BVH, bvh_started);
 
     usz node_bytes = top.nodes.len * BvhNodeGpu::size;
     usz instance_bytes = records.len * TraceInstanceGpu::size;
@@ -1292,10 +1374,18 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     };
     mem::copy(staging.bytes.ptr + SceneTraceRoot::size, top.nodes.ptr, (sz)node_bytes);
     TraceInstanceGpu* rows = (TraceInstanceGpu*)(staging.bytes.ptr + SceneTraceRoot::size + node_bytes);
+    time::Clock rows_started = gather_start();
     foreach (row, primitive : top.primitives) {
         write_trace_instance(&rows[row], &records[primitive], renderer.frame_origin);
         trace.row_records[row] = primitive;
     }
+    gather_stop(GatherStage.WRITE_TOP_ROWS, rows_started);
+
+    identity_started = gather_start();
+    $if $feat(MEASURE_GATHER):
+        gather_compare_with_last_write(boxes, rows[:records.len], write_class, serial_rows);
+    $endif
+    gather_stop(GatherStage.IDENTITY_CHECK, identity_started);
 
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, trace.allocation)!;
     renderer.pending_copies.push({
@@ -1314,7 +1404,9 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     }
     renderer.pending_overwrite = true;
 
+    time::Clock baseline_started = gather_start();
     trace.baseline[:records.len] = records[..];
+    gather_stop(GatherStage.WRITE_TOP_BASELINE, baseline_started);
     trace.baseline_count = (uint)records.len;
     trace.top_node_count = (uint)top.nodes.len;
     trace.proxy_count = proxy_count;
