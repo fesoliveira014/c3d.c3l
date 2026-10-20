@@ -62,7 +62,7 @@ struct RibbonDevice {
 }
 
 <*
- Fixed array of strip points sharing one material, drawn from one source.
+ Fixed-capacity strip points sharing one material, drawn from one source.
 *>
 struct RibbonBatch {
     MaterialId material;

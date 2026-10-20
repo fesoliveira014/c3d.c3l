@@ -26,9 +26,10 @@ const uint DEVICE_RIBBON_CAPACITY @private = 8; // mirrored as the invocation co
 const uint DEVICE_RIBBON_LIVE @private = 4;
 const float DEVICE_RIBBON_SPACING @private = 0.5f;
 const float DEVICE_RIBBON_WIDTH @private = 0.25f;
-const usz DEVICE_RIBBON_COUNT_OFFSET @private = (DEVICE_RIBBON_CAPACITY + 1) * RibbonPointGpu::size; // after the last record
+const usz DEVICE_RIBBON_COUNT_OFFSET @private = (DEVICE_RIBBON_CAPACITY + 1) * RibbonPointGpu::size; // after records
 const usz DEVICE_RIBBON_ARENA_BYTES @private = render::CULL_COUNTER_BYTES; // no room for the draw arguments
 
+// Mirrors DeviceRibbonsRoot in device_ribbons.comp.glsl.
 struct DeviceRibbonsRoot @private {
     ulong records;
     ulong count;
