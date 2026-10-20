@@ -26,6 +26,8 @@ const uint SPRITE_SIZE @local = 64;
 const uint SMOKE_CAPACITY @local = 8192; // about 1 MiB of simulation and scene draw data
 const uint SPARK_CAPACITY @local = 4096;
 const uint DEBRIS_CAPACITY @local = 1024;
+const uint PUFF_CAPACITY @local = 8192; // 512 KiB pool; above the puffs alive at the spark death rate
+const uint SPARK_EVENTS @local = 512; // 24 KiB queue; above the deaths one step raises at the spark rate
 const uint STRESS_CAPACITY @local = 100_000; // about 18 MiB of pool, draw and packed records
 const float SATURATED_REQUEST_FRACTION @local = 0.1f; // share of the pool requested every step of the saturated segment
 const uint DEFAULT_BENCHMARK_FRAMES @local = 300;
@@ -39,6 +41,7 @@ const ZString[3] EFFECT_NAMES @local = { "Smoke", "Sparks", "Debris" };
 struct Options @local {
     bool benchmark;
     bool stress;
+    bool sparks;
     bool drop_oldest;
     bool limit_frames;
     uint frames;
@@ -50,6 +53,7 @@ struct Demo @local {
     Scene scene;
     Node*[3] emitters;
     Node*[2] cameras;
+    Node* spark_puffs;
     MaterialId smoke;
     MaterialId sparks;
     ParticleMaterialParams smoke_params;
@@ -94,7 +98,7 @@ fn void destroy_demo(Demo* demo) @local {
     asset::destroy_asset_store(&demo.assets);
 }
 
-fn Demo? create_demo() @local {
+fn Demo? create_demo(bool spark_smoke) @local {
     Demo demo = {
         .assets = asset::create_asset_store(mem, asset::default_asset_store_desc()),
         .scene = scene::create_scene(mem, { .max_nodes = 32 }),
@@ -167,6 +171,24 @@ fn Demo? create_demo() @local {
     demo.emitters[0] = demo.scene.add_particle_system(smoke, name: "smoke")!;
     demo.emitters[0].local.position = { -3, 0.15f, 0 };
 
+    if (spark_smoke) {
+        ParticleSystemDesc puff = particle::default_particle_system_desc();
+        puff.capacity = PUFF_CAPACITY;
+        puff.seed = 4;
+        puff.material = demo.smoke;
+        puff.lifetime = { .min = 1, .max = 1.8f };
+        puff.speed = { .min = 0.2f, .max = 0.7f };
+        puff.size = { .min = 0.12f, .max = 0.25f };
+        puff.rotation = { .min = -(float)math::PI, .max = (float)math::PI };
+        puff.color_min = { 0.7f, 0.7f, 0.7f, 0.2f };
+        puff.color_max = { 1, 1, 1, 0.4f };
+        puff.drag = 0.5f;
+        puff.gravity_scale = -0.05f;
+        puff.size_over_life.values = { 0.6f, 1, 1.5f, 2, 2.6f, 3, 3.4f, 3.8f };
+        foreach (index, alpha : opacity) puff.color_over_life.values[index] = { 1, 1, 1, alpha };
+        demo.spark_puffs = demo.scene.add_particle_system(puff, name: "spark smoke")!;
+    }
+
     ParticleSystemDesc sparks = particle::default_particle_system_desc();
     sparks.capacity = SPARK_CAPACITY;
     sparks.seed = 2;
@@ -185,6 +207,16 @@ fn Demo? create_demo() @local {
     sparks.color_min = { 1, 0.5f, 0.2f, 0.3f };
     sparks.color_max = { 1, 1, 0.6f, 0.7f };
     foreach (index, alpha : opacity) sparks.color_over_life.values[index] = { 1, 1, 1, 1 - (float)index / 7 };
+    if (spark_smoke) {
+        sparks.max_events = SPARK_EVENTS;
+        sparks.sub_emitter_count = 1;
+        sparks.sub_emitters[0] = {
+            .trigger = DEATH,
+            .target = demo.spark_puffs.id,
+            .count = 1,
+            .inherit_velocity = 0.1f,
+        };
+    }
     demo.emitters[1] = demo.scene.add_particle_system(sparks, name: "sparks")!;
     demo.emitters[1].local.position = { 0, 0.2f, 0 };
 
@@ -250,7 +282,7 @@ fn void report_metrics(String segment, Metrics totals, uint frames) @local {
 }
 
 fn void? run_benchmark(Options options) @local {
-    Demo demo = create_demo()!;
+    Demo demo = create_demo(options.sparks)!;
     defer destroy_demo(&demo);
     Renderer renderer = render::create_renderer(mem, &demo.assets, { .validation = true, .gpu_timings = true })!;
     defer render::destroy_renderer(&renderer);
@@ -308,6 +340,12 @@ fn void? run_benchmark(Options options) @local {
             }
         }
         report_metrics(segment ? "active" : "empty", totals, options.frames);
+    }
+    if (demo.spark_puffs) {
+        ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
+        io::printfn("spark_smoke,alive,%d", demo.scene.get(demo.spark_puffs, ParticleSystem).alive);
+        io::printfn("sparks,dropped_events,%d", sparks.dropped_events);
+        io::printfn("sparks,skipped_events,%d", sparks.skipped_events);
     }
     if (options.capture_rgba.len) {
         char[] pixels = mem::new_array(char, WIDTH * HEIGHT * SPRITE_CHANNELS);
@@ -439,6 +477,12 @@ fn void? controls(
             imgui::text("Dropped: %llu", system.dropped);
             imgui::pop_id();
         }
+        if (demo.spark_puffs) {
+            ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
+            imgui::text("Spark smoke alive: %u", demo.scene.get(demo.spark_puffs, ParticleSystem).alive);
+            imgui::text("Dropped events: %llu", sparks.dropped_events);
+            imgui::text("Skipped events: %llu", sparks.skipped_events);
+        }
         bool ambient = demo.smoke_params.lighting == ParticleLighting.AMBIENT;
         bool material_changed = imgui::checkbox("Ambient smoke", &ambient);
         material_changed |= imgui::slider_float(
@@ -462,7 +506,7 @@ fn void? controls(
 fn void? run_interactive(Options options) @local {
     platform::Window window = platform::create_window(platform::default_window_desc("c3d particles", WIDTH, HEIGHT))!;
     defer platform::destroy_window(&window);
-    Demo demo = create_demo()!;
+    Demo demo = create_demo(options.sparks)!;
     defer destroy_demo(&demo);
     Renderer renderer = platform::create_window_renderer(
         allocator: mem,
@@ -540,6 +584,7 @@ fn Options? parse_options(String[] args) @local {
         switch (args[index]) {
             case "--benchmark": options.benchmark = true;
             case "--stress": options.stress = true;
+            case "--sparks": options.sparks = true;
             case "--drop-oldest": options.drop_oldest = true;
             case "--frames":
                 options.frames = option_value(args, &index)!.to_uint()!;
@@ -548,7 +593,7 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    if (!options.frames || (options.stress && options.benchmark)
+    if (!options.frames || (options.stress && options.benchmark) || (options.sparks && options.stress)
         || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;
@@ -561,7 +606,7 @@ fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--frames count] [--capture-rgba path].");
+        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--frames count] [--capture-rgba path].");
         return 1;
     }
     Options options = parsed;
