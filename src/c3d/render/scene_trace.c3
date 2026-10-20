@@ -369,7 +369,7 @@ fn TraceCollection collect_trace_instances(
         }
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
-        capacity += batch.count;
+        if (batch_collected(scene, scene.node(entity), batch)) capacity += batch.count;
     };
     TraceCollection collection = {
         .records = alloc::new_array(allocator, TraceInstance, (sz)capacity),
@@ -428,7 +428,7 @@ fn TraceCollection collect_trace_instances(
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && batch.trace && batch.count && !spatial::animated_lod_owns_node(scene, node)) {
+        if (batch_collected(scene, node, batch)) {
             TracePoseSource source = crowd_part_source(
                 scene:  scene,
                 node:   node,
@@ -589,6 +589,11 @@ fn void sway_rows_last(Allocator allocator, TraceCollection* collection) @privat
     TraceInstance[] records = alloc::new_array(allocator, TraceInstance, (sz)count);
     defer alloc::free(allocator, records.ptr);
     TracePoseSource[] poses = alloc::new_array(allocator, TracePoseSource, (sz)count);
+// The batches whose instances become records; the capacity pass counts the same ones.
+fn bool batch_collected(Scene* scene, Node* node, InstancedMesh* batch) @local {
+    return node.visible_effective && batch.trace && batch.count && !spatial::animated_lod_owns_node(scene, node);
+}
+
     defer alloc::free(allocator, poses.ptr);
 
     usz front;
