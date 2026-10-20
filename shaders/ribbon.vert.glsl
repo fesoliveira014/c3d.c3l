@@ -14,7 +14,7 @@ const float EYE_EPSILON_SQUARED = 1e-12; // squared view distance below which a 
 // The array ends with a point that has RIBBON_POINT_BREAK, so no segment joins a record past the last live point.
 bool segment_joined(RibbonPointArray points, uint index) {
     RibbonPointGpu end = points.values[index + 1u];
-    return (end.flags & RIBBON_POINT_BREAK) == 0u && end.position_width.w > 0.0;
+    return (end.flags & RIBBON_POINT_BREAK) == 0u;
 }
 
 // Zero when no joined segment of positive length lies within the steps.

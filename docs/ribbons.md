@@ -42,11 +42,11 @@ library-owned. Component pointers are short-lived ECS borrows.
 Segment `i` joins point `i` to point `i + 1`, so `n` points draw at most `n - 1` segments. A segment is not drawn when:
 
 - point `i + 1` carries `RIBBON_BREAK`, which starts a new strip at that point;
-- point `i + 1` has zero `width`;
 - its two points coincide.
 
-A strip may begin on a zero-width point and taper in; it cannot end on one, because the segment that reaches a
-zero-width point is the one that is dropped. A batch with fewer than two points draws nothing.
+A point with zero `width` is an ordinary point: a strip narrows to nothing there, whether at its start or its end, and a
+zero-width point inside a strip pinches it. Order of the points does not change this. A batch with fewer than two points
+draws nothing.
 
 ## Placement
 

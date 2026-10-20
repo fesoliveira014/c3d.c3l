@@ -48,6 +48,7 @@ fn void test_ribbon_strip_faces_two_views_with_a_break_and_a_cusp() @test {
         ribbon_point({ 0, RIBBON_GAP, 0 }, scene::RIBBON_BREAK),
         ribbon_point({ 0, RIBBON_END, 0 }),
     };
+    strip[4].width = 0;
     scene.add_ribbons(material: blended, capacity: strip.len, points: strip[..])!!;
     RibbonPoint[3] doubled_back = {
         ribbon_point({ RIBBON_CUSP_OFFSET, RIBBON_CUSP_LOW, -RIBBON_CUSP_OFFSET }),
@@ -94,7 +95,6 @@ fn void test_ribbon_strip_faces_two_views_with_a_break_and_a_cusp() @test {
         float[2] sides = { -RIBBON_INSIDE, RIBBON_INSIDE };
         foreach (side : sides) {
             check_billboard_pixel(billboard_pixel(pixels, { side, -RIBBON_END + RIBBON_MARGIN }), BILLBOARD_WHITE);
-            check_billboard_pixel(billboard_pixel(pixels, { side, RIBBON_END - RIBBON_MARGIN }), BILLBOARD_WHITE);
             check_billboard_pixel(
                 billboard_pixel(pixels, { RIBBON_CUSP_OFFSET + side, RIBBON_CUSP_PROBE }),
                 BILLBOARD_WHITE,
@@ -102,7 +102,8 @@ fn void test_ribbon_strip_faces_two_views_with_a_break_and_a_cusp() @test {
         }
         check_billboard_pixel(billboard_pixel(pixels, { 0, -RIBBON_END - RIBBON_MARGIN }), {});
         check_billboard_pixel(billboard_pixel(pixels, { 0, 0 }), {});
-        check_billboard_pixel(billboard_pixel(pixels, { RIBBON_OUTSIDE, RIBBON_END - RIBBON_MARGIN }), {});
+        check_billboard_pixel(billboard_pixel(pixels, { 0, RIBBON_GAP + RIBBON_MARGIN }), BILLBOARD_WHITE);
+        check_billboard_pixel(billboard_pixel(pixels, { RIBBON_INSIDE, RIBBON_END - RIBBON_MARGIN }), {});
         check_billboard_pixel(billboard_pixel(pixels, { RIBBON_CUSP_OFFSET + RIBBON_OUTSIDE, RIBBON_CUSP_PROBE }), {});
     }
     check_validation(&fixture.renderer);
