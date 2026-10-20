@@ -33,23 +33,22 @@ bool water_inside_frame(vec2 uv) {
     return all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
 }
 
-// Per pixel: the offset sample must stay inside the mirror's frame. Explicit lod: the branch is not uniform.
-// The mirror's target holds physical radiance, so it takes this view's pre-exposure here.
-bool water_planar(
+// The offset uv is clamped half a texel inside the slot's own texture (a scaled target's size is not the view's), so an
+// outward offset at the frame edge reads the edge texels under any address mode. The target holds physical radiance,
+// so it takes this view's pre-exposure here. Explicit lod: the stage's branches read explicit lods only.
+vec3 water_planar(
     FrameRoot frame,
     CustomMaterialGpu material,
     vec2 screen_uv,
     vec2 screen_tilt,
-    float distortion,
-    out vec3 radiance
+    float distortion
 ) {
-    vec2 offset = clamp(screen_tilt * distortion, vec2(-WATER_PLANAR_OFFSET_LIMIT), vec2(WATER_PLANAR_OFFSET_LIMIT));
-    vec2 uv = screen_uv + offset;
-    if (!water_inside_frame(uv)) return false;
-    TextureMapGpu map = material.slots[WATER_REFLECTION_SLOT];
     uint texture_index = custom_slot_texture(frame, material, WATER_REFLECTION_SLOT);
-    radiance = pre_exposed(frame, sample_texture_2d_lod(texture_index, map.sampler_index, uv, 0.0).rgb);
-    return true;
+    vec2 half_texel = 0.5 / vec2(texture_extent(texture_index));
+    vec2 offset = clamp(screen_tilt * distortion, vec2(-WATER_PLANAR_OFFSET_LIMIT), vec2(WATER_PLANAR_OFFSET_LIMIT));
+    vec2 uv = clamp(screen_uv + offset, half_texel, vec2(1.0) - half_texel);
+    TextureMapGpu map = material.slots[WATER_REFLECTION_SLOT];
+    return pre_exposed(frame, sample_texture_2d_lod(texture_index, map.sampler_index, uv, 0.0).rgb);
 }
 
 // The snapshot holds opaque, masked and sky only, from this view: blends, off-screen geometry and anything behind
@@ -82,8 +81,8 @@ bool water_march(FrameRoot frame, vec3 origin, vec3 direction, out vec3 radiance
     return water_march(frame, origin, direction, radiance, hit_distance);
 }
 
-// Planar where the view provides the slot (uniform per draw) and the sample stays in frame (per pixel); else the
-// march where the material enables it (uniform) and it hits (per pixel); else the environment or ambient.
+// Planar where the view provides the slot (uniform per draw); else the march where the material enables it (uniform)
+// and it hits (per pixel); else the environment or ambient.
 vec3 water_reflection(
     FrameRoot frame,
     CustomMaterialGpu material,
@@ -93,11 +92,10 @@ vec3 water_reflection(
     vec2 screen_uv,
     vec2 screen_tilt
 ) {
-    vec3 radiance;
-    if (custom_slot_present(frame, material, WATER_REFLECTION_SLOT)
-        && water_planar(frame, material, screen_uv, screen_tilt, params.reflection_distortion, radiance)) {
-        return radiance;
+    if (custom_slot_present(frame, material, WATER_REFLECTION_SLOT)) {
+        return water_planar(frame, material, screen_uv, screen_tilt, params.reflection_distortion);
     }
+    vec3 radiance;
     if ((params.flags & WATER_MARCH) != 0u && water_march(frame, position, reflected, radiance)) return radiance;
     return water_miss_radiance(frame, reflected);
 }

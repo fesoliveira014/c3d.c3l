@@ -62,6 +62,46 @@ fn void test_posed_slots_go_to_the_first_keys_of_each_epoch() @test {
     assert(!table.lookup.has_key(key_of(0)) && table.slots[0].key == key_of(2));
 }
 
+fn bool overflows(PosedTraceTable* table, RetireList* retire, uint node, ulong frame_index = 0) @local {
+    uint? claimed = table.claim(key_of(node), frame_index, retire);
+    if (catch excuse = claimed) return excuse == c3d::CAPACITY_EXCEEDED;
+    return false;
+}
+
+fn void test_posed_overflow_leaves_held_keys_and_ends_with_the_epoch() @test {
+    RetireList retire;
+    PosedTraceTable table = make_table(&retire);
+    defer destroy_table(&table, &retire);
+
+    table.begin_epoch(1);
+    assert(table.claim(key_of(0), 0, &retire)!! == 0);
+    assert(table.claim(key_of(1), 0, &retire)!! == 1);
+    for (uint node = 2; node < 6; node++) assert(overflows(&table, &retire, node));
+    assert(table.claim(key_of(1), 0, &retire)!! == 1 && table.claim(key_of(0), 0, &retire)!! == 0);
+    assert(retire.len() == 0);
+
+    table.begin_epoch(2);
+    assert(table.claim(key_of(4), 1, &retire)!! == 0);
+    assert(table.claim(key_of(5), 1, &retire)!! == 1);
+    assert(overflows(&table, &retire, 6, 1));
+}
+
+fn void test_posed_claims_resume_when_a_slot_empties_inside_an_overflowing_epoch() @test {
+    RetireList retire;
+    PosedTraceTable table = make_table(&retire);
+    defer destroy_table(&table, &retire);
+
+    table.begin_epoch(1);
+    assert(table.claim(key_of(0), 0, &retire)!! == 0);
+    assert(table.claim(key_of(1), 0, &retire)!! == 1);
+    assert(overflows(&table, &retire, 2));
+
+    table.sweep(1 + render::INSTANCE_ABSENCE_FRAMES, &retire);
+    assert(table.claim(key_of(2), 1, &retire)!! == 0);
+    assert(table.claim(key_of(3), 1, &retire)!! == 1);
+    assert(overflows(&table, &retire, 4, 1));
+}
+
 fn void test_posed_claims_repeat_within_an_open_frame() @test {
     RetireList retire;
     PosedTraceTable table = make_table(&retire);

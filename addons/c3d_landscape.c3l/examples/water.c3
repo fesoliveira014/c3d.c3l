@@ -1305,6 +1305,7 @@ fn Options? parse_options(String[] args) @local {
         .ripples        = true,
         .wind_speed     = STEADY_WIND_SPEED,
     };
+    bool waves_chosen;
     for (usz index = 1; index < args.len; index++) {
         switch (args[index]) {
             case "--benchmark":
@@ -1361,6 +1362,7 @@ fn Options? parse_options(String[] args) @local {
                     default: return c3d::INVALID_ARGUMENT~;
                 }
             case "--waves":
+                waves_chosen = true;
                 switch (option_value(args, &index)!) {
                     case "gerstner":
                         options.simulated = false;
@@ -1405,6 +1407,10 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
+    $if landscape_water_field::ENABLED:
+        // Four analytic waves show far-field regularity at high wind; the spectral sea does not.
+        if (options.ocean && !waves_chosen) options.spectral = true;
+    $endif
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.ocean && (options.split || options.traced)) return c3d::INVALID_ARGUMENT~;
     if (options.simulated && (options.ocean || options.sea_state)) return c3d::INVALID_ARGUMENT~;

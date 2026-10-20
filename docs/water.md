@@ -165,7 +165,7 @@ references. Its `simulation` is `DEFAULT_WAVE_SPEED` (3 m/s) and `DEFAULT_DAMPIN
 | `foam_crest` | In [0, 1): the crest factor above which wave foam shows |
 | `ripple_drift` | Non-negative: ripple scroll in m/s per m/s of wind |
 | `ripples`, `foam` | Zero, or a live `STANDARD` material |
-| `march_reflections` | The screen-space march where the planar sample is missing |
+| `march_reflections` | The screen-space march in views that provide no reflection slot |
 | `max_mirrors` | At least 1 and at most `MAX_MIRRORS` (8): the mirror slots, one per viewing view |
 | `reflection_view_slot` | Below `material::MAX_VIEW_TEXTURES` (4): the [view texture](views.md#view-textures) the material samples |
 | `trace` | Scene traces see the displaced surface, posed every frame ([Scene traces](#scene-traces)); off by default; an ocean cannot trace |
@@ -697,6 +697,9 @@ scene.update_world();
   level long. Validation asks for four cells of the finest level, and the sea-state table floors its wavelengths
   there, so the finest level draws every wave whole and buoyancy sees what the viewer sees near the camera; a body
   keeps its two-cell rule.
+- **Far-field regularity.** A sea of four waves is four sine terms, and where its crests cross the far levels draw a
+  regular grid. It is clean at a wind of 2 m/s, faint at 6 and visible at 12 to 18. A `SPECTRAL` ocean shows none at
+  any wind ([Spectral surface](#spectral-surface)); use it for an ocean seen at high wind.
 - **Anchoring.** An ocean's waves are anchored to the world. The stage evaluates `dot(d, p) / λ` on the node-local rest
   position `p`, as for a body; the CPU adds the node's absolute position `A` to `φ`: `φ += dot(g, A) / λ`, with `g`
   the gradient of the local phase in world space, `(M⁻¹)ᵀ d` for the node's world matrix `M` (the direction itself for a
@@ -814,11 +817,15 @@ The waves bend the window and the reflection with the surface normal, ripples in
 
 | Condition | Varies | Branch |
 | --- | --- | --- |
-| The viewing view provides the reflection slot | per draw | planar tried |
-| The planar uv (screen uv plus the tilt offset, clamped to 0.05) lies inside the frame | per pixel | planar sample |
-| `march_reflections` | per draw | march tried |
+| The viewing view provides the reflection slot | per draw | planar sample |
+| Otherwise, `march_reflections` | per draw | march tried |
 | The march hits: a sample lies behind the snapshot surface by less than two steps | per pixel | snapshot colour |
 | Otherwise | | the environment's specular cube at mip 0 times its intensity, else `frame.ambient` |
+
+The planar sample is never rejected. Its uv is the screen uv plus the tilt offset, clamped to 0.05, then clamped half
+a texel inside the slot's own texture, whose size follows the mirror target's `render_scale`. An outward offset at the
+frame edge reads the edge texels, so the surface does not fall back to the environment there, and the margin keeps the
+read off the opposite edge under any address mode. The slot's sampler is linear with clamp-to-edge addressing.
 
 The march steps 24 times along the reflected ray over four times the pixel's view distance, spaced
 quadratically; a sample behind the camera or outside the frame ends it as a miss, and background texels never
@@ -1135,7 +1142,10 @@ and the sea is a 20 km body (256 chunks of 80 m, 87,381 nodes) at the default ce
 own layer bit like the lake. Each frame its node follows the camera in steps of `ocean_snap_step`. It implies
 `--sea-state`, so the waves are the JONSWAP sea of `--wind` (the 20 km body has a fully developed sea; try `--wind
 12`) and the wind controls blend them in four seconds. There is no basin, grass, tree or crate, and no `--split` or
-`--traced`. `--shot FILE.png --size 1025` renders it headless, and `--benchmark` runs the segments over the sea.
+`--traced`. `--shot FILE.png --size 1025` renders it headless, and `--benchmark` runs the segments over the sea. In
+the gated `water_gpu` build the ocean defaults to `--waves spectral`, because the four-wave sea shows
+[far-field regularity](#ocean) at high wind; `--waves gerstner` selects the four-wave sea there. The `water` build draws
+the four-wave sea, and the lake keeps `gerstner` as its default in both builds.
 
 `--waves simulated` (default `gerstner`) makes every body [simulated](#simulated-surface). The 120 m lake is 96 cells
 per side at the default cell size, with wave speed 8 m/s, damping 0.3/s, the terrain as its `ground` so the shore
@@ -1148,7 +1158,7 @@ the first frame, the camera stands 12 m west of the centre at 3 m looking west, 
 
 `--waves spectral` makes every body [spectral](#spectral-surface). It needs the gated build, `python3 scripts/build.py
 --example water_gpu` (the `water` target faults at the option with that hint), which adds `-D C3D_LANDSCAPE_GPU` and one
-call of `water_gpu::update` inside each frame before its views. It implies `--sea-state`, so `--wind` and the panel's
+call of `water_gpu::update` inside each frame before its views. In that build it is the default of `--ocean`. It implies `--sea-state`, so `--wind` and the panel's
 wind controls set the spectrum, blended over four seconds. The lake is 0.5 m cells with a 32 m patch, because the fetch of
 a 120 m lake raises waves of a metre at most: `--wind 20` is its storm (`Hs` 0.11 m, `λp` 1.1 m), and the default 6 m/s
 sea lies almost wholly under the lattice's cut and draws nearly flat. With `--ocean` the body is the 20 km sea at the
@@ -1205,7 +1215,7 @@ gate exits 1 when it fails:
 - `gate simulation_uploads_stop_once_settled`: after the waves segment starts, the body reports settled in some frame
   and every later frame uploads nothing for the simulation.
 
-Switches: `--split`, `--waves gerstner|simulated`, `--ripple-age SECONDS`, `--gpu-timings` (build with `python3 scripts/build.py --target water --opt O3 --define
+Switches: `--split`, `--waves gerstner|simulated|spectral`, `--ripple-age SECONDS`, `--gpu-timings` (build with `python3 scripts/build.py --target water --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--validation`, `--shading
 forward|deferred`, `--size 1025|2049|4097`, `--reflection planar|march|env` (march: no target; env: no target
 and the march off), `--mirror-scale 0.5|1`, `--crates 16|256`, `--ssgi` (SSGI on the main view),
