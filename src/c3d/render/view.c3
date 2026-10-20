@@ -408,7 +408,8 @@ fn void? record_raster_view(
             transparent_start = candidates.len - transparent_count;
             weighted_start = candidates.len - weighted_count;
             foreach (&candidate : candidates) {
-                if (device_billboards_lost(renderer, candidate) || device_ribbons_lost(renderer, candidate)) {
+                if (device_billboards_lost(renderer, candidate) || device_ribbons_lost(renderer, candidate)
+                    || device_instances_lost(renderer, candidate)) {
                     renderer.stats.dangling_refs++;
                     continue;
                 }
@@ -1964,7 +1965,8 @@ fn gpu::GpuAddress? upload_previous_pose(
     }
 
     InstancedMesh* batch = candidate.batch;
-    if (batch && pose.instance_count == batch.count && pose.instance_revision != batch.revision) {
+    bool host_authored = batch && batch.source == InstanceSource.TRANSFORMS;
+    if (host_authored && pose.instance_count == batch.count && pose.instance_revision != batch.revision) {
         InstanceSpan span = { .end = batch.count };
         if (!candidate.crowd) {
             InstanceSpan edited = history_span(pose, batch);

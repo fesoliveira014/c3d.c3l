@@ -544,7 +544,7 @@ fn void commit_pose(
         pose.crowd_part = candidate.crowd_part;
     }
 
-    if (candidate.batch) {
+    if (candidate.batch && candidate.batch.source == InstanceSource.TRANSFORMS) {
         InstancedMesh* batch = candidate.batch;
         if (pose.instances.len != batch.transforms.len) {
             alloc::free(allocator, pose.instances.ptr);

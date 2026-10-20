@@ -124,7 +124,7 @@ fn MeshCandidate[] extract_candidates(
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
-        if (batch.count && node.visible_effective && (layers & node.layers) != 0) {
+        if (batch.draw_count() && node.visible_effective && (layers & node.layers) != 0) {
             include_batch(
                 candidates:   candidates,
                 scene:        scene,
@@ -519,7 +519,7 @@ fn bool batch_is_drawable(AssetStore* assets, InstancedMesh* batch) @private {
 fn void emit_batch_candidates(MeshCandidate[] candidates, ExtractCounts* counts, MeshCandidate template) @local {
     uint mirrored = template.crowd ? template.crowd.part_mirrored_count(template.crowd_part)
       : template.batch.mirrored_count();
-    uint unmirrored = template.batch.count - mirrored;
+    uint unmirrored = template.batch.draw_count() - mirrored;
     if (unmirrored) {
         candidates[counts.visible] = template;
         candidates[counts.visible].instance_count = unmirrored;
@@ -700,7 +700,8 @@ fn MeshCandidate[] extract_shadow_candidates(
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
 
-        if (!spatial::animated_lod_owns_node(scene, node) && batch.count && node.visible_effective && batch.cast_shadow) {
+        bool drawn = batch.draw_count() != 0;
+        if (!spatial::animated_lod_owns_node(scene, node) && drawn && node.visible_effective && batch.cast_shadow) {
             QuadtreeSelection* quadtree = batch.quadtree.parents.len ? find_quadtree_selection(quadtrees, node) : null;
 
             if (!batch_is_drawable(assets, batch) || (batch.quadtree.parents.len && !quadtree)) {

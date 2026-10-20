@@ -130,7 +130,8 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && batch.count && !animated_lod_owns_node(scene, node)) {
+        bool host_authored = batch.source == InstanceSource.TRANSFORMS;
+        if (node.visible_effective && batch.count && host_authored && !animated_lod_owns_node(scene, node)) {
             if (instanced_mesh_is_live(assets, batch)) {
                 changed |= store_batch(
                     index:  self,
@@ -314,7 +315,8 @@ fn void prepare_triangle_picks(AssetStore* assets, Scene* scene) {
         }
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
-        if (!animated_lod_owns_node(scene, scene.node(entity)) && instanced_mesh_is_live(assets, batch)
+        bool host_authored = batch.source == InstanceSource.TRANSFORMS;
+        if (host_authored && !animated_lod_owns_node(scene, scene.node(entity)) && instanced_mesh_is_live(assets, batch)
             && batch_triangles_static(assets.geometry(batch.geometry), batch.has_bounds_override)) {
             prepare_triangle_tree(assets, batch.geometry);
         }

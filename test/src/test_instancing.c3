@@ -1080,3 +1080,81 @@ fn void test_quadtree_leaf_mask_and_revision() @test {
     index.refresh(&fixture.assets, &fixture.scene)!!;
     assert(index.count == 5 && batch.is_leaf(0));
 }
+
+fn Node* add_device_batch(Fixture* fixture, uint capacity, bool mirror = false) @local {
+    Node* node = fixture.scene.add_instanced_mesh(
+        geometry: fixture.box,
+        material: fixture.red,
+        capacity: capacity,
+        source:   InstanceSource.DEVICE,
+        mirror:   mirror,
+    )!!;
+    return node;
+}
+
+fn void attach_device_buffer(Fixture* fixture, Node* node, uint capacity) @local {
+    fixture.scene.set_instance_device(
+        node,
+        {
+            .buffer       = { .index = 1, .generation = 1 },
+            .count_offset = capacity * InstanceGpu::size,
+            .capacity     = capacity,
+        },
+        { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } },
+    );
+}
+
+fn void test_device_instance_batches_extract_at_their_capacity_under_the_override_bound() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* camera_node = add_camera(&fixture);
+    Node* node = add_device_batch(&fixture, 8);
+    node.local.position = { 5, 0, 0 };
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    assert(batch.transforms.len == 0 && batch.draw_count() == 0);
+
+    @pool() {
+        render::ExtractCounts counts;
+        assert(extract(tmem, &fixture, camera_node, &counts).len == 0);
+    };
+
+    attach_device_buffer(&fixture, node, 8);
+    assert(batch.draw_count() == 8 && batch.count == 0);
+    fixture.scene.update_world();
+    Aabb bounds = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+    assert(bounds.min == (Vec3){ 4, -1, -1 } && bounds.max == (Vec3){ 6, 1, 1 });
+
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = extract(tmem, &fixture, camera_node, &counts);
+        assert(candidates.len == 1 && candidates[0].instance_count == 8 && !candidates[0].mirrored);
+
+        render::MeshCandidate[] casters = render::extract_shadow_candidates(
+            allocator:   tmem,
+            scene:       &fixture.scene,
+            assets:      &fixture.assets,
+            fade_origin: {},
+            counts:      &counts,
+        );
+        assert(casters.len == 1 && casters[0].instance_count == 8);
+    };
+}
+
+fn void test_pick_and_the_index_skip_device_instance_batches() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* node = add_device_batch(&fixture, 4, mirror: true);
+    attach_device_buffer(&fixture, node, 4);
+    Transform[2] mirrored = { at({ -1, 0, 0 }), at({ 1, 0, 0 }) };
+    fixture.scene.set_instances(node, mirrored[..])!!;
+    fixture.scene.update_world();
+
+    SceneIndex index = spatial::create_scene_index(mem, 4);
+    defer spatial::destroy_scene_index(&index);
+    index.refresh(&fixture.assets, &fixture.scene)!!;
+    assert(index.count == 0);
+    @pool() {
+        Ray ray = { .origin = { 1, 0, 10 }, .direction = { 0, 0, -1 } };
+        assert(spatial::pick(tmem, &fixture.assets, &fixture.scene, ray, spatial::PICK_OPTIONS_DEFAULT).len == 0);
+    };
+}

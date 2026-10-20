@@ -10,6 +10,8 @@ import std::collections::map;
 import std::hash::fnv32a;
 import std::math;
 
+$assert scene::INSTANCE_RECORD_BYTES == InstanceGpu::size;
+
 <*
  Batch slots when RendererDesc.max_instance_batches is 0.
 *>
@@ -386,10 +388,30 @@ fn void? record_batch_draw(
     count_draw(renderer, geometry, range.culled ? 0 : range.count);
 }
 
+fn bool candidate_device_instances(MeshCandidate* candidate) @private {
+    return candidate.batch && candidate.batch.source == InstanceSource.DEVICE;
+}
+
+fn bool device_instances_lost(Renderer* renderer, MeshCandidate* candidate) @private {
+    return candidate_device_instances(candidate) && !renderer.buffers.is_live(candidate.batch.device.buffer);
+}
+
+fn gpu::GpuAddress device_instance_records(Renderer* renderer, InstancedMesh* batch) @private {
+    return (gpu::GpuAddress)((ulong)renderer.buffer_address(batch.device.buffer) + batch.device.records_offset);
+}
+
+fn gpu::GpuAddress device_instance_count(Renderer* renderer, MeshCandidate* candidate) @private {
+    if (!candidate_device_instances(candidate)) return (gpu::GpuAddress)0;
+
+    InstanceDevice* device = &candidate.batch.device;
+    return (gpu::GpuAddress)((ulong)renderer.buffer_address(device.buffer) + device.count_offset);
+}
+
 fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candidate) @private {
     if (candidate.lod) return resolve_lod_instances(renderer, candidate.lod);
     if (candidate_device_billboards(candidate)) return device_billboard_records(renderer, candidate.billboards);
     if (candidate_device_ribbons(candidate)) return device_ribbon_records(renderer, candidate.ribbons);
+    if (candidate_device_instances(candidate)) return device_instance_records(renderer, candidate.batch);
 
     InstanceKey key = {
         .scene = candidate.scene_identity,

@@ -140,10 +140,11 @@ fn Node*? Scene.add_decal(
 
 <*
  Add a node carrying a batch with scene-owned arrays of the capacity.
- @param transforms : "Copied; the live count."
- @param colors : "Copied; slots past its end are white."
+ @param transforms : "Copied; the live count; empty unless TRANSFORMS."
+ @param colors : "Copied; slots past its end are white; empty unless TRANSFORMS."
  @param [in] parent : "Null means the root."
  @param name : "Copied into the scene allocator."
+ @param mirror : "DEVICE only; allocates the arrays the owner fills for scene tracing."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require capacity > 0
 *>
@@ -156,24 +157,53 @@ fn Node*? Scene.add_instanced_mesh(
     Vec4[] colors = {},
     Node* parent = null,
     String name = "",
+    InstanceSource source = InstanceSource.TRANSFORMS,
+    bool mirror = false,
 ) {
     if (transforms.len > capacity) return c3d::CAPACITY_EXCEEDED~;
     if (colors.len > transforms.len) return c3d::INVALID_ARGUMENT~;
+    if (source == InstanceSource.DEVICE && transforms.len) return c3d::INVALID_ARGUMENT~;
+    if (source == InstanceSource.TRANSFORMS && mirror) return c3d::INVALID_ARGUMENT~;
     Node* node = self.add_node(parent, name)!;
     InstancedMesh batch = {
         .geometry       = geometry,
         .material       = material,
-        .transforms     = alloc::new_array(self.allocator, Transform, (sz)capacity),
-        .colors         = alloc::new_array(self.allocator, Vec4, (sz)capacity),
         .cast_shadow    = true,
         .receive_shadow = true,
         .trace          = true,
         .revision       = 1,
+        .source         = source,
     };
-    batch.colors[..] = INSTANCE_COLOR_DEFAULT;
+    if (source == InstanceSource.TRANSFORMS || mirror) {
+        batch.transforms = alloc::new_array(self.allocator, Transform, (sz)capacity);
+        batch.colors = alloc::new_array(self.allocator, Vec4, (sz)capacity);
+        batch.colors[..] = INSTANCE_COLOR_DEFAULT;
+    }
+    if (source == InstanceSource.DEVICE) batch.device.capacity = capacity;
     fill_instances(&batch, transforms, colors);
     self.world.add(node.id, batch);
     return node;
+}
+
+<*
+ Attach the buffer a DEVICE batch draws from, with its conservative bound.
+ @param [&in] node : "Carries a DEVICE InstancedMesh."
+ @param local_bounds : "Node-local bound of every instance the buffer can hold, geometry included."
+ @require self.has(node, InstancedMesh)
+ @require self.get(node, InstancedMesh).source == InstanceSource.DEVICE
+ @require device.capacity == self.get(node, InstancedMesh).capacity()
+ @require device.records_offset % 16 == 0 && device.count_offset % 4 == 0
+*>
+fn void Scene.set_instance_device(
+    &self,
+    Node* node,
+    InstanceDevice device,
+    Aabb local_bounds,
+) {
+    InstancedMesh* batch = self.get(node, InstancedMesh);
+    batch.device = device;
+    batch.has_bounds_override = true;
+    batch.local_bounds = local_bounds;
 }
 
 <*
@@ -240,7 +270,9 @@ fn void? Scene.set_instance_quadtree(
         InstanceQuadtree candidate = { .parents = parents, .split_pixels = split_pixels, .hysteresis = hysteresis };
         check_instance_quadtree(&candidate, batch.count)!;
 
-        if (batch.trace || batch.mirrored_count() || self.has(node, LodGroup)) return c3d::UNSUPPORTED~;
+        if (batch.trace || batch.mirrored_count() || self.has(node, LodGroup) || batch.source == InstanceSource.DEVICE) {
+            return c3d::UNSUPPORTED~;
+        }
 
         if (!quadtree.parents.ptr) {
             quadtree.parents = alloc::new_array(self.allocator, uint, batch.transforms.len);
