@@ -118,6 +118,14 @@ fn void write_cull_planes(InstanceCullRoot* root, Frustum* frustum) @private {
     }
 }
 
+fn bool candidate_device_batch(MeshCandidate* candidate) @private {
+    return candidate_device_billboards(candidate) || candidate_device_ribbons(candidate);
+}
+
+fn usz visible_list_bytes(MeshCandidate* candidate) @private {
+    return candidate_device_ribbons(candidate) ? 0 : (usz)candidate.instance_count * uint::size;
+}
+
 fn usz? arena_place(CullArena* arena, usz bytes) @private {
     usz offset = align_up(arena.head, STREAM_ALIGNMENT);
     if (offset + bytes > arena.capacity) return c3d::CAPACITY_EXCEEDED~;
@@ -255,7 +263,7 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
         Aabb? bound = cull_bound(item.candidate, item.geometry);
         item.bounded = culling && @ok(bound);
         item.bound = bound ?? item.geometry.bounds;
-        if (item.bounded || item.sorted || candidate_device_billboards(item.candidate)) eligible++;
+        if (item.bounded || item.sorted || candidate_device_batch(item.candidate)) eligible++;
     }
     CullArena* arena = &renderer.cull_arenas[slot_index];
     usz? args_offset = c3d::CAPACITY_EXCEEDED~;
@@ -273,13 +281,13 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     uint sorted;
     foreach (&item : items) {
         if (item.candidate.lod || item.candidate.quadtree) continue;
-        bool device = candidate_device_billboards(item.candidate);
+        bool device = candidate_device_batch(item.candidate);
         if (item.bounded || item.sorted || device) {
             uint slot = args_index++;
             if (try block = args_offset) {
                 usz? list_offset = item.sorted
                   ? arena_place_sorted(arena, item.candidate.instance_count)
-                  : arena_place(arena, (usz)item.candidate.instance_count * uint::size);
+                  : arena_place(arena, visible_list_bytes(item.candidate));
                 if (try visible_offset = list_offset) {
                     usz args_at = block + slot * CULL_ARGS_STRIDE;
                     usz bytes = indirect_args_bytes(&item.geometry.layout);
@@ -333,6 +341,18 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     });
 }
 
+fn void? record_ribbon_segments(Renderer* renderer, Frame* slot, CullItem* item) @private {
+    gpu::MappedGpuSpan root_span = slot.upload.take(&renderer.device, InstanceCullRoot::size, STREAM_ALIGNMENT)!;
+    *(InstanceCullRoot*)root_span.bytes.ptr = {
+        .args       = item.args_address,
+        .count      = item.range.count,
+        .live_count = device_ribbon_count(renderer, item.candidate.ribbons),
+        .lod_mode   = shader::RIBBON_SEGMENTS,
+    };
+    gpu::cmd_dispatch(&renderer.commands, root_span.address, { 1, 1, 1 })!;
+    renderer.stats.cull_dispatches++;
+}
+
 fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
     uint culled;
     bool sorted;
@@ -352,6 +372,11 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
         foreach (&item : items) {
             CullRange* range = item.range;
             if (!range.culled || item.lod_reuse || item.lod_count != (gpu::GpuAddress)0) continue;
+            if (candidate_device_ribbons(item.candidate)) {
+                record_ribbon_segments(renderer, slot, item)!;
+                continue;
+            }
+
             gpu::MappedGpuSpan root_span = slot.upload.take(
                 &renderer.device,
                 InstanceCullRoot::size,

@@ -197,6 +197,7 @@ struct Stats {
     uint  blas_updates;          // this frame: in-place updates of posed bottom levels
     uint  acceleration_batches;  // this frame: bottom-level build groups, each ordered by one barrier
     uint  tlas_builds;
+    uint  trace_top_level_writes; // this frame: rewrites of the top-level boxes and instance rows
     uint  path_trace_samples;
     uint  shader_rejections;
     uint  textures;              // live table entries at the last reading's frame start; swapchain images count

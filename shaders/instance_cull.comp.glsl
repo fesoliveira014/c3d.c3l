@@ -34,7 +34,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer CullArgs {
     uint instance_count;
 };
 
-// A DEVICE billboard batch's live count, written by the dispatch that filled its records.
+// A DEVICE batch's live count, written by the dispatch that filled its records.
 layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LiveCount {
     uint value;
 };
@@ -195,6 +195,12 @@ void select_quadtree(InstanceCullRoot root, uint node) {
 void main() {
     InstanceCullRoot root = InstanceCullRoot(pc.root_gpu);
     uint slot = linear_group_index(INSTANCE_CULL_GROUP_SIZE);
+    if (root.lod_mode == RIBBON_SEGMENTS) {
+        if (slot != 0u) return;
+        uint points = LiveCount(root.live_count).value;
+        CullArgs(root.args).instance_count = points > 1u ? min(points - 1u, root.count) : 0u;
+        return;
+    }
     if (root.lod_mode == LOD_FINALIZE) {
         if (slot != 0u) return;
         if (root.args == 0ul) {

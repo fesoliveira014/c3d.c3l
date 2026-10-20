@@ -84,6 +84,24 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer St
     vec4 color_max;
     float size_over_life[8];
     vec4 color_over_life[8];
+    uint64_t trail_headers_home; // the addresses are unused while trail_max_points is zero
+    uint64_t trail_headers_alt;
+    uint64_t trail_points_home;
+    uint64_t trail_points_alt;
+    uint64_t trail_distances_home;
+    uint64_t trail_distances_alt;
+    uint64_t ribbon_records;
+    uint64_t ribbon_count;
+    uint trail_max_points; // stored points per particle; zero disables the trail
+    float trail_interval;
+    float trail_lifetime;
+    float trail_width;
+    float trail_tile_length;
+    uint trail_tiled;
+    uint _pad4;
+    uint _pad5;
+    float width_over_trail[8];
+    vec4 color_over_trail[8];
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleControl {
@@ -99,6 +117,29 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleCon
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleStates {
     ParticleGpu values[];
+};
+
+// One particle's trail cursor; mirrored as TRAIL_HEADER_BYTES in gpu/system.c3.
+struct TrailHeaderGpu {
+    uint head; // slot the next point is written to
+    uint count; // stored points, the newest just before head
+    float clock; // seconds since the last stored point
+    float path_length; // distance along the stored points at the newest
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer TrailHeaders {
+    TrailHeaderGpu values[];
+};
+
+// xyz: position of a stored point, w: the particle's age when it was stored.
+// Mirrored as TRAIL_POINT_BYTES in gpu/system.c3.
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer TrailPoints {
+    vec4 values[];
+};
+
+// One float per stored point; mirrored as TRAIL_DISTANCE_BYTES in gpu/system.c3.
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer TrailDistances {
+    float values[];
 };
 
 // x: live flag, y: drawn flag, z: live rank, w: drawn rank
@@ -127,6 +168,30 @@ vec4 particle_color_scale(StepRoot root, float life) {
 // Mirrors draw_extent in update.c3.
 float particle_draw_extent(StepRoot root, ParticleGpu particle) {
     return particle.size * particle_size_scale(root, particle.age / particle.lifetime);
+}
+
+// Mirrors trail_slot in trail.c3.
+uint particle_trail_slot(TrailHeaderGpu header, uint size, uint newest_rank) {
+    return (header.head + size - 1u - newest_rank) % size;
+}
+
+// Mirrors copy_trail in trail.c3 between the two halves; only the stored points move.
+void particle_copy_trail(StepRoot root, bool to_alternate, uint source, uint target) {
+    TrailHeaders from_headers = TrailHeaders(to_alternate ? root.trail_headers_home : root.trail_headers_alt);
+    TrailPoints from_points = TrailPoints(to_alternate ? root.trail_points_home : root.trail_points_alt);
+    TrailDistances from_distances = TrailDistances(to_alternate ? root.trail_distances_home : root.trail_distances_alt);
+    TrailHeaders to_headers = TrailHeaders(to_alternate ? root.trail_headers_alt : root.trail_headers_home);
+    TrailPoints to_points = TrailPoints(to_alternate ? root.trail_points_alt : root.trail_points_home);
+    TrailDistances to_distances = TrailDistances(to_alternate ? root.trail_distances_alt : root.trail_distances_home);
+
+    TrailHeaderGpu header = from_headers.values[source];
+    to_headers.values[target] = header;
+    uint size = root.trail_max_points;
+    for (uint rank = 0u; rank < header.count; rank++) {
+        uint slot = particle_trail_slot(header, size, rank);
+        to_points.values[target * size + slot] = from_points.values[source * size + slot];
+        to_distances.values[target * size + slot] = from_distances.values[source * size + slot];
+    }
 }
 
 // Admitted particles of this step; the free slots after the survivors bound it.

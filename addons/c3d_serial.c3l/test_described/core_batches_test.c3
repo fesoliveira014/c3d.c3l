@@ -282,6 +282,34 @@ fn void test_packed_billboard_batches_refuse_export() @test {
     };
 }
 
+fn void test_device_ribbon_batches_refuse_export() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        Node* root = fixture.source.add_node()!!;
+        fixture.source.add_ribbons(
+            material: (MaterialId){},
+            capacity: 2,
+            parent: root,
+            source: RibbonSource.DEVICE,
+        )!!;
+        assert(@catch(serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: root,
+        )) == c3d::UNSUPPORTED);
+        assert(@catch(serial::write_subtree_text(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: root,
+        )) == c3d::UNSUPPORTED);
+    };
+}
+
 fn void test_core_batch_copy_failures_leave_no_attached_component() @test {
     @pool() {
         Fixture fixture;

@@ -203,18 +203,32 @@ The application calls `update` once per frame, after `update_world` and before t
 one step: the queued origin shift (only after a rebase), expiry, a prefix scan, admission with spawning, advance and
 collision, a second scan, and publication. Every dispatch covers the system's capacity; there is no indirect dispatch.
 The pool stays in spawn order. A system's buffer holds 208 bytes per particle: two copies of the particle state, the
-scan scratch and one billboard record. The draw child is a core `DEVICE` [billboard batch](billboards.md#device-batches)
-over the same buffer, so every view culls and sorts the records the compute stages wrote, and no record is uploaded or
-copied by the CPU.
+scan scratch and one billboard record; a [trail](#gpu-trails) adds `80 + 88 x max_points` bytes. The draw child is a
+core `DEVICE` [billboard batch](billboards.md#device-batches) over the same buffer, so every view culls and sorts the
+records the compute stages wrote, and no record is uploaded or copied by the CPU.
 
 ### Supported subset
 
 - Supported: every emitter shape, rate and bursts; gravity, drag, wind and turbulence; lifetime tables, colour and
-  flipbooks; BILLBOARD and STRETCHED draw modes; REFUSE saturation; and `CollisionResponse` BOUNCE, STICK or DIE against
-  `ground_plane`.
-- Refused with `UNSUPPORTED` at prepare: trails, sub-emitters, MESH draws, `DROP_OLDEST` and a collision response
-  without `ground_plane`. `ParticleSystem.set_collision` requires a CPU system, because the callback is application
-  code.
+  flipbooks; BILLBOARD and STRETCHED draw modes; trails; REFUSE saturation; and `CollisionResponse` BOUNCE, STICK or DIE
+  against `ground_plane`.
+- Refused with `UNSUPPORTED` at prepare: sub-emitters, MESH draws, `DROP_OLDEST` and a collision response without
+  `ground_plane`. `ParticleSystem.set_collision` requires a CPU system, because the callback is application code.
+
+### GPU trails
+
+A trail's ring lives with its particle, in the same ping-pong buffers as the state, and compaction moves it with the
+particle. Each particle has a header (the ring cursor, the stored count, the clock and the path length) and
+`max_points` slots of position, age stamp and path length. Advance records points after collision with the CPU's
+rules: a clock that gains the step, at most one point per step, the oldest dropped once older than `trail.lifetime` by
+particle age. The origin shift moves the stored points with the particles.
+
+The trail child is a core `DEVICE` [ribbon batch](ribbons.md#device-batches) over the same buffer. Publication writes
+`max_points + 1` records for every live particle, in spawn order: the live position carrying `RIBBON_BREAK`, the stored
+points from newest to oldest, and a break with no width for each unused slot, so a particle with no stored point draws
+nothing. A terminating break follows the last strip. The count word is the number of live particles times
+`max_points + 1`, which the CPU never reads; the renderer turns it into the draw's segment count on the device. Widths,
+colours and texture coordinates follow [Publication](#publication).
 
 ### Counters and latency
 
@@ -249,7 +263,8 @@ Both paths draw every spawned value from `spawn_hash`, which `particle_random.gl
 system with one descriptor spawn the same particles. They differ only by floating-point order: the stages use float
 where the CPU uses double for the spawn samples and the flipbook, and the device's sine, cosine and fused operations.
 Replay is deterministic on one device and driver; there is no bit equality across devices, drivers or compilers.
-The acceptance case compares positions within 1e-3 m and sizes within 1e-5 m.
+The acceptance case compares positions within 1e-3 m and sizes within 1e-5 m, and the stored points of a trail within
+1e-3 m.
 
 ### Bounds
 
@@ -264,8 +279,10 @@ sets the draw child's bounds override to that union grown by:
 - the largest drawn half-extent, from the size tables and the stretch;
 - for a ground-plane response, the plane's height and one collision radius above it.
 
-The box is conservative and grows with lifetime and turbulence strength. It only decides whether core culls the whole
-batch; each record is still culled on the GPU. Moving the emitter widens it over the next lifetime.
+The trail child takes the same box grown by half the widest strip on every axis, because a stored point is a past
+position of a living particle and lies inside the box. The box is conservative and grows with lifetime and turbulence
+strength. It only decides whether core culls the whole batch; each billboard is still culled on the GPU, while a trail
+draws every segment of a visible batch. Moving the emitter widens it over the next lifetime.
 
 ## Saturation
 
@@ -678,7 +695,8 @@ reduction runs once per particle in double. A system with zero strength, or with
 | `material` | Blended material of the trail batch, as for [ribbons](ribbons.md#materials-and-supported-paths). |
 
 The trail does not change the simulation or take any spawn draw, so equal seeds emit equal
-particles with or without a trail.
+particles with or without a trail. A system with GPU execution records and publishes its trail on the device, see
+[GPU trails](#gpu-trails).
 
 ### Recording
 
@@ -720,12 +738,12 @@ the older points narrow and fade.
 
 ### Cost and validation
 
-A trail adds about 20 bytes per stored point to the pool: 12 for the position, 4 for the age stamp and 4 for the path
-length. It adds 16 bytes per particle for the ring cursor, the stored count, the clock and the path length. The ribbon
-batch holds (`max_points` + 1) points of 40 bytes for each particle of `capacity`, and core packs them into 48-byte
-GPU records. Core re-packs the batch and recomputes its bounds in every update that changes it, so a system with live
-trails does so every update. Recording is a constant amount of work
-per live particle, publication costs per drawn point, and removing a particle copies its ring.
+On the CPU, a trail adds about 20 bytes per stored point to the pool: 12 for the position, 4 for the age stamp and 4 for
+the path length. It adds 16 bytes per particle for the ring cursor, the stored count, the clock and the path length. The
+ribbon batch holds (`max_points` + 1) points of 40 bytes for each particle of `capacity`, and core packs them into
+48-byte GPU records. Core re-packs the batch and recomputes its bounds in every update that changes it, so a system with
+live trails does so every update. Recording is a constant amount of work per live particle, publication costs per drawn
+point, and removing a particle copies its ring.
 
 `add_particle_system` and `attach_particle_system` fault `INVALID_ARGUMENT` for a `point_interval`, `lifetime`, `width` or
 `tile_length` that is not finite, a negative `width`, a table entry that is not finite or is negative, and, while
@@ -750,7 +768,7 @@ lighting/soft distance, spark blending and a second camera. Validation is always
 enabled. `--frames N` closes an interactive smoke test after N frames.
 
 `--gpu` gives the smoke, sparks and embers systems GPU execution where the [subset](#supported-subset) allows it,
-so `--sparks` and `--trails` keep the sparks on the CPU, and the debris stays on the CPU as a mesh. It needs the
+so `--sparks` keeps the sparks on the CPU, and the debris stays on the CPU as a mesh. It needs the
 `particles_gpu` build, which enables `C3D_PARTICLE_GPU`, and applies to the window and to `--benchmark`, which then
 prints `execution,gpu`, the `gpu_particle_ms` of the custom compute pass, and `not_applicable` for the CPU-only
 `sparks_bounds_ms` and `sparks_copy_ms`. With `--collide` the sparks collide with the ground plane only. The flag
@@ -773,9 +791,10 @@ with and without `--embers` to compare the update cost.
 
 `--trails` gives the sparks a trail of 24 points, one per rendered frame at the fixed benchmark step, fading and
 narrowing to nothing over 0.4 seconds, drawn additively with a generated soft-edged streak texture. Combine it with
-`--collide` for sharp turns at the bounces. It applies to the window and to `--benchmark`. With `--stress` it gives the
-stress system the same trail, and each segment prints `trail_points`, `trail_draw_count` and the core `ribbon_bounds_ms`
-and `ribbon_pack_ms` beside the billboard timings; run `--stress` with and without `--trails` to compare the update cost.
+`--collide` for sharp turns at the bounces. It applies to the window and to `--benchmark`, and to the GPU sparks under
+`--gpu`. With `--stress` it gives the stress system the same trail, and each segment prints `trail_points`,
+`trail_draw_count` and the core `ribbon_bounds_ms` and `ribbon_pack_ms` beside the billboard timings; run `--stress`
+with and without `--trails` to compare the update cost.
 
 `--lit-smoke` shows only the smoke, lit: a plume with a point light circling it, under a directional light
 whose shadow an overhead slab casts across part of the plume. The L key cycles the lighting through its four

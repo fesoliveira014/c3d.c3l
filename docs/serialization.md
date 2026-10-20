@@ -51,7 +51,8 @@ particle package does, or live in a renderer buffer.
 
 RibbonBatch restores in the VALUE phase like BillboardBatch, at version 1: the material, the capacity and the live
 points, with unused points restarting at `RIBBON_POINT_DEFAULT`. Reading and writing apply the point rules of
-`Scene.set_ribbons`, so a non-finite value, a negative `width` or an unknown flag bit faults `INVALID_ARGUMENT`.
+`Scene.set_ribbons`, so a non-finite value, a negative `width` or an unknown flag bit faults `INVALID_ARGUMENT`. Writing a
+batch whose `source` is `DEVICE` faults `c3d::UNSUPPORTED`: its points live in a renderer buffer.
 
 LodGroup authoring version 3 restores in BINDINGS, after its source owners. Its common effects
 carry `trace_sway`; version-1 and version-2 binary and JSONC payloads read it as false.
