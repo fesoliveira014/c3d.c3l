@@ -812,7 +812,7 @@ fn void? PosedSwayBatch.pose_rows(
     TraceInstance[] records,
     bool key_moved,
     uint posing,
-) @local {
+) {
     PosedTraceTable* table = &renderer.posed_trace;
     acquire_compute_slot(renderer, ComputeSlot.TRACE_SWAY)!;
 
@@ -914,7 +914,7 @@ fn gpu::Vec3u dispatch_grid(Renderer* renderer, uint groups) @private {
     return grid_shape(groups, renderer.caps.max_compute_work_group_count.x);
 }
 
-// The depth is the independent sources a crowd part poses along z.
+// The depth is the independent sources a crowd part poses along z, or the rows of a swaying batch.
 fn gpu::Vec3u pose_grid(Renderer* renderer, uint vertex_count, uint depth = 1) @private {
     gpu::Vec3u grid = dispatch_grid(renderer, pose_groups(vertex_count));
     grid.z = depth;
