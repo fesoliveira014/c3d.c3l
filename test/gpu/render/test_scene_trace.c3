@@ -116,13 +116,11 @@ fn void? create_trace_scene(Fixture* fixture, TraceScene* trace) @private {
         .access       = { .graphics },
         .debug_name   = "trace_grid_readback",
     };
-    trace.readback = gpu::allocate_mapped_memory(&fixture.renderer.device, &readback_desc)!;
+    trace.readback = allocate_owned_readback(fixture, &readback_desc)!;
 }
 
 fn void destroy_trace_scene(Fixture* fixture, TraceScene* trace) @private {
     render::wait_frames(&fixture.renderer)!!;
-    gpu::GpuAllocation allocation = trace.readback.span.allocation();
-    gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
     scene::destroy_scene(&trace.scene);
 }
 
