@@ -2,7 +2,8 @@
   "flags": [
     "DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS",
     "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED", "TEMPORAL", "TRANSFORMED",
-    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING", "MULTISAMPLE", "BENT_NORMALS", "HI_Z", "MULTISAMPLE_PIXEL"
+    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING", "MULTISAMPLE", "BENT_NORMALS", "HI_Z", "MULTISAMPLE_PIXEL",
+    "PROXY_SKIP"
   ],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
@@ -22,6 +23,7 @@
       "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH", "RT_SHADOWS_HARD"] },
     { "shader": "impostor_gbuffer", "source": "impostor_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "impostor_depth", "source": "impostor_depth.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "impostor_depth", "source": "impostor_depth.frag.glsl", "stage": "frag", "defines": ["PROXY_SKIP"] },
     { "shader": "impostor_velocity", "source": "impostor_velocity.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "basic", "source": "basic.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "basic", "source": "basic.frag.glsl", "stage": "frag", "defines": ["WEIGHTED_BLEND"] },
@@ -119,6 +121,8 @@
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },
     { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": ["VERTEX_COLOR"] },
+    { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": ["PROXY_SKIP"] },
+    { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": ["VERTEX_COLOR", "PROXY_SKIP"] },
     { "shader": "shadow_transmittance", "source": "shadow_transmittance.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "shadow_transmittance", "source": "shadow_transmittance.frag.glsl", "stage": "frag", "defines": ["VERTEX_COLOR"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED"] },
@@ -236,8 +240,12 @@
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["OUTLINE", "VELOCITY", "INSTANCED", "POSED_INSTANCED"] },
     { "shader": "standard_gbuffer", "source": "standard_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "standard_gbuffer", "source": "standard_gbuffer.frag.glsl", "stage": "frag", "defines": ["REFLECTION_PREPASS"] },
+    { "shader": "standard_gbuffer", "source": "standard_gbuffer.frag.glsl", "stage": "frag",
+      "defines": ["REFLECTION_PREPASS", "PROXY_SKIP"] },
     { "shader": "physical_gbuffer", "source": "physical_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "physical_gbuffer", "source": "physical_gbuffer.frag.glsl", "stage": "frag", "defines": ["REFLECTION_PREPASS"] },
+    { "shader": "physical_gbuffer", "source": "physical_gbuffer.frag.glsl", "stage": "frag",
+      "defines": ["REFLECTION_PREPASS", "PROXY_SKIP"] },
     { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
     { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag",
@@ -272,7 +280,8 @@
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["INSTANCED", "SKINNED_U16"] },
     { "shader": "trace_sway", "source": "trace_sway.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "trace_refit", "source": "trace_refit.comp.glsl", "stage": "comp", "defines": [] },
-    { "shader": "sample_zero", "source": "sample_zero.frag.glsl", "stage": "frag", "defines": [] }
+    { "shader": "sample_zero", "source": "sample_zero.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "sample_zero", "source": "sample_zero.frag.glsl", "stage": "frag", "defines": ["PROXY_SKIP"] }
   ],
   "public_includes": [
     { "include": "constants.glsl", "stage": "frag", "defines": [] },
@@ -314,6 +323,7 @@
     { "include": "standard_shading.glsl", "stage": "frag",
       "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH", "RT_SHADOWS_HARD"] },
     { "include": "gbuffer_output.glsl", "stage": "frag", "defines": [] },
+    { "include": "proxy_skip_output.glsl", "stage": "frag", "defines": [] },
     { "include": "vertex_pull.glsl", "stage": "vert", "defines": [] },
     { "include": "view_clip.glsl", "stage": "vert", "defines": [] },
     { "include": "instance_effects.glsl", "stage": "vert", "defines": [] },
