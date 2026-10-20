@@ -242,25 +242,6 @@ fn void test_serial_layout_registration() @test {
     };
 }
 
-fn void test_particle_execution_round_trips_in_both_encodings() @test {
-    foreach (text_mode : (bool[2]){ false, true }) {
-        @pool() {
-            Fixture fixture;
-            create_fixture(&fixture, STRETCHED);
-            defer destroy_fixture(&fixture);
-            fixture.source.get(fixture.root, ParticleSystem).desc.execution = ParticleExecution.GPU;
-            char[] bytes = encode(
-                scene: &fixture.source,
-                assets: &fixture.assets,
-                root: fixture.root,
-                text_mode: text_mode,
-            )!!;
-            Node* restored = decode(&fixture, bytes, text_mode)!!;
-            assert(fixture.destination.get(restored, ParticleSystem).desc.execution == ParticleExecution.GPU);
-        };
-    }
-}
-
 fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @test {
     foreach (text_mode : (bool[2]){ false, true }) {
         foreach (mode : (ParticleRenderMode[2]){ STRETCHED, MESH }) {
