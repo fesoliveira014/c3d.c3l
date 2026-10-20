@@ -849,7 +849,7 @@ fn void mark_edited(Ground* ground, Entity tile, TexelRect added, TexelRect[] ed
  @param [&inout] assets
  @param [&in] ground : "Added by add_ground or add_ground_tiles."
  @param rise : "Height texel units added at the brush centre."
- @param edited : "One rectangle per Ground.terrain_nodes entry, grown to cover the texels the stamp changed in it."
+ @param edited : "One rectangle per Ground.terrain_nodes entry, grown over texels the stamp changed or a collider apron reads."
  @return "False when the position lies off the height map."
  @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
 *>

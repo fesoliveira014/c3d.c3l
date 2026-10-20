@@ -11,8 +11,14 @@ import std::math::vector;
 
 const char[*] HEIGHT_FIELD_V1_BINARY @private = $embed("fixtures/height_field_v1.bin");
 const char[*] HEIGHT_FIELD_V1_TEXT @private = $embed("fixtures/height_field_v1.json");
+const char[*] HEIGHT_FIELD_V2_BINARY @private = $embed("fixtures/height_field_v2.bin");
+const char[*] HEIGHT_FIELD_V2_TEXT @private = $embed("fixtures/height_field_v2.json");
+const char[*] HEIGHT_FIELD_WINDOWS_V1_BINARY @private = $embed("fixtures/height_field_windows_v1.bin");
+const char[*] HEIGHT_FIELD_WINDOWS_V1_TEXT @private = $embed("fixtures/height_field_windows_v1.json");
 const char[*] ANCHORED_BREAKABLE_V1_BINARY @private = $embed("fixtures/anchored_breakable_v1.bin");
 const char[*] ANCHORED_BREAKABLE_V1_TEXT @private = $embed("fixtures/anchored_breakable_v1.json");
+const char[*] ANCHORED_BREAKABLE_V2_BINARY @private = $embed("fixtures/anchored_breakable_v2.bin");
+const char[*] ANCHORED_BREAKABLE_V2_TEXT @private = $embed("fixtures/anchored_breakable_v2.json");
 
 const uint MAP_SAMPLES @private = 5; // four cells, two 2-cell windows along each axis
 const uint WINDOW_CELLS @private = 2;
@@ -25,6 +31,10 @@ fn TextureId add_map(Fixture* fixture) @private {
     TextureDesc desc = material::texture_2d_desc(MAP_SAMPLES, MAP_SAMPLES, R16_UINT);
     desc.generate_mips = false;
     return fixture.assets.add_texture(desc, ((char*)&samples)[:samples.len * ushort::size], "terrain_heights")!!;
+}
+
+fn void assert_no_neighbours(HeightField* field) @private {
+    foreach (&neighbour : field.neighbours) assert(!neighbour.texture.generation && !neighbour.material_indices.len);
 }
 
 fn void test_height_field_windows_round_trip_regenerates_the_windows_once() @test {
@@ -159,6 +169,7 @@ fn void test_height_field_v1_body_loads_with_a_zero_window() @test {
             HeightFieldWindow window = collider.height_field.window;
             assert(!window.x && !window.z && !window.count_x && !window.count_z);
             assert(collider.local.scale == (Vec3){ 2, 3, 4 } && collider.density == 7 && collider.filter.group == 5);
+            assert_no_neighbours(&collider.height_field);
         };
     }
 }
@@ -172,6 +183,63 @@ fn void test_anchored_breakable_v1_loads_through_its_v1_bodies() @test {
             serial::register_core_codecs()!!;
 
             char[] bytes = text_mode ? ANCHORED_BREAKABLE_V1_TEXT[..] : ANCHORED_BREAKABLE_V1_BINARY[..];
+            (void)decode(&fixture, bytes, text_mode)!!;
+            Node* owner = fixture.destination.find("physics")!!;
+            assert(fixture.destination.get(owner, Breakable).state.anchor_count() == 2);
+            assert(fixture.destination.count(PhysicsBody) == 2);
+        };
+    }
+}
+
+fn void test_height_field_v2_body_keeps_its_window() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+
+            char[] bytes = text_mode ? HEIGHT_FIELD_V2_TEXT[..] : HEIGHT_FIELD_V2_BINARY[..];
+            Node* root = decode(&fixture, bytes, text_mode)!!;
+            ColliderDesc collider = fixture.destination.get(root, PhysicsBody).colliders[0];
+            assert(collider.kind == HEIGHT_FIELD && collider.height_field.source == TEXTURE);
+            assert(c3d::same_id(collider.height_field.texture, fixture.texture));
+            HeightFieldWindow window = collider.height_field.window;
+            assert(!window.x && !window.z && window.count_x == 1 && window.count_z == 1);
+            assert(collider.local.scale == (Vec3){ 2, 3, 4 } && collider.density == 7 && collider.filter.group == 5);
+            assert_no_neighbours(&collider.height_field);
+        };
+    }
+}
+
+fn void test_height_field_windows_v1_owner_regenerates_its_windows() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+            TextureId map = add_map(&fixture);
+
+            char[] bytes = text_mode ? HEIGHT_FIELD_WINDOWS_V1_TEXT[..] : HEIGHT_FIELD_WINDOWS_V1_BINARY[..];
+            Node* root = decode(&fixture, bytes, text_mode)!!;
+            HeightFieldWindows* windows = fixture.destination.get(root, HeightFieldWindows);
+            assert(windows.window_cells == WINDOW_CELLS && windows.nodes.len == WINDOW_COUNT);
+            assert(c3d::same_id(windows.collider.height_field.texture, map));
+            assert(windows.collider.local.scale == (Vec3){ 2, 10, 2 });
+            assert_no_neighbours(&windows.collider.height_field);
+            assert(fixture.destination.count(PhysicsBody) == WINDOW_COUNT);
+        };
+    }
+}
+
+fn void test_anchored_breakable_v2_loads_through_its_v2_bodies() @test {
+    foreach (text_mode : (bool[2]){ false, true }) {
+        @pool() {
+            Fixture fixture;
+            create_fixture(&fixture);
+            defer destroy_fixture(&fixture);
+            serial::register_core_codecs()!!;
+
+            char[] bytes = text_mode ? ANCHORED_BREAKABLE_V2_TEXT[..] : ANCHORED_BREAKABLE_V2_BINARY[..];
             (void)decode(&fixture, bytes, text_mode)!!;
             Node* owner = fixture.destination.find("physics")!!;
             assert(fixture.destination.get(owner, Breakable).state.anchor_count() == 2);

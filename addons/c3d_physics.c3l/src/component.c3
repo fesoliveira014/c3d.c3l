@@ -156,6 +156,12 @@ fn PhysicsBody carve_physics_body(BlockCursor* cursor, BodyDesc body, ColliderDe
         copy.face_materials = carve_copy(cursor, source.face_materials);
         copy.material_indices = carve_copy(cursor, source.material_indices);
         copy.height_field.heights = carve_copy(cursor, source.height_field.heights);
+        foreach (side : HeightFieldSide::values) {
+            copy.height_field.neighbours[side.ordinal].material_indices = carve_copy(
+                cursor,
+                source.height_field.neighbours[side.ordinal].material_indices,
+            );
+        }
         if (cursor.base) copies[index] = copy;
     }
 

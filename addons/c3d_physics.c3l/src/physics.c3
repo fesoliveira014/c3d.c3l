@@ -102,6 +102,16 @@ enum HeightSource {
 }
 
 <*
+ Side of a height field, in HeightField.neighbours order, with TerrainNeighbour's offsets.
+*>
+enum HeightFieldSide : int (int x_offset, int z_offset) {
+    NEGATIVE_X { -1, 0 },
+    POSITIVE_X { 1, 0 },
+    NEGATIVE_Z { 0, -1 },
+    POSITIVE_Z { 0, 1 },
+}
+
+<*
  Category, mask and group box3d tests before two shapes may touch.
  Queries and mover casts test category and mask only; group filters shape pairs.
 *>
@@ -123,17 +133,27 @@ struct HeightFieldWindow {
 }
 
 <*
+ Height map continuing a texture height field past one side.
+*>
+struct HeightFieldNeighbour {
+    TextureId texture;          // empty where the map ends; the apron reads its second row or column in
+    char[]    material_indices; // one per neighbour cell; copied with the body, like ColliderDesc.material_indices
+}
+
+<*
  Row-major heights, x fastest; copied when cooked.
  TEXTURE reads mip 0's red channel (8-bit / 255, R16_UINT / 65535); counts come from the texture.
- A window needs a TEXTURE source of 8-bit or R16_UINT samples and quantizes over the full range 0 to 1.
+ A window or a neighbour needs 8-bit or R16_UINT TEXTURE samples and quantizes over the full range 0 to 1.
+ A neighbour matters where the field's map ends; window bodies take their ring cells from their own material indices.
 *>
 struct HeightField {
-    HeightSource      source;
-    float[]           heights;
-    uint              count_x;
-    uint              count_z;
-    TextureId         texture;
-    HeightFieldWindow window;
+    HeightSource                               source;
+    float[]                                    heights;
+    uint                                       count_x;
+    uint                                       count_z;
+    TextureId                                  texture;
+    HeightFieldWindow                          window;
+    HeightFieldNeighbour[HeightFieldSide::len] neighbours; // by HeightFieldSide ordinal
 }
 
 <*

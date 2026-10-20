@@ -36,10 +36,31 @@ const ushort FLAT_LEVEL @private = 6554; // a tenth of the range
 const uint  FLOAT_TEXEL_BYTES @private = 16;
 const float WIRE_TOLERANCE @private = 0.0001f; // metres; the wire holds float samples and the map 16-bit ones
 const uint  WINDOW_COUNT @private = 4;
+const uint  TILE_SAMPLES @private = 9; // 8 cells; the two tiles share their edge column
+const uint  SEAM_COLUMN @private = 8;
+const uint  EDIT_COLUMN @private = 7; // the column inside the first tile that the second tile's apron reads
+const ushort LOWERED_LEVEL @private = 0;
+const ushort SLOPE_BASE @private = 20000;
+const ushort SLOPE_STEP @private = 300; // a gentle climb, so the body keeps its contact across the seam
 
 enum Tiling @private {
     WHOLE,
     WINDOWS,
+    TILES,
+    TILE_WINDOWS,
+}
+
+enum Relief @private {
+    FLAT,
+    SLOPE_X,
+    SLOPE_Z,
+}
+
+struct Tiles @private {
+    TextureId first_map; // the tile at the lower coordinate
+    TextureId second_map;
+    Node*     first;
+    Node*     second;
 }
 
 struct Fixture @private {
@@ -77,8 +98,8 @@ fn void run_updates(Fixture* fixture, uint count) @private {
     fixture.scene.update_world();
 }
 
-fn TextureId add_map(Fixture* fixture, uint side, ushort[] samples) @private {
-    TextureDesc desc = material::texture_2d_desc(side, side, R16_UINT);
+fn TextureId add_map(Fixture* fixture, uint width, uint height, ushort[] samples) @private {
+    TextureDesc desc = material::texture_2d_desc(width, height, R16_UINT);
     desc.generate_mips = false;
     return fixture.assets.add_texture(desc, ((char*)samples.ptr)[:samples.len * ushort::size])!!;
 }
@@ -96,13 +117,13 @@ fn TextureId add_hill_map(Fixture* fixture) @private {
     }
     samples[0] = 0;
     samples[samples.len - 1] = 65535;
-    return add_map(fixture, MAP_SAMPLES, samples);
+    return add_map(fixture, MAP_SAMPLES, MAP_SAMPLES, samples);
 }
 
 fn TextureId add_flat_map(Fixture* fixture) @private {
     ushort[] samples = alloc::new_array(tmem, ushort, (sz)(FLAT_SAMPLES * FLAT_SAMPLES));
     samples[..] = FLAT_LEVEL;
-    return add_map(fixture, FLAT_SAMPLES, samples);
+    return add_map(fixture, FLAT_SAMPLES, FLAT_SAMPLES, samples);
 }
 
 fn ColliderDesc map_collider(TextureId texture) @private {
@@ -165,19 +186,106 @@ fn Node* add_capsule(Fixture* fixture, Vec3 position, Vec3 velocity) @private {
     return node;
 }
 
-fn void add_flat_terrain(Fixture* fixture, Tiling tiling) @private {
-    ColliderDesc collider = map_collider(add_flat_map(fixture));
+// A slope's far corners reach 0 and 65535, so a whole field's own range equals the shared one.
+fn ushort[] relief_heights(Relief relief) @private {
+    ushort[] heights = alloc::new_array(tmem, ushort, (sz)(FLAT_SAMPLES * FLAT_SAMPLES));
+    switch (relief) {
+        case FLAT:
+            heights[..] = FLAT_LEVEL;
+        case SLOPE_X:
+        case SLOPE_Z:
+            for (uint z = 0; z < FLAT_SAMPLES; z++) {
+                for (uint x = 0; x < FLAT_SAMPLES; x++) {
+                    uint along = relief == SLOPE_X ? x : z;
+                    heights[z * FLAT_SAMPLES + x] = (ushort)(SLOPE_BASE + along * SLOPE_STEP);
+                }
+            }
+            heights[0] = 0;
+            heights[heights.len - 1] = 65535;
+    }
+    return heights;
+}
+
+// Bodies roll along z over a slope along z, and along x otherwise.
+fn Vec3 relief_heading(Relief relief) @private => relief == SLOPE_Z ? (Vec3){ 0, 0, 1 } : (Vec3){ 1, 0, 0 };
+
+fn float relief_ground(Relief relief) @private {
+    float level = relief == FLAT ? (float)FLAT_LEVEL : (float)SLOPE_BASE + ROLL_START_X * SLOPE_STEP;
+    return level * HEIGHT_SCALE / 65535;
+}
+
+fn TextureId add_tile_map(Fixture* fixture, ushort[] heights, uint first_line, bool along_z) @private {
+    uint width = along_z ? FLAT_SAMPLES : TILE_SAMPLES;
+    uint height = along_z ? TILE_SAMPLES : FLAT_SAMPLES;
+    ushort[] tile = alloc::new_array(tmem, ushort, (sz)(width * height));
+    for (uint z = 0; z < height; z++) {
+        for (uint x = 0; x < width; x++) {
+            uint source_x = along_z ? x : first_line + x;
+            uint source_z = along_z ? first_line + z : z;
+            tile[z * width + x] = heights[source_z * FLAT_SAMPLES + source_x];
+        }
+    }
+    return add_map(fixture, width, height, tile);
+}
+
+fn Node* add_tile(Fixture* fixture, ColliderDesc* collider, Vec3 position, bool windowed) @private {
+    Node* terrain = add_terrain_node(fixture);
+    terrain.local.position = position;
+    fixture.scene.update_world();
+
+    if (windowed) {
+        physics::add_height_field_windows(
+            scene:        &fixture.scene,
+            assets:       &fixture.assets,
+            node:         terrain.id,
+            collider:     collider,
+            window_cells: FLAT_WINDOW_CELLS,
+        )!!;
+    } else {
+        fixture.physics.add_body(terrain, physics::default_body_desc(STATIC), collider[:1])!!;
+    }
+    return terrain;
+}
+
+// Two tiles cut from the heights share their edge line and are each other's neighbour.
+fn Tiles add_tiles(Fixture* fixture, ushort[] heights, bool windowed, bool along_z = false) @private {
+    Tiles tiles = {
+        .first_map  = add_tile_map(fixture, heights, 0, along_z),
+        .second_map = add_tile_map(fixture, heights, SEAM_COLUMN, along_z),
+    };
+    HeightFieldSide toward_second = along_z ? HeightFieldSide.POSITIVE_Z : HeightFieldSide.POSITIVE_X;
+    HeightFieldSide toward_first = along_z ? HeightFieldSide.NEGATIVE_Z : HeightFieldSide.NEGATIVE_X;
+    ColliderDesc first = map_collider(tiles.first_map);
+    first.height_field.neighbours[toward_second.ordinal].texture = tiles.second_map;
+    ColliderDesc second = map_collider(tiles.second_map);
+    second.height_field.neighbours[toward_first.ordinal].texture = tiles.first_map;
+
+    Vec3 offset = along_z ? (Vec3){ 0, 0, SEAM_X } : (Vec3){ SEAM_X, 0, 0 };
+    tiles.first = add_tile(fixture, &first, {}, windowed);
+    tiles.second = add_tile(fixture, &second, offset, windowed);
+    fixture.physics.update(0);
+    return tiles;
+}
+
+fn void add_terrain(Fixture* fixture, Tiling tiling, Relief relief) @private {
+    ushort[] heights = relief_heights(relief);
+    ColliderDesc collider = map_collider(add_map(fixture, FLAT_SAMPLES, FLAT_SAMPLES, heights));
     switch (tiling) {
         case WHOLE:
             Node* terrain = add_terrain_node(fixture);
             fixture.physics.add_body(terrain, physics::default_body_desc(STATIC), (&collider)[:1])!!;
         case WINDOWS:
             add_window_terrain(fixture, &collider, FLAT_WINDOW_CELLS);
+        case TILES:
+        case TILE_WINDOWS:
+            (void)add_tiles(fixture, heights, tiling == TILE_WINDOWS, relief == SLOPE_Z);
     }
 }
 
-fn Crossing measure_crossing(Fixture* fixture, Node* body) @private {
+fn Crossing measure_crossing(Fixture* fixture, Node* body, Vec3 heading) @private {
     run_updates(fixture, ROLL_SETTLE_UPDATES);
+
+    Vec3 sideways = { heading.z, 0, heading.x };
 
     float resting_height = body.world_position().y;
     float slowest = ROLL_SPEED;
@@ -186,12 +294,13 @@ fn Crossing measure_crossing(Fixture* fixture, Node* body) @private {
     for (uint update = 0; update < ROLL_UPDATES; update++) {
         run_updates(fixture, 1);
         Vec3 velocity = fixture.physics.body_state(body).linear_velocity;
-        slowest = math::min(slowest, velocity.x);
+        float along = velocity.dot(heading);
+        slowest = math::min(slowest, along);
         highest = math::max(highest, body.world_position().y);
-        heading_drift = math::max(heading_drift, math::abs(math::atan2(velocity.z, velocity.x)));
+        heading_drift = math::max(heading_drift, math::abs(math::atan2(velocity.dot(sideways), along)));
     }
 
-    assert(body.world_position().x > SEAM_X + SEAM_CLEARANCE);
+    assert(body.world_position().dot(heading) > SEAM_X + SEAM_CLEARANCE);
     return {
         .speed_loss    = ROLL_SPEED - slowest,
         .rise          = highest - resting_height,
@@ -199,41 +308,44 @@ fn Crossing measure_crossing(Fixture* fixture, Node* body) @private {
     };
 }
 
-fn Crossing roll_sphere_across_the_seam(Tiling tiling) @private {
+fn Crossing roll_sphere_across_the_seam(Tiling tiling, Relief relief = FLAT) @private {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
 
-    add_flat_terrain(&fixture, tiling);
-    float ground = FLAT_LEVEL * HEIGHT_SCALE / 65535;
+    add_terrain(&fixture, tiling, relief);
+    Vec3 heading = relief_heading(relief);
     Node* sphere = add_sphere(
         fixture:  &fixture,
-        position: { ROLL_START_X, ground + SPHERE_RADIUS, ROLL_START_Z },
-        velocity: { ROLL_SPEED, 0, 0 },
-        spin:     { 0, 0, -ROLL_SPEED / SPHERE_RADIUS },
+        position: { ROLL_START_X, relief_ground(relief) + SPHERE_RADIUS, ROLL_START_Z },
+        velocity: heading * ROLL_SPEED,
+        spin:     (Vec3){ heading.z, 0, -heading.x } * (ROLL_SPEED / SPHERE_RADIUS),
     );
-    return measure_crossing(&fixture, sphere);
+    return measure_crossing(&fixture, sphere, heading);
 }
 
-fn Crossing slide_capsule_across_the_seam(Tiling tiling) @private {
+fn Crossing slide_capsule_over(Fixture* fixture, float ground, Vec3 heading) @private {
+    Node* capsule = add_capsule(
+        fixture,
+        { ROLL_START_X, ground + CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS, ROLL_START_Z },
+        heading * ROLL_SPEED,
+    );
+    return measure_crossing(fixture, capsule, heading);
+}
+
+fn Crossing slide_capsule_across_the_seam(Tiling tiling, Relief relief = FLAT) @private {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
 
-    add_flat_terrain(&fixture, tiling);
-    float ground = FLAT_LEVEL * HEIGHT_SCALE / 65535;
-    Node* capsule = add_capsule(
-        &fixture,
-        { ROLL_START_X, ground + CAPSULE_HALF_HEIGHT + CAPSULE_RADIUS, ROLL_START_Z },
-        { ROLL_SPEED, 0, 0 },
-    );
-    return measure_crossing(&fixture, capsule);
+    add_terrain(&fixture, tiling, relief);
+    return slide_capsule_over(&fixture, relief_ground(relief), relief_heading(relief));
 }
 
-fn void assert_crosses_like_the_whole_field(Crossing windows, Crossing whole) @private {
-    assert(windows.speed_loss <= whole.speed_loss + SPEED_EPSILON);
-    assert(windows.rise <= whole.rise + RISE_EPSILON);
-    assert(windows.heading_drift <= whole.heading_drift + HEADING_EPSILON);
+fn bool crosses_like_the_whole_field(Crossing crossing, Crossing whole) @private {
+    return crossing.speed_loss <= whole.speed_loss + SPEED_EPSILON
+      && crossing.rise <= whole.rise + RISE_EPSILON
+      && crossing.heading_drift <= whole.heading_drift + HEADING_EPSILON;
 }
 
 fn fault add_body_fault(Fixture* fixture, ColliderDesc collider) @private {
@@ -397,14 +509,56 @@ fn void test_sphere_rolls_across_a_window_seam() @test {
     Crossing whole = roll_sphere_across_the_seam(WHOLE);
     Crossing windows = roll_sphere_across_the_seam(WINDOWS);
 
-    assert_crosses_like_the_whole_field(windows, whole);
+    assert(crosses_like_the_whole_field(windows, whole));
 }
 
 fn void test_capsule_slides_across_a_window_seam() @test {
     Crossing whole = slide_capsule_across_the_seam(WHOLE);
     Crossing windows = slide_capsule_across_the_seam(WINDOWS);
 
-    assert_crosses_like_the_whole_field(windows, whole);
+    assert(crosses_like_the_whole_field(windows, whole));
+}
+
+// Only a slope tells the neighbour's second row or column from its first.
+fn void test_bodies_cross_a_tile_seam_like_the_whole_field() @test {
+    foreach (relief : (Relief[2]){ SLOPE_X, SLOPE_Z }) {
+        Crossing whole_sphere = roll_sphere_across_the_seam(WHOLE, relief);
+        Crossing whole_capsule = slide_capsule_across_the_seam(WHOLE, relief);
+        foreach (tiling : (Tiling[2]){ TILES, TILE_WINDOWS }) {
+            assert(crosses_like_the_whole_field(roll_sphere_across_the_seam(tiling, relief), whole_sphere));
+            assert(crosses_like_the_whole_field(slide_capsule_across_the_seam(tiling, relief), whole_capsule));
+        }
+    }
+}
+
+// Column 7 starts lowered, so the seam is convex; the edit flattens it.
+fn Crossing slide_capsule_after_a_seam_edit(bool mark_neighbour) @private {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    ushort[] heights = relief_heights(FLAT);
+    for (uint z = 0; z < FLAT_SAMPLES; z++) heights[z * FLAT_SAMPLES + EDIT_COLUMN] = LOWERED_LEVEL;
+    Tiles tiles = add_tiles(&fixture, heights, true);
+
+    ushort* texels = (ushort*)fixture.assets.texture(tiles.first_map).pixels.ptr;
+    for (uint z = 0; z < FLAT_SAMPLES; z++) texels[z * TILE_SAMPLES + EDIT_COLUMN] = FLAT_LEVEL;
+    fixture.assets.mark_texture_dirty(tiles.first_map);
+
+    SampleRect edit = { .x = EDIT_COLUMN, .z = 0, .columns = 1, .rows = FLAT_SAMPLES };
+    SampleRect facing_edge = { .x = 0, .z = 0, .columns = 1, .rows = FLAT_SAMPLES };
+    physics::mark_height_field_windows_changed(&fixture.scene, tiles.first.id, edit)!!;
+    if (mark_neighbour) physics::mark_height_field_windows_changed(&fixture.scene, tiles.second.id, facing_edge)!!;
+    fixture.physics.update(0);
+
+    return slide_capsule_over(&fixture, relief_ground(FLAT), relief_heading(FLAT));
+}
+
+fn void test_neighbour_edit_recooks_the_seam_once_marked() @test {
+    Crossing whole = slide_capsule_across_the_seam(WHOLE);
+
+    assert(crosses_like_the_whole_field(slide_capsule_after_a_seam_edit(mark_neighbour: true), whole));
+    assert(!crosses_like_the_whole_field(slide_capsule_after_a_seam_edit(mark_neighbour: false), whole));
 }
 
 fn void test_windowed_field_validation() @test {

@@ -247,8 +247,7 @@ fn SnapshotHandle? acquire_height_field(
         case TEXTURE:
             return acquire_height_map(
                 table: table,
-                texture: field.texture,
-                window: field.window,
+                field: field,
                 scale: scale,
                 material_indices: material_indices,
                 query: query,
@@ -257,45 +256,75 @@ fn SnapshotHandle? acquire_height_field(
 }
 
 // Texture sources share one slot per texture revision, window, scale and material indices, like asset meshes.
+// Neighbour maps join the key, so an edit beside the seam cooks a new entry.
 // Called inside a caller's @pool: the samples live in tmem until box3d copies them.
 fn SnapshotHandle? acquire_height_map(
     SnapshotTable* table,
-    TextureId texture,
-    HeightFieldWindow window,
+    HeightField field,
     Vec3 scale,
     char[] material_indices,
     bool query,
 ) @local {
-    if (query) check_height_map(table.assets, texture)!;
+    AssetStore* assets = table.assets;
+    char neighbour_mask = neighbour_sides(field.neighbours[..]);
+    if (query) {
+        check_height_map(assets, field.texture)!;
+        neighbour_mask = check_height_neighbours(assets, &field)!;
+    }
 
-    HeightGrid grid = height_grid(table.assets.texture(texture).desc, window)!;
+    TextureDesc source = assets.texture(field.texture).desc;
+    HeightGrid grid = height_grid(source, field.window, neighbour_mask)!;
+    if (query && material_indices.len && material_indices.len != grid.authored_cell_count(field.window)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    char[] cell_materials = material_indices;
+    if (window_covers_map(field.window) && neighbour_mask) {
+        MapCells map = { .x = source.width - 1, .z = source.height - 1 };
+        cell_materials = ringed_materials(
+            assets:     assets,
+            indices:    material_indices,
+            map:        map,
+            window:     { .count_x = map.x, .count_z = map.z },
+            neighbours: field.neighbours[..],
+        );
+    }
     if (query) {
         check_collision_height_grid(
             count_x: grid.samples_x,
             count_z: grid.samples_z,
             sample_count: grid.padded_sample_count(),
-            material_count: material_indices.len,
+            material_count: cell_materials.len,
             padding: grid.padding(),
         )!;
     }
 
-    SnapshotSource[1] sources = { current_texture_source(table, texture) };
-    ulong content = material_indices.len ? fnv64a::hash(material_indices) : 0;
+    SnapshotSource[1 + HeightFieldSide::len] sources;
+    usz source_count = 1;
+    sources[0] = current_texture_source(table, field.texture);
+    if (neighbour_mask) {
+        source_count = sources.len;
+        foreach (side : HeightFieldSide::values) {
+            TextureId neighbour = field.neighbours[side.ordinal].texture;
+            if (neighbour.generation) sources[1 + side.ordinal] = current_texture_source(table, neighbour);
+        }
+    }
+    ulong content = cell_materials.len ? fnv64a::hash(cell_materials) : 0;
     SnapshotKey key = {
         .kind    = HEIGHT_FIELD,
         .content = content,
         .scale   = scale,
-        .window  = window,
-        .sources = sources[..],
+        .window  = field.window,
+        .sources = sources[:source_count],
     };
     foreach (usz index, &slot : table.slots) {
         if (matches(slot, key)) return hold(table, index);
     }
 
-    TextureAsset* record = table.assets.texture(texture);
-    if (!record.pixels.len) return SOURCE_UNAVAILABLE~;
+    if (!pixels_present(assets, &field, grid)) return SOURCE_UNAVAILABLE~;
+
     HeightField samples = {
-        .heights = height_map_samples(record, grid, tmem),
+        .heights = height_map_samples(assets, &field, grid, tmem),
         .count_x = grid.samples_x,
         .count_z = grid.samples_z,
     };
@@ -313,18 +342,29 @@ fn SnapshotHandle? acquire_height_map(
         table: table,
         field: samples,
         scale: scale,
-        material_indices: material_indices,
-        full_range: !window_covers_map(window),
+        material_indices: cell_materials,
+        full_range: !window_covers_map(field.window) || grid.neighbour_sides != 0,
         apron_sides: grid.apron_sides,
     )!;
     snapshot.content = content;
     snapshot.scale = scale;
-    snapshot.window = window;
-    snapshot.sources = copy_sources(table.allocator, sources[..]);
+    snapshot.window = field.window;
+    snapshot.sources = copy_sources(table.allocator, key.sources);
     return occupy(table, index, snapshot);
 }
 
-// Whole fields quantize over their own range; windows share one, so neighbours meet exactly and an edit leaves the others alone.
+// A cooked map may have released its pixels; a rebuild waits for them.
+fn bool pixels_present(AssetStore* assets, HeightField* field, HeightGrid grid) @local {
+    if (!assets.texture(field.texture).pixels.len) return false;
+
+    foreach (side : HeightFieldSide::values) {
+        if (!(grid.neighbour_sides & apron_bit(side))) continue;
+        if (!assets.texture(field.neighbours[side.ordinal].texture).pixels.len) return false;
+    }
+    return true;
+}
+
+// Whole fields quantize over their own range; windows and fields with neighbours share one, so tiles meet exactly.
 // With apron sides the heights and cell materials carry one more ring of the neighbours' samples around the field's own.
 fn CollisionSnapshot? cook_height_field(
     SnapshotTable* table,
@@ -438,7 +478,10 @@ fn ulong body_revision_sum(PhysicsWorld* world, PhysicsBody* physics_body) @priv
                 }
             case HEIGHT_FIELD:
                 HeightField field = collider.height_field;
-                if (field.source == TEXTURE) sum += texture_revision_or_zero(table, field.texture);
+                if (field.source != TEXTURE) break;
+
+                sum += texture_revision_or_zero(table, field.texture);
+                foreach (&neighbour : field.neighbours) sum += texture_revision_or_zero(table, neighbour.texture);
             case SPHERE:
             case CAPSULE:
             case BOX:
@@ -561,8 +604,9 @@ fn usz? height_texel_bytes(PixelFormat format) @private {
     }
 }
 
-// Padding past a map edge repeats the border sample; the cook never reads it.
-fn float[] height_map_samples(TextureAsset* texture, HeightGrid grid, Allocator allocator) @local {
+// Padding past a map edge repeats the border sample unless a neighbour continues it; the cook never reads the corners.
+fn float[] height_map_samples(AssetStore* assets, HeightField* field, HeightGrid grid, Allocator allocator) @local {
+    TextureAsset* texture = assets.texture(field.texture);
     uint padding = grid.padding();
     usz columns = (usz)(grid.samples_x + 2 * padding);
     usz column_before = padded_map_index(grid.x, 0, padding, texture.desc.width);
@@ -596,7 +640,55 @@ fn float[] height_map_samples(TextureAsset* texture, HeightGrid grid, Allocator 
             target:       target + padding + grid.samples_x,
         );
     }
+
+    foreach (side : HeightFieldSide::values) {
+        if (!(grid.neighbour_sides & apron_bit(side))) continue;
+
+        read_apron_samples(
+            samples: samples,
+            grid:    grid,
+            side:    side,
+            beyond:  assets.texture(field.neighbours[side.ordinal].texture),
+        );
+    }
     return samples;
+}
+
+// The neighbour's second row or column in: its first duplicates the field's edge.
+fn void read_apron_samples(
+    float[] samples,
+    HeightGrid grid,
+    HeightFieldSide side,
+    TextureAsset* beyond,
+) @local {
+    uint padding = grid.padding();
+    usz columns = (usz)(grid.samples_x + 2 * padding);
+    switch (side) {
+        case NEGATIVE_X:
+        case POSITIVE_X:
+            usz beyond_column = side == NEGATIVE_X ? (usz)beyond.desc.width - 2 : 1;
+            usz apron_column = side == NEGATIVE_X ? 0 : (usz)(padding + grid.samples_x);
+            for (uint row = 0; row < grid.samples_z; row++) {
+                read_height_texels(
+                    texture:      beyond,
+                    row:          (usz)(grid.z + row),
+                    first_column: beyond_column,
+                    count:        1,
+                    target:       samples.ptr + (usz)(row + padding) * columns + apron_column,
+                );
+            }
+        case NEGATIVE_Z:
+        case POSITIVE_Z:
+            usz beyond_row = side == NEGATIVE_Z ? (usz)beyond.desc.height - 2 : 1;
+            usz apron_row = side == NEGATIVE_Z ? 0 : (usz)(padding + grid.samples_z);
+            read_height_texels(
+                texture:      beyond,
+                row:          beyond_row,
+                first_column: grid.x,
+                count:        grid.samples_x,
+                target:       samples.ptr + apron_row * columns + padding,
+            );
+    }
 }
 
 // Red channel only; the store allocator aligns pixels for the ushort and float views.
