@@ -792,7 +792,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   [Morphing](#morphing) removes both. The velocity forms ignore per-instance previous matrices: a chunk's shape
   comes from its record, so only node motion, the camera and the morph produce velocity.
 - The velocity pass redraws every chunk on temporal views. A frame after a bounds change uploads 128 B per node
-  and, on temporal views, 64 B per node of previous matrices the stage ignores: up to 170 KiB and 85 KiB at 4097
+  and, on temporal views, 48 B per node of previous matrices the stage ignores: up to 170 KiB and 64 KiB at 4097
   texels.
 - Normals at a map border with no linked neighbour use one-sided differences. Between linked tiles they are central
   differences through the [border ring](#tile-sets), as current as its last refresh.

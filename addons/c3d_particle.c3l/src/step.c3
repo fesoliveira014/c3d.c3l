@@ -93,6 +93,7 @@ fn void step(
         }
     }
     collide(system, seconds);
+    record_trails(system, seconds);
     system.event_due = system.event_count;
 }
 
@@ -189,6 +190,7 @@ fn void emit_particle(
     system.spin[index] = sample_range(random, desc.spin);
     system.seed[index] = random.next_int();
     system.spawn[index] = system.next_spawn++;
+    reset_trail(system, index);
     raise_event(system, index, { .trigger = ParticleTrigger.BIRTH });
 }
 
@@ -245,6 +247,7 @@ fn void remove_particle(ParticleSystem* system, uint index) @private {
     system.spin[index] = system.spin[last];
     system.seed[index] = system.seed[last];
     system.spawn[index] = system.spawn[last];
+    copy_trail(system, index, last);
 }
 
 fn void swap_particles(ParticleSystem* system, uint first, uint second) @private {
@@ -257,6 +260,7 @@ fn void swap_particles(ParticleSystem* system, uint first, uint second) @private
     @swap(system.spin[first], system.spin[second]);
     @swap(system.seed[first], system.seed[second]);
     @swap(system.spawn[first], system.spawn[second]);
+    swap_trails(system, first, second);
 }
 
 fn uint median_spawn_index(ParticleSystem* system, uint low, uint high) @private {

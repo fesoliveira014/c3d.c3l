@@ -55,6 +55,12 @@ const float EMBER_FREQUENCY @local = 1.5f; // lattice cells per metre
 const uint EMBER_OCTAVES @local = 3;
 const uint EMBER_PERIOD @local = 32; // cells; the pattern repeats every period / frequency metres
 const Vec3 EMBER_SCROLL @local = { 0, 0.4f, 0 }; // metres per second; the pattern climbs with the embers
+const uint TRAIL_POINTS @local = 24;
+const float TRAIL_INTERVAL @local = STEP_SECONDS; // one point per rendered frame at the fixed benchmark step
+const float TRAIL_LIFETIME @local = 0.4f; // seconds; about the span the 24 points cover at the fixed step
+const float TRAIL_WIDTH @local = 0.05f; // metres at the live position
+const uint STREAK_ACROSS @local = 32;
+const uint STREAK_ALONG @local = 4;
 const float PUFF_BASE_RADIUS @local = 10; // texels at the first frame
 const float PUFF_GROWTH @local = 8; // texels gained by the last frame
 const float PUFF_EDGE_WARP @local = 0.35f; // share of the radius the lobes move the edge
@@ -85,6 +91,7 @@ struct Options @local {
     bool smoke;
     bool lit_smoke;
     bool embers;
+    bool trails;
     bool collide;
     bool drop_oldest;
     bool limit_frames;
@@ -110,6 +117,7 @@ struct Demo @local {
     MaterialId sparks;
     MaterialId smoke_sheet;
     MaterialId embers_material;
+    MaterialId trail_material;
     ParticleMaterialParams smoke_params;
     ParticleMaterialParams spark_params;
 }
@@ -135,6 +143,20 @@ fn ParticleTurbulence ember_turbulence() @local {
     };
 }
 
+fn ParticleTrail spark_trail(MaterialId material) @local {
+    ParticleTrail trail = {
+        .max_points = TRAIL_POINTS,
+        .point_interval = TRAIL_INTERVAL,
+        .lifetime = TRAIL_LIFETIME,
+        .width = TRAIL_WIDTH,
+        .material = material,
+    };
+    trail.width_over_trail.values = { 1, 0.85f, 0.7f, 0.55f, 0.4f, 0.25f, 0.1f, 0 };
+    float[8] fade = { 1, 0.8f, 0.6f, 0.45f, 0.3f, 0.2f, 0.1f, 0 };
+    foreach (index, alpha : fade) trail.color_over_trail.values[index] = { 1, 1, 1, alpha };
+    return trail;
+}
+
 fn double elapsed_ms(time::Clock started) @local {
     return (double)(long)started.to_now() / NANOSECONDS_PER_MILLISECOND;
 }
@@ -153,6 +175,23 @@ fn TextureId? add_sprite(AssetStore* assets) @local {
     }
     return assets.add_texture(
         material::texture_2d_desc(SPRITE_SIZE, SPRITE_SIZE, PixelFormat.RGBA8_UNORM),
+        pixels[..],
+    );
+}
+
+fn TextureId? add_streak(AssetStore* assets) @local {
+    char[STREAK_ACROSS * STREAK_ALONG * SPRITE_CHANNELS] pixels;
+    for (uint y = 0; y < STREAK_ALONG; y++) {
+        for (uint x = 0; x < STREAK_ACROSS; x++) {
+            float across = 2 * ((float)x + 0.5f) / STREAK_ACROSS - 1;
+            float coverage = 1 - across * across;
+            uint offset = (y * STREAK_ACROSS + x) * SPRITE_CHANNELS;
+            pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = char::max;
+            pixels[offset + 3] = (char)(coverage * coverage * char::max);
+        }
+    }
+    return assets.add_texture(
+        material::texture_2d_desc(STREAK_ACROSS, STREAK_ALONG, PixelFormat.RGBA8_UNORM),
         pixels[..],
     );
 }
@@ -303,6 +342,16 @@ fn Demo? create_demo(Options options) @local {
             blend: BlendMode.ADDITIVE,
         )!;
     }
+    if (options.trails) {
+        TextureId streak = add_streak(&demo.assets)!;
+        demo.trail_material = particle::add_particle_material(
+            assets: &demo.assets,
+            shader: shader,
+            params: { .color = { 1, 0.55f, 0.15f, 1 }, .soft_distance = 0.05f },
+            map: material::texture_slot(streak),
+            blend: BlendMode.ADDITIVE,
+        )!;
+    }
     GeometryId box;
     GeometryId floor;
     @pool() {
@@ -409,6 +458,7 @@ fn Demo? create_demo(Options options) @local {
             .inherit_velocity = 0.1f,
         };
     }
+    if (options.trails) sparks.trail = spark_trail(demo.trail_material);
     if (options.collide) {
         sparks.collision.response = BOUNCE;
         sparks.collision.restitution = 0.45f;
@@ -674,13 +724,19 @@ fn void? run_benchmark(Options options) @local {
     return renderer.log.check_validation();
 }
 
-fn void? run_stress(uint frames, ParticleSaturation saturation, bool turbulent) @local {
+fn void? run_stress(
+    uint frames,
+    ParticleSaturation saturation,
+    bool turbulent,
+    bool trailed,
+) @local {
     run_stress_segment(
         segment: "stress",
         frames: frames,
         saturation: saturation,
         rate: 0,
         turbulent: turbulent,
+        trailed: trailed,
     )!;
     run_stress_segment(
         segment: "saturated",
@@ -688,6 +744,7 @@ fn void? run_stress(uint frames, ParticleSaturation saturation, bool turbulent) 
         saturation: saturation,
         rate: STRESS_CAPACITY * SATURATED_REQUEST_FRACTION / STEP_SECONDS,
         turbulent: turbulent,
+        trailed: trailed,
     )!;
 }
 
@@ -697,8 +754,9 @@ fn void? run_stress_segment(
     ParticleSaturation saturation,
     float rate,
     bool turbulent,
+    bool trailed,
 ) @local {
-    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    Scene scene = scene::create_scene(mem, { .max_nodes = 3 });
     defer scene::destroy_scene(&scene);
     particle::register_particles(&scene)!;
     ParticleSystemDesc desc = particle::default_particle_system_desc();
@@ -719,6 +777,7 @@ fn void? run_stress_segment(
     desc.stretch = 0.1f;
     desc.size_over_life.values = { 1, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f };
     if (turbulent) desc.turbulence = ember_turbulence();
+    if (trailed) desc.trail = spark_trail({});
     Node* emitter = scene.add_particle_system(desc)!;
     ParticleSystem* system = scene.get(emitter, ParticleSystem);
     system.emit_burst(STRESS_CAPACITY);
@@ -728,9 +787,20 @@ fn void? run_stress_segment(
     BillboardBatch* batch = scene.get(child, BillboardBatch);
     BillboardGpu[] records = mem::new_array(BillboardGpu, STRESS_CAPACITY);
     defer free(records);
+    Node* trail_node;
+    RibbonBatch* ribbons;
+    RibbonPointGpu[] ribbon_records;
+    if (trailed) {
+        trail_node = scene.node(system.trail_node);
+        ribbons = scene.get(trail_node, RibbonBatch);
+        ribbon_records = mem::new_array(RibbonPointGpu, ribbons.points.len + 1);
+    }
+    defer free(ribbon_records);
     double update_ms;
     double bounds_ms;
     double pack_ms;
+    double ribbon_bounds_ms;
+    double ribbon_pack_ms;
     double checksum;
     for (ulong frame = 0; frame < (ulong)WARMUP_FRAMES + frames; frame++) {
         time::Clock started = clock::now();
@@ -743,10 +813,24 @@ fn void? run_stress_segment(
         render::pack_billboard_records(records, child.world, batch);
         double packed = elapsed_ms(started);
         checksum += (double)(bounds.max.x + records[frame % STRESS_CAPACITY].position_width.x);
+        double ribbon_bounded;
+        double ribbon_packed;
+        if (trailed) {
+            started = clock::now();
+            Aabb ribbon_bounds = spatial::ribbon_world_bounds(trail_node, ribbons);
+            ribbon_bounded = elapsed_ms(started);
+            started = clock::now();
+            render::pack_ribbon_records(ribbon_records, trail_node.world, ribbons);
+            ribbon_packed = elapsed_ms(started);
+            RibbonPointGpu sampled = ribbon_records[frame % (ulong)ribbon_records.len];
+            checksum += (double)(ribbon_bounds.max.x + sampled.position_width.x);
+        }
         if (frame >= WARMUP_FRAMES) {
             update_ms += updated;
             bounds_ms += bounded;
             pack_ms += packed;
+            ribbon_bounds_ms += ribbon_bounded;
+            ribbon_pack_ms += ribbon_packed;
         }
     }
     io::printfn("%s,frames,%d", segment, frames);
@@ -758,6 +842,12 @@ fn void? run_stress_segment(
     io::printfn("%s,update_ms,%.6f", segment, update_ms / frames);
     io::printfn("%s,billboard_bounds_ms,%.6f", segment, bounds_ms / frames);
     io::printfn("%s,billboard_pack_ms,%.6f", segment, pack_ms / frames);
+    io::printfn("%s,trail_points,%d", segment, trailed ? desc.trail.max_points : 0);
+    if (trailed) {
+        io::printfn("%s,trail_draw_count,%d", segment, ribbons.count);
+        io::printfn("%s,ribbon_bounds_ms,%.6f", segment, ribbon_bounds_ms / frames);
+        io::printfn("%s,ribbon_pack_ms,%.6f", segment, ribbon_pack_ms / frames);
+    }
     io::printfn("%s,checksum,%.6f", segment, checksum);
 }
 
@@ -951,6 +1041,7 @@ fn Options? parse_options(String[] args) @local {
             case "--sparks": options.sparks = true;
             case "--smoke": options.smoke = true;
             case "--embers": options.embers = true;
+            case "--trails": options.trails = true;
             case "--lit-smoke": options.lit_smoke = true;
             case "--lighting":
                 options.lighting = parse_lighting(option_value(args, &index)!)!;
@@ -968,7 +1059,8 @@ fn Options? parse_options(String[] args) @local {
     bool scene_effect = options.sparks || options.smoke || options.collide || options.lit_smoke;
     bool lit_option = options.single_lighting || options.normal != ParticleNormal.SPHERICAL;
     if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
-        || (options.lit_smoke && (options.sparks || options.smoke || options.embers || options.collide))
+        || (options.lit_smoke && (options.sparks || options.smoke || options.embers || options.trails
+            || options.collide))
         || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;
@@ -981,13 +1073,14 @@ fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--smoke] [--embers] [--collide]");
-        io::eprintn("    [--lit-smoke [--lighting name] [--normal name]] [--frames count] [--capture-rgba path].");
+        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--smoke] [--embers] [--trails]");
+        io::eprintn("    [--collide] [--lit-smoke [--lighting name] [--normal name]]");
+        io::eprintn("    [--frames count] [--capture-rgba path].");
         return 1;
     }
     Options options = parsed;
     ParticleSaturation saturation = options.drop_oldest ? ParticleSaturation.DROP_OLDEST : ParticleSaturation.REFUSE;
-    if (catch excuse = (options.stress ? run_stress(options.frames, saturation, options.embers)
+    if (catch excuse = (options.stress ? run_stress(options.frames, saturation, options.embers, options.trails)
         : options.benchmark ? run_benchmark(options) : run_interactive(options))) {
         io::eprintfn("Particles failed: %s", excuse);
         return 1;
