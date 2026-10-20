@@ -556,6 +556,24 @@ fn void test_top_level_reuse_needs_unchanged_rows() @test {
     assert(!reusable(&trace, &rt, baseline[..]));
 }
 
+fn void test_trace_rows_compare_ignores_the_pose_serial_alone() @test {
+    TraceInstance[2] baseline = { posed_row(0), posed_row(1, 4) };
+    TraceInstance[2] records = baseline;
+    assert(render::compare_trace_rows(baseline[..], records[..]) == render::TraceRowChange.NONE);
+
+    records[1].pose_serial = 5;
+    assert(render::compare_trace_rows(baseline[..], records[..]) == render::TraceRowChange.POSES);
+
+    records[0].pose_serial = 1;
+    records[1] = baseline[1];
+    records[1].bounds.max.x += 1;
+    assert(render::compare_trace_rows(baseline[..], records[..]) == render::TraceRowChange.ROWS);
+
+    records = baseline;
+    records[1].nodes = (gpu::GpuAddress)0x400;
+    assert(render::compare_trace_rows(baseline[..], records[..]) == render::TraceRowChange.ROWS);
+}
+
 fn void test_trace_collection_changes_with_the_scene() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);

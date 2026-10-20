@@ -77,6 +77,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Trace nodes: %u", stats.trace_nodes);
     imgui::text("Trace skipped: %u", stats.trace_skipped);
     imgui::text("Trace build: %.3f ms", (double)stats.trace_build_ms);
+    imgui::text("Trace top-level writes: %u", stats.trace_top_level_writes);
     imgui::text("BLAS builds: %u", stats.blas_builds);
     imgui::text("TLAS builds: %u", stats.tlas_builds);
     imgui::text("Path trace samples: %u", stats.path_trace_samples);
