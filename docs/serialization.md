@@ -377,12 +377,14 @@ schema export and reproducible CPU-only or Vulkan runs.
 
 Select `c3d_serial`, enable `C3D_PHYSICS_SERIAL`, and call
 `physics::register_serial_codecs()` alongside `physics::register_physics(scene)`.
-The plain physics manifest has no serialization dependency. PhysicsBody (v2) persists
+The plain physics manifest has no serialization dependency. PhysicsBody (v3) persists
 BodyDesc and all nested collider authoring with copied arrays and strings, including a height field's
-window. It restores PENDING with cleared failure/revision state; no native body is created. Version 1
-payloads, which predate the window, read in both formats with a zero window; a Ragdoll or Breakable
-that inspects a version 1 body reads it through the same upgrade. HeightFieldWindows restores in OWNER and
-persists `{ window_cells, collider }`; export omits its window nodes and their bodies after validating each
+window and its four neighbour maps with their cell materials. It restores PENDING with cleared failure/revision
+state; no native body is created. Version 2 payloads, which predate the neighbours, read in both formats with
+none, and version 1 payloads also read with a zero window; a Ragdoll or Breakable
+that inspects an older body reads it through the same upgrade. HeightFieldWindows (v2) restores in OWNER and
+persists `{ window_cells, collider }`, the template's neighbours included, and its version 1 payloads read with no
+neighbours; export omits its window nodes and their bodies after validating each
 node's transient `HeightFieldWindowOwner`, and loading regenerates them through
 `add_height_field_windows`.
 PhysicsJoint restores in REFERENCES with a required model-aware endpoint and

@@ -44,11 +44,6 @@ struct BodyAuthoringV1 @private {
     ColliderDescV1[]  colliders;
 }
 
-serial::BinaryCompatibility[1] body_binary_compatibility @private = {
-    { .version = 1, .read = &read_body_v1, .upgrade = &upgrade_body_v1 },
-};
-uint[1] body_text_default_versions @private = { 1 };
-
 fn void? register_body_v1_values() @private {
     describe::register_reflected(HeightFieldV1)!;
     describe::register_reflected(ColliderDescV1)!;

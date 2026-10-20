@@ -1754,7 +1754,7 @@ fn void test_propagated_edge_edit_leaves_other_neighbours_alone() @test {
         sets.assert_rings_hold_neighbours(tiles);
 
         uint settled_revision = height_revision(&sets, north_east);
-        assert(sets.propagate(north_west, mid_edge) == 0);
+        assert(sets.propagate(north_west, mid_edge) == neighbour_bit(TerrainNeighbour.EAST));
         assert(height_revision(&sets, north_east) == settled_revision);
     };
 }
@@ -1840,4 +1840,29 @@ fn void test_propagate_edit_rejects_an_entity_that_is_not_a_linked_tile() @test 
         )) == c3d::INVALID_ARGUMENT);
     }
     assert(sets.set.is_linked(tile.id));
+}
+
+fn void test_collision_neighbours_follow_links_and_the_apron_band() @test {
+    SetFixture sets;
+    setup_set(&sets, mem);
+    defer teardown_set(&sets);
+    Node* west = add_tile_with_own_map(&sets, 0, 0);
+    Node* east = add_tile_with_own_map(&sets, 1, 0);
+    uint east_side = TerrainNeighbour.EAST.ordinal;
+
+    TerrainCollisionInput input = terrain::collision_input(&sets.base.scene, west.id)!!;
+    assert(c3d::same_id(input.neighbours[east_side], sets.base.scene.get(east, Terrain).desc.height_map));
+    foreach (side, neighbour : input.neighbours) assert(side == east_side || !neighbour.generation);
+
+    uint revision = height_revision(&sets, east);
+    TexelRect in_band = { .x = SMALL_TEXELS - 2, .z = MID_EDGE_ROW, .columns = 1, .rows = EDIT_SIDE };
+    assert(sets.edit_and_propagate(west, in_band, SEED) == neighbour_bit(TerrainNeighbour.EAST));
+    assert(height_revision(&sets, east) == revision && !runtime_of(&sets, east).has_pending);
+
+    TexelRect out_of_band = { .x = SMALL_TEXELS - 3, .z = MID_EDGE_ROW, .columns = 1, .rows = EDIT_SIDE };
+    assert(sets.edit_and_propagate(west, out_of_band, SEED + 1) == 0);
+
+    sets.base.scene.remove_component(east, TerrainTile);
+    input = terrain::collision_input(&sets.base.scene, west.id)!!;
+    assert(!input.neighbours[east_side].generation);
 }

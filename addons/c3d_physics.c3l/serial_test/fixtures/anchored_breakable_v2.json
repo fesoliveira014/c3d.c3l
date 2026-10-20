@@ -1,0 +1,986 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "anchored_group",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {}
+    },
+    {
+      "id": 1,
+      "parent": 0,
+      "name": "physics",
+      "local": {
+        "position": [
+          3,
+          4,
+          5
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "breakable": {
+          "version": 2,
+          "value": {
+            "desc": {
+              "break_force": 2000,
+              "contact_distance": 0.00999999978,
+              "density": 1,
+              "material": {
+                "friction": 0.600000024,
+                "restitution": 0,
+                "rolling_resistance": 0,
+                "tangent_velocity": [
+                  0,
+                  0,
+                  0
+                ],
+                "id": "0"
+              },
+              "filter": {
+                "category": "1",
+                "mask": "18446744073709551615",
+                "group": 0
+              },
+              "hit_events": false,
+              "sleep_until_hit": false
+            },
+            "pieces": [
+              {
+                "node": {
+                  "node": 2,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "hulls": [
+                  "cube"
+                ],
+                "rest_frame": {
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "strength": {
+                  "force": 600,
+                  "twist": 50,
+                  "bending": 80
+                },
+                "has_strength": true
+              },
+              {
+                "node": {
+                  "node": 3,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "hulls": [
+                  "cube"
+                ],
+                "rest_frame": {
+                  "position": [
+                    1,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "strength": {
+                  "force": 0,
+                  "twist": 0,
+                  "bending": 0
+                },
+                "has_strength": false
+              },
+              {
+                "node": {
+                  "node": 4,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "hulls": [
+                  "cube"
+                ],
+                "rest_frame": {
+                  "position": [
+                    2,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "strength": {
+                  "force": 700,
+                  "twist": 40,
+                  "bending": 100
+                },
+                "has_strength": true
+              },
+              {
+                "node": {
+                  "node": 5,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "hulls": [
+                  "cube"
+                ],
+                "rest_frame": {
+                  "position": [
+                    3,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "strength": {
+                  "force": 0,
+                  "twist": 0,
+                  "bending": 0
+                },
+                "has_strength": false
+              }
+            ],
+            "recipe_kind": "AUTHORED_REST",
+            "evaluation": "SAMPLED_REACTION",
+            "strength": {
+              "force": 800,
+              "twist": 60,
+              "bending": 90
+            },
+            "welds": [
+              {
+                "piece_a": 0,
+                "piece_b": 1,
+                "frame_a": {
+                  "position": [
+                    0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0.174108133,
+                    0.984726548
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "frame_b": {
+                  "position": [
+                    -0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0.174108133,
+                    0.984726548
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "moment_axis": [
+                  1,
+                  0,
+                  0
+                ],
+                "strength_override": {
+                  "force": 0,
+                  "twist": 3.40282347e+38,
+                  "bending": 3.40282347e+38
+                },
+                "has_strength_override": true
+              },
+              {
+                "piece_a": 1,
+                "piece_b": 2,
+                "frame_a": {
+                  "position": [
+                    0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0.174108133,
+                    0.984726548
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "frame_b": {
+                  "position": [
+                    -0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0.174108133,
+                    0.984726548
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "moment_axis": [
+                  1,
+                  0,
+                  0
+                ],
+                "strength_override": {
+                  "force": 900,
+                  "twist": 20,
+                  "bending": 3.40282347e+38
+                },
+                "has_strength_override": true
+              },
+              {
+                "piece_a": 2,
+                "piece_b": 3,
+                "frame_a": {
+                  "position": [
+                    0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0.174108133,
+                    0.984726548
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "frame_b": {
+                  "position": [
+                    -0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0.174108133,
+                    0.984726548
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "moment_axis": [
+                  1,
+                  0,
+                  0
+                ],
+                "strength_override": {
+                  "force": 0,
+                  "twist": 0,
+                  "bending": 0
+                },
+                "has_strength_override": false
+              }
+            ],
+            "anchors": [
+              {
+                "piece": 0,
+                "target": {
+                  "node": 6,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "frame_a": {
+                  "position": [
+                    -0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "frame_b": {
+                  "position": [
+                    0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "moment_axis": [
+                  0,
+                  0,
+                  1
+                ],
+                "target_strength": {
+                  "force": 1200,
+                  "twist": 70,
+                  "bending": 90
+                },
+                "strength_override": {
+                  "force": 3.40282347e+38,
+                  "twist": 3.40282347e+38,
+                  "bending": 3.40282347e+38
+                },
+                "has_target_strength": true,
+                "has_strength_override": true
+              },
+              {
+                "piece": 3,
+                "target": {
+                  "node": 7,
+                  "model": null,
+                  "template_index": 4294967295
+                },
+                "frame_a": {
+                  "position": [
+                    0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "frame_b": {
+                  "position": [
+                    -0.5,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "moment_axis": [
+                  0,
+                  1,
+                  0
+                ],
+                "target_strength": {
+                  "force": 0,
+                  "twist": 0,
+                  "bending": 0
+                },
+                "strength_override": {
+                  "force": 3.40282347e+38,
+                  "twist": 3.40282347e+38,
+                  "bending": 3.40282347e+38
+                },
+                "has_target_strength": false,
+                "has_strength_override": true
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "parent": 1,
+      "name": "piece_0",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 2,
+          "value": {
+            "geometry": "cube",
+            "material": null,
+            "cast_shadow": true,
+            "receive_shadow": true,
+            "trace": true,
+            "trace_only": false,
+            "morph_weights": [],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "parent": 1,
+      "name": "piece_1",
+      "local": {
+        "position": [
+          1,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 2,
+          "value": {
+            "geometry": "cube",
+            "material": null,
+            "cast_shadow": true,
+            "receive_shadow": true,
+            "trace": true,
+            "trace_only": false,
+            "morph_weights": [],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "parent": 1,
+      "name": "piece_2",
+      "local": {
+        "position": [
+          2,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 2,
+          "value": {
+            "geometry": "cube",
+            "material": null,
+            "cast_shadow": true,
+            "receive_shadow": true,
+            "trace": true,
+            "trace_only": false,
+            "morph_weights": [],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "parent": 1,
+      "name": "piece_3",
+      "local": {
+        "position": [
+          3,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "c3d.Mesh": {
+          "version": 2,
+          "value": {
+            "geometry": "cube",
+            "material": null,
+            "cast_shadow": true,
+            "receive_shadow": true,
+            "trace": true,
+            "trace_only": false,
+            "morph_weights": [],
+            "has_bounds_override": false,
+            "local_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                0,
+                0,
+                0
+              ]
+            },
+            "vertex_motion": false
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "parent": 0,
+      "name": "support_a",
+      "local": {
+        "position": [
+          2,
+          4,
+          5
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "physics_body": {
+          "version": 2,
+          "value": {
+            "body": {
+              "kind": "STATIC",
+              "name": "",
+              "linear_velocity": [
+                0,
+                0,
+                0
+              ],
+              "angular_velocity": [
+                0,
+                0,
+                0
+              ],
+              "linear_damping": 0,
+              "angular_damping": 0,
+              "gravity_scale": 1,
+              "allow_sleep": true,
+              "bullet": false,
+              "disabled": false,
+              "locks": {
+                "linear_x": false,
+                "linear_y": false,
+                "linear_z": false,
+                "angular_x": false,
+                "angular_y": false,
+                "angular_z": false
+              }
+            },
+            "colliders": [
+              {
+                "kind": "SPHERE",
+                "local": {
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "radius": 0.25,
+                "half_height": 0,
+                "half_extents": [
+                  0,
+                  0,
+                  0
+                ],
+                "geometry": null,
+                "height_field": {
+                  "source": "HEIGHTS",
+                  "heights": [],
+                  "count_x": 0,
+                  "count_z": 0,
+                  "texture": null,
+                  "window": {
+                    "x": 0,
+                    "z": 0,
+                    "count_x": 0,
+                    "count_z": 0
+                  }
+                },
+                "children": [],
+                "density": 1000,
+                "explosion_scale": 1,
+                "material": {
+                  "friction": 0.600000024,
+                  "restitution": 0,
+                  "rolling_resistance": 0,
+                  "tangent_velocity": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "id": "0"
+                },
+                "face_materials": [],
+                "material_indices": [],
+                "sensor": false,
+                "contact_events": false,
+                "hit_events": false,
+                "filter": {
+                  "category": "1",
+                  "mask": "18446744073709551615",
+                  "group": 0
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "parent": 0,
+      "name": "support_b",
+      "local": {
+        "position": [
+          7,
+          4,
+          5
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "physics_body": {
+          "version": 2,
+          "value": {
+            "body": {
+              "kind": "STATIC",
+              "name": "",
+              "linear_velocity": [
+                0,
+                0,
+                0
+              ],
+              "angular_velocity": [
+                0,
+                0,
+                0
+              ],
+              "linear_damping": 0,
+              "angular_damping": 0,
+              "gravity_scale": 1,
+              "allow_sleep": true,
+              "bullet": false,
+              "disabled": false,
+              "locks": {
+                "linear_x": false,
+                "linear_y": false,
+                "linear_z": false,
+                "angular_x": false,
+                "angular_y": false,
+                "angular_z": false
+              }
+            },
+            "colliders": [
+              {
+                "kind": "SPHERE",
+                "local": {
+                  "position": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    1,
+                    1,
+                    1
+                  ]
+                },
+                "radius": 0.25,
+                "half_height": 0,
+                "half_extents": [
+                  0,
+                  0,
+                  0
+                ],
+                "geometry": null,
+                "height_field": {
+                  "source": "HEIGHTS",
+                  "heights": [],
+                  "count_x": 0,
+                  "count_z": 0,
+                  "texture": null,
+                  "window": {
+                    "x": 0,
+                    "z": 0,
+                    "count_x": 0,
+                    "count_z": 0
+                  }
+                },
+                "children": [],
+                "density": 1000,
+                "explosion_scale": 1,
+                "material": {
+                  "friction": 0.600000024,
+                  "restitution": 0,
+                  "rolling_resistance": 0,
+                  "tangent_velocity": [
+                    0,
+                    0,
+                    0
+                  ],
+                  "id": "0"
+                },
+                "face_materials": [],
+                "material_indices": [],
+                "sensor": false,
+                "contact_events": false,
+                "hit_events": false,
+                "filter": {
+                  "category": "1",
+                  "mask": "18446744073709551615",
+                  "group": 0
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

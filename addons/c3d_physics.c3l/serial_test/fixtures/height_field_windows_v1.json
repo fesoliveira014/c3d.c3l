@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "physics",
+      "local": {
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 1,
+      "visible": true,
+      "components": {
+        "height_field_windows": {
+          "version": 1,
+          "value": {
+            "window_cells": 2,
+            "collider": {
+              "kind": "HEIGHT_FIELD",
+              "local": {
+                "position": [
+                  0,
+                  0,
+                  0
+                ],
+                "rotation": [
+                  0,
+                  0,
+                  0,
+                  1
+                ],
+                "scale": [
+                  2,
+                  10,
+                  2
+                ]
+              },
+              "radius": 0,
+              "half_height": 0,
+              "half_extents": [
+                0,
+                0,
+                0
+              ],
+              "geometry": null,
+              "height_field": {
+                "source": "TEXTURE",
+                "heights": [],
+                "count_x": 0,
+                "count_z": 0,
+                "texture": "terrain_heights",
+                "window": {
+                  "x": 0,
+                  "z": 0,
+                  "count_x": 0,
+                  "count_z": 0
+                }
+              },
+              "children": [],
+              "density": 1000,
+              "explosion_scale": 1,
+              "material": {
+                "friction": 0.600000024,
+                "restitution": 0,
+                "rolling_resistance": 0,
+                "tangent_velocity": [
+                  0,
+                  0,
+                  0
+                ],
+                "id": "0"
+              },
+              "face_materials": [],
+              "material_indices": [],
+              "sensor": false,
+              "contact_events": false,
+              "hit_events": false,
+              "filter": {
+                "category": "1",
+                "mask": "18446744073709551615",
+                "group": 0
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

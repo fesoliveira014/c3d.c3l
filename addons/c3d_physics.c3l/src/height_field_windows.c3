@@ -102,7 +102,17 @@ fn void? add_height_field_windows(
             @pool() {
                 ColliderDesc window_collider = windows.collider;
                 window_collider.height_field.window = window;
-                window_collider.material_indices = window_materials(windows.collider.material_indices, map, window);
+                window_collider.height_field.neighbours = edge_neighbours(
+                    template:       windows.collider.height_field.neighbours[..],
+                    interior_sides: window_apron_sides(window, map),
+                );
+                window_collider.material_indices = ringed_materials(
+                    assets:     assets,
+                    indices:    windows.collider.material_indices,
+                    map:        map,
+                    window:     window,
+                    neighbours: windows.collider.height_field.neighbours[..],
+                );
                 scene.add(window_node, try_copy_physics_body(
                     allocator: scene.allocator,
                     body:      default_body_desc(STATIC),
@@ -175,6 +185,8 @@ fn MapCells? check_window_template(AssetStore* assets, ColliderDesc* collider, u
     if (collider.kind != HEIGHT_FIELD || collider.height_field.source != TEXTURE) return c3d::INVALID_ARGUMENT~;
 
     check_height_map(assets, collider.height_field.texture)!;
+    char neighbour_sides = check_height_neighbours(assets, &collider.height_field)!;
+    check_neighbour_cells(&collider.height_field, collider.face_materials.len)!;
     TextureDesc source = assets.texture(collider.height_field.texture).desc;
     MapCells map = { .x = source.width - 1, .z = source.height - 1 };
     if (collider.material_indices.len && collider.material_indices.len != (usz)map.x * map.z) {
@@ -185,7 +197,7 @@ fn MapCells? check_window_template(AssetStore* assets, ColliderDesc* collider, u
         .count_x = math::min(window_cells, map.x),
         .count_z = math::min(window_cells, map.z),
     };
-    (void)height_grid(source, first_window)!;
+    (void)height_grid(source, first_window, neighbour_sides)!;
     return map;
 }
 
@@ -237,6 +249,12 @@ fn HeightFieldWindows carve_windows(
     copy.height_field.window = {};
     copy.face_materials = carve_copy(cursor, collider.face_materials);
     copy.material_indices = carve_copy(cursor, collider.material_indices);
+    foreach (side : HeightFieldSide::values) {
+        copy.height_field.neighbours[side.ordinal].material_indices = carve_copy(
+            cursor,
+            collider.height_field.neighbours[side.ordinal].material_indices,
+        );
+    }
     return {
         .window_cells = window_cells,
         .columns      = columns,
@@ -246,20 +264,14 @@ fn HeightFieldWindows carve_windows(
     };
 }
 
-// The window's cells of the map-wide indices, ringed by its neighbours' cells; empty when the map has none.
-fn char[] window_materials(char[] indices, MapCells map, HeightFieldWindow window) @local {
-    if (!indices.len) return {};
-
-    uint padding = apron_padding(window_apron_sides(window, map));
-    uint columns = window.count_x + 2 * padding;
-    uint rows = window.count_z + 2 * padding;
-    char[] slice = alloc::new_array(tmem, char, (sz)((usz)columns * rows));
-    for (uint row = 0; row < rows; row++) {
-        usz source_row = padded_map_index(window.z, row, padding, map.z);
-        for (uint column = 0; column < columns; column++) {
-            usz source_column = padded_map_index(window.x, column, padding, map.x);
-            slice[(usz)row * columns + column] = indices[source_row * map.x + source_column];
-        }
+// A window body reads neighbour maps where the map ends; its ring cells already hold the neighbours' cells.
+fn HeightFieldNeighbour[HeightFieldSide::len] edge_neighbours(
+    HeightFieldNeighbour[] template,
+    char interior_sides,
+) @local {
+    HeightFieldNeighbour[HeightFieldSide::len] kept;
+    foreach (side : HeightFieldSide::values) {
+        if (!(interior_sides & apron_bit(side))) kept[side.ordinal].texture = template[side.ordinal].texture;
     }
-    return slice;
+    return kept;
 }

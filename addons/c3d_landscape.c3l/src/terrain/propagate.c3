@@ -32,7 +32,7 @@ struct EdgeWrite @private {
  @require rect.columns > 0 && rect.rows > 0
  @require rect.x + rect.columns <= self.texels
  @require rect.z + rect.rows <= self.texels
- @return "Bit n is set when the TerrainNeighbour of ordinal n changed; set.neighbour names its tile."
+ @return "Bit n is set when the TerrainNeighbour of ordinal n changed or its collider apron reads rect; set.neighbour names its tile."
  @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
 *>
 fn uint? TerrainSet.propagate_edit(
@@ -81,6 +81,13 @@ fn uint? TerrainSet.propagate_edit(
             writes[count] = { .neighbour = neighbour, .target = strip.target };
             count++;
             changed_neighbours |= (uint)1 << direction.ordinal;
+        }
+    }
+    // A neighbour's collider reads the second texel inside the shared edge, which the copy leaves alone.
+    uint apron_edges = touched_edges(self.texels, rect);
+    foreach (edge : BorderEdge::values) {
+        if ((apron_edges & edge.bit()) && @ok(self.neighbour(tile, edge.neighbour))) {
+            changed_neighbours |= (uint)1 << edge.neighbour.ordinal;
         }
     }
     // Every copy lands first: a ring row reads texels of the tiles around it.
