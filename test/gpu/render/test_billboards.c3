@@ -30,6 +30,28 @@ const uint ATLAS_COVERED_MINIMUM @private = 100;
 const float ATLAS_COLOR_TOLERANCE @private = 0.02f;
 const float ATLAS_BLEND_TOLERANCE @private = 1.0f / 255;
 const char[*] BILLBOARD_FRAME_FRAGMENT @private = $embed("billboard_frame.frag.glsl");
+const char[*] DEVICE_BILLBOARDS_STAGE @private = $embed("device_billboards.comp.glsl");
+const uint DEVICE_CAPACITY @private = 8; // mirrored as the invocation count of device_billboards.comp.glsl
+const uint DEVICE_LIVE @private = 3;
+const float DEVICE_SPACING @private = 0.5f;
+const float DEVICE_WIDTH @private = 0.25f;
+const usz DEVICE_COUNT_OFFSET @private = DEVICE_CAPACITY * BillboardGpu::size; // the count word follows the records
+const usz DEVICE_ARENA_BYTES @private = render::CULL_COUNTER_BYTES + 64; // the command fits, the sorted list does not
+
+struct DeviceBillboardsRoot @private {
+    ulong records;
+    ulong count;
+    uint live;
+    uint capacity;
+    float spacing;
+    float width;
+}
+$assert DeviceBillboardsRoot::size == 32;
+
+struct DeviceViewMode @private {
+    bool culling;
+    TransparencyMode transparency;
+}
 
 struct BillboardScene @private {
     Scene scene;
@@ -55,6 +77,8 @@ fn BillboardScene? create_billboard_scene(
     Fixture* fixture,
     Billboard[] values,
     BillboardFacing facing = BillboardFacing.CAMERA,
+    uint capacity = BILLBOARD_TEST_CAPACITY,
+    BillboardSource source = BillboardSource.BILLBOARDS,
 ) @private {
     BillboardScene target = { .scene = scene::create_scene(mem, { .max_nodes = 16 }) };
     defer catch destroy_billboard_scene(fixture, &target);
@@ -66,10 +90,11 @@ fn BillboardScene? create_billboard_scene(
     target.holder = target.scene.add_node()!;
     target.node = target.scene.add_billboards(
         material: target.material,
-        capacity: BILLBOARD_TEST_CAPACITY,
+        capacity: capacity,
         billboards: values,
         facing: facing,
         parent: target.holder,
+        source: source,
     )!;
     foreach (index, &camera : target.cameras) {
         *camera = target.scene.add_camera(camera::orthographic(BILLBOARD_VIEW_HEIGHT, 0.1f, 100))!;
@@ -525,5 +550,150 @@ fn void test_billboard_atlas_selects_cells_without_bleed_and_blends_frames() @te
     Vec4[] blend = read_float_target(&fixture, target.targets[0])!!;
     defer free(blend);
     assert(math::abs(billboard_pixel(blend).x - 0.5f) <= ATLAS_BLEND_TOLERANCE);
+    check_validation(&fixture.renderer);
+}
+
+fn BufferId? attach_device_buffer(Fixture* fixture, BillboardScene* target) @private {
+    BufferId buffer = fixture.renderer.create_buffer({
+        .size       = DEVICE_COUNT_OFFSET + uint::size,
+        .debug_name = "device_billboards",
+    })!;
+    target.scene.set_billboard_device(
+        target.node,
+        {
+            .buffer         = buffer,
+            .records_offset = 0,
+            .count_offset   = DEVICE_COUNT_OFFSET,
+            .capacity       = DEVICE_CAPACITY,
+        },
+        { .min = { -2, -1, -1 }, .max = { 2, 1, 1 } },
+    );
+    return buffer;
+}
+
+fn void? render_device_billboard_frames(
+    Fixture* fixture,
+    BillboardScene* target,
+    ComputeShaderId stage,
+    BufferId buffer,
+) @private {
+    Renderer* renderer = &fixture.renderer;
+    ulong records = (ulong)renderer.buffer_address(buffer);
+    DeviceBillboardsRoot root = {
+        .records  = records,
+        .count    = records + DEVICE_COUNT_OFFSET,
+        .live     = DEVICE_LIVE,
+        .capacity = DEVICE_CAPACITY,
+        .spacing  = DEVICE_SPACING,
+        .width    = DEVICE_WIDTH,
+    };
+    BufferId[1] writes = { buffer };
+    target.scene.update_world();
+    for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT + 1; frame++) {
+        renderer.begin_frame()!;
+        defer catch render::abort_frame(renderer);
+        renderer.dispatch({
+            .shader = stage,
+            .root   = ((char*)&root)[:DeviceBillboardsRoot::size],
+            .groups = { 1, 1, 1 },
+            .writes = writes[..],
+        })!;
+        renderer.render_view(&target.scene, target.cameras[0], target.views[0])!;
+        renderer.finish_view(target.views[0])!;
+        renderer.end_frame()!;
+    }
+}
+
+fn Vec2 device_record_offset(uint index) @private {
+    return { ((float)index - 0.5f * (float)(DEVICE_CAPACITY - 1)) * DEVICE_SPACING, 0 };
+}
+
+fn void test_device_billboards_draw_the_counted_records() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ComputeShaderId stage = add_compute_shader(&fixture, (String)DEVICE_BILLBOARDS_STAGE[..])!!;
+    BillboardScene target = create_billboard_scene(
+        fixture: &fixture,
+        values: {},
+        capacity: DEVICE_CAPACITY,
+        source: BillboardSource.DEVICE,
+    )!!;
+    defer destroy_billboard_scene(&fixture, &target);
+    BufferId buffer = attach_device_buffer(&fixture, &target)!!;
+    DeviceViewMode[3] modes = {
+        { .culling = true, .transparency = TransparencyMode.SORTED },
+        { .culling = false, .transparency = TransparencyMode.SORTED },
+        { .culling = false, .transparency = TransparencyMode.WEIGHTED },
+    };
+    foreach (mode : modes) {
+        ViewDesc desc = fixture.renderer.views.get(target.views[0]).desc;
+        desc.instance_culling = mode.culling;
+        desc.transparency = mode.transparency;
+        render::configure_view(&fixture.renderer, target.views[0], desc)!!;
+        render_device_billboard_frames(
+            fixture: &fixture,
+            target:  &target,
+            stage:   stage,
+            buffer:  buffer,
+        )!!;
+        assert(fixture.renderer.stats.instances_tested == DEVICE_CAPACITY);
+        assert(fixture.renderer.stats.instances_visible == DEVICE_LIVE);
+        if (mode.transparency != TransparencyMode.SORTED) continue;
+
+        Vec4[] pixels = read_float_target(&fixture, target.targets[0])!!;
+        defer free(pixels);
+        for (uint index = 0; index < DEVICE_CAPACITY; index++) {
+            check_billboard_pixel(
+                billboard_pixel(pixels, device_record_offset(index)),
+                index < DEVICE_LIVE ? BILLBOARD_WHITE : (Vec4){},
+            );
+        }
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn void test_device_billboards_with_a_destroyed_buffer_are_skipped_and_counted() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    BillboardScene target = create_billboard_scene(
+        fixture: &fixture,
+        values: {},
+        capacity: DEVICE_CAPACITY,
+        source: BillboardSource.DEVICE,
+    )!!;
+    defer destroy_billboard_scene(&fixture, &target);
+    BufferId buffer = attach_device_buffer(&fixture, &target)!!;
+    fixture.renderer.destroy_buffer(buffer)!!;
+    render_billboard_frames(fixture: &fixture, target: &target, frames: 1)!!;
+    assert(fixture.renderer.stats.dangling_refs == 1);
+    assert(fixture.renderer.stats.instances_tested == 0);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_device_billboards_that_overflow_the_cull_arena_draw_nothing() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, instance_cull_bytes: DEVICE_ARENA_BYTES)!!;
+    defer destroy_fixture(&fixture);
+    ComputeShaderId stage = add_compute_shader(&fixture, (String)DEVICE_BILLBOARDS_STAGE[..])!!;
+    BillboardScene target = create_billboard_scene(
+        fixture: &fixture,
+        values: {},
+        capacity: DEVICE_CAPACITY,
+        source: BillboardSource.DEVICE,
+    )!!;
+    defer destroy_billboard_scene(&fixture, &target);
+    BufferId buffer = attach_device_buffer(&fixture, &target)!!;
+    render_device_billboard_frames(
+        fixture: &fixture,
+        target:  &target,
+        stage:   stage,
+        buffer:  buffer,
+    )!!;
+    assert(fixture.renderer.stats.sort_overflows == 1 && fixture.renderer.stats.cull_overflows == 0);
+    Vec4[] pixels = read_float_target(&fixture, target.targets[0])!!;
+    defer free(pixels);
+    check_billboard_pixel(billboard_pixel(pixels, device_record_offset(0)), {});
     check_validation(&fixture.renderer);
 }

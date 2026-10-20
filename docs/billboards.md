@@ -52,12 +52,43 @@ aggregate cache is library-owned. Component pointers are short-lived ECS borrows
   `records[:count]`, sets each `facing` to the batch's `BillboardFacing` ordinal and each `direction` to a unit vector
   or zero, and calls `mark_billboards_dirty`. Core subtracts the frame origin as it copies them to the upload, and
   builds no `Billboard`.
+- **`DEVICE`** has no CPU array. Compute writes `capacity` `BillboardGpu` records and one `uint` count into an
+  application buffer from `Renderer.create_buffer`. Every record is relative to `Renderer.frame_origin`, which the writer
+  subtracts. `Scene.set_billboard_device` attaches a `BillboardDevice` naming the buffer, the byte offsets of the records
+  and of the count word, and the capacity, which must equal the batch's. The records offset is a multiple of 16, the
+  count offset a multiple of 4, and the buffer holds both. Core does not check them.
 
-A RECORDS batch is drawn without its node's world matrix, so its node must keep an identity world; a WORLD child with
-an identity pose does. Records are not validated: the owner keeps them finite. Passing `billboards` with `RECORDS`
-returns `INVALID_ARGUMENT`, and `set_billboards` and `resize_billboards` apply to `BILLBOARDS` batches only. Bounds, picking
-and `SceneIndex` read both sources through `BillboardBatch.billboard(index)`. The serialization codec faults
-`UNSUPPORTED` when exporting a `RECORDS` batch.
+A RECORDS or DEVICE batch is drawn without its node's world matrix, so its node must keep an identity world; a WORLD
+child with an identity pose does. Records are not validated: the owner keeps them finite. Passing `billboards` with
+another source than `BILLBOARDS` returns `INVALID_ARGUMENT`, and `set_billboards` and `resize_billboards` apply to
+`BILLBOARDS` batches only. Bounds, picking and `SceneIndex` read `BILLBOARDS` and `RECORDS` batches through
+`BillboardBatch.billboard(index)`. The serialization codec faults `UNSUPPORTED` when exporting a `RECORDS` or `DEVICE`
+batch.
+
+### Device batches
+
+The renderer culls a DEVICE batch at its capacity and skips the records at or past the count word. It draws the counted
+records that are visible and shares one buffer between every view. The draw count and the order of the survivors
+therefore come from the GPU: the count word may change every frame, and nothing on the CPU reads it. A batch with no
+attached buffer draws nothing.
+
+- The culling dispatch always runs for a DEVICE batch, with an open frustum when the view has `instance_culling` off,
+  because the records past the count word hold stale data. When the cull arena cannot hold the batch it draws nothing
+  and the frame counts the overflow in `Stats.cull_overflows`, or in `sort_overflows` for a sorted batch.
+- A destroyed buffer skips the draw and counts in `Stats.dangling_refs`.
+- A `Renderer.dispatch` that names the buffer in `DispatchDesc.writes` orders its writes before every later cull and draw
+  of the frame.
+- Bounds come from the override below. Picking and `SceneIndex` skip a DEVICE batch.
+- The sprite-sheet block that precedes a batch's records in the other sources is written into the frame's upload ring for
+  a DEVICE batch, because the application's buffer has no room for it.
+
+### Bounds override
+
+`BillboardBatch.has_bounds_override` with `local_bounds` replaces the union of the records' bounds with the node-local
+box, transformed by the node, for every source. It spares the CPU the scan over the records, and a DEVICE batch needs it
+because the CPU never reads the records. `set_billboard_device` sets both. The box must contain every record the batch
+can hold, since extraction culls the whole batch against it; the per-record test on the GPU is unchanged. Picking and
+`SceneIndex` keep reading the records' own bounds.
 
 ## Orientation and units
 
@@ -169,7 +200,7 @@ Blended instances still sort when culling is disabled. Sorting is within each
 batch, with the existing unsorted fallback on arena overflow, rather than a
 global ordering across all transparent surfaces.
 
-Linear picking and `SceneIndex` include individual conservative bounds.
+Linear picking and `SceneIndex` include individual conservative bounds of `BILLBOARDS` and `RECORDS` batches.
 `PickHit.billboard` identifies the component; `instanced` is true and
 `instance_index` is the original record index. Triangle requests fall back to
 bounds with `triangle_hit = false`, because the query API has no view. Include

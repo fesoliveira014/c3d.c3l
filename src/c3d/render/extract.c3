@@ -141,7 +141,7 @@ fn MeshCandidate[] extract_candidates(
     };
     scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
         Node* node = scene.node(entity);
-        if (batch.count && node.visible_effective && (layers & node.layers)) {
+        if (batch.draw_count() && node.visible_effective && (layers & node.layers)) {
             include_billboards(
                 candidates: candidates,
                 scene: scene,
@@ -394,7 +394,7 @@ fn void include_billboards(
         .view_depth = center_view_depth(camera, world),
         .billboards = batch,
         .scene_identity = scene.identity,
-        .instance_count = batch.count,
+        .instance_count = batch.draw_count(),
     };
 }
 

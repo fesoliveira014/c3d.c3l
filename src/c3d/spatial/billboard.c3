@@ -42,11 +42,14 @@ fn Aabb billboard_bounds(Mat4 world, Billboard billboard) {
  @param [&in] node : "Published node transform."
  @param [&inout] batch : "Valid records; cached bounds may be refreshed."
  @param origin : "Absolute origin of the returned bounds; zero preserves world."
- @require batch.count > 0
+ @require batch.draw_count() > 0
+ @require batch.has_bounds_override || batch.source != BillboardSource.DEVICE
 *>
 fn Aabb billboard_world_bounds(Node* node, BillboardBatch* batch, Vec3 origin = {}) {
-    BillboardAggregate* aggregate = &batch.aggregate;
     Mat4 world = maths::rebase(node.world, origin);
+    if (batch.has_bounds_override) return maths::aabb_transform(batch.local_bounds, world);
+
+    BillboardAggregate* aggregate = &batch.aggregate;
     if (aggregate.revision == batch.revision && aggregate.world == world) return aggregate.bounds;
 
     Aabb bounds = batch.source == BillboardSource.RECORDS

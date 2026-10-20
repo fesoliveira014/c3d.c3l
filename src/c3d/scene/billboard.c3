@@ -28,6 +28,7 @@ enum BillboardFacing {
 enum BillboardSource {
     BILLBOARDS, // Billboard values that core packs once per revision
     RECORDS,    // world-space records the owner writes; core copies them
+    DEVICE,     // frame-origin records and a live count that compute writes
 }
 
 <*
@@ -67,6 +68,16 @@ struct BillboardRecord {
 $assert BillboardRecord::size == 64;
 
 <*
+ Renderer buffer holding a DEVICE batch's records and live count.
+*>
+struct BillboardDevice {
+    BufferId buffer;
+    usz records_offset; // capacity BillboardGpu records, 16-byte aligned
+    usz count_offset; // one uint, 4-byte aligned, at most capacity
+    uint capacity;
+}
+
+<*
  Library-owned world bounds of a billboard batch.
 *>
 struct BillboardAggregate {
@@ -88,6 +99,9 @@ struct BillboardBatch {
     BillboardAtlas atlas;
     BillboardSource source;
     BillboardRecord[] records; // RECORDS only: capacity records, the first count live
+    BillboardDevice device; // DEVICE only; a zero buffer draws nothing, and count stays zero
+    bool has_bounds_override;
+    Aabb local_bounds; // node-local; read when has_bounds_override is set
 }
 
 <*
@@ -128,9 +142,31 @@ fn Node*? Scene.add_billboards(
             batch.billboards[:billboards.len] = billboards[..];
         case RECORDS:
             batch.records = alloc::new_array(self.allocator, BillboardRecord, (sz)capacity);
+        case DEVICE:
+            batch.device.capacity = capacity;
     }
     self.world.add(node.id, batch);
     return node;
+}
+
+<*
+ Attach the buffer a DEVICE batch draws from, with its conservative bound.
+ @param [&in] node : "Carries a DEVICE BillboardBatch."
+ @param local_bounds : "Node-local bound of every record the buffer can hold."
+ @require self.has(node, BillboardBatch)
+ @require self.get(node, BillboardBatch).source == BillboardSource.DEVICE
+ @require device.capacity == self.get(node, BillboardBatch).capacity()
+*>
+fn void Scene.set_billboard_device(
+    &self,
+    Node* node,
+    BillboardDevice device,
+    Aabb local_bounds,
+) {
+    BillboardBatch* batch = self.get(node, BillboardBatch);
+    batch.device = device;
+    batch.has_bounds_override = true;
+    batch.local_bounds = local_bounds;
 }
 
 <*
@@ -191,7 +227,20 @@ fn void Scene.mark_billboards_dirty(&self, Node* node) {
  Records the batch can hold.
 *>
 fn uint BillboardBatch.capacity(&self) {
-    return (uint)(self.source == BillboardSource.RECORDS ? self.records.len : self.billboards.len);
+    switch (self.source) {
+        case BILLBOARDS: return (uint)self.billboards.len;
+        case RECORDS: return (uint)self.records.len;
+        case DEVICE: return self.device.capacity;
+    }
+}
+
+<*
+ Instances the renderer culls; a DEVICE batch's capacity once attached.
+*>
+fn uint BillboardBatch.draw_count(&self) {
+    if (self.source != BillboardSource.DEVICE) return self.count;
+
+    return self.device.buffer.generation ? self.device.capacity : 0;
 }
 
 <*
@@ -281,5 +330,6 @@ fn void free_billboards(Entity entity, void* component, void* user) @private {
     switch (batch.source) {
         case BILLBOARDS: alloc::free(allocator, batch.billboards.ptr);
         case RECORDS: alloc::free(allocator, batch.records.ptr);
+        case DEVICE: break;
     }
 }
