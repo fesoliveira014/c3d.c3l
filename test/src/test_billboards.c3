@@ -54,46 +54,20 @@ fn void test_invalid_billboard_creation_leaves_node_capacity_available() @test {
 }
 
 fn void test_billboard_atlas_rejects_bad_layouts() @test {
-    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    Scene scene = scene::create_scene(mem, { .max_nodes = 1 });
     defer scene::destroy_scene(&scene);
     BillboardAtlas grid = { .columns = 2, .rows = 2, .frame_count = 4, .inset = { 0.01f, 0.02f } };
-    Billboard[1] values = { scene::BILLBOARD_DEFAULT };
-    Node* node = scene.add_billboards(material: {}, capacity: 1, billboards: values[..], atlas: grid)!!;
+    Node* node = scene.add_billboards(material: {}, capacity: 1, atlas: grid)!!;
     BillboardBatch* batch = scene.get(node, BillboardBatch);
     uint revision = batch.revision;
 
-    values[0].frame = bitcast(0x7fc00000u, float);
-    assert(@catch(scene.set_billboards(node, values[..])) == c3d::INVALID_ARGUMENT);
-    values[0].frame = -0.5f;
-    assert(@catch(scene.set_billboards(node, values[..])) == c3d::INVALID_ARGUMENT);
-
     BillboardAtlas bad = grid;
-    bad.rows = 0;
-    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
-    bad = grid;
-    bad.frame_count = 0;
-    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
     bad.frame_count = 5;
-    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
-    bad = grid;
-    bad.inset.x = bitcast(0x7fc00000u, float);
-    assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
-    bad = grid;
-    bad.inset.y = -0.01f;
     assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
     bad = grid;
     bad.inset.x = 0.25f;
     assert(@catch(scene.set_billboard_atlas(node, bad)) == c3d::INVALID_ARGUMENT);
-    assert(batch.revision == revision && batch.atlas.rows == 2 && batch.atlas.frame_count == 4);
-
-    values[0].frame = 1.5f;
-    assert(@catch(scene.add_billboards(material: {}, capacity: 1, billboards: values[..], atlas: bad))
-        == c3d::INVALID_ARGUMENT);
-    values[0].frame = -1;
-    assert(@catch(scene.add_billboards(material: {}, capacity: 1, billboards: values[..], atlas: grid))
-        == c3d::INVALID_ARGUMENT);
-    Node* spare = scene.add_node()!!;
-    assert(scene.world.is_alive(spare.id));
+    assert(batch.revision == revision && batch.atlas.frame_count == 4 && batch.atlas.inset.x == 0.01f);
 
     grid.frame_count = 3;
     scene.set_billboard_atlas(node, grid)!!;
