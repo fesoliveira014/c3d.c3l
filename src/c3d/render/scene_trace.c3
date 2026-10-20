@@ -1114,6 +1114,7 @@ fn void? acquire_rt_top_levels(Renderer* renderer) @local {
     }
     rt.top_level_scratch_size = gpu::get_acceleration_structure_requirements(&renderer.device, &desc)!.build_scratch_size;
     rt.top_levels = created;
+
     sz instance_capacity = renderer.max_trace_instances;
     rt.packed = alloc::new_array(renderer.allocator, gpu::AccelerationStructureInstance, instance_capacity);
 }

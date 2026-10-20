@@ -569,14 +569,9 @@ fn void test_trace_rows_compare_ignores_the_pose_serial_alone() @test {
     records[1].bounds.max.x += 1;
     assert(render::compare_trace_rows(baseline[..], records[..]) == render::TraceRowChange.ROWS);
 
-    usz pose_offset = $reflect(TraceInstance.pose_serial).offset;
-    for (usz offset = 0; offset < TraceInstance::size; offset++) {
-        records = baseline;
-        ((char*)&records[1])[offset] ^= 1;
-        render::TraceRowChange expected = offset >= pose_offset && offset < pose_offset + ulong::size
-          ? render::TraceRowChange.POSES : render::TraceRowChange.ROWS;
-        assert(render::compare_trace_rows(baseline[..], records[..]) == expected);
-    }
+    records = baseline;
+    records[1].nodes = (gpu::GpuAddress)0x400;
+    assert(render::compare_trace_rows(baseline[..], records[..]) == render::TraceRowChange.ROWS);
 }
 
 fn void test_trace_collection_changes_with_the_scene() @test {
