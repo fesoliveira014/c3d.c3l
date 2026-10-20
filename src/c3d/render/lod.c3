@@ -341,7 +341,8 @@ fn Mat4 candidate_world(MeshCandidate* candidate) @private {
 }
 
 fn bool candidate_instanced(MeshCandidate* candidate) @private {
-    return candidate.batch || candidate.billboards || (candidate.lod && candidate.lod.state.mode == LodMode.INSTANCED);
+    return candidate.batch || candidate.billboards || candidate.ribbons
+        || (candidate.lod && candidate.lod.state.mode == LodMode.INSTANCED);
 }
 
 fn void retire_lod_history(Renderer* renderer, LodHistory* history) @private {

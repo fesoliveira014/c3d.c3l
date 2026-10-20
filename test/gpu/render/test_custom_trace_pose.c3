@@ -38,6 +38,7 @@ const double[3] POSE_TIMES @private = { 0.0, 0.4, 0.8 };
 const double SWAY_FIRST_TIME @private = 0.3;
 const double SWAY_SECOND_TIME @private = 0.6;
 const uint TWO_INSTANCES @private = 2;
+const float[2] MOVED_NODE_OFFSETS @private = { 0.4f, 0.9f };
 const bool[2] INSTANCED_MODES @private = { false, true };
 const Vec3 FACING_AXIS @private = { 1, 0, 0 };
 const Quat IDENTITY_ROTATION @private = maths::TRANSFORM_IDENTITY.rotation;
@@ -384,6 +385,28 @@ fn void test_custom_pose_poses_every_instance_including_one_off_camera() @test {
         posed_assert_agreement(rig.harness.results, "second instance", flat_faces: false);
         report_pose_counts(renderer, "instanced, second instance in view");
         assert(renderer.stats.trace_posed_instances == 2 && renderer.stats.trace_poses == 0);
+        check_validation(renderer);
+    }
+}
+
+fn void test_custom_pose_follows_a_moved_batch_node() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        TraceRig rig;
+        create_trace_rig(&rig, ray_queries)!!;
+        defer destroy_trace_rig(&rig);
+        ShaderId shader = add_displace_shader(&rig.fixture, false, instanced: true)!!;
+        MaterialId material = add_displace_material(&rig.fixture, shader, STILL_RATE)!!;
+        Node* batch = add_facing_batch(&rig, add_displaced_surface(&rig.fixture)!!, material)!!;
+        Renderer* renderer = &rig.fixture.renderer;
+
+        foreach (offset : MOVED_NODE_OFFSETS) {
+            batch.local.position.x = offset;
+            look_at_instance(&rig, offset);
+            render_rig(&rig, POSE_TIMES[0])!!;
+            posed_assert_agreement(rig.harness.results, "moved batch node", flat_faces: false);
+            report_pose_counts(renderer, "moved batch node");
+            assert(renderer.stats.trace_poses == 2);
+        }
         check_validation(renderer);
     }
 }

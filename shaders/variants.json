@@ -11,6 +11,7 @@
     { "shader": "weighted_composite", "source": "weighted_composite.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "billboard_vertex", "source": "billboard.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "ribbon_vertex", "source": "ribbon.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "impostor_vertex", "source": "impostor.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "impostor_forward", "source": "impostor.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "impostor_forward", "source": "impostor.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },

@@ -110,9 +110,9 @@ Participants, in a `WEIGHTED` view:
 
 - Basic, Standard, Physical (without transmission) and Toon `BLEND` meshes with `PREMULTIPLIED_ALPHA`;
 - blended instanced batches, and the blended parts of a [LOD group](lod.md);
-- [billboard batches](billboards.md), which are always blended, with a built-in material;
-- custom `BLEND` stages with `PREMULTIPLIED_ALPHA`, including billboard batches with a custom fragment and
-  the [particle](particles.md) effects, when their shader supplies the weighted form the view needs
+- [billboard batches](billboards.md) and [ribbon batches](ribbons.md), which are always blended, with a built-in material;
+- custom `BLEND` stages with `PREMULTIPLIED_ALPHA`, including billboard and ribbon batches with a custom fragment
+  and the [particle](particles.md) effects, when their shader supplies the weighted form the view needs
   ([custom shaders](custom_shaders.md#weighted-transparency)).
 
 Not participants:

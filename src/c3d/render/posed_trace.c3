@@ -636,7 +636,7 @@ fn TracePlacement trace_placement(Renderer* renderer, TracePoseSource* source, T
     TracePlacement result = { .part_local = bitcast(part_local, Mat4f) };
     write_instance(
         record: &result.instance,
-        world:  maths::rebase(record.world, renderer.frame_origin).mul(placement),
+        model:  maths::rebase(record.world, renderer.frame_origin).mul(placement),
         color:  color,
         seed:   seed,
     );

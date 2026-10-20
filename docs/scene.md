@@ -72,7 +72,7 @@ IK chains support a `WORLD` first joint and world-space target/pole markers.
 Every later articulated joint must use `PARENT`; see
 [inverse kinematics](animation.md#inverse-kinematics).
 
-[Billboard batches](billboards.md) are scene-owned components with the same
+[Billboard batches](billboards.md) and [ribbon batches](ribbons.md) are scene-owned components with the same
 transform-space, visibility and subtree lifetime rules as other draw components.
 
 ## Components

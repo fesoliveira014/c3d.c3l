@@ -12,7 +12,9 @@ const ulong INSTANCES_V1_LAYOUT @local = 0x59d3aec48200fec8;
 const ulong INSTANCES_V2_LAYOUT @local = 0x7f422a9bb5bb80ce;
 const ulong INSTANCES_V3_LAYOUT @local = 0x5d8d9a7cc4cd085d;
 const ulong INSTANCES_LAYOUT @local = 0x538fec02e9ba976c;
-const ulong BILLBOARDS_LAYOUT @local = 0x0e6e17ed81a957bb;
+const ulong BILLBOARDS_V1_LAYOUT @local = 0x0e6e17ed81a957bb;
+const ulong BILLBOARDS_LAYOUT @local = 0xee9607fc47eb65bd;
+const ulong RIBBONS_LAYOUT @local = 0x0a749b6758d8fac2;
 const ulong LOD_V1_LAYOUT @local = 0xdb17924ea7b43e3f;
 const ulong LOD_V2_LAYOUT @local = 0x8ed85fe0b352d50f;
 const ulong LOD_LAYOUT @local = 0xa073cd1a57d78766;
@@ -94,11 +96,25 @@ struct InstanceAuthoring @private {
     QuadtreeLevel[] levels;
 }
 
+struct BillboardAuthoringV1 @private {
+    MaterialId material;
+    uint capacity;
+    BillboardFacing facing;
+    BillboardV1[] billboards;
+}
+
 struct BillboardAuthoring @private {
     MaterialId material;
     uint capacity;
     BillboardFacing facing;
     Billboard[] billboards;
+    BillboardAtlas atlas;
+}
+
+struct RibbonAuthoring @private {
+    MaterialId material;
+    uint capacity;
+    RibbonPoint[] points;
 }
 
 struct LodAuthoringV1 @private {
@@ -163,6 +179,11 @@ BinaryCompatibility[3] instances_binary_compatibility @local = {
 };
 uint[3] instances_text_default_versions @local = { 1, 2, 3 };
 
+BinaryCompatibility[1] billboards_binary_compatibility @local = {
+    { .version = 1, .read = &read_billboards_v1 },
+};
+uint[1] billboards_text_default_versions @local = { 1 };
+
 BinaryCompatibility[2] lod_binary_compatibility @local = {
     { .version = 1, .read = &read_lod_v1, .upgrade = &upgrade_lod_v1 },
     { .version = 2, .read = &read_lod_v2, .upgrade = &upgrade_lod_v2 },
@@ -174,7 +195,9 @@ fn void? register_core_batch_codecs() @private {
     describe::register_reflected(InstanceAuthoringV2)!;
     describe::register_reflected(InstanceAuthoringV3)!;
     describe::register_reflected(InstanceAuthoring)!;
+    describe::register_reflected(BillboardAuthoringV1)!;
     describe::register_reflected(BillboardAuthoring)!;
+    describe::register_reflected(RibbonAuthoring)!;
     describe::register_reflected(LodAuthoringV1)!;
     describe::register_reflected(ModelSkin)!;
     describe::register_reflected(AnimatedLodPartAuthoring)!;
@@ -201,7 +224,14 @@ fn void? register_core_batch_codecs() @private {
         layout: INSTANCES_LAYOUT,
         defaults: &defaults_instances,
     )!;
-    register_core_value(BillboardAuthoring, BILLBOARDS_LAYOUT, &defaults_billboards)!;
+    register_core_value(BillboardAuthoringV1, BILLBOARDS_V1_LAYOUT, &defaults_billboards_v1)!;
+    register_described_type(
+        $Type: BillboardAuthoring,
+        version: 2,
+        layout: BILLBOARDS_LAYOUT,
+        defaults: &defaults_billboards,
+    )!;
+    register_core_value(RibbonAuthoring, RIBBONS_LAYOUT, &defaults_ribbons)!;
     register_core_value(LodAuthoringV1, LOD_V1_LAYOUT, &defaults_lod_v1)!;
     register_core_value(ModelSkin, ANIMATED_LOD_SKIN_LAYOUT, &defaults_animated_lod_skin)!;
     register_core_value(AnimatedLodPartAuthoring, ANIMATED_LOD_PART_LAYOUT, &defaults_animated_lod_part)!;
@@ -227,7 +257,16 @@ fn void? register_core_batch_codecs() @private {
         .text_default_versions = instances_text_default_versions[..],
     })!;
     register_described_owner(BillboardBatch, BillboardAuthoring, {
-        .name = "c3d.BillboardBatch", .project = &project_billboards, .attach = &attach_billboards,
+        .name = "c3d.BillboardBatch",
+        .project = &project_billboards,
+        .attach = &attach_billboards,
+        .binary_compatibility = billboards_binary_compatibility[..],
+        .text_default_versions = billboards_text_default_versions[..],
+    })!;
+    register_described_owner(RibbonBatch, RibbonAuthoring, {
+        .name = "c3d.RibbonBatch",
+        .project = &project_ribbons,
+        .attach = &attach_ribbons,
     })!;
     register_described_owner(LodGroup, LodAuthoring, {
         .name = "c3d.LodGroup",
@@ -255,8 +294,16 @@ fn void defaults_instances(void* value) @local {
     *(InstanceAuthoring*)value = { .capacity = 1, .cast_shadow = true, .receive_shadow = true, .trace = true };
 }
 
+fn void defaults_billboards_v1(void* value) @local {
+    *(BillboardAuthoringV1*)value = { .capacity = 1 };
+}
+
 fn void defaults_billboards(void* value) @local {
     *(BillboardAuthoring*)value = { .capacity = 1 };
+}
+
+fn void defaults_ribbons(void* value) @local {
+    *(RibbonAuthoring*)value = { .capacity = 1 };
 }
 
 fn void defaults_lod_v1(void* value) @local {
@@ -316,11 +363,25 @@ fn void? project_instances(void* component, void* value, WriteContext* context) 
 fn void? project_billboards(void* component, void* value, WriteContext* context) @local {
     BillboardBatch* batch = component;
     if (!scene::billboards_valid(batch.billboards[:batch.count])) return c3d::INVALID_ARGUMENT~;
+    if (!scene::billboard_atlas_valid(batch.atlas)) return c3d::INVALID_ARGUMENT~;
+
     *(BillboardAuthoring*)value = {
         .material = batch.material,
         .capacity = (uint)batch.billboards.len,
         .facing = batch.facing,
         .billboards = batch.billboards[:batch.count],
+        .atlas = batch.atlas,
+    };
+}
+
+fn void? project_ribbons(void* component, void* value, WriteContext* context) @local {
+    RibbonBatch* batch = component;
+    if (!scene::ribbon_points_valid(batch.points[:batch.count])) return c3d::INVALID_ARGUMENT~;
+
+    *(RibbonAuthoring*)value = {
+        .material = batch.material,
+        .capacity = (uint)batch.points.len,
+        .points = batch.points[:batch.count],
     };
 }
 
@@ -408,6 +469,7 @@ fn void? attach_billboards(void* value, ReadContext* context) @local {
     BillboardAuthoring* source = value;
     if (!source.capacity || source.billboards.len > source.capacity) return c3d::INVALID_ARGUMENT~;
     if (!scene::billboards_valid(source.billboards)) return c3d::INVALID_ARGUMENT~;
+    if (!scene::billboard_atlas_valid(source.atlas)) return c3d::INVALID_ARGUMENT~;
     Billboard[] entries = alloc::new_array_try(context.scene.allocator, Billboard, (sz)source.capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
     context.scene.add(context.node, (BillboardBatch){
@@ -419,6 +481,23 @@ fn void? attach_billboards(void* value, ReadContext* context) @local {
     defer catch context.scene.remove_component(context.node, BillboardBatch);
     entries[..] = scene::BILLBOARD_DEFAULT;
     context.scene.set_billboards(context.node, source.billboards)!;
+    context.scene.set_billboard_atlas(context.node, source.atlas)!;
+}
+
+fn void? attach_ribbons(void* value, ReadContext* context) @local {
+    RibbonAuthoring* source = value;
+    if (!source.capacity || source.points.len > source.capacity) return c3d::INVALID_ARGUMENT~;
+    if (!scene::ribbon_points_valid(source.points)) return c3d::INVALID_ARGUMENT~;
+    RibbonPoint[] entries = alloc::new_array_try(context.scene.allocator, RibbonPoint, (sz)source.capacity)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    context.scene.add(context.node, (RibbonBatch){
+        .material = source.material,
+        .points = entries,
+        .revision = 1,
+    });
+    defer catch context.scene.remove_component(context.node, RibbonBatch);
+    entries[..] = scene::RIBBON_POINT_DEFAULT;
+    context.scene.set_ribbons(context.node, source.points)!;
 }
 
 fn void? attach_lod(void* value, ReadContext* context) @local {
@@ -527,6 +606,29 @@ fn AnimatedLodDescAuthoring? project_animated_lod(LodGroupState* state, WriteCon
         .has_bounds_override = state.mode == SINGLE && state.desc.has_bounds_override,
         .local_bounds = state.mode == SINGLE ? state.desc.local_bounds : (Aabb){},
     };
+}
+
+fn void? read_billboards_v1(Reader* reader, ReadContext* context) @local {
+    BillboardAuthoringV1* legacy = context.read_value(BillboardAuthoringV1, reader)!;
+    Billboard[] billboards = alloc::new_array_try(tmem, Billboard, legacy.billboards.len)
+      ?? c3d::CAPACITY_EXCEEDED~!;
+    foreach (index, card : legacy.billboards) {
+        billboards[index] = {
+            .position = card.position,
+            .size = card.size,
+            .direction = card.direction,
+            .rotation = card.rotation,
+            .color = card.color,
+        };
+    }
+
+    BillboardAuthoring source = {
+        .material = legacy.material,
+        .capacity = legacy.capacity,
+        .facing = legacy.facing,
+        .billboards = billboards,
+    };
+    attach_billboards(&source, context)!;
 }
 
 fn void? upgrade_instances_v1(Reader* reader, ReadContext* context, void* value) @local {

@@ -46,6 +46,7 @@ struct MeshCandidate {
     bool                    receive_shadow;
     InstancedMesh*          batch;
     BillboardBatch*         billboards;
+    RibbonBatch*            ribbons;
     ulong                   scene_identity;
     AnimatedCrowd*          crowd;
     AnimatedLodPartBinding* animated_lod;
@@ -142,6 +143,22 @@ fn MeshCandidate[] extract_candidates(
         Node* node = scene.node(entity);
         if (batch.count && node.visible_effective && (layers & node.layers)) {
             include_billboards(
+                candidates: candidates,
+                scene: scene,
+                node: node,
+                batch: batch,
+                assets: assets,
+                camera: camera,
+                clip_frustum: &clip_frustum,
+                counts: counts,
+                origin: origin,
+            );
+        }
+    };
+    scene.@each(RibbonBatch; Entity entity, RibbonBatch* batch) {
+        Node* node = scene.node(entity);
+        if (batch.count > 1 && node.visible_effective && (layers & node.layers)) {
+            include_ribbons(
                 candidates: candidates,
                 scene: scene,
                 node: node,
@@ -381,6 +398,39 @@ fn void include_billboards(
     };
 }
 
+fn void include_ribbons(
+    MeshCandidate[] candidates,
+    Scene* scene,
+    Node* node,
+    RibbonBatch* batch,
+    AssetStore* assets,
+    CameraMatrices* camera,
+    Frustum* clip_frustum,
+    ExtractCounts* counts,
+    Vec3 origin,
+) @local {
+    if (!spatial::ribbon_batch_is_live(assets, batch)) {
+        counts.dangling++;
+        return;
+    }
+    Aabb world = spatial::ribbon_world_bounds(node, batch, origin);
+    if (!maths::frustum_intersects_aabb(&camera.frustum, world)
+        || !maths::frustum_intersects_aabb(clip_frustum, world)) {
+        counts.culled++;
+        return;
+    }
+    candidates[counts.visible++] = {
+        .node = node,
+        .material = batch.material,
+        .world_bounds = world,
+        .ndc_depth = center_depth(camera, world),
+        .view_depth = center_view_depth(camera, world),
+        .ribbons = batch,
+        .scene_identity = scene.identity,
+        .instance_count = batch.count - 1,
+    };
+}
+
 fn void include_batch(
     MeshCandidate[] candidates,
     Scene* scene,
@@ -491,7 +541,8 @@ fn bool casts_shadow(Material* material, bool colored) @local {
 }
 
 fn sz candidate_capacity(Scene* scene) @local {
-    sz capacity = (sz)scene.count(Mesh) + 2 * (sz)scene.count(InstancedMesh) + (sz)scene.count(BillboardBatch);
+    sz capacity = (sz)scene.count(Mesh) + 2 * (sz)scene.count(InstancedMesh) + (sz)scene.count(BillboardBatch)
+      + (sz)scene.count(RibbonBatch);
     scene.@each(LodGroup; entity, group) { capacity += 2 * (group.state.desc.parts.len + 1); };
     return capacity;
 }

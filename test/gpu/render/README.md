@@ -46,6 +46,19 @@ the descriptor heap, so a missing vertex-stage barrier fails no assertion here; 
 no validation error is logged. The barrier itself shows in a `VK_LAYER_LUNARG_api_dump` capture, where the image barrier
 that returns a store texture to the sampled state names the vertex, fragment and compute stages.
 
+`test_billboard_atlas_selects_cells_without_bleed_and_blends_frames` draws frame 2 of a 2x2, 128-texel atlas whose four
+cells differ in colour, carry an 8-texel border at zero alpha and have a generated mip chain. At 1:1 and at four texels
+per pixel, every pixel with alpha shows only cell 2's colour; an inset of 16 texels fills the whole quad with that
+colour; a two-row texture on a 1x1 atlas draws its first stored row at the top of the quad; and a custom fragment that
+outputs `v_billboard.z` reads 0.5 within 1/255 at frame 1.5. It runs under validation.
+
+`test_ribbon_strip_faces_two_views_with_a_break_and_a_cusp` draws a five-point strip, with a zero-length first segment, a
+`RIBBON_BREAK` at the fourth point and a last point of zero width, and a second batch whose strip doubles back on itself,
+from two orthographic views 90 degrees apart. Both views cover the drawn segments across their width, cover the wide end
+of the segment that tapers to the zero-width point and leave its narrow end empty, leave the gap across the break and the
+margin past the zero-length segment empty, and cover the doubled-back strip, which only the incoming-direction fallback
+keeps finite. It runs under validation.
+
 The auto-exposure cases in `test_auto_exposure.c3` render constant-luminance backgrounds into float targets and
 read each rendering's adapted value from the view's readback. They check the GLSL adaptation against its C3 twin
 within 1e-4 relative over a sequence of 0, 1/144 to 0.5 s steps and luminance changes, and the delayed

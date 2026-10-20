@@ -612,31 +612,31 @@ fn void test_pack_instance_records_orders_by_parity() @test {
     )!!;
     InstanceGpu[3] records;
 
-    uint split = render::pack_instance_records(records[..], matrix::IDENTITY4, fixture.scene.get(node, InstancedMesh));
+    uint split = render::pack_instance_records(records[..], fixture.scene.get(node, InstancedMesh));
 
     assert(split == 2);
     assert(records[0].color == RED && records[1].color == WHITE && records[2].color == GREEN);
     assert(records[1].model[3][0] == 2 && records[2].model[0][0] == -1);
 }
 
-fn void test_write_instance_packs_world_and_normal() @test {
+fn void test_write_instance_packs_local_and_normal() @test {
     Transform transform = {
         .position = { 1, 2, 3 },
         .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 3),
         .scale    = { 2, 1, 0.5f },
     };
-    Mat4 world = transform.to_mat4();
+    Mat4 local = transform.to_mat4();
     InstanceGpu record;
 
     render::write_instance(
         record: &record,
-        world:  world,
+        model:  local,
         color:  GREEN,
         seed:   0.25f,
     );
 
-    Mat3 normal = maths::normal_matrix(world);
-    assert(bitcast(record.model, Mat4) == world);
+    Mat3 normal = maths::normal_matrix(local);
+    assert(bitcast(record.model, Mat4) == local);
     assert(record.normal_0 == (Vec4){ normal.m00, normal.m10, normal.m20, 0.25f });
     assert(record.normal_1 == (Vec4){ normal.m01, normal.m11, normal.m21, 0 });
     assert(record.normal_2 == (Vec4){ normal.m02, normal.m12, normal.m22, 0 });
@@ -648,22 +648,16 @@ fn void test_packed_records_carry_the_local_seed() @test {
     defer destroy_fixture(&fixture);
     Transform[3] transforms = { at({ -2, 0, 0 }), mirrored_at({ 0, 0, 0 }), at({ 2, 0, 0 }) };
     Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, transforms[..])!!;
-    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
-    Transform placement = {
-        .position = { 5, 1, -3 },
-        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 3),
-        .scale    = { 1, 1, 1 },
-    };
-    InstanceGpu[3] at_origin;
-    InstanceGpu[3] placed;
+    node.local.position = { 5, 1, -3 };
+    fixture.scene.update_world();
+    InstanceGpu[3] records;
 
-    render::pack_instance_records(at_origin[..], matrix::IDENTITY4, batch);
-    render::pack_instance_records(placed[..], placement.to_mat4(), batch);
+    render::pack_instance_records(records[..], fixture.scene.get(node, InstancedMesh));
 
     uint[3] draw_order = { 0, 2, 1 };
     foreach (record_index, source : draw_order) {
         float seed = render::instance_seed(transforms[source].position);
-        assert(at_origin[record_index].normal_0.w == seed && placed[record_index].normal_0.w == seed);
+        assert(records[record_index].normal_0.w == seed);
         assert(seed >= 0 && seed < 1);
     }
 }
@@ -764,7 +758,7 @@ fn void test_mark_instances_dirty_bumps_revision() @test {
     assert(batch.revision == 1);
 }
 
-fn void test_needs_upload_follows_key_capacity_revision_and_world() @test {
+fn void test_needs_upload_follows_key_capacity_and_revision() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
     Transform[2] transforms = { at({ 0, 0, 0 }), at({ 1, 0, 0 }) };
@@ -774,56 +768,33 @@ fn void test_needs_upload_follows_key_capacity_revision_and_world() @test {
     fixture.scene.update_world();
     InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
     InstanceKey key = { .scene = fixture.scene.identity, .node = node.id };
-    GpuInstances uploaded = { .key = key, .revision = 1, .capacity = 4, .world = node.world };
+    GpuInstances uploaded = { .key = key, .revision = 1, .capacity = 4 };
 
     GpuInstances free_slot;
-    assert(render::needs_upload(slot: &free_slot, key: key, batch: batch, world: node.world));
+    assert(render::needs_upload(slot: &free_slot, key: key, batch: batch));
     GpuInstances recycled = uploaded;
     recycled.key.node.generation++;
-    assert(render::needs_upload(slot: &recycled, key: key, batch: batch, world: node.world));
+    assert(render::needs_upload(slot: &recycled, key: key, batch: batch));
     GpuInstances smaller = uploaded;
     smaller.capacity = 3;
-    assert(render::needs_upload(slot: &smaller, key: key, batch: batch, world: node.world));
+    assert(render::needs_upload(slot: &smaller, key: key, batch: batch));
     GpuInstances discarded = uploaded;
     discarded.revision = 0;
-    assert(render::needs_upload(slot: &discarded, key: key, batch: batch, world: node.world));
-    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch, world: node.world));
+    assert(render::needs_upload(slot: &discarded, key: key, batch: batch));
+    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch));
     GpuInstances larger = uploaded;
     larger.capacity = 8;
-    assert(!render::needs_upload(slot: &larger, key: key, batch: batch, world: node.world));
-    Vec3 origin = { 49920, 0, 49920 };
-    assert(render::needs_upload(
-        slot: &uploaded,
-        key: key,
-        batch: batch,
-        world: node.world,
-        origin: origin,
-    ));
-    uploaded.origin = origin;
-    assert(!render::needs_upload(
-        slot: &uploaded,
-        key: key,
-        batch: batch,
-        world: node.world,
-        origin: origin,
-    ));
-    assert(render::needs_upload(
-        slot: &uploaded,
-        key: key,
-        batch: batch,
-        world: node.world,
-    ));
-    uploaded.origin = {};
-    Mat4 moved = at({ 0, 1, 0 }).to_mat4().mul(node.world);
-    assert(render::needs_upload(slot: &uploaded, key: key, batch: batch, world: moved));
+    assert(!render::needs_upload(slot: &larger, key: key, batch: batch));
+
+    node.local.position = { -40, 7, 12 };
+    fixture.scene.update_world();
+    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch));
     fixture.scene.mark_instances_dirty(node);
-    assert(render::needs_upload(slot: &uploaded, key: key, batch: batch, world: node.world));
+    assert(render::needs_upload(slot: &uploaded, key: key, batch: batch));
 
     uploaded.revision = batch.revision;
     fixture.scene.update_world();
-    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch, world: node.world));
-    fixture.scene.update_world();
-    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch, world: node.world));
+    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch));
 }
 
 fn InstanceKey table_key(uint index) @local => { .scene = 1, .node = { .index = index, .generation = 1 } };
@@ -853,7 +824,6 @@ fn void test_instance_key_separates_scenes_and_recycled_entities() @test {
     GpuInstances* uploaded = &table.slots[first_index];
     uploaded.revision = 1;
     uploaded.capacity = 4;
-    uploaded.world = first.world;
     uploaded.allocation = ALLOCATED_SLOT.allocation;
     fixture.scene.remove(first);
     Node* recycled = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 4, transforms[..])!!;
@@ -865,12 +835,7 @@ fn void test_instance_key_separates_scenes_and_recycled_entities() @test {
     uint recycled_index = table.acquire(recycled_key, 2)!!;
     assert(recycled_index != first_index && recycled_index != second_index);
     InstancedMesh* batch = fixture.scene.get(recycled, InstancedMesh);
-    assert(render::needs_upload(
-        slot:  &table.slots[recycled_index],
-        key:   recycled_key,
-        batch: batch,
-        world: recycled.world,
-    ));
+    assert(render::needs_upload(slot: &table.slots[recycled_index], key: recycled_key, batch: batch));
     assert(table.lookup.len() == 3);
 }
 

@@ -43,11 +43,23 @@ const float STEP_SECONDS @local = 1.0f / 60;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 const uint SPRITE_CHANNELS @local = 4;
 const ZString[3] EFFECT_NAMES @local = { "Smoke", "Sparks", "Debris" };
+const uint SMOKE_SHEET_COLUMNS @local = 4;
+const uint SMOKE_CELL_TEXELS @local = 64;
+const uint SMOKE_SHEET_TEXELS @local = SMOKE_SHEET_COLUMNS * SMOKE_CELL_TEXELS;
+const uint SMOKE_CELL_PADDING @local = 8; // zero-alpha border; 2^(4 - 1) texels cover four sampled mip levels
+const float SMOKE_FRAME_RATE @local = 6;
+const float PUFF_BASE_RADIUS @local = 10; // texels at the first frame
+const float PUFF_GROWTH @local = 8; // texels gained by the last frame
+const float PUFF_EDGE_WARP @local = 0.35f; // share of the radius the lobes move the edge
+const float PUFF_THINNING @local = 0.6f; // opacity lost by the last frame
+const float[2] PUFF_LOBES @local = { 3, 5 };
+const float[2] PUFF_LOBE_DRIFT @local = { 0.7f, -1.1f };
 
 struct Options @local {
     bool benchmark;
     bool stress;
     bool sparks;
+    bool smoke;
     bool collide;
     bool drop_oldest;
     bool limit_frames;
@@ -65,6 +77,7 @@ struct Demo @local {
     Node* spark_puffs;
     MaterialId smoke;
     MaterialId sparks;
+    MaterialId smoke_sheet;
     ParticleMaterialParams smoke_params;
     ParticleMaterialParams spark_params;
 }
@@ -98,6 +111,38 @@ fn TextureId? add_sprite(AssetStore* assets) @local {
     }
     return assets.add_texture(
         material::texture_2d_desc(SPRITE_SIZE, SPRITE_SIZE, PixelFormat.RGBA8_UNORM),
+        pixels[..],
+    );
+}
+
+fn float puff_alpha(uint frame, uint x, uint y) @local {
+    float centre = (float)SMOKE_CELL_TEXELS / 2;
+    float horizontal = (float)x + 0.5f - centre;
+    float vertical = (float)y + 0.5f - centre;
+    float progress = (float)frame / (SMOKE_SHEET_COLUMNS * SMOKE_SHEET_COLUMNS - 1);
+    float angle = math::atan2(vertical, horizontal);
+    float lobes;
+    foreach (index, count : PUFF_LOBES) lobes += math::sin(count * angle + PUFF_LOBE_DRIFT[index] * frame) / 2;
+    float edge = (PUFF_BASE_RADIUS + PUFF_GROWTH * progress) * (1 + PUFF_EDGE_WARP * lobes / 2);
+    edge = math::min(edge, centre - SMOKE_CELL_PADDING);
+    float coverage = math::max(0.0f, 1 - (horizontal * horizontal + vertical * vertical) / (edge * edge));
+    return coverage * coverage * (1 - PUFF_THINNING * progress);
+}
+
+fn TextureId? add_smoke_sheet(AssetStore* assets) @local {
+    char[] pixels = mem::new_array(char, SMOKE_SHEET_TEXELS * SMOKE_SHEET_TEXELS * SPRITE_CHANNELS);
+    defer free(pixels);
+    for (uint y = 0; y < SMOKE_SHEET_TEXELS; y++) {
+        for (uint x = 0; x < SMOKE_SHEET_TEXELS; x++) {
+            uint frame = y / SMOKE_CELL_TEXELS * SMOKE_SHEET_COLUMNS + x / SMOKE_CELL_TEXELS;
+            float alpha = puff_alpha(frame, x % SMOKE_CELL_TEXELS, y % SMOKE_CELL_TEXELS);
+            uint offset = (y * SMOKE_SHEET_TEXELS + x) * SPRITE_CHANNELS;
+            pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = char::max;
+            pixels[offset + 3] = (char)(alpha * char::max);
+        }
+    }
+    return assets.add_texture(
+        material::texture_2d_desc(SMOKE_SHEET_TEXELS, SMOKE_SHEET_TEXELS, PixelFormat.RGBA8_UNORM),
         pixels[..],
     );
 }
@@ -138,6 +183,15 @@ fn Demo? create_demo(Options options) @local {
         map: material::texture_slot(sprite),
         blend: BlendMode.ADDITIVE,
     )!;
+    if (options.smoke) {
+        TextureId sheet = add_smoke_sheet(&demo.assets)!;
+        demo.smoke_sheet = particle::add_particle_material(
+            assets: &demo.assets,
+            shader: shader,
+            params: demo.smoke_params,
+            map: material::texture_slot(sheet),
+        )!;
+    }
     GeometryId box;
     GeometryId floor;
     @pool() {
@@ -179,6 +233,19 @@ fn Demo? create_demo(Options options) @local {
     smoke.drag = 0.1f;
     smoke.gravity_scale = -0.03f;
     smoke.size_over_life.values = { 0.5f, 1, 1.5f, 2.2f, 3, 4, 5, 6 };
+    if (options.smoke) {
+        smoke.material = demo.smoke_sheet;
+        smoke.flipbook = {
+            .columns = SMOKE_SHEET_COLUMNS,
+            .rows = SMOKE_SHEET_COLUMNS,
+            .frame_count = SMOKE_SHEET_COLUMNS * SMOKE_SHEET_COLUMNS,
+            .inset = { 0.5f / SMOKE_SHEET_TEXELS, 0.5f / SMOKE_SHEET_TEXELS },
+            .mode = FPS,
+            .fps = SMOKE_FRAME_RATE,
+            .random_start = true,
+            .blend = true,
+        };
+    }
     float[8] opacity = { 0, 0.7f, 1, 1, 0.9f, 0.6f, 0.3f, 0 };
     foreach (index, alpha : opacity) smoke.color_over_life.values[index] = { 1, 1, 1, alpha };
     demo.emitters[0] = demo.scene.add_particle_system(smoke, name: "smoke")!;
@@ -599,7 +666,10 @@ fn void? controls(
             v_max: 1,
         );
         demo.smoke_params.lighting = ambient ? ParticleLighting.AMBIENT : ParticleLighting.UNLIT;
-        if (material_changed) demo.assets.@set_custom_params(demo.smoke, demo.smoke_params)!;
+        if (material_changed) {
+            demo.assets.@set_custom_params(demo.smoke, demo.smoke_params)!;
+            if (demo.smoke_sheet.generation) demo.assets.@set_custom_params(demo.smoke_sheet, demo.smoke_params)!;
+        }
         Material* sparks = &demo.assets.material(demo.sparks).data;
         bool additive = sparks.common.blend_mode == BlendMode.ADDITIVE;
         if (imgui::checkbox("Additive sparks", &additive)) {
@@ -694,6 +764,7 @@ fn Options? parse_options(String[] args) @local {
             case "--benchmark": options.benchmark = true;
             case "--stress": options.stress = true;
             case "--sparks": options.sparks = true;
+            case "--smoke": options.smoke = true;
             case "--collide": options.collide = true;
             case "--drop-oldest": options.drop_oldest = true;
             case "--frames":
@@ -703,7 +774,7 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    bool scene_effect = options.sparks || options.collide;
+    bool scene_effect = options.sparks || options.smoke || options.collide;
     if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
         || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
@@ -717,7 +788,7 @@ fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--collide]");
+        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--smoke] [--collide]");
         io::eprintn("    [--frames count] [--capture-rgba path].");
         return 1;
     }

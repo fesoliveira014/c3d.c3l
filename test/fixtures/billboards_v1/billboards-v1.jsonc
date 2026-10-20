@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "billboard_cards",
+      "local": {
+        "position": [
+          3,
+          -1,
+          5
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 5,
+      "visible": true,
+      "components": {
+        "c3d.BillboardBatch": {
+          "version": 1,
+          "value": {
+            "material": "billboards_v1/material",
+            "capacity": 4,
+            "facing": "DIRECTIONAL",
+            "billboards": [
+              {
+                "position": [
+                  0,
+                  0,
+                  -0.0
+                ],
+                "size": [
+                  1,
+                  2
+                ],
+                "direction": [
+                  0,
+                  1,
+                  0
+                ],
+                "rotation": 0,
+                "color": [
+                  0.100000001,
+                  0.200000003,
+                  0.300000012,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  1,
+                  0.5,
+                  -1
+                ],
+                "size": [
+                  1.5,
+                  2
+                ],
+                "direction": [
+                  1,
+                  0,
+                  0
+                ],
+                "rotation": 0.25,
+                "color": [
+                  0.200000003,
+                  0.200000003,
+                  0.300000012,
+                  1
+                ]
+              },
+              {
+                "position": [
+                  2,
+                  1,
+                  -2
+                ],
+                "size": [
+                  2,
+                  2
+                ],
+                "direction": [
+                  0,
+                  1,
+                  0
+                ],
+                "rotation": 0.5,
+                "color": [
+                  0.300000012,
+                  0.200000003,
+                  0.300000012,
+                  1
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

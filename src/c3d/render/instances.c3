@@ -40,7 +40,7 @@ struct GpuInstances {
     uint               count;    // live instances the records hold
     uint               mirrored; // mirrored records among them
     ulong              last_seen;
-    Mat4               world; // records bake the node world, so a moved node re-uploads
+    Mat4               world; // billboard records bake the node world, so a moved node re-uploads them
     Vec3               origin;
     gpu::GpuAllocation allocation;
     gpu::GpuAddress    records;
@@ -138,20 +138,20 @@ fn void InstanceTable.sweep(&self, ulong frame_index, RetireList* retire) {
 }
 
 <*
- Write one instance record from its world matrix, color and seed.
+ Write one instance record from its matrix, color and seed.
  @param [&out] record : "Overwritten whole."
- @param world : "Affine instance matrix."
+ @param model : "Affine instance matrix."
  @param seed : "Instance seed in [0, 1), carried in normal_0.w."
 *>
 fn void write_instance(
     InstanceGpu* record,
-    Mat4 world,
+    Mat4 model,
     Vec4 color,
     float seed,
 ) {
-    Mat3 normal = maths::normal_matrix(world);
+    Mat3 normal = maths::normal_matrix(model);
     *record = {
-        .model    = bitcast(world, Mat4f),
+        .model    = bitcast(model, Mat4f),
         .normal_0 = { normal.m00, normal.m10, normal.m20, seed },
         .normal_1 = { normal.m01, normal.m11, normal.m21, 0 },
         .normal_2 = { normal.m02, normal.m12, normal.m22, 0 },
@@ -160,7 +160,7 @@ fn void write_instance(
 }
 
 <*
- Pack the live instances, unmirrored first, each group in array order.
+ Pack the live instances relative to their node, unmirrored first, each group in array order.
  @param [out] records : "At least batch.count long."
  @param [&in] batch : "Live count above zero."
  @param [in] crowd : "Null selects ordinary batch transforms."
@@ -169,7 +169,6 @@ fn void write_instance(
 *>
 fn uint pack_instance_records(
     InstanceGpu[] records,
-    Mat4 node_world,
     InstancedMesh* batch,
     AnimatedCrowd* crowd = null,
     uint part = 0,
@@ -191,12 +190,11 @@ fn uint pack_instance_records(
 
     foreach (slot, index : order[:batch.count]) {
         write_batch_instance(
-            record:     &records[slot],
-            node_world: node_world,
-            local:      instance_local(batch, crowd, part, index),
-            batch:      batch,
-            index:      index,
-            crowd:      crowd,
+            record: &records[slot],
+            local:  instance_local(batch, crowd, part, index),
+            batch:  batch,
+            index:  index,
+            crowd:  crowd,
         );
     }
 
@@ -205,7 +203,6 @@ fn uint pack_instance_records(
 
 fn void pack_instance_span(
     InstanceGpu[] records,
-    Mat4 node_world,
     InstancedMesh* batch,
     InstanceSpan span,
     AnimatedCrowd* crowd = null,
@@ -213,12 +210,11 @@ fn void pack_instance_span(
 ) @private {
     for (uint index = span.first; index < span.end; index++) {
         write_batch_instance(
-            record:     &records[index - span.first],
-            node_world: node_world,
-            local:      instance_local(batch, crowd, part, index),
-            batch:      batch,
-            index:      index,
-            crowd:      crowd,
+            record: &records[index - span.first],
+            local:  instance_local(batch, crowd, part, index),
+            batch:  batch,
+            index:  index,
+            crowd:  crowd,
         );
     }
 }
@@ -233,7 +229,6 @@ fn bool instance_mirrored(InstancedMesh* batch, AnimatedCrowd* crowd, uint part,
 
 fn void write_batch_instance(
     InstanceGpu* record,
-    Mat4 node_world,
     Mat4 local,
     InstancedMesh* batch,
     uint index,
@@ -241,7 +236,7 @@ fn void write_batch_instance(
 ) @local {
     write_instance(
         record: record,
-        world:  node_world.mul(local),
+        model:  local,
         color:  batch.colors[index],
         seed:   instance_seed(batch.transforms[index].position),
     );
@@ -290,29 +285,22 @@ fn void destroy_instance_table(InstanceTable* table) {
  Whether the slot must upload the batch's records.
  @param [&in] slot
  @param [&in] batch
- @param world : "Batch node world matrix."
- @param origin : "Absolute origin used to pack the records."
 *>
 fn bool needs_upload(
     GpuInstances* slot,
     InstanceKey key,
     InstancedMesh* batch,
-    Mat4 world,
-    Vec3 origin = {},
 ) {
-    return slot.key != key || slot.capacity < batch.transforms.len || slot.revision != batch.revision
-        || slot.world != world || slot.origin != origin;
+    return slot.key != key || slot.capacity < batch.transforms.len || slot.revision != batch.revision;
 }
 
 fn InstanceSpan patchable_span(
     GpuInstances* slot,
     InstancedMesh* batch,
-    Mat4 world,
-    Vec3 origin,
     AnimatedCrowd* crowd,
     uint part,
 ) @private {
-    if (slot.capacity < batch.transforms.len || slot.world != world || slot.origin != origin) return {};
+    if (slot.capacity < batch.transforms.len) return {};
     if (slot.count != batch.count || slot.mirrored) return {};
 
     InstanceSpan span = batch.ranges.span_since(slot.revision);
@@ -403,7 +391,8 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
     InstanceKey key = {
         .scene = candidate.scene_identity,
         .node = candidate.node.id,
-        .kind = candidate.billboards ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
+        .kind = candidate.billboards ? shader::INSTANCE_KIND_BILLBOARD
+          : candidate.ribbons ? shader::INSTANCE_KIND_RIBBON : shader::INSTANCE_KIND_MESH,
     };
     uint index = renderer.instances.acquire(key, renderer.frame_index)!;
     GpuInstances* slot = &renderer.instances.slots[index];
@@ -419,12 +408,22 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
         }
         return slot.records;
     }
+    if (RibbonBatch* ribbons = candidate.ribbons) {
+        if (slot.capacity <= ribbons.points.len || slot.revision != ribbons.revision
+            || slot.world != candidate.node.world || slot.origin != renderer.frame_origin) {
+            upload_ribbon_records(
+                renderer: renderer,
+                index: index,
+                batch: ribbons,
+                world: candidate.node.world,
+            )!;
+        }
+        return slot.records;
+    }
     bool stale = needs_upload(
         slot: slot,
         key: key,
         batch: candidate.batch,
-        world: candidate.node.world,
-        origin: renderer.frame_origin,
     );
     bool quadtree = candidate.batch.quadtree.parents.len != 0;
     if (quadtree && (stale || quadtree_stale(slot, candidate.batch))) candidate.batch.validate_quadtree();
@@ -434,7 +433,6 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
             renderer: renderer,
             index:    index,
             batch:    candidate.batch,
-            world:    candidate.node.world,
             crowd:    candidate.crowd,
             part:     candidate.crowd_part,
         )!;
@@ -453,10 +451,11 @@ fn void? acquire_instance_records(
     GpuInstances* slot,
     uint capacity,
     usz record_size,
+    usz header_size = 0,
 ) @private {
     if (slot.capacity < capacity) {
         gpu::AllocationDesc records_desc = {
-            .size         = (usz)capacity * record_size,
+            .size         = header_size + (usz)capacity * record_size,
             .alignment    = STREAM_ALIGNMENT,
             .memory_class = gpu::MemoryClass.GPU_PRIVATE,
             .access       = { .graphics },
@@ -470,7 +469,7 @@ fn void? acquire_instance_records(
             renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
         }
         slot.allocation = allocation;
-        slot.records = address;
+        slot.records = (gpu::GpuAddress)((ulong)address + header_size);
         slot.capacity = capacity;
         slot.revision = 0;
     } else {
@@ -482,13 +481,12 @@ fn void? upload_instance_records(
     Renderer* renderer,
     uint index,
     InstancedMesh* batch,
-    Mat4 world,
     AnimatedCrowd* crowd,
     uint part,
 ) @private {
     GpuInstances* slot = &renderer.instances.slots[index];
     uint capacity = (uint)batch.transforms.len;
-    InstanceSpan patch = patchable_span(slot, batch, world, renderer.frame_origin, crowd, part);
+    InstanceSpan patch = patchable_span(slot, batch, crowd, part);
     bool patched = patch.end > patch.first;
     if (!patched) patch = { .end = batch.count };
 
@@ -505,11 +503,9 @@ fn void? upload_instance_records(
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     InstanceGpu[] records = ((InstanceGpu*)staging.bytes.ptr)[:patch_count];
 
-    Mat4 node_world = maths::rebase(world, renderer.frame_origin);
     if (patched) {
         pack_instance_span(
             records: records,
-            node_world: node_world,
             batch: batch,
             span: patch,
             crowd: crowd,
@@ -518,7 +514,6 @@ fn void? upload_instance_records(
     } else {
         uint split = pack_instance_records(
             records: records,
-            node_world: node_world,
             batch: batch,
             crowd: crowd,
             part: part,
@@ -535,8 +530,6 @@ fn void? upload_instance_records(
     renderer.pending_instance_uploads.push(index);
     slot.revision = batch.revision;
     slot.count = batch.count;
-    slot.world = world;
-    slot.origin = renderer.frame_origin;
 
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)bytes;

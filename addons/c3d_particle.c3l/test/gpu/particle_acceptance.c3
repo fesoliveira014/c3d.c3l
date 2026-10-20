@@ -18,6 +18,11 @@ const float VIEW_HEIGHT @private = 4;
 const float PIXEL_TOLERANCE @private = 0.02f;
 const Vec4 WHITE @private = { 1, 1, 1, 1 };
 const Vec4 BLUE @private = { 0, 0, 1, 1 };
+const Vec4 RED @private = { 1, 0, 0, 1 };
+const uint SHEET_WIDTH @private = 4; // two cells of two texels, so filtering inside a cell never leaves its colour
+const uint SHEET_HEIGHT @private = 2;
+const uint SHEET_CELL_WIDTH @private = SHEET_WIDTH / 2;
+const uint SHEET_TEXEL_BYTES @private = 4;
 
 struct Fixture @private {
     AssetStore assets;
@@ -364,4 +369,36 @@ fn void test_empty_hidden_and_removed_emitters_release_render_work() @test {
     render_frames(&fixture, false, (uint)render::INSTANCE_ABSENCE_FRAMES + 1);
     assert(fixture.renderer.instances.lookup.len() == 0);
     assert(fixture.renderer.stats.indirect_draws == 0 && fixture.renderer.stats.scene_snapshots == 0);
+}
+
+fn void test_particle_flipbook_blends_adjacent_frames() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    char[SHEET_WIDTH * SHEET_HEIGHT * SHEET_TEXEL_BYTES] texels;
+    for (uint texel = 0; texel < SHEET_WIDTH * SHEET_HEIGHT; texel++) {
+        bool first_cell = texel % SHEET_WIDTH < SHEET_CELL_WIDTH;
+        texels[texel * SHEET_TEXEL_BYTES + (first_cell ? 0 : 2)] = char::max;
+        texels[texel * SHEET_TEXEL_BYTES + 3] = char::max;
+    }
+    TextureId sheet = fixture.assets.add_texture(
+        material::texture_2d_desc(SHEET_WIDTH, SHEET_HEIGHT, PixelFormat.RGBA8_UNORM),
+        texels[..],
+    )!!;
+    ParticleSystemDesc desc = quiet_desc();
+    desc.material = particle::add_particle_material(
+        assets: &fixture.assets,
+        shader: fixture.shader,
+        params: fixture.params,
+        map: material::texture_slot(sheet),
+    )!!;
+    desc.flipbook = { .columns = 2, .rows = 1, .frame_count = 2, .blend = true };
+    Node* emitter = add_emitter(&fixture, desc);
+    burst(&fixture, emitter);
+    check_pixel(centre(&fixture), RED);
+
+    ParticleSystem* system = fixture.scene.get(emitter, ParticleSystem);
+    system.age[0] = system.lifetime[0] / 2;
+    particle::update(&fixture.scene, 0);
+    check_pixel(centre(&fixture), { 0.5f, 0, 0.5f, 1 });
 }

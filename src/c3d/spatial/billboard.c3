@@ -12,8 +12,12 @@ import std::math;
  @param [&in] batch : "Any billboard batch."
 *>
 fn bool billboard_batch_is_live(AssetStore* assets, BillboardBatch* batch) {
-    if (!assets.materials.is_live(batch.material)) return false;
-    Material* material = &assets.material(batch.material).data;
+    return blended_batch_material_is_live(assets, batch.material);
+}
+
+fn bool blended_batch_material_is_live(AssetStore* assets, MaterialId material_id) @private {
+    if (!assets.materials.is_live(material_id)) return false;
+    Material* material = &assets.material(material_id).data;
     if (material.common.alpha_mode != AlphaMode.BLEND) return false;
     if (material.kind == MaterialKind.PHYSICAL && material.physical.transmission > 0) return false;
     if (material.kind != MaterialKind.CUSTOM) return true;
