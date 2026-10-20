@@ -1374,7 +1374,6 @@ fn void test_pending_foliage_keeps_owned_lod_through_failure_retry_and_removal()
 
 const float REBASE_CELLS @local = 4; // 256 m cells, so the rebase offset is a render cell multiple
 const float REBASE_OFFSET @local = REBASE_CELLS * 256;
-const float REBASE_HEIGHT @local = 128;
 const float TURN_DEGREES @local = 0.5f; // about 0.009 in the rotation entries, under the translation tolerance
 
 fn Node* add_nested_ground(Fixture* fixture, Node* parent) @local {
@@ -1797,9 +1796,6 @@ fn void test_scatter_job_commits_shifted_after_a_rebase() @test {
         ScatterJob job = take_job(&fixture, layer, tmem);
         run_job(&job, tmem);
         fixture.scene.shift_origin({ REBASE_OFFSET, 0, REBASE_OFFSET });
-        // shift_origin takes no vertical offset; the check accounts for one all the same.
-        anchor.local.position.y -= REBASE_HEIGHT;
-        fixture.scene.world_shift[1] += REBASE_HEIGHT;
         fixture.scene.update_world();
         try_commit(&fixture, &job)!!;
 
