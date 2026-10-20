@@ -120,7 +120,7 @@ fn void Scene.mark_ribbons_dirty(&self, Node* node) {
 }
 
 <*
- Factor a node world scales strip widths by: the cube root of the determinant's magnitude.
+ Mean scale of a node world, the factor strip widths take.
  @param world : "Published affine node transform."
  @pure
 *>
