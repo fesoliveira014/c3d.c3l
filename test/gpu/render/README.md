@@ -46,6 +46,12 @@ the descriptor heap, so a missing vertex-stage barrier fails no assertion here; 
 no validation error is logged. The barrier itself shows in a `VK_LAYER_LUNARG_api_dump` capture, where the image barrier
 that returns a store texture to the sampled state names the vertex, fragment and compute stages.
 
+`test_billboard_atlas_selects_cells_without_bleed_and_blends_frames` draws frame 2 of a 2x2, 128-texel atlas whose four
+cells differ in colour, carry an 8-texel border at zero alpha and have a generated mip chain. At 1:1 and at four texels
+per pixel, every pixel with alpha shows only cell 2's colour; an inset of 16 texels fills the whole quad with that
+colour; and a custom fragment that outputs `v_billboard.z` reads 0.5 within 1/255 at frame 1.5. It runs under
+validation.
+
 The auto-exposure cases in `test_auto_exposure.c3` render constant-luminance backgrounds into float targets and
 read each rendering's adapted value from the view's readback. They check the GLSL adaptation against its C3 twin
 within 1e-4 relative over a sequence of 0, 1/144 to 0.5 s steps and luminance changes, and the delayed

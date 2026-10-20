@@ -42,6 +42,11 @@ propagate and remove the batch; a `BOX_RANGES` payload without parents or levels
 `SPHERE_PIXELS`, fail the read the same way. Version-1, version-2 and version-3 payloads read as
 `SPHERE_PIXELS`.
 
+BillboardBatch authoring version 2 adds the batch's sprite-sheet `atlas` and each billboard's `frame`. Version-1
+binary and JSONC payloads read the atlas as off and every frame as 0. Reading and writing apply the
+`BillboardAtlas` and `frame` rules of `Scene.set_billboard_atlas` and `Scene.set_billboards`, so a layout that
+breaks them, or a negative or non-finite `frame`, faults `INVALID_ARGUMENT`.
+
 LodGroup authoring version 3 restores in BINDINGS, after its source owners. Its common effects
 carry `trace_sway`; version-1 and version-2 binary and JSONC payloads read it as false.
 Rigid groups preserve ordered affine parts, levels, capacities, live placements,
