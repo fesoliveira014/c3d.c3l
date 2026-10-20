@@ -135,6 +135,7 @@ void main() {
     vec4 world = draw.model * vec4(local, 1.0);
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)
     v_world_pos = world.xyz;
+    v_shading_pos = world.xyz;
     v_normal = normalize(mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz) * vec3(0.0, 1.0, 0.0));
     v_tangent = vec4(0.0);
 #endif

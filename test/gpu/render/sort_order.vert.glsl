@@ -4,7 +4,7 @@
 #include "mesh_vertex.glsl"
 
 #ifndef DEPTH_ONLY
-layout(location = 9) flat out uvec2 v_sort_order;
+layout(location = 10) flat out uvec2 v_sort_order;
 #endif
 
 void main() {

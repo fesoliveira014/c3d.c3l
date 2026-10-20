@@ -16,6 +16,7 @@ layout(location = 1) in vec3 v_normal;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
 layout(location = 5) in vec4 v_color;
+layout(location = 9) centroid in vec3 v_shading_pos; // inside the triangle under MSAA, where v_world_pos can lie outside it
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -55,11 +56,11 @@ void main() {
         LightGpu light = LightArray(frame.lights).values[selected_light_index(frame, lights, index)];
         if ((draw.layers & light.layers) == 0u) continue;
 
-        LightSample light_sample = sample_light(light, v_world_pos);
+        LightSample light_sample = sample_light(light, v_shading_pos);
         float response = toon_response(material, dot(normal, light_sample.direction));
         vec3 visibility = vec3(1.0);
         if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light_casts_shadow(light)) {
-            visibility = shadow_transmittance(frame, light, v_world_pos, normal, view_depth);
+            visibility = shadow_transmittance(frame, light, v_shading_pos, normal, view_depth);
         }
         color += base_color.rgb / PI * response * light_sample.radiance * visibility;
     }
