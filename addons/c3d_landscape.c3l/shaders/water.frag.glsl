@@ -116,6 +116,13 @@ void main() {
     vec3 view_direction = standard_view_direction(frame, v_world_pos);
     vec3 wave_normal = normalize(v_normal);
 
+    // A back face seen from above is the far side of a triangle showing through a gap between quads. Facing and the
+    // camera test are uniform over a primitive, so its quads discard together and the derivatives below are untouched.
+    // The camera test is place_mirror's, in water/mirror.c3.
+    vec3 rest_normal = normalize(mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz) * vec3(0.0, 1.0, 0.0));
+    bool camera_under_plane = dot(frame.camera_position.xyz - draw.model[3].xyz, rest_normal) < 0.0;
+    if (!gl_FrontFacing && !camera_under_plane) discard;
+
     // The references are per material, so both samples run in uniform control flow for their derivatives.
     vec3 normal = wave_normal;
     if (material.references[WATER_RIPPLES] != 0ul) {
@@ -142,7 +149,6 @@ void main() {
     }
 
     vec2 screen_uv = scene_uv(frame, gl_FragCoord.xy);
-    vec3 rest_normal = normalize(mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz) * vec3(0.0, 1.0, 0.0));
     vec3 view_tilt = mat3(frame.view) * (normal - rest_normal);
     vec2 screen_tilt = vec2(view_tilt.x, -view_tilt.y);
     float bend = clamp(scene_depth_gap(frame, gl_FragCoord) / WATER_REFRACTION_DEPTH, 0.0, 1.0);
@@ -171,6 +177,7 @@ void main() {
     );
 
     // The branch holds explicit-lod reads only, so the derivatives above stay in uniform control flow.
+    // A back face that reaches it has the camera under the rest plane.
     if (!gl_FrontFacing) {
         color = water_from_below(frame, params, v_world_pos, normal, view_direction);
         out_color = material_output(color, 1.0, material.flags);

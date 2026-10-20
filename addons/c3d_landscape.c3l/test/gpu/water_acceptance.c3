@@ -94,6 +94,10 @@ const float SLANT_PITCH @local = 0.364f; // tangent of 20 degrees: the diver loo
 const float TIR_ELEVATION_DEGREES @local = 30; // 60 from the vertical, past the critical angle of 48.75
 const float TIR_REACH @local = 10; // metres along the ray to the world point that locates its pixel
 const float TIR_FOG_RATIO @local = 0.5f; // the reflected path is many absorption distances: far under half remains
+const float BACK_FACE_EXTENT @local = 10; // metres along the quad's side: it covers the view's centre
+const Vec3 BACK_FACE_CAMERA @local = { 0, 5, 8.66f }; // 60 degrees off the normal, past the critical angle
+const Vec3 BACK_FACE_BED_COLOR @local = { 0.2f, 0.6f, 1 }; // no channel is zero: shading from below returns black here
+const float CHANNEL_STEP @local = 1.0f / 255; // one 8-bit step
 const Vec3 MIRROR_BACKGROUND_POINT @local = { -4, 4, -8 }; // above the plane, off every box
 const uint MIRROR_SAMPLES @local = 2;
 const int[<2>][3] CENTRE_PIXELS @local = { { 32, 32 }, { 26, 30 }, { 36, 38 } }; // near the axis of the view
@@ -343,10 +347,10 @@ fn Node* add_camera_node(
     return node;
 }
 
-fn Node* add_emissive_box(Fixture* fixture, Vec3 position, Vec3 size) @local {
+fn Node* add_emissive_box(Fixture* fixture, Vec3 position, Vec3 size, Vec3 color = { 1, 1, 1 }) @local {
     StandardParams glow = material::STANDARD_PARAMS_DEFAULT;
     glow.base_color = { 0, 0, 0, 1 };
-    glow.emissive = { 1, 1, 1 };
+    glow.emissive = color;
     glow.emissive_strength = EMISSIVE_STRENGTH;
     MaterialId glowing = fixture.assets.add_material(material::standard(glow))!!;
     Node* node = fixture.scene.add_mesh(fixture.box, glowing, name: "emissive")!!;
@@ -2150,6 +2154,64 @@ fn void test_underwater_surface_reflects_the_fogged_bed_past_the_window() @test 
     assert(unfogged.x > DARK_LIMIT, "the reflection of the bed is missing: %f", unfogged.x);
     assert(fogged.x > DARK_LIMIT, "the fogged reflection is lost: %f", fogged.x);
     assert(fogged.x < TIR_FOG_RATIO * unfogged.x, "fogged %f, unfogged %f", fogged.x, unfogged.x);
+    check_validation(&fixture.renderer);
+}
+
+fn GeometryId add_backwards_quad(Fixture* fixture, float extent) @local {
+    GeometryId quad_id;
+    @pool() {
+        Geometry quad = geometry::plane(tmem, extent, extent);
+        for (usz first = 0; first < quad.indices.len; first += 3) {
+            @swap(quad.indices[first + 1], quad.indices[first + 2]);
+        }
+        quad_id = fixture.assets.add_geometry(&quad)!!;
+    };
+    return quad_id;
+}
+
+fn void test_back_faces_seen_from_above_draw_nothing() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    WaterDesc desc = surface_desc({}, BACK_FACE_EXTENT, 1);
+    desc.geometry = add_backwards_quad(&fixture, BACK_FACE_EXTENT);
+    desc.absorption_color = { 1, 1, 1 };
+    Node* water_node = add_water_node(&fixture, desc);
+    add_emissive_box(
+        fixture:  &fixture,
+        position: BED_POSITION,
+        size:     PLATE_SIZE,
+        color:    BACK_FACE_BED_COLOR,
+    );
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: 60,
+        position:    BACK_FACE_CAMERA,
+        forward:     -BACK_FACE_CAMERA,
+        up:          { 0, 1, 0 },
+    );
+    ViewId view = add_view(&fixture, MIRROR_SIZE);
+
+    Vec4 over_body = shoot_pixel(
+        fixture:     &fixture,
+        camera_node: camera_node,
+        view:        view,
+        pixel:       CENTRE_PIXELS[0],
+    );
+    fixture.scene.remove(water_node);
+    Vec4 bed = shoot_pixel(
+        fixture:     &fixture,
+        camera_node: camera_node,
+        view:        view,
+        pixel:       CENTRE_PIXELS[0],
+    );
+
+    assert(bed.x > DARK_LIMIT, "the bed is not seen: %f", bed.x);
+    for (uint channel = 0; channel < 3; channel++) {
+        float found = over_body[channel];
+        float miss = math::abs(found - bed[channel]);
+        assert(miss <= CHANNEL_STEP, "channel %d: %f over the body, %f without it", channel, found, bed[channel]);
+    }
     check_validation(&fixture.renderer);
 }
 
