@@ -637,6 +637,10 @@ narrowing to nothing over 0.4 seconds, drawn additively with a generated soft-ed
 stress system the same trail, and each segment prints `trail_points`, `trail_draw_count` and the core `ribbon_bounds_ms`
 and `ribbon_pack_ms` beside the billboard timings; run `--stress` with and without `--trails` to compare the update cost.
 
+`--debris-shadows` sets `mesh_cast_shadow` on the debris system, gives the sun a shadow map and draws the ground
+with a Standard material, which receives the shadows. It applies to the window and to `--benchmark`, and does not
+combine with `--stress` or `--lit-smoke`.
+
 `--collide` makes the sparks bounce on the ground plane and, through a physics
 ray cast, on a canopy and two crates that are static physics bodies. It applies
 to the window and to `--benchmark`, and `--benchmark` prints `collision_skips`.
