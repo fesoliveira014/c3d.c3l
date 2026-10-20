@@ -564,7 +564,7 @@ array so that no two constraints of a color share a particle, then stores it col
 edges stay in ascending `(first, second)` order and bends in the order of their interior edges. A topology
 change after a tear recolors with scratch carved at preparation, so it allocates nothing. The order follows
 the bend mode and has no setting of its own; for a given mesh, `ClothDesc` and update sequence the results
-are deterministic. An array that needs more than 32 colors keeps its previous order. With
+are deterministic. An array that needs more than 32 colors keeps its previous order. The ordering reports where each color starts; running it again on an ordered array gives the same colors and the same order, which is how the [device solver](#device-solver) recovers the ranges. With
 `ClothBendMode.DIHEDRAL`, edges keep the ascending order and hinges the order of the interior edges, whose
 state they carry.
 
@@ -641,15 +641,49 @@ little more; more iterations shrink that gap. In a steady breeze, sheets of diff
 along one edge move together closely. Once the sheet flutters, the motion is chaotic enough that
 tessellations agree only statistically; compare time averages there.
 
+## Device solver
+
+`c3d::render::cloth_gpu`, compiled in the physics add-on under the `C3D_PHYSICS_GPU` feature, runs the solver of a prepared cloth as compute dispatches and writes the result into the cloth's geometry through a [geometry write](custom_shaders.md#geometry-writes). It is render-layer code: it imports core (`c3d::render`) and `c3d::physics::cloth`, records `Renderer.dispatch` passes and never imports `gpu`. A consumer that enables the feature selects the GPU dependencies.
+
+```c3
+Node* flag = scene.add_mesh(geometry, material)!;
+scene.add_cloth(&assets, flag, desc, &physics)!;
+GpuCloth device = cloth_gpu::create_gpu_cloth(&renderer, &assets, &scene, flag)!;
+
+renderer.begin_frame(info)!;
+device.step(&renderer, &scene, physics::DEFAULT_GRAVITY, physics::DEFAULT_FIXED_DT)!;
+renderer.render_view(&scene, camera, view)!;
+```
+
+`create_gpu_cloth` checks the subset, holds the CPU cloth with `Cloth.sleep` so `update_cloths` neither solves nor publishes it, builds the buffers and uploads nothing yet. The first `step` writes the constants into an `UPLOAD` buffer, which the renderer accepts only before the frame's first dispatch, so run it before other dispatches of that frame. Waking the cloth hands it back to the CPU solver, whose publication overwrites the device contents. `destroy_gpu_cloth` releases the buffers and leaves the geometry copy to the physics cloth.
+
+**Subset.** `check_gpu_cloth` returns `UNSUPPORTED` for a cloth with: a `Wind` component, a bend stiffness other than zero or dihedral bending, soft attachments, tangent frames, seams, render-particle welds, cut paths, nonzero transport, self-contact, continuous contact, a skinned or crowd source, more than one collider or a collider other than a sphere, a material-vertex split (the output vertex `i` must be particle `i`), or an edge set that needs more than 32 colors. Pins, distance edges, gravity, damping, a ground plane and one sphere are supported.
+
+**Step.** A step runs `ClothDesc.substeps` substeps. Each one predicts the particles (semi-implicit gravity, then damping `max(0, 1 - damping * dt)`), projects the edges color by color with one dispatch per color and pass, pushes free particles out of the sphere and the ground by the contact offset after each pass, and integrates the velocities; a final dispatch writes node-local positions and area-weighted normals. A step records `1 + substeps * (2 + iterations * (colors + 1))` dispatches, plus one initial dispatch on the first step. The colors are those of the CPU ordering (see [Solver and publication](#solver-and-publication)), so both solvers share the topology; within a color no two edges share a particle, so the projection is Gauss-Seidel across colors and order independent inside one.
+
+**Limits.** Pins follow the node's world matrix as sampled by the step, held across the substeps; they are not interpolated as on the CPU. The sphere is sampled once at creation and must not move. A zero-length edge is skipped instead of separating along its rest direction. Contacts are projections of single particles with the CPU's thickness offsets, without the CPU's bounded resolution loop. Output bounds are the rest bounds grown by the rest diagonal, passed as the geometry write's `local_bounds`, so culling, picking and tracing see that box.
+
+**Observation.** The solver state lives on the device. `GpuCloth.read_positions` returns the world positions `FRAMES_IN_FLIGHT` frames old through a `READBACK` buffer (see [Readback](custom_shaders.md#readback)); `ClothState`, `PhysicsWorld` queries and the cloth's CPU geometry arrays do not see the device cloth. Tracing a `vertex_motion` cloth refits its slot from the written streams, and the velocity pass reads the renderer-owned previous positions, with no position upload.
+
+Checks: `physics_gpu_test` (subset check, no device) and, on a Vulkan device, the manual target
+
+```text
+c3c test cloth_gpu_acceptance --path addons/c3d_physics.c3l/test/gpu
+```
+
+which settles a 33x33 flag under gravity against pinned edge and one sphere, with TAA and motion blur and validation on, and reads the positions back.
+
 ## Example
 
 ```text
 python scripts/build.py --example cloth
-addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
+addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd|densities [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|field|crowd [--count 100] [--workers 4] [--cells 32]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33 [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|flag33|field|crowd [--count 100] [--workers 4] [--cells 32]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
+python scripts/build.py --example cloth_gpu
+addons/c3d_physics.c3l/build/cloth_gpu.exe [--benchmark] --gpu --scene flag33
 ```
 
 Run from `addons/c3d_physics.c3l`: the character model path is relative to it, and from `build/` the
@@ -693,6 +727,8 @@ template: the example adds the cape as a rigid mesh part on the `DEF-spine.003` 
 mean and 95th-percentile staging and commit wall times beside the summed solve time, and the bytes of all
 cloth states. `--cpu-only` steps the scene without a renderer, which keeps rasteriser threads from competing
 with the job pool. `--cells N` sets the benchmark flag's cells per side (default 32).
+
+The `flag33` scene hangs a 33x33-vertex sheet (1.8 m by 1.2 m) from a bar by its first row, laid out horizontally so gravity swings it down, with a static ball under the swing, bend stiffness zero, damping 3 per second and the ground on. It has no wind, which keeps it inside the [device solver](#device-solver) subset, and it runs on the CPU solver by default. `--gpu`, accepted by the `cloth_gpu` build, holds the CPU cloth and steps it with `cloth_gpu` instead. With `--benchmark` it additionally prints the `CUSTOM_COMPUTE` pass time (`gpu_cloth,custom_compute_ms`), the velocity pass time (`gpu_velocity_ms`) and the CPU time that recording the step took (`gpu_cloth,record_ms`) beside the existing upload figures; the CPU figures of the same scene come from `--benchmark --cpu-only --scene flag33`. Reset does nothing under `--gpu`.
 
 The `densities` scene hangs the same 1.8 m by 1.2 m flag from two bars side by side, at 12x8 and 24x16 cells,
 with the top row pinned and a 1.5 m/s wind that blows straight at the sheets, under the example's gusts. The

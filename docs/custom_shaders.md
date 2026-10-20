@@ -875,7 +875,7 @@ renderer.finish_view(renderer.default_view)!;
 renderer.end_frame()!;
 ```
 
-`root` is the application's std430 root; its bytes are copied into the upload ring and their address becomes `DispatchRoot.parameters` (zero for an empty root). `writes` names the buffers the dispatch writes: the renderer records one barrier before the dispatch, from every consumer stage to compute, and one after, from compute to the vertex, fragment and compute stages, so a later dispatch or draw in the same frame reads the results. A dispatch with no writes records no buffer barrier. Buffer reads need no declaration. Dispatches record in call order anywhere between `begin_frame` and `end_frame`, outside an overlay, after the frame's pending asset uploads; `write_buffer` faults `INVALID_ARGUMENT` after the frame's first dispatch, so every staged write lands before every dispatch. A dead shader or buffer id faults `INVALID_ID`. Indirect dispatch and readback are outside this contract.
+`root` is the application's std430 root; its bytes are copied into the upload ring and their address becomes `DispatchRoot.parameters` (zero for an empty root). `writes` names the buffers the dispatch writes: the renderer records one barrier before the dispatch, from every consumer stage to compute, and one after, from compute to the vertex, fragment and compute stages, so a later dispatch or draw in the same frame reads the results. A dispatch with no writes records no buffer barrier. Buffer reads need no declaration. Dispatches record in call order anywhere between `begin_frame` and `end_frame`, outside an overlay, after the frame's pending asset uploads; `write_buffer` faults `INVALID_ARGUMENT` after the frame's first dispatch, so every staged write lands before every dispatch. A dead shader or buffer id faults `INVALID_ID`. Indirect dispatch is outside this contract; [readback](#readback) is limited to `READBACK` buffers.
 
 ### Textures
 
@@ -902,6 +902,48 @@ store_storage_texture(textures.slots[1].texture_index, ivec2(coord), mix(color, 
 A `read_texture` entry for an `R16_UINT` texture is read with `gpu_fetch_uint(textures.slots[i].texture_index, texel, 0)`, never sampled.
 
 A store texture is writable when its `TextureDesc.storage` is set; block-compressed, sRGB and `R16_UINT` formats reject the flag with `INVALID_ARGUMENT`. `add_texture_empty(desc, key)` creates a storage texture with no pixels, contents undefined until a dispatch writes them; it may be bound by a material before that. A dispatch writes one mip of one layer per declaration; levels it does not write keep their previous contents, and `Renderer.upload(texture)` writes the CPU pixels back over the GPU contents.
+
+### Geometry writes
+
+A dispatch may write the vertex streams of a resident geometry. `DispatchDesc.geometry` lists `GeometryWrite { geometry, streams, local_bounds }`, where `streams` names the positions, normals and tangents the shader writes. The application packs the stream addresses into its root:
+
+```c3
+ClothRoot root = {
+    .positions = (ulong)renderer.geometry_stream_address(geometry, GeometryStream.POSITIONS)!,
+    .normals   = (ulong)renderer.geometry_stream_address(geometry, GeometryStream.NORMALS)!,
+};
+GeometryWrite[1] writes = {{
+    .geometry     = geometry,
+    .streams      = { .positions = true, .normals = true },
+    .local_bounds = bounds,
+}};
+renderer.dispatch({
+    .shader   = deform,
+    .root     = material::@as_bytes(root),
+    .groups   = { groups, 1, 1 },
+    .geometry = writes[..],
+})!;
+```
+
+`geometry_stream_address` needs an open frame and returns the address of any present stream of the geometry's block for the current frame: positions and normals are packed three-float vectors (12 bytes per vertex), tangents four-float vectors, indexed by vertex. Only positions, normals and tangents can be written.
+
+- **Validation.** A dead geometry id faults `INVALID_ID`. A geometry that is not resident (call `upload_geometry` first), a stream the geometry does not carry, a stream other than positions, normals or tangents, an empty stream set or the same geometry twice faults `INVALID_ARGUMENT`. Every fault comes before the dispatch records or stages anything. A geometry with a CPU revision still waiting for its upload is uploaded first, so the write lands after it.
+- **Barriers.** The dispatch brackets a geometry write like a buffer write: consumer stages to compute before, compute to the consumer stages and transfer after.
+- **Device revision.** The write is a device revision of the named streams. Draws, shadows, the velocity pass and the trace refit read it in the same frame; the CPU arrays do not change, and no CPU upload happens. A later CPU revision (`mark_geometry_dirty`, `mark_geometry_streams_dirty`, `mark_geometry_range_dirty`, `replace_geometry`) uploads the whole block again from the CPU arrays, overwrites the device contents of every stream and restores the geometry's bounds. Record the dispatch before the draws that should show it and before `prepare_scene_trace`.
+- **Velocity.** The first write of a frame that names positions copies the positions the block held into a renderer-owned buffer, allocated once at the geometry's first write, before the dispatch records. A `Mesh` with `vertex_motion` reads it as its previous positions in a view that drew the mesh the frame before: the velocity of a moving write is the per-vertex motion, and a frame without a write reports none. The buffer is per geometry, so a view that skips frames sees one frame of motion. `Stats.vertex_history_bytes` stays zero for a device-written geometry, and its CPU arrays may be released.
+- **Tracing.** A `vertex_motion` mesh's posed trace slot copies the written streams and refits its tree or updates its bottom-level structure in the same frame (see [Scene tracing](scene_trace.md)). The shared rest tree and bottom level of a geometry that no `vertex_motion` mesh traces keep the CPU form.
+- **Bounds.** `local_bounds` replaces the geometry's bounds for culling, the scene index, picking and the top-level structure until the next CPU revision. It must contain every position the shader can write. Picking tests the bounds only, because the CPU arrays no longer describe the drawn vertices.
+
+### Readback
+
+`BufferUsage.READBACK` creates a buffer that shaders write like a `GPU_PRIVATE` one and the CPU can read back later. At the end of every frame that recorded work, the renderer copies each live `READBACK` buffer into a mapped staging copy. `Renderer.read_buffer(buffer)` inside an open frame returns the contents the buffer held when the frame `FRAMES_IN_FLIGHT` frames earlier ended:
+
+```c3
+renderer.begin_frame(info)!;
+char[] bytes = renderer.read_buffer(positions)!;
+```
+
+The result borrows mapped memory without copying or allocating and stays valid until the next `begin_frame`. `read_buffer` faults `render::NOT_READY` until that frame has been copied, so in the first `FRAMES_IN_FLIGHT` frames and after a frame that recorded no work or was aborted; `INVALID_ARGUMENT` for a buffer that is not `READBACK`. The copy is made after every dispatch of the frame, and the staging keeps `FRAMES_IN_FLIGHT + 1` copies of the buffer.
 
 ### Views
 

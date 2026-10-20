@@ -133,9 +133,15 @@ call `physics.update_cloths()` once after `physics.update`, after final ragdoll/
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
 faults, frame order and usage; the `cloth` example includes flag, cape, external-contact,
 seamed-fold, fast-crossing, flag-field, cape-crowd and tessellation-comparison scenes
-(`--scene flag|cape|both|contacts|fold|fast|field|crowd|densities`).
+(`--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33`).
 The manual Vulkan acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
+
+Under the `C3D_PHYSICS_GPU` feature, `c3d::render::cloth_gpu` solves a prepared cloth of its subset
+(pins, distance edges, gravity, damping, the ground and one sphere) as compute dispatches and writes the cloth's
+geometry through a geometry write. The `cloth_gpu` example runs it (`--gpu --scene flag33`), `physics_gpu_test`
+checks the subset and `cloth_gpu_acceptance` runs it on a Vulkan device
+(`c3c test cloth_gpu_acceptance --path addons/c3d_physics.c3l/test/gpu`). See [Cloth](../../docs/cloth.md#device-solver).
 
 A cloth whose free particles stay under `ClothDesc.sleep_speed` for `sleep_steps` simulated steps
 rests: it skips the solve and publication until a trigger wakes it (reference motion past

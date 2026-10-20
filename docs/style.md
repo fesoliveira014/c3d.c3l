@@ -29,6 +29,7 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d::landscape::foliage;` | Vegetation layers in `addons/c3d_landscape.c3l`. Imports stdlib, core, `c3d::landscape` (the shared `STALE` fault) and `c3d::landscape::terrain`, opened with `@public` for its placement predicate; no faults of its own. |
 | `module c3d::landscape::water;` | Water bodies in `addons/c3d_landscape.c3l`. Imports stdlib, core, `c3d::landscape` and `c3d::landscape::terrain` (`@public`: the SPIR-V constants and the query predicate); no faults of its own. |
 | `module c3d::landscape::water_gpu @feat(C3D_LANDSCAPE_GPU);` | Spectral water's field passes in `addons/c3d_landscape.c3l`, recorded through `Renderer.dispatch`. Imports stdlib, core (`c3d::render`), `c3d::landscape` and `c3d::landscape::water`; never `gpu`; no faults of its own. |
+| `module c3d::render::cloth_gpu @feat(C3D_PHYSICS_GPU);` | The device cloth solver in `addons/c3d_physics.c3l/src/gpu/`, recorded through `Renderer.dispatch`. Imports stdlib, core (`c3d::render`), `c3d::physics` and `c3d::physics::cloth`; never `gpu`; no faults of its own. |
 | `module c3d::ui;` | Game UI in `addons/c3d_ui.c3l`: documents, styles, bindings, input routing and overlay drawing over Clay. Imports stdlib, core (`c3d::render` for the overlay list, `c3d::platform` for input) and `clay`; never `gpu`; faults belong to the add-on. |
 | `module c3d::instrumentation @private;` | Core's optional scope bridge; only its CPU+INTERNAL section imports the profiler add-on. |
 
