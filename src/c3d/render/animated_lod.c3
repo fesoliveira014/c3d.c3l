@@ -381,14 +381,14 @@ fn gpu::GpuAddress? upload_animated_lod_previous(Renderer* renderer, DrawItem* i
     if (!candidate.animated_lod.skinned) {
         gpu::MappedGpuSpan local_span = frame.upload.take(
             device: &renderer.device,
-            size: (usz)count * Mat4f::size,
+            size: (usz)count * AffineRowsGpu::size,
             alignment: STREAM_ALIGNMENT,
         )!;
-        Mat4f[] locals = ((Mat4f*)local_span.bytes.ptr)[:count];
+        AffineRowsGpu[] locals = ((AffineRowsGpu*)local_span.bytes.ptr)[:count];
         Mat4 authored = selection.state.desc.parts[candidate.lod_part].local;
 
         foreach (source, mesh_local : animated_lod_previous_mesh_locals(owner, candidate)) {
-            locals[source] = bitcast(bitcast(mesh_local, Mat4).mul(authored), Mat4f);
+            locals[source] = affine_rows(bitcast(bitcast(mesh_local, Mat4).mul(authored), Mat4f));
         }
 
         previous.instances = local_span.address;

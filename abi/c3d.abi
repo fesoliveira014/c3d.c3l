@@ -356,6 +356,14 @@ struct LodHistoryGpu {
     uint _pad0;
 }
 
+// The first three rows of an affine matrix; the fourth row is (0, 0, 0, 1).
+struct AffineRowsGpu {
+    vec4 row_0;
+    vec4 row_1;
+    vec4 row_2;
+}
+
+// PreviousPoseGpu.instances addresses one AffineRowsGpu per previous instance matrix.
 root PreviousPoseGpu {
     GpuAddress skin;
     GpuAddress morph;

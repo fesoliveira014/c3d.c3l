@@ -797,6 +797,16 @@ $assert $reflect(LodHistoryGpu.generation).offset == 68;
 $assert $reflect(LodHistoryGpu.reject_history).offset == 72;
 $assert $reflect(LodHistoryGpu._pad0).offset == 76;
 
+struct AffineRowsGpu {
+    Vec4f row_0;
+    Vec4f row_1;
+    Vec4f row_2;
+}
+$assert AffineRowsGpu::size == 48;
+$assert $reflect(AffineRowsGpu.row_0).offset == 0;
+$assert $reflect(AffineRowsGpu.row_1).offset == 16;
+$assert $reflect(AffineRowsGpu.row_2).offset == 32;
+
 struct PreviousPoseGpu {
     GpuAddress skin;
     GpuAddress morph;

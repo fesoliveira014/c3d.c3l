@@ -545,6 +545,12 @@ struct LodHistoryGpu {
     uint _pad0;
 };
 
+struct AffineRowsGpu {
+    vec4 row_0;
+    vec4 row_1;
+    vec4 row_2;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPoseGpu {
     uint64_t skin;
     uint64_t morph;

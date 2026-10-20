@@ -1959,7 +1959,7 @@ fn gpu::GpuAddress? upload_previous_pose(
                 locals = pose.instances[span.first:span.end - span.first];
             }
 
-            base = upload_bytes(renderer, locals.ptr, locals.len * Mat4f::size)!;
+            base = upload_previous_instances(renderer, locals)!;
             instances.set(key, base);
         }
         bind_previous_instances(
@@ -1984,9 +1984,29 @@ fn void bind_previous_instances(
     uint offset,
 ) @local {
     // A draw that starts at instance offset indexes its own matrices from zero.
-    previous.instances = offset_by_instances(base, offset > span.first ? offset - span.first : 0, Mat4f::size);
+    previous.instances = offset_by_instances(base, offset > span.first ? offset - span.first : 0, AffineRowsGpu::size);
     previous.instances_first = span.first > offset ? span.first - offset : 0;
     previous.instances_end = span.end > offset ? span.end - offset : 0;
+}
+
+// Previous matrices upload as affine rows: with a 64-byte stride the velocity pass cost on an RTX 4090 depended on
+// where the upload landed in the ring, and 48-byte rows do not.
+fn AffineRowsGpu affine_rows(Mat4f matrix) @private {
+    return {
+        .row_0 = { matrix[0][0], matrix[1][0], matrix[2][0], matrix[3][0] },
+        .row_1 = { matrix[0][1], matrix[1][1], matrix[2][1], matrix[3][1] },
+        .row_2 = { matrix[0][2], matrix[1][2], matrix[2][2], matrix[3][2] },
+    };
+}
+
+fn gpu::GpuAddress? upload_previous_instances(Renderer* renderer, Mat4f[] matrices) @local {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, matrices.len * AffineRowsGpu::size, STREAM_ALIGNMENT)!;
+    AffineRowsGpu[] rows = ((AffineRowsGpu*)span.bytes.ptr)[:matrices.len];
+
+    foreach (index, matrix : matrices) rows[index] = affine_rows(matrix);
+
+    return span.address;
 }
 
 fn VertexHistory vertex_history_of(AssetStore* assets, MeshCandidate* candidate, PoseRecord* pose) @private {
