@@ -147,15 +147,15 @@ const int[<2>][9] BED_PIXELS @local = {
 const float AO_MATCH_TOLERANCE @local = 0.03f; // relative to the untraced bed: the open-ground bound of the AO cases
 const float OCCLUDED_RATIO_MAXIMUM @local = 0.5f; // the bed under a double-sided row measures 0.09 of the untraced one
 
-const uint FILTER_MAP_SIZE @local = 64; // six mip levels
+const uint FILTER_MAP_SIZE @local = 64; // seven mip levels
 const uint FILTER_CHANNELS @local = 4;
-const float FILTER_UV_SCALE @local = 8; // texture periods per metre: 28 texels to a pixel of the twin's view, past the sixth mip
+const float FILTER_UV_SCALE @local = 8; // periods per metre: 28 texels to a pixel of the twin's view, mip level 5
 const float FILTER_TILT @local = 0.5f; // x of each texel's normal, leaning either way in turn: its mip is 0.87 long
 const float FILTER_CELL_SIZE @local = 0.5f; // the body is flat
 const uint FILTER_PATCH @local = 5; // pixels along the side of the patch around the optical axis
 const float FILTER_SUN_INTENSITY @local = 1;
-const float FILTER_PEAK_RATIO_MAXIMUM @local = 0.1f; // the widened lobe measures four orders under the narrow one
-const float FILTER_UNFILTERED_TOLERANCE @local = 0.05f; // relative to the body without a reference
+const float FILTER_PEAK_RATIO_MAXIMUM @local = 0.1f; // the widened lobe measures five orders under the narrow one
+const float NORMALIZED_TOLERANCE @local = 0.05f; // relative to the body without a reference
 const float FLAT_MAP_TOLERANCE @local = 0.01f; // relative to the body without a reference
 
 const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with default_water_desc, the example's waves
@@ -2476,11 +2476,12 @@ fn void test_ripple_filter_widens_a_minified_ripple_highlight() @test {
     float filtered = filter_peak(&fixture, camera_node, view, filtered_reference);
     float unfiltered = filter_peak(&fixture, camera_node, view, unfiltered_reference);
 
-    io::printfn("Ripple filter peaks: bare %g, flat %g, renormalized %g, filtered %g", bare, flat, unfiltered, filtered);
+    io::printfn("Ripple peaks: bare %g, flat %g, renormalized %g, filtered %g", bare, flat, unfiltered, filtered);
     assert(bare > 0, "the sun's highlight is not seen");
-    assert(math::abs(flat - bare) <= FLAT_MAP_TOLERANCE * bare, "a flat map moved the highlight: %f, not %f", flat, bare);
-    float unfiltered_miss = math::abs(unfiltered - bare);
-    assert(unfiltered_miss <= FILTER_UNFILTERED_TOLERANCE * bare, "a renormalized map moved it: %f, not %f", unfiltered, bare);
+    float flat_miss = math::abs(flat - bare);
+    assert(flat_miss <= FLAT_MAP_TOLERANCE * bare, "a flat map moved the highlight: %f, %f", flat, bare);
+    float renormalized_miss = math::abs(unfiltered - bare);
+    assert(renormalized_miss <= NORMALIZED_TOLERANCE * bare, "a renormalized map moved it: %f, %f", unfiltered, bare);
     float kept = FILTER_PEAK_RATIO_MAXIMUM * unfiltered;
     assert(filtered <= kept, "the minified map kept its highlight: %f, not under %f", filtered, kept);
 }

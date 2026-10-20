@@ -118,7 +118,7 @@ const Vec3 LOWER_SKY_COLOR @local = { 0.25f, 0.23f, 0.2f }; // below the horizon
 const Vec3 SUN_DISC_COLOR @local = { 60, 55, 45 };
 const float SUN_DISC_COSINE @local = 0.9995f; // about 3.6 degrees across
 
-const uint RIPPLE_MAP_SIZE @local = 256; // 512 KiB of half floats and its mips; one tile covers 1 / RIPPLE_UV_SCALE metres
+const uint RIPPLE_MAP_SIZE @local = 256; // 512 KiB of half floats and its mips; a tile is 1 / RIPPLE_UV_SCALE m
 const float RIPPLE_UV_SCALE @local = 0.25f; // texture periods per metre
 const float RIPPLE_SLOPE @local = 0.3f; // slope bound; the eight terms reach 0.6 of it at most; steeper ripples glint like chop
 const uint FOAM_MAP_SIZE @local = 128;
