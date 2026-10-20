@@ -347,9 +347,20 @@ velocity as direction and full dimensions `(size, size + speed * stretch)`;
 core handles per-camera projection and the zero/parallel-direction fallback.
 Rotation is an extra in-plane turn. MESH publishes the supplied geometry/material
 with uniform scale and rotation about world +Y. Mesh particles inherit that
-material's alpha/depth behaviour; they do not cast shadows or trace in this
-delivery. Zero-area/zero-scale output is omitted without removing the simulated
+material's alpha/depth behaviour. Zero-area/zero-scale output is omitted without removing the simulated
 particle. Pick indices identify compacted draw records, not stable particles.
+
+`mesh_cast_shadow` and `mesh_trace` apply to MESH systems and default to false, so debris neither casts
+shadows nor enters the scene trace. Both are copied to the owned `InstancedMesh` child when the system is prepared,
+and core's rules for instanced batches apply to them:
+
+- Debris shadows need an opaque or masked material. A blended Standard material casts only into the translucent
+  maps of [colored shadows](shadows.md#colored-shadows), and a custom blended material never casts.
+- `mesh_trace` adds one trace instance per live particle, taken from `RendererDesc.max_trace_instances`
+  (4,096 when zero) with the scene's other traced meshes. A scene past that capacity faults
+  `c3d::CAPACITY_EXCEEDED` when the renderer prepares the trace; see [scene tracing](scene_trace.md#what-traces).
+  Only opaque and masked materials trace.
+- Setting either field outside MESH mode fails `INVALID_ARGUMENT`.
 
 `add_particle_shader` creates a shared fragment-only shader using core's depth
 snapshot, with its [weighted form](custom_shaders.md#weighted-transparency), so source-over
@@ -703,4 +714,4 @@ Windows.
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 7. Version 2 added `saturation`, version 3 added `sub_emitters`, `sub_emitter_count` and `max_events`, version 4 added `collision`, version 5 added `flipbook`, version 6 added `turbulence`, and version 7 adds `trail`; older payloads in both encodings read the defaults, which is no collision, no flipbook, no turbulence and no trail. The trail child is generated, so it is not written; preparation creates it again. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
+Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 8. Version 2 added `saturation`, version 3 added `sub_emitters`, `sub_emitter_count` and `max_events`, version 4 added `collision`, version 5 added `flipbook`, version 6 added `turbulence`, version 7 added `trail`, and version 8 adds `mesh_cast_shadow` and `mesh_trace`; older payloads in both encodings read the defaults, which is no collision, no flipbook, no turbulence, no trail, and debris that casts no shadow and does not trace. The trail child is generated, so it is not written; preparation creates it again. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
