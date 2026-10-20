@@ -223,6 +223,11 @@ const uint SHADER_FLAG_HI_Z = 1 << 21;
 *>
 const uint SHADER_FLAG_MULTISAMPLE_PIXEL = 1 << 22;
 
+<*
+ Flag bit for PROXY_SKIP.
+*>
+const uint SHADER_FLAG_PROXY_SKIP = 1 << 23;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -238,6 +243,7 @@ const char[*] IMPOSTOR_FORWARD_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embe
 const char[*] IMPOSTOR_FORWARD_RT_SHADOWS_SCENE_TRACE_BVH_RT_SHADOWS_HARD_SPIRV @private = $embed("../../../shaders/spv/impostor_forward_rt_shadows_scene_trace_bvh_rt_shadows_hard.spv");
 const char[*] IMPOSTOR_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/impostor_gbuffer.spv");
 const char[*] IMPOSTOR_DEPTH_SPIRV @private = $embed("../../../shaders/spv/impostor_depth.spv");
+const char[*] IMPOSTOR_DEPTH_PROXY_SKIP_SPIRV @private = $embed("../../../shaders/spv/impostor_depth_proxy_skip.spv");
 const char[*] IMPOSTOR_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/impostor_velocity.spv");
 const char[*] BASIC_SPIRV @private = $embed("../../../shaders/spv/basic.spv");
 const char[*] BASIC_WEIGHTED_BLEND_SPIRV @private = $embed("../../../shaders/spv/basic_weighted_blend.spv");
@@ -324,6 +330,8 @@ const char[*] CLOUDS_COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/clo
 const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
 const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
 const char[*] DEPTH_ONLY_VERTEX_COLOR_SPIRV @private = $embed("../../../shaders/spv/depth_only_vertex_color.spv");
+const char[*] DEPTH_ONLY_PROXY_SKIP_SPIRV @private = $embed("../../../shaders/spv/depth_only_proxy_skip.spv");
+const char[*] DEPTH_ONLY_VERTEX_COLOR_PROXY_SKIP_SPIRV @private = $embed("../../../shaders/spv/depth_only_vertex_color_proxy_skip.spv");
 const char[*] SHADOW_TRANSMITTANCE_SPIRV @private = $embed("../../../shaders/spv/shadow_transmittance.spv");
 const char[*] SHADOW_TRANSMITTANCE_VERTEX_COLOR_SPIRV @private = $embed("../../../shaders/spv/shadow_transmittance_vertex_color.spv");
 const char[*] MESH_SKINNED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned.spv");
@@ -439,8 +447,10 @@ const char[*] MESH_SKINNED_U16_MORPH_VELOCITY_INSTANCED_OUTLINE_SPIRV @private =
 const char[*] MESH_VELOCITY_INSTANCED_POSED_INSTANCED_OUTLINE_SPIRV @private = $embed("../../../shaders/spv/mesh_velocity_instanced_posed_instanced_outline.spv");
 const char[*] STANDARD_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/standard_gbuffer.spv");
 const char[*] STANDARD_GBUFFER_REFLECTION_PREPASS_SPIRV @private = $embed("../../../shaders/spv/standard_gbuffer_reflection_prepass.spv");
+const char[*] STANDARD_GBUFFER_REFLECTION_PREPASS_PROXY_SKIP_SPIRV @private = $embed("../../../shaders/spv/standard_gbuffer_reflection_prepass_proxy_skip.spv");
 const char[*] PHYSICAL_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/physical_gbuffer.spv");
 const char[*] PHYSICAL_GBUFFER_REFLECTION_PREPASS_SPIRV @private = $embed("../../../shaders/spv/physical_gbuffer_reflection_prepass.spv");
+const char[*] PHYSICAL_GBUFFER_REFLECTION_PREPASS_PROXY_SKIP_SPIRV @private = $embed("../../../shaders/spv/physical_gbuffer_reflection_prepass_proxy_skip.spv");
 const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve.spv");
 const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows.spv");
 const char[*] LIGHTING_RESOLVE_RT_SHADOWS_RT_SHADOWS_HARD_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_rt_shadows_hard.spv");
@@ -464,11 +474,12 @@ const char[*] TRACE_POSE_SKINNED_U16_INSTANCED_SPIRV @private = $embed("../../..
 const char[*] TRACE_SWAY_SPIRV @private = $embed("../../../shaders/spv/trace_sway.spv");
 const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_refit.spv");
 const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_zero.spv");
+const char[*] SAMPLE_ZERO_PROXY_SKIP_SPIRV @private = $embed("../../../shaders/spv/sample_zero_proxy_skip.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[241] SHADER_ENTRIES = {
+const ShaderEntry[247] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -484,6 +495,7 @@ const ShaderEntry[241] SHADER_ENTRIES = {
     { .variant = { .shader = IMPOSTOR_FORWARD, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_RT_SHADOWS_HARD }, .spirv = IMPOSTOR_FORWARD_RT_SHADOWS_SCENE_TRACE_BVH_RT_SHADOWS_HARD_SPIRV[..] },
     { .variant = { .shader = IMPOSTOR_GBUFFER }, .spirv = IMPOSTOR_GBUFFER_SPIRV[..] },
     { .variant = { .shader = IMPOSTOR_DEPTH }, .spirv = IMPOSTOR_DEPTH_SPIRV[..] },
+    { .variant = { .shader = IMPOSTOR_DEPTH, .flags = SHADER_FLAG_PROXY_SKIP }, .spirv = IMPOSTOR_DEPTH_PROXY_SKIP_SPIRV[..] },
     { .variant = { .shader = IMPOSTOR_VELOCITY }, .spirv = IMPOSTOR_VELOCITY_SPIRV[..] },
     { .variant = { .shader = BASIC }, .spirv = BASIC_SPIRV[..] },
     { .variant = { .shader = BASIC, .flags = SHADER_FLAG_WEIGHTED_BLEND }, .spirv = BASIC_WEIGHTED_BLEND_SPIRV[..] },
@@ -570,6 +582,8 @@ const ShaderEntry[241] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY, .flags = SHADER_FLAG_VERTEX_COLOR }, .spirv = DEPTH_ONLY_VERTEX_COLOR_SPIRV[..] },
+    { .variant = { .shader = DEPTH_ONLY, .flags = SHADER_FLAG_PROXY_SKIP }, .spirv = DEPTH_ONLY_PROXY_SKIP_SPIRV[..] },
+    { .variant = { .shader = DEPTH_ONLY, .flags = SHADER_FLAG_VERTEX_COLOR | SHADER_FLAG_PROXY_SKIP }, .spirv = DEPTH_ONLY_VERTEX_COLOR_PROXY_SKIP_SPIRV[..] },
     { .variant = { .shader = SHADOW_TRANSMITTANCE }, .spirv = SHADOW_TRANSMITTANCE_SPIRV[..] },
     { .variant = { .shader = SHADOW_TRANSMITTANCE, .flags = SHADER_FLAG_VERTEX_COLOR }, .spirv = SHADOW_TRANSMITTANCE_VERTEX_COLOR_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED }, .spirv = MESH_SKINNED_SPIRV[..] },
@@ -685,8 +699,10 @@ const ShaderEntry[241] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_VELOCITY | SHADER_FLAG_INSTANCED | SHADER_FLAG_POSED_INSTANCED | SHADER_FLAG_OUTLINE }, .spirv = MESH_VELOCITY_INSTANCED_POSED_INSTANCED_OUTLINE_SPIRV[..] },
     { .variant = { .shader = STANDARD_GBUFFER }, .spirv = STANDARD_GBUFFER_SPIRV[..] },
     { .variant = { .shader = STANDARD_GBUFFER, .flags = SHADER_FLAG_REFLECTION_PREPASS }, .spirv = STANDARD_GBUFFER_REFLECTION_PREPASS_SPIRV[..] },
+    { .variant = { .shader = STANDARD_GBUFFER, .flags = SHADER_FLAG_REFLECTION_PREPASS | SHADER_FLAG_PROXY_SKIP }, .spirv = STANDARD_GBUFFER_REFLECTION_PREPASS_PROXY_SKIP_SPIRV[..] },
     { .variant = { .shader = PHYSICAL_GBUFFER }, .spirv = PHYSICAL_GBUFFER_SPIRV[..] },
     { .variant = { .shader = PHYSICAL_GBUFFER, .flags = SHADER_FLAG_REFLECTION_PREPASS }, .spirv = PHYSICAL_GBUFFER_REFLECTION_PREPASS_SPIRV[..] },
+    { .variant = { .shader = PHYSICAL_GBUFFER, .flags = SHADER_FLAG_REFLECTION_PREPASS | SHADER_FLAG_PROXY_SKIP }, .spirv = PHYSICAL_GBUFFER_REFLECTION_PREPASS_PROXY_SKIP_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE }, .spirv = LIGHTING_RESOLVE_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_RT_SHADOWS_HARD }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_RT_SHADOWS_HARD_SPIRV[..] },
@@ -710,4 +726,5 @@ const ShaderEntry[241] SHADER_ENTRIES = {
     { .variant = { .shader = TRACE_SWAY }, .spirv = TRACE_SWAY_SPIRV[..] },
     { .variant = { .shader = TRACE_REFIT }, .spirv = TRACE_REFIT_SPIRV[..] },
     { .variant = { .shader = SAMPLE_ZERO }, .spirv = SAMPLE_ZERO_SPIRV[..] },
+    { .variant = { .shader = SAMPLE_ZERO, .flags = SHADER_FLAG_PROXY_SKIP }, .spirv = SAMPLE_ZERO_PROXY_SKIP_SPIRV[..] },
 };

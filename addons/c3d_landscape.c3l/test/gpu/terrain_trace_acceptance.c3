@@ -55,6 +55,7 @@ const float FINE_LOD @local = 64; // the finest level again
 const uint SPECKLE_EDGE @local = 40; // luminance step of an edge, out of 255
 const float SPECKLE_LAPLACIAN_RATIO @local = 1.25f; // of the finest grid's mean |Laplacian|
 const float SPECKLE_PIXEL_RATIO @local = 2; // of the finest grid's edge pixels
+const float AO_AMBIENT @local = 2; // scene ambient intensity: ambient light is what traced occlusion darkens
 const Vec3 CREST @local = { 31.4f, 0, 89.8f }; // where the hills are level: sin(0.05 x) and cos(0.07 z) peak
 const float BOX_SIZE @local = 0.5f;
 const Vec3 CONTACT_CAMERA_OFFSET @local = { 0, 4, 0 }; // above the box, looking down
@@ -409,6 +410,9 @@ struct ShadeDesc @local {
     float       fov_degrees;
     Vec3        sun_direction;
     bool        without_skip;   // publishes no gaps, so no hit on the trace grid is skipped
+    bool        traced_ao;      // ray traced ambient occlusion over an ambient-lit scene
+    bool        back_faces;     // the terrain is double-sided, so rays meet the grid from below
+    MsaaSamples msaa;
 }
 
 struct ShadeRig @local {
@@ -428,6 +432,13 @@ fn void drop_published_gaps(ShadeRig* rig) @local {
 
     // The trace error and the per-level drawn deviations are one run of floats in the block.
     mem::clear(block.ptr + TRACE_ERROR_OFFSET, float::size * (1 + terrain::MAX_TERRAIN_LEVELS));
+    rig.assets.mark_material_dirty(material);
+}
+
+// An occlusion ray meets a grid above the drawn surface from below, where a single-sided grid is culled.
+fn void show_grid_back_faces(ShadeRig* rig) @local {
+    MaterialId material = rig.scene.get(rig.terrain_node, TerrainRuntime).material;
+    rig.assets.material(material).data.common.double_sided = true;
     rig.assets.mark_material_dirty(material);
 }
 
@@ -460,6 +471,8 @@ fn void? create_shade_rig(ShadeRig* rig, ShadeDesc* shade) @local {
     )!;
 
     if (shade.without_skip) drop_published_gaps(rig);
+    if (shade.back_faces) show_grid_back_faces(rig);
+    if (shade.traced_ao) rig.scene.ambient_intensity = AO_AMBIENT;
 
     Light sun = light::directional({ 1, 0.95f, 0.85f }, 3);
     sun.shadow.ray_traced = true;
@@ -488,6 +501,11 @@ fn void? create_shade_rig(ShadeRig* rig, ShadeDesc* shade) @local {
     view_desc.shading = shade.shading;
     view_desc.post.anti_aliasing = AntiAliasing.NONE;
     view_desc.ray_tracing.shadows = true;
+    view_desc.msaa = shade.msaa;
+    if (shade.traced_ao) {
+        view_desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+        view_desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
+    }
     rig.view = render::create_view(&rig.renderer, view_desc)!;
     rig.pixels = alloc::new_array(mem, char, SHADE_BYTES);
 }
@@ -550,6 +568,9 @@ fn Speckle render_speckle(
     uint        trace_level,
     float       lod_threshold,
     bool        without_skip = false,
+    bool        traced_ao = false,
+    bool        back_faces = false,
+    MsaaSamples msaa = MsaaSamples.ONE,
 ) @local {
     ShadeDesc shade = {
         .ray_queries   = ray_queries,
@@ -560,6 +581,9 @@ fn Speckle render_speckle(
         .fov_degrees   = SPECKLE_FOV_DEGREES,
         .sun_direction = RIDGE_SUN,
         .without_skip  = without_skip,
+        .traced_ao     = traced_ao,
+        .back_faces    = back_faces,
+        .msaa          = msaa,
     };
     ShadeRig rig;
     create_shade_rig(&rig, &shade)!!;
@@ -602,6 +626,42 @@ fn void test_traced_terrain_does_not_shadow_itself() @test {
                 assert((float)speckle.edges <= SPECKLE_PIXEL_RATIO * (float)floor.edges);
             }
         }
+    }
+}
+
+struct AoSpeckleCase @local {
+    ShadingPath shading;
+    MsaaSamples msaa;
+}
+
+// llvmpipe creates no two-sample deferred view.
+const AoSpeckleCase[2] AO_SPECKLE_CASES @local = {
+    { .shading = ShadingPath.FORWARD, .msaa = MsaaSamples.ONE },
+    { .shading = ShadingPath.DEFERRED, .msaa = MsaaSamples.FOUR },
+};
+
+// The measured grid is double-sided: a single-sided one hides a missing skip, since rays meet it from below.
+fn void test_traced_ao_does_not_speckle_terrain() @test {
+    foreach (&ao_case : AO_SPECKLE_CASES) {
+        Speckle floor = render_speckle(
+            ray_queries:   false,
+            shading:       ao_case.shading,
+            trace_level:   0,
+            lod_threshold: FINEST_LOD,
+            traced_ao:     true,
+            msaa:          ao_case.msaa,
+        );
+        Speckle speckle = render_speckle(
+            ray_queries:   false,
+            shading:       ao_case.shading,
+            trace_level:   TRACE_LEVEL,
+            lod_threshold: MIDDLE_LOD,
+            traced_ao:     true,
+            back_faces:    true,
+            msaa:          ao_case.msaa,
+        );
+        assert(speckle.mean_laplacian <= SPECKLE_LAPLACIAN_RATIO * floor.mean_laplacian);
+        assert((float)speckle.edges <= SPECKLE_PIXEL_RATIO * (float)floor.edges);
     }
 }
 

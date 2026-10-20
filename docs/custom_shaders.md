@@ -17,7 +17,7 @@ ShaderDesc desc = {
 ShaderId shader = assets.add_shader(&desc, "pulse")!;
 ```
 
-Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `weighted_fragment.shaded`, `weighted_fragment.traced.hardware` and `weighted_fragment.traced.software` are the forward stage compiled with `WEIGHTED_BLEND` for views that compose blended surfaces by weight ([weighted transparency](#weighted-transparency)); each may be empty or supplied alone, and none is validated. `trace_pose` holds the compute sources that pose the shader's geometry for [scene traces](#trace-pose): `single` for a mesh, `instanced` for one instance of a batch, and `reads_time` when the stage reads the frame time; both forms are optional. `trace_pose_grid` declares that the stages index through `trace_pose_index`, which a row past the 1-D dispatch limit needs. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, a `trace_pose.single` without `vertex.shaded`, a `trace_pose.instanced` without `vertex.instanced_shaded`, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero). `asset::copy_shader_desc` and `asset::free_shader_desc` deep-copy and free a desc with any allocator.
+Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `weighted_fragment.shaded`, `weighted_fragment.traced.hardware` and `weighted_fragment.traced.software` are the forward stage compiled with `WEIGHTED_BLEND` for views that compose blended surfaces by weight ([weighted transparency](#weighted-transparency)); each may be empty or supplied alone, and none is validated. `trace_pose` holds the compute sources that pose the shader's geometry for [scene traces](#trace-pose): `single` for a mesh, `instanced` for one instance of a batch, and `reads_time` when the stage reads the frame time; both forms are optional. `depth` is the [prepass stage](#prepass-stage), optional and unpaired. `trace_pose_grid` declares that the stages index through `trace_pose_index`, which a row past the 1-D dispatch limit needs. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, a `trace_pose.single` without `vertex.shaded`, a `trace_pose.instanced` without `vertex.instanced_shaded`, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero). `asset::copy_shader_desc` and `asset::free_shader_desc` deep-copy and free a desc with any allocator.
 
 The SPIR-V can come from anywhere: `$embed`ed `.spv` files, a build step, or the in-process compiler below.
 
@@ -277,6 +277,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `decals.glsl` | `apply_decals` ([decals](materials.md#decals)) |
 | `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
 | `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |
+| `proxy_skip_output.glsl` | `write_proxy_skip` and the `out_proxy_skip` output at location 0 ([prepass stage](#prepass-stage)) |
 | `vertex_pull.glsl` | `pull_vec2`, `pull_vec3`, `pull_vec4`, `pull_triangle`, `GEOMETRY_*` |
 | `view_clip.glsl` | `gl_ClipDistance[1]` (redeclared) and `view_clip_distance` ([clip plane](views.md#clip-plane)); vertex stages only |
 | `instance_effects.glsl` | `instance_anchor`, `instance_fade_scale`, `sway_height_weight`, `sway_offset` ([sway and fade](instancing.md#sway-and-distance-fade); the blocks are `c3d_abi.glsl`'s `InstanceEffectsGpu` and `SwayGpu`) |
@@ -365,7 +366,7 @@ weight its G-buffer stage writes matches that route, as the Standard twin does.
 `write_gbuffer` also packs `trace_proxy_skip_height` into the upper 16 bits of the flags output
 (`GBUFFER_PROXY_SKIP_SHIFT`, in steps of `GBUFFER_PROXY_SKIP_UNIT`), so a stage that writes location 4 itself keeps those
 bits for the lighting resolve and the traced effects. A material whose traced stand-in may sit above its surface raises the
-height before shading, as the forward and the G-buffer stage of terrain do; see
+height before shading, as the forward, the G-buffer and the prepass stage of terrain do; see
 [trace proxies](scene_trace.md#trace-proxies). It stays zero otherwise.
 
 On a `DEFERRED` view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the stage writes the multisample
@@ -376,6 +377,25 @@ The capability is also visible to shaders: `CustomMaterialGpu.capabilities` carr
 `CUSTOM_CAPABILITY_GBUFFER` when the stage is present. Pipelines for the G-buffer stage are keyed
 separately, so a rejected G-buffer stage leaves the forward stage of the same shader drawing, and
 a replacement that drops the stage retires its pipelines while the forward ones are rebuilt.
+
+## Prepass stage
+
+`ShaderDesc.depth` is an optional fragment stage for the depth prepass of a `FORWARD` view with
+[ray-traced ambient occlusion](ambient_occlusion.md#ray-traced). That prepass writes one `R32_UINT` word per pixel, packed
+like the G-buffer flags, so the traced effects can read the pixel's
+[proxy skip height](scene_trace.md#trace-proxies). A draw of the shader in that prepass runs `depth` in place of the core
+depth fragment, with the vertex stage's `depth` form when it has one. The stage is unpaired: it needs no other form, and
+no fault checks it.
+
+The stage includes `proxy_skip_output.glsl`, raises `trace_proxy_skip_height` when its surface can sit below a trace
+stand-in, and calls `write_proxy_skip()` on every path; the include declares the output at location 0. The stage does its
+own alpha test: it calls `discard` for a cut-out pixel, as the core depth fragment does for a masked material. It reads
+the inputs the vertex stage's `depth` form writes, for example a varying that carries the level of a terrain chunk, and
+the draw's `fragment_root_gpu`. `terrain_depth.frag.glsl` in `addons/c3d_landscape.c3l` is the reference.
+
+A shader without the stage draws with the core fragment, which writes zero: its pixels read no skip height, and traced
+rays start as before. The stage never runs in shadow layers or in the prepass of a `DEFERRED` view, whose G-buffer stage
+packs the height instead. A material that reads the scene or blends never draws in the prepass, so its stage never runs.
 
 ## Additive output and fog
 

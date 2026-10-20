@@ -243,8 +243,12 @@ proxies pays no proxy query. Without the argument the entry points behave as bef
 The forward shadow paths read `trace_proxy_skip_height` themselves. A deferred view carries it per pixel: `write_gbuffer`
 packs it into the upper 16 bits of the flags channel as centimetres, rounded up and clamped at 655.35 m, and the
 lighting resolve, [ray-traced ambient occlusion](ambient_occlusion.md#ray-traced) and
-[ray-traced reflections](reflections.md) read it back. A forward view's ambient occlusion and reflections, and any
-multisampled view's, have no flags channel to read and start rays as before. A material that never sets it writes zero.
+[ray-traced reflections](reflections.md) read it back. A forward view with ray-traced ambient occlusion carries the same
+word from its depth prepass: every prepass fragment writes it to an `R32_UINT` `proxy_skip` image, the core fragments
+write zero, and a shader's [prepass stage](custom_shaders.md#prepass-stage) writes its own height. A multisampled view
+reads sample 0 of the word: a deferred view's flags and a forward view's multisample `proxy_skip` are copied to a
+single-sample image after the pass that writes them. A forward view's reflections read none, because only Standard and
+Physical pixels trace and they raise no height. A material that never sets it writes zero.
 The path tracer starts its rays at trace hits and is unaffected.
 
 ### Hit surfaces

@@ -103,7 +103,7 @@ struct ViewDesc {
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
   + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3 + 2 + 1 + 2 + 1 + 1 + 2
-  + 2 * AO_HISTORY_SLOTS + 6 + 1 + 2 * REFLECTION_HISTORY_SLOTS + 1 + 1;
+  + 2 * AO_HISTORY_SLOTS + 6 + 1 + 2 * REFLECTION_HISTORY_SLOTS + 1 + 1 + 3;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -699,6 +699,9 @@ struct ViewRecord {
     Target                               normal_sample_zero;
     Target                               specular_sample_zero;
     Target                               msaa_edges; // single-sample mask: one where a pixel is lit per sample
+    Target                               proxy_skip; // forward prepass word; the sample-0 copy under msaa
+    Target                               msaa_proxy_skip;
+    Target                               flags_sample_zero;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -822,6 +825,9 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     next += 2 * REFLECTION_HISTORY_SLOTS;
     targets[next] = &record.depth_pyramid;
     targets[next + 1] = &record.msaa_edges;
+    targets[next + 2] = &record.proxy_skip;
+    targets[next + 3] = &record.msaa_proxy_skip;
+    targets[next + 4] = &record.flags_sample_zero;
     return targets;
 }
 
@@ -1202,6 +1208,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] o
     acquire_depth_pyramid(renderer, record)!;
     acquire_reflection_images(renderer, record)!;
     acquire_reflection_gbuffer(renderer, record)!;
+    acquire_proxy_skip(renderer, record)!;
     acquire_accumulation(renderer, record)!;
     acquire_sky_view_images(renderer, record)!;
     acquire_fog_volume(renderer, record)!;
@@ -1324,6 +1331,7 @@ fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
     }
 
     if (!desc.ray_tracing.reflections || desc.shading != ShadingPath.FORWARD) staged.reflection_gbuffer = {};
+    if (!proxy_skip_wanted(desc)) staged.proxy_skip = {};
     if (desc.shading != ShadingPath.PATH_TRACED) staged.accumulation = {};
     if (desc.shading == ShadingPath.PATH_TRACED) {
         staged.sky_view = {};

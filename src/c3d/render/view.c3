@@ -2262,6 +2262,7 @@ fn void? record_depth_prepass(
     foreach (&item : gbuffer) candidates[count++] = *item.candidate;
     foreach (&item : opaque) candidates[count++] = *item.candidate;
     bool thin = record.reflection_gbuffer.texture.is_valid();
+    bool proxy = record.proxy_skip.texture.is_valid();
     bool multisample = record.desc.msaa != MsaaSamples.ONE;
     gpu::SampleCount samples = msaa_sample_count(record.desc.msaa);
     ShadowDraw[] draws = prepare_shadow_draws(
@@ -2270,6 +2271,7 @@ fn void? record_depth_prepass(
         effects_view: effects_view,
         thin:         thin,
         samples:      samples,
+        proxy_skip:   proxy,
     )!;
     CullRange[] ranges = alloc::new_array(tmem, CullRange, (sz)draws.len);
     CullItem[] culls = shadow_cull_items(draws, ranges, &record.frustum);
@@ -2281,6 +2283,7 @@ fn void? record_depth_prepass(
     uint height = record.depth.height;
     Target* depth_image = multisample ? &record.msaa_depth : &record.depth;
     Target* thin_image = multisample ? &record.msaa_reflection_gbuffer : &record.reflection_gbuffer;
+    Target* proxy_image = multisample ? &record.msaa_proxy_skip : &record.proxy_skip;
     gpu::DepthTargetDesc depth = {
         .view         = depth_image.attachment,
         .resolve_view = multisample ? record.depth.attachment : (gpu::AttachmentViewHandle){},
@@ -2293,18 +2296,25 @@ fn void? record_depth_prepass(
     state.viewport = flipped_viewport(width, height);
     state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
 
-    // Cleared to zero, so a pixel no eligible draw covers keeps zero specular weight.
-    gpu::ColorTargetDesc[1] thin_color = {{
-        .view     = thin_image.attachment,
-        .load_op  = gpu::LoadOp.CLEAR,
-        .store_op = gpu::StoreOp.STORE,
-    }};
-    gpu::ColorTargetState[1] thin_state = { gpu::color_blend_disabled() };
-    if (thin) {
-        pass.colors = thin_color[..];
-        state.color.targets = thin_state[..];
-        thin_image.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+    Target*[2] attachments;
+    usz color_count;
+    if (proxy) attachments[color_count++] = proxy_image;
+    if (thin) attachments[color_count++] = thin_image;
+
+    // Cleared to zero, so a pixel no draw covers keeps zero specular weight and no proxy skip height.
+    gpu::ColorTargetDesc[2] colors;
+    gpu::ColorTargetState[2] color_targets;
+    foreach (index, image : attachments[:color_count]) {
+        colors[index] = {
+            .view     = image.attachment,
+            .load_op  = gpu::LoadOp.CLEAR,
+            .store_op = gpu::StoreOp.STORE,
+        };
+        color_targets[index] = gpu::color_blend_disabled();
+        image.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     }
+    pass.colors = colors[:color_count];
+    state.color.targets = color_targets[:color_count];
 
     if (multisample) record.msaa_depth.transition(&renderer.commands, DEPTH_RESOLVE_STATE)!;
 
@@ -2315,6 +2325,7 @@ fn void? record_depth_prepass(
           vertex: depth_only_vertex_variant({}),
           reflection: thin ? ReflectionPrepass.MASKED : ReflectionPrepass.OFF,
           samples: samples,
+          proxy_skip: proxy,
       )!;
 
     @profile_pass(renderer, Pass.DEPTH_PREPASS) {
@@ -2332,6 +2343,7 @@ fn void? record_depth_prepass(
         )!;
         gpu::cmd_end_render_pass(&renderer.commands)!;
         if (multisample && thin) record_sample_zero(renderer, thin_image, &record.reflection_gbuffer)!;
+        if (multisample && proxy) record_sample_zero(renderer, proxy_image, &record.proxy_skip)!;
     }!;
 }
 
