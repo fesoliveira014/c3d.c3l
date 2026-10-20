@@ -117,9 +117,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer St
     float delivery_inherit; // share of the event velocity added to each child
     float impact_speed;
     uint delivery_valid; // zero when the target cannot take children, so the events are only counted
-    uint _pad6;
-    uint _pad7;
-    uint _pad8;
+    uint mesh; // nonzero when the records are InstanceGpu
+    uint64_t mirror; // host mirror of a traced mesh system; zero without one
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleControl {

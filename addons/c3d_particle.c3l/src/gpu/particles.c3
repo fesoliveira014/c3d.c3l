@@ -10,7 +10,7 @@ import std::math;
 <*
  GPU particle systems one context simulates by default.
 *>
-const uint DEFAULT_MAX_SYSTEMS = 16; // a buffer each at its first update and one for counters, of the renderer's 64
+const uint DEFAULT_MAX_SYSTEMS = 16; // one buffer each, two for a traced mesh, and one for counters, of the renderer's 64
 
 const String SHIFT_KEY @private = "c3d_particle/particle_shift";
 const String EXPIRE_KEY @private = "c3d_particle/particle_expire";
@@ -34,11 +34,12 @@ struct GpuStages {
 }
 
 <*
- Buffer a GPU system owns, and the emitter it belongs to.
+ Buffers a GPU system owns, and the emitter it belongs to.
 *>
 struct GpuSystemSlot {
     Entity emitter; // a zero generation marks a free slot
     BufferId buffer;
+    BufferId mirror; // READBACK; only a mesh system with mesh_trace has one
     uint stamp; // the update that last saw the emitter
     uint chained; // the update that last recorded the emitter's step
 }
@@ -120,6 +121,7 @@ fn GpuParticles? create_gpu_particles(
 fn void destroy_gpu_particles(GpuParticles* particles, Renderer* renderer) {
     foreach (&slot : particles.slots) {
         if (slot.buffer.generation) (void)renderer.destroy_buffer(slot.buffer);
+        if (slot.mirror.generation) (void)renderer.destroy_buffer(slot.mirror);
     }
     if (particles.counters.generation) (void)renderer.destroy_buffer(particles.counters);
     alloc::free(particles.allocator, particles.slots.ptr);
@@ -156,7 +158,7 @@ fn void? update(
             .debug_name = "particle_counters",
         })!;
     }
-    char[] counters = read_counters(renderer, particles.counters)!;
+    char[] counters = read_snapshot(renderer, particles.counters)!;
 
     fault failure;
     scene.@each(ParticleSystem; entity, system) {
@@ -189,8 +191,8 @@ fn ComputeShaderId? stage(AssetStore* assets, String key, char[] spirv) @private
     return assets.add_compute_shader(&desc, key);
 }
 
-fn char[]? read_counters(Renderer* renderer, BufferId counters) @private {
-    char[]? bytes = renderer.read_buffer(counters);
+fn char[]? read_snapshot(Renderer* renderer, BufferId buffer) @private {
+    char[]? bytes = renderer.read_buffer(buffer);
     if (catch excuse = bytes) {
         if (excuse == render::NOT_READY) return (char[]){};
         return excuse~;
@@ -215,6 +217,7 @@ fn void? retire_unseen(GpuParticles* particles, Renderer* renderer) @private {
         if (!slot.emitter.generation || slot.stamp == particles.stamp) continue;
 
         if (slot.buffer.generation) renderer.destroy_buffer(slot.buffer)!;
+        if (slot.mirror.generation) renderer.destroy_buffer(slot.mirror)!;
         *slot = {};
     }
 }
@@ -269,6 +272,21 @@ fn void? step_system(
             .debug_name = "particle_system",
         })!;
     }
+    if (mirrors_instances(&system.desc)) {
+        if (!slot.mirror.generation) {
+            slot.mirror = renderer.create_buffer({
+                .size = mirror_bytes(system.desc.capacity),
+                .usage = BufferUsage.READBACK,
+                .debug_name = "particle_mirror",
+            })!;
+        }
+        adopt_mirror(
+            scene: scene,
+            renderer: renderer,
+            system: system,
+            mirror: slot.mirror,
+        )!;
+    }
 
     Node* emitter = scene.node(entity);
     GpuStepPlan plan = particle::plan_gpu_step(
@@ -288,24 +306,36 @@ fn void? step_system(
         wind: wind,
         origin: renderer.frame_origin,
     );
-    BufferId[2] writes = { slot.buffer, particles.counters };
+    BufferId[3] writes = { slot.buffer, particles.counters, slot.mirror };
     record_chain(
         renderer: renderer,
         stages: &particles.stages,
         root: &root,
         groups: layout.groups,
         shifted: !plan.first && plan.shift != (Vec3){},
-        writes: writes[..],
+        writes: writes[:slot.mirror.generation ? 3 : 2],
     )!;
     slot.chained = particles.stamp;
 
-    BillboardDevice device = {
-        .buffer = slot.buffer,
-        .records_offset = layout.records,
-        .count_offset = layout.count,
-        .capacity = system.desc.capacity,
-    };
-    scene.set_billboard_device(scene.node(system.draw_node), device, state.pending.reach.bound(&system.desc));
+    Aabb bound = state.pending.reach.bound(&system.desc, mesh_bound_radius(renderer.assets, &system.desc));
+    Node* draw = scene.node(system.draw_node);
+    if (system.desc.render_mode == ParticleRenderMode.MESH) {
+        InstanceDevice instances = {
+            .buffer = slot.buffer,
+            .records_offset = layout.records,
+            .count_offset = layout.count,
+            .capacity = system.desc.capacity,
+        };
+        scene.set_instance_device(draw, instances, bound);
+    } else {
+        BillboardDevice billboards = {
+            .buffer = slot.buffer,
+            .records_offset = layout.records,
+            .count_offset = layout.count,
+            .capacity = system.desc.capacity,
+        };
+        scene.set_billboard_device(draw, billboards, bound);
+    }
     if (!system.desc.trail.max_points) return;
 
     RibbonDevice ribbons = {
@@ -322,7 +352,42 @@ fn SystemAddresses system_addresses(GpuParticles* particles, Renderer* renderer,
     return {
         .base = (ulong)renderer.buffer_address(slot.buffer),
         .counters = (ulong)renderer.buffer_address(particles.counters) + slot_index * COUNTER_BYTES,
+        .mirror = slot.mirror.generation ? (ulong)renderer.buffer_address(slot.mirror) : 0,
     };
+}
+
+fn float mesh_bound_radius(AssetStore* assets, ParticleSystemDesc* desc) @private {
+    if (desc.render_mode != ParticleRenderMode.MESH || !assets.geometries.is_live(desc.geometry)) return 0;
+
+    return particle::bound_radius(assets.geometry(desc.geometry).data.bounds);
+}
+
+fn void? adopt_mirror(
+    Scene* scene,
+    Renderer* renderer,
+    ParticleSystem* system,
+    BufferId mirror,
+) @private {
+    char[] snapshot = read_snapshot(renderer, mirror)!;
+    if (snapshot.len < MIRROR_HEADER_BYTES) return;
+
+    Node* node = scene.node(system.draw_node);
+    InstancedMesh* batch = scene.get(node, InstancedMesh);
+    uint count = math::min(*(uint*)snapshot.ptr, system.desc.capacity);
+    MirrorRecord[] records = ((MirrorRecord*)(snapshot.ptr + MIRROR_HEADER_BYTES))[:count];
+    foreach (index, record : records) {
+        float size = record.position_size.w;
+        batch.transforms[index] = {
+            .position = { record.position_size.x, record.position_size.y, record.position_size.z },
+            .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, record.rotation),
+            .scale = { size, size, size },
+        };
+        batch.colors[index] = record.color;
+    }
+
+    bool changed = count || batch.count;
+    batch.count = count;
+    if (changed) scene.mark_instances_dirty(node);
 }
 
 fn GpuSystemSlot* find_slot(GpuParticles* particles, Entity emitter) @private {
