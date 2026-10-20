@@ -48,6 +48,13 @@ const uint SMOKE_CELL_TEXELS @local = 64;
 const uint SMOKE_SHEET_TEXELS @local = SMOKE_SHEET_COLUMNS * SMOKE_CELL_TEXELS;
 const uint SMOKE_CELL_PADDING @local = 8; // zero-alpha border; 2^(4 - 1) texels cover four sampled mip levels
 const float SMOKE_FRAME_RATE @local = 6;
+const uint EMBER_CAPACITY @local = 3072; // above the embers alive at the ember rate
+const Vec3 EMBER_POSITION @local = { 0, 0.1f, 3 };
+const float EMBER_STRENGTH @local = 1.6f; // metres per second; comparable to the embers' own launch speed
+const float EMBER_FREQUENCY @local = 1.5f; // lattice cells per metre
+const uint EMBER_OCTAVES @local = 3;
+const uint EMBER_PERIOD @local = 32; // cells; the pattern repeats every period / frequency metres
+const Vec3 EMBER_SCROLL @local = { 0, 0.4f, 0 }; // metres per second; the pattern climbs with the embers
 const float PUFF_BASE_RADIUS @local = 10; // texels at the first frame
 const float PUFF_GROWTH @local = 8; // texels gained by the last frame
 const float PUFF_EDGE_WARP @local = 0.35f; // share of the radius the lobes move the edge
@@ -77,6 +84,7 @@ struct Options @local {
     bool sparks;
     bool smoke;
     bool lit_smoke;
+    bool embers;
     bool collide;
     bool drop_oldest;
     bool limit_frames;
@@ -97,9 +105,11 @@ struct Demo @local {
     Node* spark_puffs;
     Node* lamp;
     bool lit_smoke;
+    Node* embers;
     MaterialId smoke;
     MaterialId sparks;
     MaterialId smoke_sheet;
+    MaterialId embers_material;
     ParticleMaterialParams smoke_params;
     ParticleMaterialParams spark_params;
 }
@@ -113,6 +123,16 @@ struct Metrics @local {
     uint gpu_samples;
     bool sorted;
     bool transparent;
+}
+
+fn ParticleTurbulence ember_turbulence() @local {
+    return {
+        .strength = EMBER_STRENGTH,
+        .frequency = EMBER_FREQUENCY,
+        .octaves = EMBER_OCTAVES,
+        .period = EMBER_PERIOD,
+        .scroll = EMBER_SCROLL,
+    };
 }
 
 fn double elapsed_ms(time::Clock started) @local {
@@ -274,6 +294,15 @@ fn Demo? create_demo(Options options) @local {
             map: material::texture_slot(sheet),
         )!;
     }
+    if (options.embers) {
+        demo.embers_material = particle::add_particle_material(
+            assets: &demo.assets,
+            shader: shader,
+            params: { .color = { 1, 0.5f, 0.12f, 1 }, .soft_distance = 0.05f },
+            map: material::texture_slot(sprite),
+            blend: BlendMode.ADDITIVE,
+        )!;
+    }
     GeometryId box;
     GeometryId floor;
     @pool() {
@@ -410,6 +439,29 @@ fn Demo? create_demo(Options options) @local {
     demo.emitters[2] = demo.scene.add_particle_system(debris, name: "debris")!;
     demo.emitters[2].local.position = { 3, 0.2f, 0 };
 
+    if (options.embers) {
+        ParticleSystemDesc embers = particle::default_particle_system_desc();
+        embers.capacity = EMBER_CAPACITY;
+        embers.seed = 5;
+        embers.material = demo.embers_material;
+        embers.shape = CONE;
+        embers.radius = 0.25f;
+        embers.cone_angle = 0.35f;
+        embers.rate = 450;
+        embers.lifetime = { .min = 3, .max = 6 };
+        embers.speed = { .min = 0.6f, .max = 1.6f };
+        embers.size = { .min = 0.03f, .max = 0.07f };
+        embers.gravity_scale = -0.25f;
+        embers.drag = 1.2f;
+        embers.color_min = { 1, 0.4f, 0.1f, 0.5f };
+        embers.color_max = { 1, 0.8f, 0.3f, 1 };
+        embers.turbulence = ember_turbulence();
+        float[8] glow = { 0, 1, 1, 0.9f, 0.7f, 0.5f, 0.25f, 0 };
+        foreach (index, alpha : glow) embers.color_over_life.values[index] = { 1, 1, 1, alpha };
+        demo.embers = demo.scene.add_particle_system(embers, name: "embers")!;
+        demo.embers.local.position = EMBER_POSITION;
+    }
+
     demo.cameras[0] = demo.scene.add_camera(camera::perspective_deg(55, 0.1f, 100))!;
     demo.cameras[1] = demo.scene.add_camera(camera::perspective_deg(55, 0.1f, 100))!;
     demo.cameras[0].local.position = options.lit_smoke ? LIT_CAMERA_POSITIONS[0] : (Vec3){ 10, 7, 17 };
@@ -503,6 +555,7 @@ fn void set_emission(Demo* demo, bool active) @local {
         ParticleSystem* system = demo.scene.get(emitter, ParticleSystem);
         system.emitting = active && (!demo.lit_smoke || index == 0);
     }
+    if (demo.embers) demo.scene.get(demo.embers, ParticleSystem).emitting = active;
 }
 
 fn void report_metrics(String segment, Metrics totals, uint frames) @local {
@@ -605,6 +658,7 @@ fn void? run_benchmark(Options options) @local {
     if (options.collide) {
         io::printfn("sparks,collision_skips,%d", demo.scene.get(demo.emitters[1], ParticleSystem).collision_skips);
     }
+    if (demo.embers) io::printfn("embers,alive,%d", demo.scene.get(demo.embers, ParticleSystem).alive);
     if (demo.spark_puffs) {
         ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
         io::printfn("spark_smoke,alive,%d", demo.scene.get(demo.spark_puffs, ParticleSystem).alive);
@@ -620,18 +674,20 @@ fn void? run_benchmark(Options options) @local {
     return renderer.log.check_validation();
 }
 
-fn void? run_stress(uint frames, ParticleSaturation saturation) @local {
+fn void? run_stress(uint frames, ParticleSaturation saturation, bool turbulent) @local {
     run_stress_segment(
         segment: "stress",
         frames: frames,
         saturation: saturation,
         rate: 0,
+        turbulent: turbulent,
     )!;
     run_stress_segment(
         segment: "saturated",
         frames: frames,
         saturation: saturation,
         rate: STRESS_CAPACITY * SATURATED_REQUEST_FRACTION / STEP_SECONDS,
+        turbulent: turbulent,
     )!;
 }
 
@@ -640,6 +696,7 @@ fn void? run_stress_segment(
     uint frames,
     ParticleSaturation saturation,
     float rate,
+    bool turbulent,
 ) @local {
     Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
     defer scene::destroy_scene(&scene);
@@ -661,6 +718,7 @@ fn void? run_stress_segment(
     desc.drag = 0.2f;
     desc.stretch = 0.1f;
     desc.size_over_life.values = { 1, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f };
+    if (turbulent) desc.turbulence = ember_turbulence();
     Node* emitter = scene.add_particle_system(desc)!;
     ParticleSystem* system = scene.get(emitter, ParticleSystem);
     system.emit_burst(STRESS_CAPACITY);
@@ -692,6 +750,7 @@ fn void? run_stress_segment(
         }
     }
     io::printfn("%s,frames,%d", segment, frames);
+    io::printfn("%s,turbulence_octaves,%d", segment, desc.turbulence.strength > 0 ? desc.turbulence.octaves : 0);
     io::printfn("%s,alive,%d", segment, system.alive);
     io::printfn("%s,refused,%d", segment, system.dropped);
     io::printfn("%s,evicted,%d", segment, system.evicted);
@@ -743,6 +802,11 @@ fn void? controls(
         }
         if (demo.has_physics) {
             imgui::text("Collision skips: %llu", demo.scene.get(demo.emitters[1], ParticleSystem).collision_skips);
+        }
+        if (demo.embers) {
+            ParticleSystem* embers = demo.scene.get(demo.embers, ParticleSystem);
+            imgui::checkbox("Embers emitting", &embers.emitting);
+            imgui::text("Embers alive: %u", embers.alive);
         }
         if (demo.spark_puffs) {
             ParticleSystem* sparks = demo.scene.get(demo.emitters[1], ParticleSystem);
@@ -886,6 +950,7 @@ fn Options? parse_options(String[] args) @local {
             case "--stress": options.stress = true;
             case "--sparks": options.sparks = true;
             case "--smoke": options.smoke = true;
+            case "--embers": options.embers = true;
             case "--lit-smoke": options.lit_smoke = true;
             case "--lighting":
                 options.lighting = parse_lighting(option_value(args, &index)!)!;
@@ -903,26 +968,26 @@ fn Options? parse_options(String[] args) @local {
     bool scene_effect = options.sparks || options.smoke || options.collide || options.lit_smoke;
     bool lit_option = options.single_lighting || options.normal != ParticleNormal.SPHERICAL;
     if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
-        || (options.lit_smoke && (options.sparks || options.smoke || options.collide))
+        || (options.lit_smoke && (options.sparks || options.smoke || options.embers || options.collide))
         || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;
 }
 
 <*
- Display smoke, sparks and debris or measure their rendering.
+ Display smoke, sparks, debris and embers or measure their rendering.
 *>
 fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--smoke] [--collide]");
+        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--smoke] [--embers] [--collide]");
         io::eprintn("    [--lit-smoke [--lighting name] [--normal name]] [--frames count] [--capture-rgba path].");
         return 1;
     }
     Options options = parsed;
     ParticleSaturation saturation = options.drop_oldest ? ParticleSaturation.DROP_OLDEST : ParticleSaturation.REFUSE;
-    if (catch excuse = (options.stress ? run_stress(options.frames, saturation)
+    if (catch excuse = (options.stress ? run_stress(options.frames, saturation, options.embers)
         : options.benchmark ? run_benchmark(options) : run_interactive(options))) {
         io::eprintfn("Particles failed: %s", excuse);
         return 1;

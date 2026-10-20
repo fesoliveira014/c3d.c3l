@@ -28,6 +28,8 @@ const uint TILES_PER_SIDE = 2; // four tiles, each a quarter of the height map
 <* Tiles of a tiled ground. *>
 const uint TILE_COUNT = TILES_PER_SIDE * TILES_PER_SIDE;
 
+const uint TRACE_VERTEX_BUDGET @local = 1 << 22; // vertices; the store's arrays and the CPU tree grow with it
+
 <* Node layer bit of the terrain, left out of picks. *>
 const uint TERRAIN_LAYER = 1 << 1;
 
@@ -385,13 +387,13 @@ fn MaterialId? add_layer(AssetStore* assets, LayerLook look, uint index) @local 
 }
 
 <*
- Smallest trace level whose grid a terrain of this many texels per side can pose.
+ Smallest trace level whose grid of a terrain of this many texels per side fits the vertex budget.
 *>
 fn uint finest_trace_level(uint texels) {
     uint level;
     while (true) {
         uint side = ((texels - 1) >> level) + 1;
-        if (side * side <= terrain::MAX_TRACE_VERTICES) return level;
+        if (side * side <= TRACE_VERTEX_BUDGET) return level;
 
         level++;
     }

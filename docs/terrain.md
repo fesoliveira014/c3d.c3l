@@ -87,7 +87,7 @@ than asserts, since descs also come from files.
 | `triplanar_sharpness` | Exponent of the plane weights: `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read and checked only under `TRIPLANAR` |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update`; `cast_shadow` also onto the [trace grid](#scene-traces) |
 | `trace` | Adds a trace-only grid, so [scene traces](scene_trace.md) see the terrain; baked at preparation |
-| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel. It stays below the map's level count (1 at 257 texels, 3 at 1025) and keeps the grid to `MAX_TRACE_VERTICES` (4,194,240, so level 1 or more at 2049 texels and 2 or more at 4097); read and checked only with `trace`, baked at preparation |
+| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel. It stays below the map's level count (1 at 257 texels, 3 at 1025); read and checked only with `trace`, baked at preparation |
 
 **Height maps.** `image::load_texture_r16` loads a 16-bit PNG as `R16_UINT`; an 8-bit file widens by 257, so
 255 becomes 65535. Generated heights go through `AssetStore.add_texture` with
@@ -175,7 +175,8 @@ of the whole extent, built from the same height map and independent of any view.
   and level 2. Its triangles split each cell along the diagonal from `(x + 1, z)` to `(x, z + 1)`, as the drawn chunks
   and the physics height field do. The geometry is shared by every terrain of that side length in a store.
 - **The stage.** The terrain shader carries a `trace_pose.single` form, `terrain_trace_pose.comp.glsl`
-  ([trace pose](custom_shaders.md#trace-pose)). Each vertex takes the height of the texel it stands on from the height
+  ([trace pose](custom_shaders.md#trace-pose)) with `trace_pose_grid` declared, so a grid of any size poses in one
+  dispatch. Each vertex takes the height of the texel it stands on from the height
   map, and its normal from the central differences the fragment stage uses, through the [border ring](#tile-sets) at a
   linked tile's edge. It reads no time, so the pose runs again only when the height map, the border ring or the
   material changes.
@@ -513,6 +514,50 @@ setup](#physics-and-navigation-setup).
   - A rejected revision leaves the log. Consumers that follow the ground, such as [vegetation](vegetation.md),
     read it.
 
+## Detached bounds build
+
+A terrain's whole bounds build can run as ranges on any scheduler: at load, for a terrain attached but not
+prepared, or after a height-map replacement or a revision advanced without `mark_dirty`, for a prepared one. The
+owner thread takes a snapshot, any thread runs the ranges, and the owner thread publishes. `add_terrain`,
+`prepare` and `update` stay serial and unchanged; the library never imports `c3d_job`, and the
+[example](#detached-bounds-in-the-example) drives the ranges with a `JobPool`.
+
+```c3
+BoundsJob job = terrain::bounds_job(&scene, &assets, ground, scratch)!;
+// run_range over disjoint ranges of [0, job.range_count()), on any threads, joined
+terrain::commit_bounds(&scene, &assets, &job)!;
+```
+
+- **Snapshot.** `bounds_job` records the height map's revision, replacement and pixel array, the terrain's own
+  revision, pending rectangle and trace shape. The texels are borrowed. A prepared
+  terrain with nothing to rebuild, or whose only change is a [`mark_dirty`](#edits) rectangle, which `update`
+  refreshes serially, faults `INVALID_ARGUMENT`. A height map the checks refuse faults with the checks' fault and
+  changes nothing; `update` then reports it and hides the batch.
+- **Ranges.** `run_range(first, count)` takes positions in the finest chunks, row by row, `range_count()` of them,
+  in any order and on any thread, as long as no two running ranges overlap. A range builds each of its chunks'
+  bounds and, under `trace`, its gaps at every level. It writes only those chunks' entries in the job's own arrays,
+  so the terrain's runtime and the scene are untouched until the commit. While a range runs, nothing may edit,
+  replace or remove the height map; that is a programming error.
+- **Scratch.** The job takes 4 bytes per finest chunk from the `scratch` allocator for the bounds and, under
+  `trace`, 4 bytes per chunk and level for the gaps (28 KiB at 4097 texels), and holds nothing else; it never
+  frees them. Dropping the job cancels it.
+- **Commit.** `commit_bounds` runs on the owner thread. It copies the job's chunks into the runtime, then runs what
+  `prepare` (a pending terrain) or `update` (a prepared one, for this node alone) runs after the leaf bounds: the
+  gap and level reductions, the node records, the quadtree and tile set ranges and the trace grid. The bounds,
+  gaps and records equal a serial build of the same texels bit for bit. It faults as `prepare` or `update` does and
+  leaves the scene as that call would; after a fault in publishing the records, `update` publishes them again.
+  Afterwards `update` has nothing left to rebuild.
+- **Staleness.** `commit_bounds` faults `landscape::STALE` and changes nothing if any of these changed since
+  `bounds_job`:
+  - the node died or lost `Terrain`, or was prepared or torn down;
+  - the height map's id, revision, replacement or pixel array;
+  - the terrain's own revision, so an `update` that rebuilt it first makes the job stale; its pending rectangle; or
+    its trace shape (`trace` and `trace_level`).
+
+  Commit before `update`. The application drops a stale job and takes a new one. A moved node or an origin shift
+  does not make a job stale: the ranges write texel-space results only, and the commit builds the records, ranges
+  and trace grid from the live node and desc.
+
 ## Physics and navigation setup
 
 The package imports neither `c3d::physics` nor `c3d::nav`. It supplies two neutral values, `collision_input` and
@@ -719,7 +764,7 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `add_terrain`, `height_view`, `update` | `c3d::UNSUPPORTED` | Height map not `R16_UINT`, not a `MIP_ZERO` source, or a layered, 3D or cube texture |
 | `add_terrain` | `c3d::UNSUPPORTED` | Control map not `RGBA8_UNORM` |
 | `add_terrain`, `height_view`, `update` | `c3d::INVALID_ARGUMENT` | Not square, a side outside the list, pixel bytes not `side² × 2` |
-| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `morph_band` that is negative, not finite or above `(1 - lod_hysteresis) / 2`, a positive `morph_band` with a zero `lod_threshold`, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count or whose grid has more than `MAX_TRACE_VERTICES` vertices, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
+| `add_terrain` | `c3d::INVALID_ARGUMENT` | A non-positive scale, a negative or non-finite tunable, a `morph_band` that is negative, not finite or above `(1 - lod_hysteresis) / 2`, a positive `morph_band` with a zero `lod_threshold`, a `TRIPLANAR` terrain with a `triplanar_sharpness` outside its range or not finite, a `trace` terrain whose `trace_level` is not below the level count, no layer 0, a layer after an unset one, a layer that is not `STANDARD`, a shared key naming another asset kind |
 | `add_terrain`, `prepare` | `c3d::INVALID_ARGUMENT` | A tile that does not match its set, or shares a coordinate with a linked tile ([tile sets](#tile-sets)) |
 | `add_terrain`, `prepare`, `update` | `c3d::UNSUPPORTED` | The node carries a `LodGroup`, which cannot share a batch with a quadtree |
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
@@ -731,6 +776,11 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
 | `collision_input` | `c3d::UNSUPPORTED` | A world axis length of the node differs from 1 by more than 1e-4 |
 | `height_range` | `c3d::INVALID_ID` | A dead node or a node without `Terrain` |
 | `height_range` | `NOT_PREPARED` | A pending terrain |
+| `bounds_job` | the faults of `add_terrain` (pending) or `update` (prepared) | The value and height-map checks that precede the leaf bounds |
+| `bounds_job` | `c3d::INVALID_ARGUMENT` | A prepared terrain with nothing to rebuild, or with only a `mark_dirty` rectangle |
+| `bounds_job` | `c3d::CAPACITY_EXCEEDED` | The scratch allocator failed |
+| `commit_bounds` | `landscape::STALE` | A source the job read changed ([above](#detached-bounds-build)) |
+| `commit_bounds` | the faults of `prepare` or `update` | The call the commit stands in for |
 
 ## Limits
 
@@ -752,8 +802,9 @@ within the G-buffer quantization. Traced terrain, as used by reflections, GI and
   textures stretch along the fall line. Use [`TRIPLANAR`](#slope-projection) for them.
 - Edits upload only the marked texels of the height map; with a collider, the end of a stroke re-cooks the whole
   field, or only the windows it touched when the collider is tiled into [windows](#physics-collider).
-- Updates run on the calling thread and change scene structure, so they never run inside a job range;
-  `sample_height` and `sample_normal` may.
+- `update`, `prepare` and publication run on the owner thread and change scene structure, so they never run inside a
+  job range. The bounds kernels of a whole build may, through the [job API](#detached-bounds-build);
+  `sample_height` and `sample_normal` may too.
 
 ## The example
 
@@ -765,7 +816,8 @@ cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's laye
 camera beside the physics ray height, and the LOD threshold.
 
 `--shadows traced` sets `trace` on the ground, so ridges shadow valleys. `--trace-level LEVEL` sets the grid's level; the
-default is the finest the size allows: 0 at 1025 texels, 1 at 2049 and 2 at 4097.
+default is the finest whose grid has at most 2^22 vertices: 0 at 1025 texels, 1 at 2049 and 2 at 4097. `--trace-level 0`
+traces one vertex per texel at any size.
 
 The collider is tiled into 256-cell windows, and the end of a stroke re-cooks only the windows it touched.
 `--collision-window CELLS` sets the window size; 0 builds one collider over the whole map.
@@ -799,11 +851,30 @@ tested in the core quadtree acceptance.
 Switches: `--gpu-timings` (build with `python3 scripts/build.py --target terrain --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading forward|deferred`,
 `--shadows atlas|traced`, `--size 1025|2049|4097`, `--layers 1|4`, `--lod-threshold PIXELS`,
-`--width W --height H` (2560 × 1440 by default in benchmark mode), `--hide-terrain`, `--validation` and `--sky`
+`--width W --height H` (2560 × 1440 by default in benchmark mode), `--hide-terrain`, `--workers N` (with `--benchmark`:
+rebuild the bounds again through the [job API](#detached-bounds-in-the-example)), `--validation` and `--sky`
 (an [atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the
 pass lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a
 [froxel volume](sky.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`).
 Interactive runs always validate; benchmark runs validate only with `--validation`.
+
+### Detached bounds in the example
+
+`--workers N` needs `--benchmark`. The `terrain` target links `c3d_job`; the trampoline from the job ranges to a
+`JobPool` lives in `examples/landscape_bounds.c3`. After the serial `bounds_build_ms` rebuilds, the example copies
+the serial result, then rebuilds the whole map five times per mode through the job API, commits, and compares the
+bounds, gaps, trace error and published node records with the copy bit for bit:
+
+| `mode` | Ranges |
+| --- | --- |
+| `inline` | A pool without workers: the trampoline runs its ranges on the owner thread |
+| `workers` | A pool with `N` workers, for `N > 0` |
+
+It prints `bounds_job` (the map size, the finest chunks and `serial_ms`, the `terrain::update` of one whole
+rebuild), `bounds_job_timing` per mode (medians of `leaf_ms` for the ranges, `commit_ms` for the owner thread, and
+`identical`) and, for `workers` in a build with `--define C3D_PROFILE_CPU --lib c3d_profile`, `bounds_job_ranges`
+from the pool's worker range records: ranges and busy time per run and the workers that ran them.
+`gate bounds_job_identical` fails the run when any rebuild differs from the serial bounds.
 
 ## Cost
 

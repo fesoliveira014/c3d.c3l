@@ -196,7 +196,7 @@ fn PosedDraw? stage_posed_draw(
         retire_skin_blocks(table, binding, &renderer.pending_upload_retire);
         // A crowd part poses its sources in one dispatch row each.
         if (table.bytes + needed > MAX_COMPUTE_SKINNING_BYTES
-          || sources > renderer.caps.max_compute_work_group_count.y) return { .root = geometry.root };
+          || sources > renderer.caps.max_compute_work_group_count.z) return { .root = geometry.root };
 
         gpu::AllocationDesc desc = {
             .size         = needed,
@@ -374,8 +374,8 @@ fn void? record_compute_skin(Renderer* renderer, gpu::CommandList* commands) @pr
 
     foreach (&dispatch : table.dispatches) {
         gpu::cmd_bind_pipeline(commands, skin_pipeline(renderer, dispatch))!;
-        uint groups = (dispatch.vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
-        gpu::cmd_dispatch(commands, dispatch.root, { groups, math::max(dispatch.sources, 1u), 1 })!;
+        gpu::Vec3u grid = pose_grid(renderer, dispatch.vertex_count, math::max(dispatch.sources, 1u));
+        gpu::cmd_dispatch(commands, dispatch.root, grid)!;
     }
 
     // Raster reads the posed streams in the vertex stage, trace shaders and refits in compute and ray tracing,

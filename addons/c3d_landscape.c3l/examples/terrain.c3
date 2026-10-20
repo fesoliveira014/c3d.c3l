@@ -20,9 +20,10 @@ import c3d::render;
 import c3d::scene;
 import c3d::spatial;
 import imgui;
+import landscape_bounds;
 import landscape_ground;
 
-const uint AUTO_TRACE_LEVEL @local = uint::max; // the finest trace level a terrain of the chosen size can pose
+const uint AUTO_TRACE_LEVEL @local = uint::max; // the finest trace level within the ground's trace vertex budget
 const uint CRATE_CAPACITY @local = 256; // one node and one body each; the scene capacity lever
 const uint SCENE_NODE_CAPACITY @local = CRATE_CAPACITY + 16; // the collision windows' nodes come on top
 const uint COLLISION_WINDOW_CELLS @local = 256; // 65 k samples per window: one stroke re-cooks a few of them, not the map
@@ -137,6 +138,8 @@ struct Options @local {
     bool        tiles;
     uint        collision_window;
     String      capture;
+    bool        bounds_jobs;
+    uint        workers;
 }
 
 struct Demo @local {
@@ -467,6 +470,9 @@ fn Options? parse_options(String[] args) @local {
             case "--morph": options.morph_band = MORPH_BAND;
             case "--triplanar": options.triplanar = true;
             case "--collision-window": options.collision_window = option_value(args, &index)!.to_uint()!;
+            case "--workers":
+                options.bounds_jobs = true;
+                options.workers = option_value(args, &index)!.to_uint()!;
             case "--sky": options.sky = true;
             case "--volumetric-fog": options.volumetric_fog = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
@@ -478,6 +484,7 @@ fn Options? parse_options(String[] args) @local {
     if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (options.tiles && options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (options.capture.len && options.benchmark) return c3d::INVALID_ARGUMENT~;
+    if (options.bounds_jobs && !options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -1157,6 +1164,17 @@ fn bool? run_benchmark(Options options) @local {
         options.volumetric_fog ? "on" : "off",
         options.collision_window,
     );
+    bool bounds_gate = true;
+    if (options.bounds_jobs) {
+        landscape_bounds::BoundsSubject subject = {
+            .scene     = demo.scene,
+            .assets    = demo.assets,
+            .node      = demo.ground.node,
+            .serial_ms = result.bounds_build_ms,
+        };
+        bounds_gate = landscape_bounds::report_bounds_jobs(&subject, options.workers)!;
+        io::printfn("gate bounds_job_identical %s", bounds_gate ? "pass" : "fail");
+    }
     run_segments(
         demo:     &demo,
         renderer: &renderer,
@@ -1164,7 +1182,8 @@ fn bool? run_benchmark(Options options) @local {
         result:   &result,
     )!;
     render::wait_frames(&renderer)!;
-    return print_results(options, &result);
+    bool frames_pass = print_results(options, &result);
+    return frames_pass && bounds_gate;
 }
 
 // ----------------------------------------------------------------------------- capture
@@ -1251,7 +1270,8 @@ fn int main(String[] args) {
               "[--shadows atlas|traced] [--trace-level LEVEL] [--size 1025|2049|4097] [--layers 1|4] "
               "[--lod-threshold PIXELS] [--morph] [--triplanar] [--width W] [--height H] [--hide-terrain] "
               "[--tiles 2x2] "
-              "[--capture FILE.png] [--sky] [--volumetric-fog] [--collision-window CELLS].");
+              "[--capture FILE.png] [--sky] [--volumetric-fog] [--collision-window CELLS] "
+              "[--workers N, with --benchmark].");
         }
         return 1;
     }
