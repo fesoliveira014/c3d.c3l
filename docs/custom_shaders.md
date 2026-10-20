@@ -17,7 +17,7 @@ ShaderDesc desc = {
 ShaderId shader = assets.add_shader(&desc, "pulse")!;
 ```
 
-Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `weighted_fragment.shaded`, `weighted_fragment.traced.hardware` and `weighted_fragment.traced.software` are the forward stage compiled with `WEIGHTED_BLEND` for views that compose blended surfaces by weight ([weighted transparency](#weighted-transparency)); each may be empty or supplied alone, and none is validated. `trace_pose` holds the compute sources that pose the shader's geometry for [scene traces](#trace-pose): `single` for a mesh, `instanced` for one instance of a batch, and `reads_time` when the stage reads the frame time; both forms are optional. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, a `trace_pose.single` without `vertex.shaded`, a `trace_pose.instanced` without `vertex.instanced_shaded`, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero). `asset::copy_shader_desc` and `asset::free_shader_desc` deep-copy and free a desc with any allocator.
+Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `weighted_fragment.shaded`, `weighted_fragment.traced.hardware` and `weighted_fragment.traced.software` are the forward stage compiled with `WEIGHTED_BLEND` for views that compose blended surfaces by weight ([weighted transparency](#weighted-transparency)); each may be empty or supplied alone, and none is validated. `trace_pose` holds the compute sources that pose the shader's geometry for [scene traces](#trace-pose): `single` for a mesh, `instanced` for one instance of a batch, and `reads_time` when the stage reads the frame time; both forms are optional. `trace_pose_grid` declares that the stages index through `trace_pose_index`, which a row past the 1-D dispatch limit needs. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, a `trace_pose.single` without `vertex.shaded`, a `trace_pose.instanced` without `vertex.instanced_shaded`, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero). `asset::copy_shader_desc` and `asset::free_shader_desc` deep-copy and free a desc with any allocator.
 
 The SPIR-V can come from anywhere: `$embed`ed `.spv` files, a build step, or the in-process compiler below.
 
@@ -282,7 +282,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `instance_effects.glsl` | `instance_anchor`, `instance_fade_scale`, `sway_height_weight`, `sway_offset` ([sway and fade](instancing.md#sway-and-distance-fade); the blocks are `c3d_abi.glsl`'s `InstanceEffectsGpu` and `SwayGpu`) |
 | `mesh_vertex.glsl` | the push block, outputs 0 to 6, `gl_ClipDistance[1]` and `view_clip_distance` (through `view_clip.glsl`), `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`; starts from the view's retained base positions of a [`vertex_motion`](post.md#edited-vertices) mesh), `instance_source`, `world_instance`, `instance_bend_weight` and `apply_instance_effects` (`INSTANCED`), `previous_world_model` and `apply_previous_instance_effects` (`VELOCITY` with `INSTANCED`) |
 | `quadtree_morph.glsl` | `quadtree_range`, `quadtree_morph` and `quadtree_world_scale` ([quadtree morph](#quadtree-morph); the blocks are `c3d_abi.glsl`'s `QuadtreeGpu` and `QuadtreeLevelGpu`); vertex and compute stages |
-| `trace_pose.glsl` | the compute push block and group size, `TracePoseVertex`, `trace_pose_vertex`, `trace_pose_write`, `trace_pose_instance` ([trace pose](#trace-pose)); compute stages only |
+| `trace_pose.glsl` | the compute push block and group size, `TracePoseVertex`, `trace_pose_index`, `trace_pose_vertex`, `trace_pose_write`, `trace_pose_instance` ([trace pose](#trace-pose)); compute stages only |
 | `scene_trace.glsl` | as in [Scene tracing](scene_trace.md) |
 
 `blend_output.glsl` is probed plain and with `WEIGHTED_BLEND`; `shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, with `RT_SHADOWS` and `SCENE_TRACE_BVH`, and each of those two with `RT_SHADOWS_HARD`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `instance_effects.glsl` and `quadtree_morph.glsl` in vertex and compute stages; `trace_pose.glsl` in compute stages; `scene_trace.glsl` in compute with each trace kind.
@@ -636,6 +636,7 @@ The stage includes `trace_pose.glsl`, which declares the compute push block, one
 
 | Helper | Meaning |
 | --- | --- |
+| `bool trace_pose_index(out uint index)` | The vertex this invocation poses; false past `vertex_count`, where the stage returns |
 | `TracePoseVertex trace_pose_vertex(uint index)` | Rest vertex `index`: `position`, `normal`, `tangent`, `uv0`, `uv1`, `color`, with the defaults `pull_mesh_vertex` gives a missing stream |
 | `void trace_pose_write(uint index, vec3 position, vec3 normal, vec4 tangent)` | Writes the posed vertex; a stream the geometry lacks is not written, and the tangent keeps its `w` |
 | `InstanceGpu trace_pose_instance()` | The record `world_instance` returns for the row, for the `instanced` form only |
@@ -648,7 +649,7 @@ The push block addresses a generated `TraceCustomPoseRoot` (`pc.root_gpu`):
 | `material` | The row's `CustomMaterialGpu`, whose `parameters` and `slots` the stage reads as the vertex stage does |
 | `instance` | The row's `InstanceGpu`; zero for a mesh |
 | `time` | `FrameRoot.jitter_time.z` of the frame |
-| `vertex_count` | Vertices of the geometry; the stage returns for an index past it |
+| `vertex_count` | Vertices of the geometry; `trace_pose_index` reports an index past it |
 
 ```glsl
 #version 460
@@ -657,16 +658,20 @@ The push block addresses a generated `TraceCustomPoseRoot` (`pc.root_gpu`):
 #include "trace_pose.glsl"
 
 void main() {
-    TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
-    uint index = gl_GlobalInvocationID.x;
-    if (index >= root.vertex_count) return;
+    uint index;
+    if (!trace_pose_index(index)) return;
 
+    TraceCustomPoseRoot root = TraceCustomPoseRoot(pc.root_gpu);
     PulseParams params = PulseParams(CustomMaterialGpu(root.material).parameters);
     TracePoseVertex vertex = trace_pose_vertex(index);
     vec3 position = pulse_position(vertex.position, root.time, params.motion);
     trace_pose_write(index, position, vertex.normal, vertex.tangent);
 }
 ```
+
+A row is dispatched as a grid of groups, 64 vertices each. The grid is as wide as the device's group count along x allows, and `trace_pose_index` folds its rows into one linear index. A row that fits the device's group count along x (at least 65,535 groups, so 4,194,240 vertices) has a one-row grid, and `gl_GlobalInvocationID.x` is the same index. A stage that indexes through `trace_pose_index` sets `ShaderDesc.trace_pose_grid`. A stage that does not poses only the first row of groups, so `prepare_scene_trace` faults `c3d::UNSUPPORTED` for a row whose groups exceed the device's count along x, and poses none of it.
+
+Migration: rows above 4,194,240 vertices need `trace_pose_index` and `trace_pose_grid`. Replace the `gl_GlobalInvocationID.x` index and its range check with `uint index; if (!trace_pose_index(index)) return;`, and set the flag on the `ShaderDesc`.
 
 Keep the displacement the vertex stage applies in a function both stages include, so the two cannot drift. Scope:
 

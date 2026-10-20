@@ -721,6 +721,18 @@ fn void? record_vertex_motion_copies(Renderer* renderer, gpu::CommandList* comma
     renderer.work_recorded = true;
 }
 
+fn uint pose_groups(uint vertex_count) @private {
+    return (vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
+}
+
+// Groups wrap into rows past the device's limit along x, which trace_pose_linear_index folds back into one index.
+// The depth is the independent sources a crowd part poses along z.
+fn gpu::Vec3u pose_grid(Renderer* renderer, uint vertex_count, uint depth = 1) @private {
+    uint groups = pose_groups(vertex_count);
+    uint columns = math::clamp(groups, 1u, renderer.caps.max_compute_work_group_count.x);
+    return { columns, (groups + columns - 1) / columns, depth };
+}
+
 // Every posing dispatch, then every refit, so three barriers serve any number of slots.
 fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @private {
     PosedTraceTable* table = &renderer.posed_trace;
@@ -738,8 +750,7 @@ fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @pri
         if (!dispatch.pose_root) continue;
         gpu::PipelineHandle skin_pipeline = dispatch.joints_u16 ? table.pose_u16_pipeline : table.pose_pipeline;
         gpu::cmd_bind_pipeline(commands, dispatch.pipeline.is_valid() ? dispatch.pipeline : skin_pipeline)!;
-        uint groups = (dispatch.vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
-        gpu::cmd_dispatch(commands, dispatch.pose_root, { groups, 1, 1 })!;
+        gpu::cmd_dispatch(commands, dispatch.pose_root, pose_grid(renderer, dispatch.vertex_count))!;
         renderer.stats.trace_poses++;
     }
     gpu::Barrier posed = { .before = { .compute }, .after = { .compute } };

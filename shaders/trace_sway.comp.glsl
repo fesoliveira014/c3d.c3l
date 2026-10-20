@@ -19,7 +19,7 @@ vec3 apply_trace_sway(TraceSwayPoseRoot root, vec3 world_position, float bend_we
 // Raster moves the world position; the posed streams are in the geometry's space, so the offset is carried back.
 void main() {
     TraceSwayPoseRoot root = TraceSwayPoseRoot(pc.root_gpu);
-    uint index = gl_GlobalInvocationID.x;
+    uint index = trace_pose_linear_index();
     if (index >= root.vertex_count) return;
 
     GeometryRoot source = GeometryRoot(root.source);
