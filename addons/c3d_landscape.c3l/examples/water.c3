@@ -118,7 +118,7 @@ const Vec3 LOWER_SKY_COLOR @local = { 0.25f, 0.23f, 0.2f }; // below the horizon
 const Vec3 SUN_DISC_COLOR @local = { 60, 55, 45 };
 const float SUN_DISC_COSINE @local = 0.9995f; // about 3.6 degrees across
 
-const uint RIPPLE_MAP_SIZE @local = 256; // 256 KiB and its mips; one tile covers 1 / RIPPLE_UV_SCALE metres
+const uint RIPPLE_MAP_SIZE @local = 256; // 512 KiB of half floats and its mips; a tile is 1 / RIPPLE_UV_SCALE m
 const float RIPPLE_UV_SCALE @local = 0.25f; // texture periods per metre
 const float RIPPLE_SLOPE @local = 0.3f; // slope bound; the eight terms reach 0.6 of it at most; steeper ripples glint like chop
 const uint FOAM_MAP_SIZE @local = 128;
@@ -398,27 +398,30 @@ fn Vec2 tile_gradient(TileTerm[] terms, float u, float v) @local {
 fn MaterialId? add_ripples(AssetStore* assets) @local {
     TextureId normal_map;
     @pool() {
-        char[] pixels = alloc::new_array(tmem, char, (sz)RIPPLE_MAP_SIZE * RIPPLE_MAP_SIZE * RGBA8_BYTES);
+        usz texels = (usz)RIPPLE_MAP_SIZE * RIPPLE_MAP_SIZE;
+        ushort[] halves = alloc::new_array(tmem, ushort, (sz)(texels * RGBA_CHANNELS));
         for (uint row = 0; row < RIPPLE_MAP_SIZE; row++) {
             for (uint column = 0; column < RIPPLE_MAP_SIZE; column++) {
                 float u = (float)column / (float)RIPPLE_MAP_SIZE;
                 float v = (float)row / (float)RIPPLE_MAP_SIZE;
                 Vec2 slope = tile_gradient(RIPPLE_TERMS[..], u, v) * RIPPLE_SLOPE;
                 Vec3 normal = (Vec3){ -slope.x, -slope.y, 1 }.normalize();
-                usz offset = ((usz)row * RIPPLE_MAP_SIZE + column) * RGBA8_BYTES;
-                pixels[offset] = unit_to_byte(normal.x * 0.5f + 0.5f);
-                pixels[offset + 1] = unit_to_byte(normal.y * 0.5f + 0.5f);
-                pixels[offset + 2] = unit_to_byte(normal.z * 0.5f + 0.5f);
-                pixels[offset + 3] = char::max;
+                usz offset = ((usz)row * RIPPLE_MAP_SIZE + column) * RGBA_CHANNELS;
+                halves[offset] = asset::encode_texture_half(normal.x * 0.5f + 0.5f);
+                halves[offset + 1] = asset::encode_texture_half(normal.y * 0.5f + 0.5f);
+                halves[offset + 2] = asset::encode_texture_half(normal.z * 0.5f + 0.5f);
+                halves[offset + 3] = asset::encode_texture_half(1);
             }
         }
+        // COLOR semantics and half floats: the mips keep the vectors' length, which widens the water's highlight.
         TextureDesc desc = material::texture_2d_desc(
             width:      RIPPLE_MAP_SIZE,
             height:     RIPPLE_MAP_SIZE,
-            format:     RGBA8_UNORM,
+            format:     RGBA16_FLOAT,
             debug_name: "water_ripples",
         );
-        normal_map = assets.add_texture(desc, pixels, "water/ripples")!;
+        usz bytes = texels * RGBA_CHANNELS * ushort::size;
+        normal_map = assets.add_texture(desc, ((char*)halves.ptr)[:bytes], "water/ripples")!;
     };
     // The water stage reads the normal map alone, at the rest position in metres through this transform.
     StandardParams params = material::STANDARD_PARAMS_DEFAULT;
