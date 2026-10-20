@@ -40,9 +40,15 @@ const uint MAX_MIRRORS = 8; // one camera node and 8 B of runtime each; a render
 const float DEFAULT_CELL_SIZE = 1.25f; // 96 cells over a 120 m lake; waves down to 2.5 m stay unaliased
 
 <*
- Turn of the second ripple scroll away from the first, in radians.
+ Turn of the second ripple layer away from the first, in radians.
+ Turns both its drift and its sampling coordinates.
 *>
-const float RIPPLE_CROSS_ANGLE = 0.6f; // crossing scrolls never line up, so the ripples show no stripes
+const float RIPPLE_CROSS_ANGLE = 0.6f; // crossing layers never line up; mirrored as RIPPLE_CROSS_ANGLE in water.frag.glsl
+
+<*
+ Texture periods of the second ripple layer per period of the first.
+*>
+const float RIPPLE_SECOND_SCALE = 1.618034f; // golden ratio, so the tilings never realign; mirrored as RIPPLE_SECOND_SCALE in water.frag.glsl
 
 <*
  Cells along one chunk edge of an ocean at every level.

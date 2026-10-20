@@ -856,6 +856,12 @@ fn Vec2 texture_phase(Vec2 offset, UvTransform transform) @local {
     return texture - math::floor(texture);
 }
 
+fn Vec2 turned(Vec2 vector, float angle) @local {
+    float cosine = math::cos(angle);
+    float sine = math::sin(angle);
+    return { cosine * vector.x - sine * vector.y, sine * vector.x + cosine * vector.y };
+}
+
 fn float phase_distance(Vec2 first, Vec2 second) @local {
     Vec2 difference = first - second;
     difference -= math::round(difference);
@@ -887,10 +893,10 @@ fn void test_wind_change_keeps_the_ripple_offset_continuous() @test {
     Vec3 local_wind = maths::transform_dir(maths::inverse_affine(node.world), { 4, 0, 3 });
     Vec2 first = (Vec2){ local_wind.x, local_wind.z } * 0.05f;
     assert((params.scroll_velocity.xy - first).length() <= QUERY_TOLERANCE);
-    float cosine = math::cos(water::RIPPLE_CROSS_ANGLE);
-    float sine = math::sin(water::RIPPLE_CROSS_ANGLE);
-    Vec2 second = { cosine * first.x - sine * first.y, sine * first.x + cosine * first.y };
-    assert((params.scroll_velocity.zw - second).length() <= QUERY_TOLERANCE);
+    Vec2 first_drift = turned(first, water::RIPPLE_CROSS_ANGLE);
+    Vec2 second_drift = turned(params.scroll_velocity.zw, -water::RIPPLE_CROSS_ANGLE) / water::RIPPLE_SECOND_SCALE;
+    float drift_error = (second_drift - first_drift).length();
+    assert(drift_error <= QUERY_TOLERANCE, "the second layer's pattern drifts %f m/s off", drift_error);
     update_water(&fixture, { 4, 0, 3 }, 1.5);
     assert(fixture.assets.material(owned).header.revision == revision + 1);
 
@@ -1303,6 +1309,42 @@ fn void test_ocean_phase_is_world_anchored() @test {
     assert(math::abs(after - height) <= ANCHOR_TOLERANCE, "a rebase moved the surface: %f m to %f m", height, after);
     assert(math::abs(other_after - height) <= ANCHOR_TOLERANCE);
     assert(material_revision(&fixture, first) == revision, "an exact rebase uploaded");
+}
+
+fn Vec2 rest_position(Node* node, Vec3 point) @local {
+    Vec3 local = maths::transform_point(maths::inverse_affine(node.world), point);
+    return { local.x, local.z };
+}
+
+fn Vec2 second_layer_uv(Vec2 rest, Vec2 scroll) @local {
+    return turned(rest, water::RIPPLE_CROSS_ANGLE) * water::RIPPLE_SECOND_SCALE + scroll;
+}
+
+fn void test_ocean_move_keeps_both_ripple_layers_in_place() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    StandardParams ripple_params = material::STANDARD_PARAMS_DEFAULT;
+    ripple_params.normal_map.transform = { .scale = { 0.25f, 0.4f }, .rotation = 0.3f };
+    WaterDesc desc = ocean_desc();
+    desc.ripples = fixture.assets.add_material(material::standard(ripple_params))!!;
+    Node* node = add_water_node(&fixture, desc, FIRST_OCEAN, WATER_YAW_DEGREES);
+    WaterParams* params = fixture.assets.@custom_params(fixture.scene.get(node, WaterRuntime).material, WaterParams);
+    update_water(&fixture, {}, ANCHOR_TIME);
+    Vec2 rest = rest_position(node, SHARED_POINT);
+    Vec2 first = rest + params.scroll_origin.xy;
+    Vec2 second = second_layer_uv(rest, params.scroll_origin.zw);
+
+    node.local.position += OCEAN_SNAP;
+    fixture.scene.update_world();
+    update_water(&fixture, {}, ANCHOR_TIME);
+    Vec2 moved_rest = rest_position(node, SHARED_POINT);
+    Vec2 moved_first = moved_rest + params.scroll_origin.xy;
+    Vec2 moved_second = second_layer_uv(moved_rest, params.scroll_origin.zw);
+    UvTransform transform = ripple_params.normal_map.transform;
+    assert((moved_rest - rest).length() > 1, "the node did not move the rest position");
+    assert(phase_distance(texture_phase(first, transform), texture_phase(moved_first, transform)) <= SCROLL_TOLERANCE);
+    assert(phase_distance(texture_phase(second, transform), texture_phase(moved_second, transform)) <= SCROLL_TOLERANCE);
 }
 
 fn void test_ocean_uploads_only_on_a_move_or_a_blend() @test {
