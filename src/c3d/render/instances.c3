@@ -388,6 +388,8 @@ fn void? record_batch_draw(
 
 fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candidate) @private {
     if (candidate.lod) return resolve_lod_instances(renderer, candidate.lod);
+    if (candidate_device_billboards(candidate)) return device_billboard_records(renderer, candidate.billboards);
+
     InstanceKey key = {
         .scene = candidate.scene_identity,
         .node = candidate.node.id,

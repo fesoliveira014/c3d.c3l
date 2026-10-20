@@ -310,3 +310,20 @@ fn void test_record_batch_bounds_index_and_pick_read_records() @test {
         assert(hits[0].node != hits[1].node && linear[0].node != linear[1].node);
     };
 }
+
+fn void test_billboard_bounds_override_replaces_record_bounds() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 1 });
+    defer scene::destroy_scene(&scene);
+    Billboard[1] values = { scene::BILLBOARD_DEFAULT };
+    Node* node = scene.add_billboards(material: {}, capacity: 1, billboards: values[..])!!;
+    node.local.position = { 5, 0, 0 };
+    scene.update_world();
+    BillboardBatch* batch = scene.get(node, BillboardBatch);
+    Aabb record_bounds = spatial::billboard_world_bounds(node, batch);
+    assert(record_bounds.min.x > 4 && record_bounds.max.x < 6);
+
+    batch.has_bounds_override = true;
+    batch.local_bounds = { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } };
+    Aabb bounds = spatial::billboard_world_bounds(node, batch);
+    assert(near_vector(bounds.min, { 4, -1, -1 }) && near_vector(bounds.max, { 6, 1, 1 }));
+}
