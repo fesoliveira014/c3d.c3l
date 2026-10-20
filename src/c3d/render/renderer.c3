@@ -29,10 +29,10 @@ const ulong RETIRE_TIMEOUT_NS @private = 1_000_000; // one bounded presentation 
 const int CLEANUP_FAILURE_EXIT_CODE @private = 1; // Reports failed completion without running unsafe teardown finalizers.
 const uint TEARDOWN_RETIRE_ATTEMPTS @private = 64; // teardown cannot pump events, so its presentation wait is bounded
 
-// Entries the renderer holds in each device table: 14 allocations or 2 top levels, doubled for growth.
+// Entries the renderer holds in each device table: 14 allocations or 2 top levels, doubled and rounded up for growth.
 // One count serves both tables because the structure clause never binds first at equal table sizes.
 const uint RENDERER_RESERVED_ENTRIES @private = 32;
-const uint VIEW_RESERVED_ENTRIES @private = 16; // allocations: 7 per view, doubled for growth; the room of 8 posed slots
+const uint VIEW_RESERVED_ENTRIES @private = 16; // 7 allocations per view, doubled for growth; the cost of 8 posed slots
 
 const ZString[FRAMES_IN_FLIGHT] FRAME_ALLOCATOR_NAMES @private = {
     "frame_allocator_0",
