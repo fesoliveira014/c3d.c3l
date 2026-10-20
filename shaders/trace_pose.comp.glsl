@@ -11,19 +11,19 @@ layout(push_constant) uniform Push {
 } pc;
 
 // The order and functions of apply_mesh_deformation in mesh_vertex.glsl: morph, then skin; tangent w is kept.
-// INSTANCED poses every source of a crowd part: x is the vertex, y the source, and the source picks its palette
-// and morph rows and its slot in the posed streams, as logical_source does in mesh_vertex.glsl.
+// INSTANCED poses every source of a crowd part: the group grid is the vertex, z the source, and the source picks its
+// palette and morph rows and its slot in the posed streams, as logical_source does in mesh_vertex.glsl.
 void main() {
     TracePoseRoot root = TracePoseRoot(pc.root_gpu);
     GeometryRoot source = GeometryRoot(root.source);
-    uint index = gl_GlobalInvocationID.x;
+    uint index = trace_pose_linear_index();
     if (index >= source.vertex_count) return;
 
     uint64_t palette_address = root.palette;
     uint64_t morph_address = root.morph;
     uint posed_index = index;
 #ifdef INSTANCED
-    uint logical = gl_GlobalInvocationID.y;
+    uint logical = gl_GlobalInvocationID.z;
     palette_address += uint64_t(logical) * uint64_t(root.palette_joints) * PALETTE_MATRIX_BYTES;
     morph_address += uint64_t(logical) * MORPH_BLOCK_BYTES;
     posed_index += logical * source.vertex_count;

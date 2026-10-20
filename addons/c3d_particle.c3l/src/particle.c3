@@ -13,6 +13,21 @@ import std::math::random;
 const uint LIFETIME_TABLE_ENTRIES = 8; // 32 bytes per scalar table; one lerp per sample
 
 <*
+ Most octaves a turbulence field can sum.
+*>
+const uint MAX_TURBULENCE_OCTAVES = 3; // each octave adds one curl evaluation per particle per step
+
+<*
+ Most lattice cells in one tile of a turbulence field.
+*>
+const uint MAX_TURBULENCE_PERIOD = uint::max >> MAX_TURBULENCE_OCTAVES; // period << octaves stays inside 32 bits
+
+<*
+ Most points one particle's trail keeps.
+*>
+const uint MAX_TRAIL_POINTS = 64; // per particle; the ring is capacity * max_points points in the pool
+
+<*
  Maximum simulated duration of one update.
 *>
 const float MAX_PARTICLE_STEP_SECONDS = 0.1f; // caps hitch integration; excess wall time is dropped
@@ -31,6 +46,9 @@ const uint DEFAULT_COLLISION_QUERIES @private = 256; // callback casts per step;
 const float DEFAULT_IMPACT_SPEED @private = 1; // above the 0.98 m/s gravity adds in the longest step
 const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 56 KiB pool for a small effect; draw arrays are additional
 const usz PARTICLE_FLOAT_STREAMS @private = 5;
+const usz TRAIL_POINT_FLOAT_STREAMS @private = 2; // stamp and distance of each stored point
+const usz TRAIL_PARTICLE_FLOAT_STREAMS @private = 2; // record clock and path length of each particle
+const usz TRAIL_PARTICLE_UINT_STREAMS @private = 2; // ring write cursor and stored count of each particle
 
 <*
  Volume and direction distribution of new particles.
@@ -74,6 +92,14 @@ enum ParticleTrigger {
 enum FlipbookMode {
     OVER_LIFE,
     FPS,
+}
+
+<*
+ How a trail maps its texture coordinate along the strip.
+*>
+enum TrailUv {
+    STRETCH,
+    TILE,
 }
 
 <*
@@ -188,6 +214,34 @@ struct ParticleFlipbook {
 }
 
 <*
+ Divergence-free air motion that particles follow through their drag; zero strength disables it.
+ A system with zero drag ignores it.
+*>
+struct ParticleTurbulence {
+    float strength; // metres per second of air velocity at the first octave
+    float frequency; // lattice cells per metre
+    uint octaves; // 1 to MAX_TURBULENCE_OCTAVES; each doubles the frequency and halves the strength
+    uint period; // lattice cells per tile, so the field repeats every period / frequency metres
+    Vec3 scroll; // metres per second that the pattern drifts
+}
+
+<*
+ Ribbon trail behind each particle; zero max_points disables it.
+ The trail leaves with its particle.
+*>
+struct ParticleTrail {
+    uint max_points; // 0, or 2 to MAX_TRAIL_POINTS; the stored points, besides the live position
+    float point_interval; // seconds of particle age between recorded points; at most one point per update
+    float lifetime; // seconds a recorded point lives
+    float width; // metres across the strip at the live position
+    LifetimeTable width_over_trail; // by point age over lifetime; may end at 0
+    LifetimeColorTable color_over_trail; // by point age over lifetime; multiplies the particle colour
+    TrailUv uv;
+    float tile_length; // metres of path per texture coordinate unit under TILE
+    MaterialId material; // blended material of the trail batch
+}
+
+<*
  Immutable emission, simulation and draw configuration of one system.
 *>
 struct ParticleSystemDesc {
@@ -219,6 +273,8 @@ struct ParticleSystemDesc {
     uint max_events; // event queue capacity; 0 disables events
     ParticleCollision collision;
     ParticleFlipbook flipbook;
+    ParticleTurbulence turbulence;
+    ParticleTrail trail;
 }
 
 <*
@@ -235,6 +291,13 @@ struct ParticleSystem {
     float[] spin;
     uint[] seed;
     ulong[] spawn;
+    Vec3[] trail_position; // max_points ring slots per particle, in the particle's own block
+    float[] trail_stamp; // particle age when the slot was recorded
+    float[] trail_distance; // path length along the stored points when the slot was recorded
+    float[] trail_clock; // seconds since the last recorded point
+    float[] path_length; // path length at the newest recorded point
+    uint[] trail_head; // ring slot the next point is written to
+    uint[] trail_count; // stored points, newest just before trail_head
     uint alive;
     ulong pending_burst;
     ulong next_spawn;
@@ -251,8 +314,10 @@ struct ParticleSystem {
     ParticleCollisionFn collision_cast;
     void* collision_context;
     double emit_accumulator;
+    double turbulence_time; // seconds this system has stepped; the turbulence pattern drifts with it
     Sfc32Random random;
     Entity draw_node;
+    Entity trail_node; // the ribbon child; unset while the trail is disabled
     bool emitting;
     void* block;
 }
@@ -328,7 +393,8 @@ fn void? prepare(Scene* scene, Node* emitter) {
     if (system.is_prepared()) return;
     ParticleSystemDesc desc = system.desc;
     check_particle_desc(&desc)!;
-    void*? block = alloc::malloc_try(scene.allocator, (sz)particle_pool_bytes(desc.capacity, desc.max_events));
+    usz pool_bytes = particle_pool_bytes(desc.capacity, desc.max_events, desc.trail.max_points);
+    void*? block = alloc::malloc_try(scene.allocator, (sz)pool_bytes);
     if (catch block) return c3d::CAPACITY_EXCEEDED~;
     system.block = block;
     defer catch alloc::free(scene.allocator, system.block);
@@ -343,6 +409,16 @@ fn void? prepare(Scene* scene, Node* emitter) {
     system.seed = @carve_stream(uint, &system, &cursor, desc.capacity);
     system.spawn = @carve_stream(ulong, &system, &cursor, desc.capacity);
     system.events = @carve_stream(ParticleEvent, &system, &cursor, desc.max_events);
+    if (desc.trail.max_points) {
+        usz points = (usz)desc.capacity * desc.trail.max_points;
+        system.trail_position = @carve_stream(Vec3, &system, &cursor, points);
+        system.trail_stamp = @carve_stream(float, &system, &cursor, points);
+        system.trail_distance = @carve_stream(float, &system, &cursor, points);
+        system.trail_clock = @carve_stream(float, &system, &cursor, desc.capacity);
+        system.path_length = @carve_stream(float, &system, &cursor, desc.capacity);
+        system.trail_head = @carve_stream(uint, &system, &cursor, desc.capacity);
+        system.trail_count = @carve_stream(uint, &system, &cursor, desc.capacity);
+    }
     seed_random(&system.random, desc.seed);
     Node* child;
     if (desc.render_mode == ParticleRenderMode.MESH) {
@@ -365,10 +441,22 @@ fn void? prepare(Scene* scene, Node* emitter) {
             atlas: flipbook_atlas(&desc.flipbook),
         )!;
     }
+    defer catch scene.remove(child);
     child.transform_space = TransformSpace.WORLD;
     child.layers = emitter.layers;
     system.draw_node = child.id;
     scene.add(child, (ParticleDrawOwner){ .emitter = emitter.id });
+    if (desc.trail.max_points) {
+        Node* trail = scene.add_ribbons(
+            material: desc.trail.material,
+            capacity: desc.capacity * (desc.trail.max_points + 1),
+            parent: emitter,
+        )!;
+        trail.transform_space = TransformSpace.WORLD;
+        trail.layers = emitter.layers;
+        system.trail_node = trail.id;
+        scene.add(trail, (ParticleDrawOwner){ .emitter = emitter.id });
+    }
     *scene.get(emitter, ParticleSystem) = system;
 }
 
@@ -395,7 +483,7 @@ fn void? prepare_subtree(Scene* scene, Node* root = null) {
 }
 
 <*
- Move every particle and queued event by the negated offset and put draw children back at the origin.
+ Move every particle, trail point and queued event by the negated offset and put draw children back at the origin.
  Call after Scene.shift_origin and before update_world.
  @param [&inout] self : "Prepared systems are written; pending ones are skipped."
  @require offset.y == 0
@@ -406,6 +494,10 @@ fn void Scene.shift_particles(&self, Vec3 offset) {
             for (uint index = 0; index < system.alive; index++) system.position[index] -= offset;
             for (uint index = 0; index < system.event_count; index++) system.events[index].position -= offset;
             self.node(system.draw_node).local = maths::TRANSFORM_IDENTITY;
+            if (system.desc.trail.max_points) {
+                shift_trail_points(system, offset);
+                self.node(system.trail_node).local = maths::TRANSFORM_IDENTITY;
+            }
         }
     };
 }
@@ -435,6 +527,8 @@ fn ParticleSystemDesc default_particle_system_desc() {
     };
     desc.size_over_life.values[..] = 1;
     desc.color_over_life.values[..] = (Vec4){ 1, 1, 1, 1 };
+    desc.trail.width_over_trail.values[..] = 1;
+    desc.trail.color_over_trail.values[..] = (Vec4){ 1, 1, 1, 1 };
     return desc;
 }
 
@@ -453,13 +547,20 @@ fn usz particle_align(usz cursor, usz alignment) @private {
     return (cursor + alignment - 1) & ~(alignment - 1);
 }
 
-fn usz particle_pool_bytes(uint capacity, uint max_events) @private {
+fn usz particle_pool_bytes(uint capacity, uint max_events, uint max_trail_points) @private {
     usz cursor = (usz)capacity * Vec3::size;
     cursor = particle_align(cursor, Vec3::alignment) + (usz)capacity * Vec3::size;
     cursor = particle_align(cursor, float::alignment) + (usz)capacity * PARTICLE_FLOAT_STREAMS * float::size;
     cursor = particle_align(cursor, uint::alignment) + (usz)capacity * uint::size;
     cursor = particle_align(cursor, ulong::alignment) + (usz)capacity * ulong::size;
-    return particle_align(cursor, ParticleEvent::alignment) + (usz)max_events * ParticleEvent::size;
+    cursor = particle_align(cursor, ParticleEvent::alignment) + (usz)max_events * ParticleEvent::size;
+    if (!max_trail_points) return cursor;
+
+    usz points = (usz)capacity * max_trail_points;
+    cursor = particle_align(cursor, Vec3::alignment) + points * Vec3::size;
+    usz floats = points * TRAIL_POINT_FLOAT_STREAMS + (usz)capacity * TRAIL_PARTICLE_FLOAT_STREAMS;
+    cursor = particle_align(cursor, float::alignment) + floats * float::size;
+    return particle_align(cursor, uint::alignment) + (usz)capacity * TRAIL_PARTICLE_UINT_STREAMS * uint::size;
 }
 
 macro @carve_stream($Type, ParticleSystem* system, usz* cursor, usz count) @private {
@@ -485,9 +586,9 @@ fn bool valid_particle_color(Vec4 color) @private {
 }
 
 fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
-    if (!desc.capacity || particle_pool_bytes(desc.capacity, desc.max_events) > (usz)sz::max) {
-        return c3d::INVALID_ARGUMENT~;
-    }
+    check_particle_trail(&desc.trail, desc.capacity)!;
+    usz pool_bytes = particle_pool_bytes(desc.capacity, desc.max_events, desc.trail.max_points);
+    if (!desc.capacity || pool_bytes > (usz)sz::max) return c3d::INVALID_ARGUMENT~;
     ParticleRange[5] ranges = { desc.lifetime, desc.speed, desc.size, desc.rotation, desc.spin };
     foreach (range : ranges) if (!valid_particle_range(range)) return c3d::INVALID_ARGUMENT~;
     if (desc.lifetime.min <= 0 || desc.speed.min < 0 || desc.size.min < 0) return c3d::INVALID_ARGUMENT~;
@@ -515,6 +616,7 @@ fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
     }
     check_particle_collision(&desc.collision)!;
     check_particle_flipbook(&desc.flipbook, desc.render_mode)!;
+    check_particle_turbulence(&desc.turbulence)!;
 }
 
 fn void? check_particle_collision(ParticleCollision* collision) @private {
@@ -540,4 +642,33 @@ fn void? check_particle_flipbook(ParticleFlipbook* flipbook, ParticleRenderMode 
     if (flipbook.mode == FlipbookMode.FPS && !(math::is_finite(flipbook.fps) && flipbook.fps > 0)) {
         return c3d::INVALID_ARGUMENT~;
     }
+}
+
+fn void? check_particle_turbulence(ParticleTurbulence* turbulence) @private {
+    float[5] finite = {
+        turbulence.strength, turbulence.frequency, turbulence.scroll.x, turbulence.scroll.y, turbulence.scroll.z,
+    };
+    foreach (value : finite) if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
+    if (turbulence.strength < 0) return c3d::INVALID_ARGUMENT~;
+    if (turbulence.strength == 0) return;
+
+    if (turbulence.frequency <= 0) return c3d::INVALID_ARGUMENT~;
+    if (!turbulence.octaves || turbulence.octaves > MAX_TURBULENCE_OCTAVES) return c3d::INVALID_ARGUMENT~;
+    if (!turbulence.period || turbulence.period > MAX_TURBULENCE_PERIOD) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? check_particle_trail(ParticleTrail* trail, uint capacity) @private {
+    float[4] finite = { trail.point_interval, trail.lifetime, trail.width, trail.tile_length };
+    foreach (value : finite) if (!math::is_finite(value)) return c3d::INVALID_ARGUMENT~;
+    if (trail.width < 0) return c3d::INVALID_ARGUMENT~;
+    foreach (value : trail.width_over_trail.values) {
+        if (!math::is_finite(value) || value < 0) return c3d::INVALID_ARGUMENT~;
+    }
+    foreach (color : trail.color_over_trail.values) if (!valid_particle_color(color)) return c3d::INVALID_ARGUMENT~;
+    if (!trail.max_points) return;
+
+    if (trail.max_points < 2 || trail.max_points > MAX_TRAIL_POINTS) return c3d::INVALID_ARGUMENT~;
+    if (trail.point_interval <= 0 || trail.lifetime <= 0) return c3d::INVALID_ARGUMENT~;
+    if (trail.uv == TrailUv.TILE && trail.tile_length <= 0) return c3d::INVALID_ARGUMENT~;
+    if ((ulong)capacity * (ulong)(trail.max_points + 1) > uint::max) return c3d::INVALID_ARGUMENT~;
 }

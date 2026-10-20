@@ -47,7 +47,7 @@ scene.update_world();
 Register once before adding systems. Registration can fault `CAPACITY_EXCEEDED`;
 destroy the scene after a partial registration failure. Emitter creation itself
 is atomic: it validates the descriptor, allocates one pool and creates the
-emitter plus one draw child, rolling back on failure. Invalid descriptors return
+emitter plus one draw child, and a trail child when [trails](#trails) are on, rolling back on failure. Invalid descriptors return
 `INVALID_ARGUMENT`; scene capacity failure returns `CAPACITY_EXCEEDED`.
 
 ## Pending authoring
@@ -86,7 +86,7 @@ particle::update(&scene, delta_seconds, wind_velocity);
 ```
 
 Update steps every system, runs the [sub-emitters](#events-and-sub-emitters), then publishes the
-draws, so particles spawned by events are drawn in the same update.
+draws and trails, so particles spawned by events are drawn in the same update.
 Render every camera afterward. Rendering does not advance the simulation.
 `wind_velocity` is application-owned world-space air velocity in metres/second.
 Hidden emitters continue simulating. Their WORLD/identity draw child inherits
@@ -94,8 +94,8 @@ visibility and subtree lifetime; update explicitly copies the emitter's layer
 mask because layers are not inherited.
 
 After an origin rebase, call `scene.shift_particles(offset)` after `Scene.shift_origin` and before `update_world`. It
-subtracts the offset from every live particle position and every queued event position, and resets each draw child,
-which is world-space and was moved by the scene shift, to the identity transform. The next `update_world` and `particle::update` publish the draws.
+subtracts the offset from every live particle position, every stored trail point and every queued event position, and
+resets each draw and trail child, which is world-space and was moved by the scene shift, to the identity transform. The next `update_world` and `particle::update` publish the draws.
 
 The descriptor is captured at creation and remains immutable. Runtime controls
 are `ParticleSystem.emitting`, `emit_burst(count)`, emitter transforms and wind.
@@ -106,7 +106,7 @@ The library owns the pool arrays, counters, PRNG state and draw child. Inspect
 them as short-lived component borrows; do not resize/edit the arrays or remove,
 reparent or replace the owned child independently. Removing the emitter or scene
 releases pool and draw storage immediately. Removing only ParticleSystem frees
-the pool; the next `particle::update` removes the orphan draw child, so run that
+the pool; the next `particle::update` removes the orphan draw and trail children, so run that
 update before rendering. Shared materials, shaders, textures and mesh geometry
 remain in the asset store.
 
@@ -133,8 +133,8 @@ integration and leave it with age equal to the clamped duration. Newborns with
 already-exhausted lifetime expire without a replacement in the same step. A
 zero-duration update consumes bursts and publishes age-zero particles.
 
-Velocity receives gravity, then drag toward wind; position uses that updated
-velocity. Expiry swap-removes every stream together. Equal seeds/configuration
+Velocity receives gravity, then drag toward the air velocity, which is wind plus
+[turbulence](#turbulence); position uses that updated velocity. Expiry swap-removes every stream together. Equal seeds/configuration
 and identical emitter-pose, delta and wind sequences replay identically within
 the same build. There is no cross-compiler/version bitwise guarantee.
 
@@ -417,9 +417,9 @@ exactly once. ADDITIVE adds the lit, coverage-scaled RGB and preserves
 destination alpha. The ordinary and the weighted-transparency forms light alike.
 
 Simulation is inline, with no allocation during normal step/update. The pool is
-one aligned allocation of nine capacity-sized streams and the event queue; core
-separately owns draw arrays and persistent GPU records. GPU simulation, particle-particle collision,
-ribbons and parallel execution are outside this delivery. Core
+one aligned allocation of nine capacity-sized streams, the event queue and, with [trails](#trails), the trail
+streams; core separately owns draw arrays and persistent GPU records. GPU simulation, particle-particle collision
+and parallel execution are outside this delivery. Core
 billboard material restrictions are documented separately.
 
 ## Flipbooks
@@ -468,6 +468,121 @@ Neighbouring cells meet at a texel boundary, so filtering can mix their colours.
 [edge rules](billboards.md#edges-and-mipmaps) apply: set `inset` to half a texel of the sheet, pad each cell of a
 mipmapped sheet with 2^(m-1) texels for m sampled levels, and expect no guarantee under anisotropic filtering.
 
+## Turbulence
+
+`ParticleSystemDesc.turbulence` adds a swirling, divergence-free air motion to the air that drag pulls particles
+toward. It is off while `strength` is 0. A `ParticleTurbulence` has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `strength` | Metres per second of air velocity at the first octave; 0 disables turbulence. |
+| `frequency` | Lattice cells per metre. |
+| `octaves` | 1 to `MAX_TURBULENCE_OCTAVES`. Each octave doubles the frequency and halves the speed. |
+| `period` | Lattice cells per tile, 1 to `MAX_TURBULENCE_PERIOD`. |
+| `scroll` | Metres per second that the pattern drifts; the pattern moves with `scroll`. |
+
+The field is the curl of three tiled 3D gradient (Perlin) potentials with a quintic fade and analytic derivatives, so
+it has no sources or sinks. The potentials read disjoint bits of one lattice hash. Octave k uses `period` x 2^k cells
+over the same length as the first, so every octave tiles. The first octave's root-mean-square speed is about
+`strength`; the sum of octaves is somewhat faster. Because the field is periodic, it repeats every
+`period` / `frequency` metres along each axis. Choose a period length that exceeds the extent of the effect, or the
+repeat shows.
+
+The sample point is `position` + `Scene.world_shift` - `scroll` x t, in double, where t is
+`ParticleSystem.turbulence_time`: the seconds the system has stepped, restarting at 0 whenever the system is created
+or read. The point is reduced modulo the period length in double and then evaluated in float. A particle at the same
+world point therefore sees the same air velocity before and after an origin rebase, up to the float rounding of its
+shifted position. `Scene.shift_particles` needs no further call.
+
+Drag blends the velocity toward `wind` + the turbulence velocity, by the same `min(1, drag x dt)` share as before.
+**A system with zero drag ignores turbulence** and wind alike. A higher drag follows the swirl more closely.
+The blend is convex, so turbulence alone never takes a particle faster than the air.
+
+The field takes no draw from the system's random stream and depends only on position and time, so equal seeds emit
+equal particles with or without turbulence, and replays repeat.
+
+`add_particle_system` and `attach_particle_system` fault `INVALID_ARGUMENT` for a `strength`, `frequency` or `scroll`
+value that is not finite, a negative `strength`, and, while `strength` is above 0, a `frequency` of 0 or less, an
+`octaves` outside 1 to `MAX_TURBULENCE_OCTAVES` and a `period` of 0 or above `MAX_TURBULENCE_PERIOD`. A disabled
+turbulence reads only the finiteness rules.
+
+Cost falls on `particle::update`, not on rendering, and grows linearly with the live particles and the octaves. Each
+octave is one curl evaluation per particle per step: eight lattice hashes and three analytic gradients. The tile
+reduction runs once per particle in double. A system with zero strength, or with zero drag, evaluates nothing.
+
+## Trails
+
+`ParticleSystemDesc.trail` records the path of every particle and draws it as a camera-facing strip through a core
+[ribbon batch](ribbons.md). It is off while `max_points` is 0. A `ParticleTrail` has these fields:
+
+| Field | Meaning |
+| --- | --- |
+| `max_points` | Stored points per particle, 2 to `MAX_TRAIL_POINTS`; 0 disables the trail. The live position is one more point and is not stored. |
+| `point_interval` | Seconds of particle age between recorded points; above 0. |
+| `lifetime` | Seconds a recorded point lives; above 0. |
+| `width` | Metres across the strip at the live position; 0 or more. |
+| `width_over_trail` | Width multiplier by point age over `lifetime`. It may end at 0, which narrows the strip to nothing. |
+| `color_over_trail` | Colour multiplier by point age over `lifetime`; it multiplies the particle's colour. |
+| `uv` | `STRETCH` or `TILE`, see below. |
+| `tile_length` | Metres of path per texture coordinate unit under `TILE`; above 0 there. |
+| `material` | Blended material of the trail batch, as for [ribbons](ribbons.md#materials-and-supported-paths). |
+
+The trail does not change the simulation or draw anything from the system's random stream, so equal seeds emit equal
+particles with or without a trail.
+
+### Recording
+
+At the end of each update, after collision, a particle's clock gains the step. When the clock reaches `point_interval`
+the particle's position is stored and one interval is taken off the clock; a step of two intervals or more clears the
+rest. A particle therefore stores at most one point per update, and a `point_interval` shorter than the step stores one
+per step. When `max_points` are stored, the next point overwrites the oldest. A stored point older than `lifetime`, by
+particle age, is dropped from the tail. A new particle draws no trail until its first point is stored.
+
+### Publication
+
+The system owns a second world-space child with a ribbon batch of `capacity` x (`max_points` + 1) points. Each update
+writes one strip per particle that has a stored point: the live position first, carrying `RIBBON_BREAK`, then the stored
+points from newest to oldest. Other particles contribute nothing. A particle whose size table reaches 0 still draws its
+trail. The batch is not sorted by depth within itself, so overlapping source-over trails blend in strip order; additive
+or weighted blending is order-independent, see the [ribbon material rules](ribbons.md#materials-and-supported-paths).
+
+Let f be a point's age divided by `lifetime`, in [0, 1], with the live position at 0. A point's width is `width` x
+`width_over_trail`(f). Its colour is the particle's current colour, `color_over_life` included, x `color_over_trail`(f), so
+every point of a strip shares one base colour.
+
+The strip runs from the head to the tail, so by the [ribbon orientation](ribbons.md#texture-coordinates) the texture
+coordinate v rises from the head to the tail in both modes: the top row of the image is at the head.
+
+| `uv` | v of a point |
+| --- | --- |
+| `STRETCH` | f. The head is 0 and the oldest point approaches 1, so the image spans the trail and travels with it. |
+| `TILE` | minus the path length, divided by `tile_length`. The path is measured along the recorded points; the live position adds its distance from the newest one. The coordinate of a stored point never changes, so the image stays fixed along the path and the head slides over it. |
+
+`TILE` coordinates are negative and fall without bound as a particle travels, so the material's sampler needs a
+repeating address mode.
+
+### Lifetime
+
+A trail is removed with its particle, on expiry, eviction or a `DIE` impact, and its removal is abrupt: the whole
+trail disappears in the update that removes the particle. To fade the end, let `color_over_life` reach alpha 0 as the
+particle expires, which fades every point of its trail, and end `width_over_trail` and `color_over_trail` at 0 so that
+the older points narrow and fade.
+
+### Cost and validation
+
+A trail adds about 20 bytes per stored point to the pool: 12 for the position, 4 for the age stamp and 4 for the path
+length. It adds 16 bytes per particle for the ring cursor, the stored count, the clock and the path length. The ribbon
+batch holds (`max_points` + 1) points of 40 bytes for each particle of `capacity`, and core packs them into 48-byte
+GPU records. Core re-packs the batch and recomputes its bounds in every update that changes it, so a system with live
+trails does so every update. Recording is a constant amount of work
+per live particle, publication costs per drawn point, and removing a particle copies its ring.
+
+`add_particle_system` and `attach_particle_system` fault `INVALID_ARGUMENT` for a `point_interval`, `lifetime`, `width` or
+`tile_length` that is not finite, a negative `width`, a table entry that is not finite or is negative, and, while
+`max_points` is above 0, a `max_points` of 1 or above `MAX_TRAIL_POINTS`, a `point_interval` or `lifetime` of 0 or
+less, a `tile_length` of 0 or less under `TILE`, and a `capacity` x (`max_points` + 1) beyond the 32-bit ribbon capacity.
+A disabled trail reads only the finiteness and sign rules.
+
 ## Example and measurements
 
 ```powershell
@@ -499,6 +614,17 @@ by lowercase name, for example `--lighting direct_shadowed --normal volume`. Wit
 reports the transparent pass for AMBIENT, DIRECT and DIRECT_SHADOWED as the segments `ambient`, `direct`
 and `direct_shadowed`, or for the `--lighting` mode alone. Sparks and debris do not emit, and the flag does
 not combine with `--stress`, `--sparks`, `--smoke` or `--collide`.
+
+`--embers` adds a system of rising additive embers whose drag follows a three-octave turbulence field that scrolls
+upward. It applies to the window, which shows the live count, and to `--benchmark`, which prints `embers,alive`. With
+`--stress` it gives the stress system the same turbulence, and each segment prints `turbulence_octaves`; run `--stress`
+with and without `--embers` to compare the update cost.
+
+`--trails` gives the sparks a trail of 24 points, one per rendered frame at the fixed benchmark step, fading and
+narrowing to nothing over 0.4 seconds, drawn additively with a generated soft-edged streak texture. Combine it with
+`--collide` for sharp turns at the bounces. It applies to the window and to `--benchmark`. With `--stress` it gives the
+stress system the same trail, and each segment prints `trail_points`, `trail_draw_count` and the core `ribbon_bounds_ms`
+and `ribbon_pack_ms` beside the billboard timings; run `--stress` with and without `--trails` to compare the update cost.
 
 `--collide` makes the sparks bounce on the ground plane and, through a physics
 ray cast, on a canopy and two crates that are static physics bodies. It applies
@@ -577,4 +703,4 @@ Windows.
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 5. Version 2 added `saturation`, version 3 added `sub_emitters`, `sub_emitter_count` and `max_events`, version 4 added `collision`, and version 5 adds `flipbook`; older payloads in both encodings read the defaults, which is no collision and no flipbook. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.
+Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. The description is version 7. Version 2 added `saturation`, version 3 added `sub_emitters`, `sub_emitter_count` and `max_events`, version 4 added `collision`, version 5 added `flipbook`, version 6 added `turbulence`, and version 7 adds `trail`; older payloads in both encodings read the defaults, which is no collision, no flipbook, no turbulence and no trail. The trail child is generated, so it is not written; preparation creates it again. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.

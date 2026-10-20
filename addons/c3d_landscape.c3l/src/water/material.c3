@@ -159,6 +159,7 @@ fn ShaderId? water_shader(AssetStore* assets, bool* created = null) @private {
             .instanced_velocity = landscape::WATER_VERTEX_INSTANCED_VELOCITY_SPIRV[..],
         },
         .trace_pose       = { .single = landscape::WATER_TRACE_POSE_SPIRV[..], .reads_time = true },
+        .trace_pose_grid  = true,
         .param_block_size = WaterParams::size,
         .scene_reads      = { .color, .depth },
     };

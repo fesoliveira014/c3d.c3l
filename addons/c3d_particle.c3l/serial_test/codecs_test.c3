@@ -37,6 +37,7 @@ fn void create_fixture(Fixture* fixture, ParticleRenderMode mode, uint capacity 
     particle::register_particles(&fixture.destination)!!;
     fixture.source.register(Extra)!!;
     MaterialId material = fixture.assets.add_material(material::standard(), "effect")!!;
+    MaterialId trail_material = fixture.assets.add_material(material::standard(), "trail")!!;
     GeometryId geometry;
     @pool() {
         Geometry box = geometry::box(
@@ -95,6 +96,24 @@ fn void create_fixture(Fixture* fixture, ParticleRenderMode mode, uint capacity 
             .blend = true,
         };
     }
+    desc.turbulence = {
+        .strength = 1.5f,
+        .frequency = 0.25f,
+        .octaves = 2,
+        .period = 12,
+        .scroll = { 0.5f, -1, 0.25f },
+    };
+    desc.trail = {
+        .max_points = 5,
+        .point_interval = 0.02f,
+        .lifetime = 0.75f,
+        .width = 0.125f,
+        .uv = TILE,
+        .tile_length = 1.5f,
+        .material = trail_material,
+    };
+    foreach (index, &width : desc.trail.width_over_trail.values) *width = 1 - (float)index / 8;
+    foreach (index, &color : desc.trail.color_over_trail.values) *color = { 1, 0.5f, (float)index * 0.1f, 0.9f };
     fixture.source.attach_particle_system(fixture.root, desc)!!;
     fixture.source.get(fixture.root, ParticleSystem).emitting = false;
 }
@@ -180,10 +199,22 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(particle::ParticleAuthoringV4)!!.layout == 0xbc9869b807205e38);
     assert(serial::described_type(ParticleFlipbook)!!.version == 1);
     assert(serial::described_type(ParticleFlipbook)!!.layout == 0x3ff56ab69bece737);
-    assert(serial::described_type(ParticleSystemDesc)!!.version == 5);
-    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x9112174200c2df34);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 5);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0x35b8ed9f357f1cbe);
+    assert(serial::described_type(particle::ParticleSystemDescV5)!!.version == 5);
+    assert(serial::described_type(particle::ParticleSystemDescV5)!!.layout == 0x9112174200c2df34);
+    assert(serial::described_type(particle::ParticleAuthoringV5)!!.version == 5);
+    assert(serial::described_type(particle::ParticleAuthoringV5)!!.layout == 0x35b8ed9f357f1cbe);
+    assert(serial::described_type(ParticleTurbulence)!!.version == 1);
+    assert(serial::described_type(ParticleTurbulence)!!.layout == 0x3a1f2d4e38ebc210);
+    assert(serial::described_type(particle::ParticleSystemDescV6)!!.version == 6);
+    assert(serial::described_type(particle::ParticleSystemDescV6)!!.layout == 0x07763ae500c62112);
+    assert(serial::described_type(particle::ParticleAuthoringV6)!!.version == 6);
+    assert(serial::described_type(particle::ParticleAuthoringV6)!!.layout == 0x5cdb9677e6a87b8c);
+    assert(serial::described_type(ParticleTrail)!!.version == 1);
+    assert(serial::described_type(ParticleTrail)!!.layout == 0x8ca2db8e1e495b9f);
+    assert(serial::described_type(ParticleSystemDesc)!!.version == 7);
+    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x4c53c2a840dc4b22);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 7);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0xa19169c0d642b947);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("particle_system") && schema.contains("emitting"));
@@ -192,6 +223,8 @@ fn void test_serial_layout_registration() @test {
         assert(schema.contains("sub_emitters") && schema.contains("inherit_velocity") && schema.contains("max_events"));
         assert(schema.contains("collision") && schema.contains("ground_height") && schema.contains("BOUNCE"));
         assert(schema.contains("flipbook") && schema.contains("random_start") && schema.contains("OVER_LIFE"));
+        assert(schema.contains("turbulence") && schema.contains("octaves") && schema.contains("scroll"));
+        assert(schema.contains("trail") && schema.contains("width_over_trail") && schema.contains("TILE"));
     };
 }
 
@@ -248,6 +281,17 @@ fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @tes
                     assert(flipbook.inset == (Vec2){ 0.001f, 0.002f } && flipbook.mode == FPS);
                     assert(flipbook.fps == 12.5f && flipbook.random_start && flipbook.blend);
                 }
+                ParticleTurbulence turbulence = system.desc.turbulence;
+                assert(turbulence.strength == 1.5f && turbulence.frequency == 0.25f);
+                assert(turbulence.octaves == 2 && turbulence.period == 12);
+                assert(turbulence.scroll == (Vec3){ 0.5f, -1, 0.25f });
+                ParticleTrail trail = system.desc.trail;
+                assert(trail.max_points == 5 && trail.point_interval == 0.02f && trail.lifetime == 0.75f);
+                assert(trail.width == 0.125f && trail.uv == TILE && trail.tile_length == 1.5f);
+                assert(trail.width_over_trail.values == source.desc.trail.width_over_trail.values);
+                assert(trail.color_over_trail.values == source.desc.trail.color_over_trail.values);
+                assert(fixture.assets.materials.is_live(trail.material));
+                assert(!c3d::same_id(trail.material, system.desc.material));
                 assert(system.desc.color_over_life.values[7] == source.desc.color_over_life.values[7]);
                 assert(restored.first_child && restored.first_child.name == "authored-child");
                 assert(fixture.destination.count(BillboardBatch) == 0 && fixture.destination.count(InstancedMesh) == 0);
@@ -383,6 +427,22 @@ fn void test_particle_draw_roots_and_authored_additions_are_rejected() @test {
                 root: fixture.root,
                 text_mode: text_mode,
             )) == c3d::INVALID_ARGUMENT);
+            fixture.source.remove_component(draw, Extra);
+
+            Node* trail = fixture.source.node(fixture.source.get(fixture.root, ParticleSystem).trail_node);
+            assert(@catch(encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: trail,
+                text_mode: text_mode,
+            )) == c3d::INVALID_ARGUMENT);
+            fixture.source.add(trail, (Extra){ .value = 9 });
+            assert(@catch(encode(
+                scene: &fixture.source,
+                assets: &fixture.assets,
+                root: fixture.root,
+                text_mode: text_mode,
+            )) == c3d::INVALID_ARGUMENT);
         };
     }
 }
@@ -391,7 +451,7 @@ fn void test_particle_read_and_prepare_failures_preserve_authoring() @test {
     foreach (text_mode : (bool[2]){ false, true }) {
         @pool() {
             Fixture fixture;
-            create_fixture(&fixture, BILLBOARD, 2);
+            create_fixture(&fixture, BILLBOARD, 3);
             defer destroy_fixture(&fixture);
             char[] bytes = encode(
                 scene: &fixture.source,
@@ -412,16 +472,22 @@ fn void test_particle_read_and_prepare_failures_preserve_authoring() @test {
             assert(fixture.destination.world.entities.free_count == free_nodes && fixture.destination.count(ParticleSystem) == 0);
             Node* restored = decode(&fixture, bytes, text_mode)!!;
             ParticleSystem* system = fixture.destination.get(restored, ParticleSystem);
+            free_nodes = fixture.destination.world.entities.free_count;
             assert(@catch(particle::prepare(&fixture.destination, restored)) == c3d::CAPACITY_EXCEEDED);
             assert(!system.is_prepared() && !system.emitting && system.desc.capacity == 7);
             assert(fixture.assets.materials.free_count == free_materials);
+            assert(fixture.destination.world.entities.free_count == free_nodes);
+            assert(fixture.destination.count(BillboardBatch) == 0);
             fixture.destination.remove(restored.first_child);
             particle::prepare(&fixture.destination, restored)!!;
             assert(system.is_prepared() && !system.emitting);
             fixture.destination.remove(restored);
-            Node* occupied = fixture.destination.add_node()!!;
+            fixture.destination.add_node()!!;
+            fixture.destination.add_node()!!;
+            free_nodes = fixture.destination.world.entities.free_count;
             assert(@catch(decode(&fixture, bytes, text_mode)) == c3d::CAPACITY_EXCEEDED);
-            assert(fixture.destination.root.first_child == occupied && fixture.destination.count(ParticleSystem) == 0);
+            assert(fixture.destination.world.entities.free_count == free_nodes);
+            assert(fixture.destination.count(ParticleSystem) == 0);
         };
     }
 }

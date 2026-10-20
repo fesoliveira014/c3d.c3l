@@ -17,6 +17,7 @@ import std::math::quaternion;
 
 const char[*] DISPLACE_VERTEX_SOURCE @private = $embed("displace.vert.glsl");
 const char[*] DISPLACE_POSE_SOURCE @private = $embed("displace_pose.comp.glsl");
+const char[*] LIFT_POSE_SOURCE @private = $embed("lift_pose.comp.glsl");
 const char[*] DISPLACE_INCLUDE_SOURCE @private = $embed("displace.glsl");
 const String DISPLACE_INCLUDE_NAME @private = "test/displace.glsl";
 const float DISPLACE_AMPLITUDE @private = 0.3f;       // a tenth of the camera distance, far above the depth tolerance
@@ -34,6 +35,9 @@ const float SIDE_INSTANCE_X @private = 6;             // well outside the half w
 const float SWAY_AMPLITUDE @private = 0.4f;
 const float MASK_BEND_AMPLITUDE @private = 0.2f;
 const float LOW_ALPHA @private = 0.1f;                // below the fixture mask's cutoff of 0.5
+const uint LONG_ROW_SIDE @private = 2100;             // 4,410,000 vertices, past the 4,194,240 one dispatch row poses
+const float POSE_LIFT @private = 0.5f;                // mirrored as LIFT in lift_pose.comp.glsl
+const usz POSITION_BYTES @private = 12;               // a packed vec3 position
 const double[3] POSE_TIMES @private = { 0.0, 0.4, 0.8 };
 const double SWAY_FIRST_TIME @private = 0.3;
 const double SWAY_SECOND_TIME @private = 0.6;
@@ -643,5 +647,134 @@ fn void test_posed_slots_run_out_per_kind() @test {
     report_pose_counts(renderer, "sway rows past one slot");
     assert(renderer.stats.trace_instances == 2 && renderer.stats.trace_posed_instances == 1);
     assert(renderer.stats.trace_sway_at_rest == 1 && renderer.stats.trace_deform_overflow == 0);
+    check_validation(renderer);
+}
+
+// One triangle over the first, second and last vertex keeps the trace tree small; the pose still covers every vertex.
+fn GeometryId? add_long_row(Fixture* fixture) @private {
+    GeometryId row;
+    @pool() {
+        sz vertex_count = (sz)LONG_ROW_SIDE * LONG_ROW_SIDE;
+        Geometry geometry = {
+            .topology  = TRIANGLES,
+            .positions = alloc::new_array(tmem, Vec3, vertex_count),
+            .indices   = alloc::new_array(tmem, uint, 3),
+        };
+        foreach (index, &position : geometry.positions) {
+            *position = { (float)(index % LONG_ROW_SIDE), 0, (float)(index / LONG_ROW_SIDE) };
+        }
+
+        uint[3] corners = { 0, 1, (uint)(vertex_count - 1) };
+        geometry.indices[..] = corners[..];
+        geometry.finalize();
+        row = fixture.assets.add_geometry(&geometry)!;
+    };
+    return row;
+}
+
+// A stage that lifts every vertex by POSE_LIFT; declared sets trace_pose_grid.
+fn ShaderId? add_lift_shader(Fixture* fixture, bool declared) @private {
+    String fragment = (String)file::load(tmem, repository_path(PULSE_FRAGMENT))!;
+    asset::ShaderDesc desc = {
+        .fragment         = compile::compile_glsl(fixture.allocator, fragment, ShaderStage.FRAGMENT)!,
+        .param_block_size = PulseBlock::size,
+        .trace_pose_grid  = declared,
+    };
+    defer asset::free_shader_desc(fixture.allocator, &desc);
+    desc.vertex.shaded = compile_displace_vertex(fixture, false, false)!;
+    desc.vertex.depth = compile_displace_vertex(fixture, true, false)!;
+    desc.trace_pose.single = compile_displace_stage(
+        fixture: fixture,
+        source:  (String)LIFT_POSE_SOURCE[..],
+        stage:   ShaderStage.COMPUTE,
+        defines: {},
+    )!;
+    return fixture.assets.add_shader(&desc);
+}
+
+fn Node*? add_long_row_mesh(TraceRig* rig, bool declared) @private {
+    ShaderId shader = add_lift_shader(&rig.fixture, declared)!;
+    MaterialId material = add_displace_material(&rig.fixture, shader, STILL_RATE)!;
+    Node* mesh = rig.harness.scene.add_mesh(add_long_row(&rig.fixture)!, material, name: "long_row")!;
+    rig.harness.scene.update_world();
+    return mesh;
+}
+
+// Prepares the trace in an open frame and copies the posed streams' last position out before the frame ends.
+fn Vec3? pose_and_read_last_vertex(TraceRig* rig, Node* mesh) @private {
+    Renderer* renderer = &rig.fixture.renderer;
+    gpu::AllocationDesc readback_desc = {
+        .size         = POSITION_BYTES,
+        .alignment    = 16,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access       = { .graphics },
+        .debug_name   = "long_row_readback",
+    };
+    gpu::MappedGpuSpan readback = gpu::allocate_mapped_memory(&renderer.device, &readback_desc)!;
+    defer {
+        gpu::GpuAllocation allocation = readback.span.allocation();
+        gpu::free_allocation(&renderer.device, &allocation)!!;
+    }
+
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.prepare_scene_trace(&rig.harness.scene, TraceKind.SOFTWARE)!;
+    PosedTraceRes* slot = posed_slot_of(&rig.fixture, &rig.harness, mesh);
+    usz last = slot.positions.size - POSITION_BYTES;
+    gpu::Barrier posed = { .before = { .all }, .after = { .transfer } };
+    gpu::cmd_barrier(&renderer.commands, &posed)!;
+    gpu::BufferCopyDesc copy = {
+        .src = slot.positions.checked_subspan(last, POSITION_BYTES)!,
+        .dst = readback.span,
+    };
+    gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
+    gpu::Barrier host_read = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &host_read)!;
+    renderer.end_frame()!;
+    render::wait_frames(renderer)!;
+    gpu::invalidate_mapped_span(&renderer.device, readback.span)!;
+    float* position = (float*)readback.bytes.ptr;
+    return { position[0], position[1], position[2] };
+}
+
+fn void test_custom_pose_of_a_row_past_one_dispatch_row_poses_its_last_vertex() @test {
+    TraceRig rig;
+    create_trace_rig(&rig, false)!!;
+    defer destroy_trace_rig(&rig);
+    Node* mesh = add_long_row_mesh(&rig, true)!!;
+    Renderer* renderer = &rig.fixture.renderer;
+
+    Vec3 posed = pose_and_read_last_vertex(&rig, mesh)!!;
+    float last = (float)(LONG_ROW_SIDE - 1);
+    io::eprintfn(
+        "long row: last vertex posed to %f %f %f, %d poses",
+        posed.x,
+        posed.y,
+        posed.z,
+        renderer.stats.trace_poses,
+    );
+    assert(renderer.stats.trace_poses == 1);
+    assert(posed.x == last && posed.y == POSE_LIFT && posed.z == last);
+    check_validation(renderer);
+}
+
+fn void test_custom_pose_without_the_grid_flag_on_a_long_row_faults_unsupported() @test {
+    TraceRig rig;
+    create_trace_rig(&rig, false)!!;
+    defer destroy_trace_rig(&rig);
+    Renderer* renderer = &rig.fixture.renderer;
+    uint vertex_count = LONG_ROW_SIDE * LONG_ROW_SIDE;
+    uint groups = (vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
+    if (groups <= renderer.caps.max_compute_work_group_count.x) {
+        io::eprintfn("long row: the device dispatches %d groups in one row, nothing to refuse", groups);
+        return;
+    }
+
+    add_long_row_mesh(&rig, false)!!;
+    renderer.begin_frame()!!;
+    fault caught = @catch(renderer.prepare_scene_trace(&rig.harness.scene, TraceKind.SOFTWARE));
+    render::abort_frame(renderer);
+    assert(caught == c3d::UNSUPPORTED);
+    assert(renderer.stats.trace_poses == 0);
     check_validation(renderer);
 }

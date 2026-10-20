@@ -21,11 +21,13 @@ fn void update(Scene* scene, float dt, Vec3 wind = {}) {
             Node* emitter = scene.node(entity);
             Node* child = scene.node(system.draw_node);
             child.layers = emitter.layers;
+            if (system.desc.trail.max_points) scene.node(system.trail_node).layers = emitter.layers;
             particle::step(
                 system: system,
                 emitter_world: emitter.world,
                 dt: dt,
                 wind: wind,
+                world_shift: scene.world_shift,
             );
         }
     };
@@ -40,6 +42,7 @@ fn void update(Scene* scene, float dt, Vec3 wind = {}) {
             } else {
                 publish_billboards(scene, child, system);
             }
+            if (system.desc.trail.max_points) publish_trails(scene, scene.node(system.trail_node), system);
         }
     };
 }
@@ -138,7 +141,7 @@ fn void publish_meshes(Scene* scene, Node* node, ParticleSystem* system) @privat
 fn bool draw_has_owner(Scene* scene, Entity child, ParticleDrawOwner* owner) @private {
     if (!scene.world.is_alive(owner.emitter)) return false;
     ParticleSystem* system = scene.get(scene.node(owner.emitter), ParticleSystem);
-    return system && c3d::same_id(system.draw_node, child);
+    return system && (c3d::same_id(system.draw_node, child) || c3d::same_id(system.trail_node, child));
 }
 
 fn void remove_orphan_draws(Scene* scene) @private {
