@@ -764,7 +764,10 @@ stand in it.
   the body's medium is not in its own mirror either way. Probe updates, reflection captures and the path tracer take no
   media: a water surface they draw shows what lies behind it unabsorbed.
 
-**From below.** The material is double-sided, and a back face, the surface seen from under the water, shades as follows:
+**From below.** The material is double-sided. A back face shades from below when the viewing camera is under the
+body's rest plane, the test of the mirror ([The mirror](#the-mirror)), and draws nothing otherwise: seen from above, a
+back face is the far side of a triangle showing through a gap between quads. A front face is unchanged for any
+camera. A back face seen from under the plane shades as follows:
 
 - The camera ray refracts with the index ratio 1.33 to 1. Inside the critical angle (48.75° from the normal) the
   refracted direction leaves the water. It is projected into the view: the scene snapshot there shows what lies above
@@ -1050,6 +1053,9 @@ store.
   follows the plane's side, not the waves'. The water between the surface and the box's top is not absorbed: a bed seen
   through a crest misses up to about twice the amplitude of absorption. A simulated body's amplitude is its reach, the
   largest height magnitude since it woke: the box's top is `MEDIUM_SKIN` under the rest plane while the pond is calm.
+- **Camera side**: the surface's from-below test is the rest plane, as the mirror's, so a camera within the wave reach
+  of it takes the plane's side. Over the plane and under a crest, the crest's underside draws nothing; under the plane
+  and over a trough, back faces shade from below and front faces as from above.
 - **Underwater views**: no light shafts and no caustics. The window and the reflection show this view's snapshot and the
   environment elsewhere, so near the frame's edge the window changes from the snapshot to the environment. The surface
   shows no glints or foam from below.
