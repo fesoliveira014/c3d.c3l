@@ -580,7 +580,9 @@ fn gpu::PipelineHandle? create_pipeline(
         return gpu::create_compute_pipeline(device, &compute_desc);
     }
     bool custom_fragment = key.custom.fragment || key.custom.gbuffer;
-    bool per_sample = (key.fragment.flags & shader::SHADER_FLAG_MULTISAMPLE) != 0;
+    // The pixel-rate form shades a pixel once and writes every covered sample.
+    bool per_sample = (key.fragment.flags & shader::SHADER_FLAG_MULTISAMPLE) != 0
+        && (key.fragment.flags & shader::SHADER_FLAG_MULTISAMPLE_PIXEL) == 0;
     gpu::GraphicsPipelineDesc desc = {
         .vertex_shader      = {
             .spirv = key.custom.vertex ? custom.vertex : registry.get(key.vertex)!,
