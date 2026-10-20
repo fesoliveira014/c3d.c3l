@@ -165,7 +165,7 @@ references. Its `simulation` is `DEFAULT_WAVE_SPEED` (3 m/s) and `DEFAULT_DAMPIN
 | `foam_crest` | In [0, 1): the crest factor above which wave foam shows |
 | `ripple_drift` | Non-negative: ripple scroll in m/s per m/s of wind |
 | `ripples`, `foam` | Zero, or a live `STANDARD` material |
-| `march_reflections` | The screen-space march where the planar sample is missing |
+| `march_reflections` | The screen-space march in views that provide no reflection slot |
 | `max_mirrors` | At least 1 and at most `MAX_MIRRORS` (8): the mirror slots, one per viewing view |
 | `reflection_view_slot` | Below `material::MAX_VIEW_TEXTURES` (4): the [view texture](views.md#view-textures) the material samples |
 | `trace` | Scene traces see the displaced surface, posed every frame ([Scene traces](#scene-traces)); off by default; an ocean cannot trace |
@@ -787,11 +787,15 @@ The waves bend the window and the reflection with the surface normal, ripples in
 
 | Condition | Varies | Branch |
 | --- | --- | --- |
-| The viewing view provides the reflection slot | per draw | planar tried |
-| The planar uv (screen uv plus the tilt offset, clamped to 0.05) lies inside the frame | per pixel | planar sample |
-| `march_reflections` | per draw | march tried |
+| The viewing view provides the reflection slot | per draw | planar sample |
+| Otherwise, `march_reflections` | per draw | march tried |
 | The march hits: a sample lies behind the snapshot surface by less than two steps | per pixel | snapshot colour |
 | Otherwise | | the environment's specular cube at mip 0 times its intensity, else `frame.ambient` |
+
+The planar sample is never rejected. Its uv is the screen uv plus the tilt offset, clamped to 0.05, then clamped half
+a texel inside the slot's own texture, whose size follows the mirror target's `render_scale`. An outward offset at the
+frame edge reads the edge texels, so the surface does not fall back to the environment there, and the margin keeps the
+read off the opposite edge under any address mode. The slot's sampler is linear with clamp-to-edge addressing.
 
 The march steps 24 times along the reflected ray over four times the pixel's view distance, spaced
 quadratically; a sample behind the camera or outside the frame ends it as a miss, and background texels never
