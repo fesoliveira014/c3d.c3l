@@ -10,7 +10,7 @@ import std::math;
 <*
  GPU particle systems one context simulates by default.
 *>
-const uint DEFAULT_MAX_SYSTEMS = 16; // a buffer each at its first update and one for counters, of the renderer's 64
+const uint DEFAULT_MAX_SYSTEMS = 16; // a buffer each, two for a traced mesh, and one for counters, of the renderer's 64
 
 const String SHIFT_KEY @private = "c3d_particle/particle_shift";
 const String EXPIRE_KEY @private = "c3d_particle/particle_expire";
@@ -18,6 +18,7 @@ const String SCAN_KEY @private = "c3d_particle/particle_scan";
 const String ADMIT_KEY @private = "c3d_particle/particle_admit";
 const String ADVANCE_KEY @private = "c3d_particle/particle_advance";
 const String PUBLISH_KEY @private = "c3d_particle/particle_publish";
+const String DELIVER_KEY @private = "c3d_particle/particle_deliver";
 
 <*
  Compute stages of one chain.
@@ -29,15 +30,18 @@ struct GpuStages {
     ComputeShaderId admit;
     ComputeShaderId advance;
     ComputeShaderId publish;
+    ComputeShaderId deliver;
 }
 
 <*
- Buffer a GPU system owns, and the emitter it belongs to.
+ Buffers a GPU system owns, and the emitter it belongs to.
 *>
 struct GpuSystemSlot {
     Entity emitter; // a zero generation marks a free slot
     BufferId buffer;
+    BufferId mirror; // READBACK; only a mesh system with mesh_trace has one
     uint stamp; // the update that last saw the emitter
+    uint chained; // the update that last recorded the emitter's step
 }
 
 <*
@@ -49,6 +53,12 @@ struct GpuParticles {
     GpuSystemSlot[] slots;
     BufferId counters; // READBACK; one entry per slot, created at the first update
     uint stamp;
+}
+
+struct SystemRef @private {
+    Entity entity;
+    ParticleSystem* system;
+    GpuSystemSlot* slot;
 }
 
 struct ChainRecorder @private {
@@ -94,6 +104,7 @@ fn GpuParticles? create_gpu_particles(
         .admit = stage(assets, ADMIT_KEY, particle::PARTICLE_ADMIT_SPIRV[..])!,
         .advance = stage(assets, ADVANCE_KEY, particle::PARTICLE_ADVANCE_SPIRV[..])!,
         .publish = stage(assets, PUBLISH_KEY, particle::PARTICLE_PUBLISH_SPIRV[..])!,
+        .deliver = stage(assets, DELIVER_KEY, particle::PARTICLE_DELIVER_SPIRV[..])!,
     };
     return {
         .allocator = allocator,
@@ -110,6 +121,7 @@ fn GpuParticles? create_gpu_particles(
 fn void destroy_gpu_particles(GpuParticles* particles, Renderer* renderer) {
     foreach (&slot : particles.slots) {
         if (slot.buffer.generation) (void)renderer.destroy_buffer(slot.buffer);
+        if (slot.mirror.generation) (void)renderer.destroy_buffer(slot.mirror);
     }
     if (particles.counters.generation) (void)renderer.destroy_buffer(particles.counters);
     alloc::free(particles.allocator, particles.slots.ptr);
@@ -146,7 +158,7 @@ fn void? update(
             .debug_name = "particle_counters",
         })!;
     }
-    char[] counters = read_counters(renderer, particles.counters)!;
+    char[] counters = read_snapshot(renderer, particles.counters)!;
 
     fault failure;
     scene.@each(ParticleSystem; entity, system) {
@@ -165,6 +177,9 @@ fn void? update(
             }
         }
     };
+    if (catch excuse = deliver_events(particles, renderer, scene)) {
+        if (!failure) failure = excuse;
+    }
     retire_unseen(particles, renderer)!;
     if (failure) return failure~;
 }
@@ -176,8 +191,8 @@ fn ComputeShaderId? stage(AssetStore* assets, String key, char[] spirv) @private
     return assets.add_compute_shader(&desc, key);
 }
 
-fn char[]? read_counters(Renderer* renderer, BufferId counters) @private {
-    char[]? bytes = renderer.read_buffer(counters);
+fn char[]? read_snapshot(Renderer* renderer, BufferId buffer) @private {
+    char[]? bytes = renderer.read_buffer(buffer);
     if (catch excuse = bytes) {
         if (excuse == render::NOT_READY) return (char[]){};
         return excuse~;
@@ -202,6 +217,7 @@ fn void? retire_unseen(GpuParticles* particles, Renderer* renderer) @private {
         if (!slot.emitter.generation || slot.stamp == particles.stamp) continue;
 
         if (slot.buffer.generation) renderer.destroy_buffer(slot.buffer)!;
+        if (slot.mirror.generation) renderer.destroy_buffer(slot.mirror)!;
         *slot = {};
     }
 }
@@ -219,6 +235,8 @@ fn void adopt_counters(
     uint* words = (uint*)counters.ptr + slot_index * (COUNTER_BYTES / uint::size);
     system.alive = words[0];
     system.dropped = (ulong)words[1] | ((ulong)words[2] << 32);
+    system.dropped_events = (ulong)words[4] | ((ulong)words[5] << 32);
+    system.skipped_events = (ulong)words[6] | ((ulong)words[7] << 32);
 }
 
 fn void? step_system(
@@ -246,13 +264,28 @@ fn void? step_system(
         slot_index: slot_index,
     );
 
-    SystemLayout layout = system_layout(system.desc.capacity, system.desc.trail.max_points);
+    SystemLayout layout = system_layout(&system.desc);
     if (!slot.buffer.generation) {
         slot.buffer = renderer.create_buffer({
             .size = layout.size,
             .usage = BufferUsage.GPU_PRIVATE,
             .debug_name = "particle_system",
         })!;
+    }
+    if (mirrors_instances(&system.desc)) {
+        if (!slot.mirror.generation) {
+            slot.mirror = renderer.create_buffer({
+                .size = mirror_bytes(system.desc.capacity),
+                .usage = BufferUsage.READBACK,
+                .debug_name = "particle_mirror",
+            })!;
+        }
+        adopt_mirror(
+            scene: scene,
+            renderer: renderer,
+            system: system,
+            mirror: slot.mirror,
+        )!;
     }
 
     Node* emitter = scene.node(entity);
@@ -264,36 +297,45 @@ fn void? step_system(
         frame: renderer.frame_index,
         world_shift: scene.world_shift,
     );
-    SystemAddresses addresses = {
-        .base = (ulong)renderer.buffer_address(slot.buffer),
-        .counters = (ulong)renderer.buffer_address(particles.counters) + slot_index * COUNTER_BYTES,
-    };
     StepRoot root = step_root(
         system: system,
         plan: &plan,
         layout: &layout,
-        addresses: addresses,
+        addresses: system_addresses(particles, renderer, slot),
         emitter_world: emitter.world,
         wind: wind,
         origin: renderer.frame_origin,
     );
-    BufferId[2] writes = { slot.buffer, particles.counters };
+    BufferId[3] writes = { slot.buffer, particles.counters, slot.mirror };
     record_chain(
         renderer: renderer,
         stages: &particles.stages,
         root: &root,
         groups: layout.groups,
         shifted: !plan.first && plan.shift != (Vec3){},
-        writes: writes[..],
+        writes: writes[:slot.mirror.generation ? 3 : 2],
     )!;
+    slot.chained = particles.stamp;
 
-    BillboardDevice device = {
-        .buffer = slot.buffer,
-        .records_offset = layout.records,
-        .count_offset = layout.count,
-        .capacity = system.desc.capacity,
-    };
-    scene.set_billboard_device(scene.node(system.draw_node), device, state.pending.reach.bound(&system.desc));
+    Aabb bound = state.pending.reach.bound(&system.desc, mesh_bound_radius(renderer.assets, &system.desc));
+    Node* draw = scene.node(system.draw_node);
+    if (system.desc.render_mode == ParticleRenderMode.MESH) {
+        InstanceDevice instances = {
+            .buffer = slot.buffer,
+            .records_offset = layout.records,
+            .count_offset = layout.count,
+            .capacity = system.desc.capacity,
+        };
+        scene.set_instance_device(draw, instances, bound);
+    } else {
+        BillboardDevice billboards = {
+            .buffer = slot.buffer,
+            .records_offset = layout.records,
+            .count_offset = layout.count,
+            .capacity = system.desc.capacity,
+        };
+        scene.set_billboard_device(draw, billboards, bound);
+    }
     if (!system.desc.trail.max_points) return;
 
     RibbonDevice ribbons = {
@@ -303,6 +345,138 @@ fn void? step_system(
         .capacity = system.desc.capacity * (system.desc.trail.max_points + 1),
     };
     scene.set_ribbon_device(scene.node(system.trail_node), ribbons, state.pending.reach.trail_bound(&system.desc));
+}
+
+fn SystemAddresses system_addresses(GpuParticles* particles, Renderer* renderer, GpuSystemSlot* slot) @private {
+    usz slot_index = slot - particles.slots.ptr;
+    return {
+        .base = (ulong)renderer.buffer_address(slot.buffer),
+        .counters = (ulong)renderer.buffer_address(particles.counters) + slot_index * COUNTER_BYTES,
+        .mirror = slot.mirror.generation ? (ulong)renderer.buffer_address(slot.mirror) : 0,
+    };
+}
+
+fn float mesh_bound_radius(AssetStore* assets, ParticleSystemDesc* desc) @private {
+    if (desc.render_mode != ParticleRenderMode.MESH || !assets.geometries.is_live(desc.geometry)) return 0;
+
+    return particle::bound_radius(assets.geometry(desc.geometry).data.bounds);
+}
+
+fn void? adopt_mirror(
+    Scene* scene,
+    Renderer* renderer,
+    ParticleSystem* system,
+    BufferId mirror,
+) @private {
+    char[] snapshot = read_snapshot(renderer, mirror)!;
+    if (snapshot.len < MIRROR_HEADER_BYTES) return;
+
+    Node* node = scene.node(system.draw_node);
+    InstancedMesh* batch = scene.get(node, InstancedMesh);
+    uint count = math::min(*(uint*)snapshot.ptr, system.desc.capacity);
+    MirrorRecord[] records = ((MirrorRecord*)(snapshot.ptr + MIRROR_HEADER_BYTES))[:count];
+    foreach (index, record : records) {
+        float size = record.position_size.w;
+        batch.transforms[index] = {
+            .position = { record.position_size.x, record.position_size.y, record.position_size.z },
+            .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, record.rotation),
+            .scale = { size, size, size },
+        };
+        batch.colors[index] = record.color;
+    }
+
+    bool changed = count || batch.count;
+    batch.count = count;
+    if (changed) scene.mark_instances_dirty(node);
+}
+
+fn GpuSystemSlot* find_slot(GpuParticles* particles, Entity emitter) @private {
+    foreach (&slot : particles.slots) {
+        if (slot.emitter.generation && c3d::same_id(slot.emitter, emitter)) return slot;
+    }
+    return null;
+}
+
+fn void? deliver_events(GpuParticles* particles, Renderer* renderer, Scene* scene) @private {
+    fault failure;
+    scene.@each(ParticleSystem; entity, system) {
+        GpuSystemSlot* slot;
+        if (system.is_prepared() && system.desc.execution == ParticleExecution.GPU) slot = find_slot(particles, entity);
+        if (slot && slot.chained == particles.stamp) {
+            foreach (sub_index, &sub_emitter : system.desc.sub_emitters[:system.desc.sub_emitter_count]) {
+                if (catch excuse = deliver_sub_emitter(
+                    particles: particles,
+                    renderer: renderer,
+                    scene: scene,
+                    source: { .entity = entity, .system = system, .slot = slot },
+                    sub_index: (uint)sub_index,
+                )) {
+                    if (!failure) failure = excuse;
+                }
+            }
+        }
+    };
+    if (failure) return failure~;
+}
+
+fn void? deliver_sub_emitter(
+    GpuParticles* particles,
+    Renderer* renderer,
+    Scene* scene,
+    SystemRef source,
+    uint sub_index,
+) @private {
+    SubEmitter* sub_emitter = &source.system.desc.sub_emitters[sub_index];
+    SystemRef receiver = source;
+    bool delivers;
+    if (scene.world.is_alive(sub_emitter.target)) {
+        Node* node = scene.node(sub_emitter.target);
+        ParticleSystem* target = scene.get(node, ParticleSystem);
+        GpuSystemSlot* target_slot;
+        if (target && target.is_prepared() && target.desc.execution == ParticleExecution.GPU) {
+            target_slot = find_slot(particles, sub_emitter.target);
+        }
+        if (target_slot && target_slot.chained == particles.stamp) {
+            receiver = { .entity = sub_emitter.target, .system = target, .slot = target_slot };
+            delivers = true;
+        }
+    }
+
+    SystemLayout layout = system_layout(&receiver.system.desc);
+    GpuStepPlan idle;
+    StepRoot root = step_root(
+        system: receiver.system,
+        plan: &idle,
+        layout: &layout,
+        addresses: system_addresses(particles, renderer, receiver.slot),
+        emitter_world: scene.node(receiver.entity).world,
+        wind: {},
+        origin: renderer.frame_origin,
+    );
+    ulong source_base = (ulong)renderer.buffer_address(source.slot.buffer);
+    root.source_control = source_base;
+    root.source_events = source_base + system_layout(&source.system.desc).events;
+    root.source_event_capacity = source.system.desc.max_events;
+    root.delivery_sub = sub_index;
+    root.delivery_count = sub_emitter.count;
+    root.delivery_inherit = sub_emitter.inherit_velocity;
+    root.delivery_valid = delivers ? 1 : 0;
+
+    if (delivers) {
+        ParticleReach* source_reach = &particle::gpu_step_state(source.system).pending.reach;
+        particle::gpu_step_state(receiver.system).pending.reach.record_origins(
+            origins: source_reach.bound(&source.system.desc),
+            inherited_speed: sub_emitter.inherit_velocity * source_reach.speed_bound(&source.system.desc),
+        );
+    }
+    BufferId[2] writes = { receiver.slot.buffer, source.slot.buffer };
+    uint events = source.system.desc.max_events;
+    renderer.dispatch({
+        .shader = particles.stages.deliver,
+        .root = ((char*)&root)[:StepRoot::size],
+        .groups = { (events + GROUP_SIZE - 1) / GROUP_SIZE, 1, 1 },
+        .writes = writes[..],
+    })!;
 }
 
 fn void? record_chain(

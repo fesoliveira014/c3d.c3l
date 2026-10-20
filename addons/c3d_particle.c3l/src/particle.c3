@@ -425,6 +425,8 @@ fn void? prepare(Scene* scene, Node* emitter) {
             material: desc.material,
             capacity: desc.capacity,
             parent: emitter,
+            source: device ? InstanceSource.DEVICE : InstanceSource.TRANSFORMS,
+            mirror: device && desc.mesh_trace,
         )!;
         InstancedMesh* batch = scene.get(child, InstancedMesh);
         batch.cast_shadow = desc.mesh_cast_shadow;
@@ -658,8 +660,7 @@ fn void? check_particle_execution(ParticleSystemDesc* desc) @private {
     $else
         ParticleCollision* collision = &desc.collision;
         bool needs_depth = collision.response != CollisionResponse.NONE && !collision.ground_plane;
-        bool refused = desc.sub_emitter_count || needs_depth
-            || desc.render_mode == ParticleRenderMode.MESH || desc.saturation == ParticleSaturation.DROP_OLDEST;
+        bool refused = needs_depth || desc.saturation == ParticleSaturation.DROP_OLDEST;
         if (refused) return c3d::UNSUPPORTED~;
     $endif
 }

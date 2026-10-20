@@ -16,6 +16,8 @@ const uint WATER_FOAM = 1u; // mirrored as FOAM_REFERENCE in water/material.c3
 const float WATER_REFRACTION_DEPTH = 1.0; // metres of water behind the surface at which refraction bends fully
 const float RIPPLE_CROSS_ANGLE = 0.6; // mirrored as RIPPLE_CROSS_ANGLE in water/water.c3
 const float RIPPLE_SECOND_SCALE = 1.618034; // mirrored as RIPPLE_SECOND_SCALE in water/water.c3
+const float RIPPLE_MINIMUM_LENGTH = 1.0 / 256.0; // keeps the variance finite where a mip cancels to nothing
+const float RIPPLE_LENGTH_TOLERANCE = 0.0005; // one half-float step of the decoded vector: rounding is not shortening
 
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
@@ -58,6 +60,28 @@ StandardMaterialSample water_layer(
         view_direction,
         false
     );
+}
+
+// The slope variance the ripple map's mip filter averaged away at the uv: the shortening of the filtered texel's vector
+// (Toksvig, through s = 2 / a^2 - 2), scaled as normal_scale scales the slope. A map that renormalizes its mips reads
+// as length 1, and so does an RG map, whose third component is rebuilt.
+float ripple_variance(CustomMaterialGpu material, vec2 uv) {
+    StandardMaterialGpu ripples = custom_reference(material, WATER_RIPPLES);
+    bool stores_length = (ripples.map_flags & MATERIAL_MAP_NORMAL) != 0u
+        && (ripples.map_flags & MATERIAL_MAP_NORMAL_RG) == 0u
+        && ripples.normal_scale != 0.0;
+    if (!stores_length) return 0.0;
+
+    vec3 encoded = sample_map(ripples.normal_map, ripples.map_flags, MATERIAL_MAP_NORMAL, uv, uv).rgb;
+    float texel_length = clamp(length(2.0 * encoded - 1.0), RIPPLE_MINIMUM_LENGTH, 1.0);
+    float shortening = 2.0 * max(1.0 - texel_length - RIPPLE_LENGTH_TOLERANCE, 0.0) / texel_length;
+    return shortening * ripples.normal_scale * ripples.normal_scale;
+}
+
+// The roughness whose GGX alpha squared carries the slope variance on top of the surface's own.
+float roughness_with_variance(float roughness, float slope_variance) {
+    float alpha_squared = roughness * roughness * roughness * roughness;
+    return sqrt(sqrt(clamp(alpha_squared + slope_variance, alpha_squared, 1.0)));
 }
 
 // What a ray leaving the water through the surface sees, from the snapshot where the direction lies in the frame and
@@ -116,8 +140,16 @@ void main() {
     vec3 view_direction = standard_view_direction(frame, v_world_pos);
     vec3 wave_normal = normalize(v_normal);
 
+    // A back face seen from above is the far side of a triangle showing through a gap between quads. Facing and the
+    // camera test are uniform over a primitive, so its quads discard together and the derivatives below are untouched.
+    // The camera test is place_mirror's, in water/mirror.c3.
+    vec3 rest_normal = normalize(mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz) * vec3(0.0, 1.0, 0.0));
+    bool camera_under_plane = dot(frame.camera_position.xyz - draw.model[3].xyz, rest_normal) < 0.0;
+    if (!gl_FrontFacing && !camera_under_plane) discard;
+
     // The references are per material, so both samples run in uniform control flow for their derivatives.
     vec3 normal = wave_normal;
+    float slope_variance = 0.0;
     if (material.references[WATER_RIPPLES] != 0ul) {
         vec4 scroll = params.scroll_origin + params.scroll_velocity * (frame.jitter_time.z - params.scroll_time);
         vec2 first_uv = v_uv0 + scroll.xy;
@@ -126,6 +158,8 @@ void main() {
         vec3 second = water_layer(material, WATER_RIPPLES, geometry, wave_normal, second_uv, view_direction).normal;
         // Sums the two perturbations of the wave normal.
         normal = normalize(first + second - wave_normal);
+        // The layers sample incommensurate scales and turns, so their slope variances add.
+        slope_variance = ripple_variance(material, first_uv) + ripple_variance(material, second_uv);
     }
     float foam = 0.0;
     vec3 foam_color = vec3(0.0);
@@ -142,7 +176,6 @@ void main() {
     }
 
     vec2 screen_uv = scene_uv(frame, gl_FragCoord.xy);
-    vec3 rest_normal = normalize(mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz) * vec3(0.0, 1.0, 0.0));
     vec3 view_tilt = mat3(frame.view) * (normal - rest_normal);
     vec2 screen_tilt = vec2(view_tilt.x, -view_tilt.y);
     float bend = clamp(scene_depth_gap(frame, gl_FragCoord) / WATER_REFRACTION_DEPTH, 0.0, 1.0);
@@ -155,7 +188,7 @@ void main() {
     StandardSurface surface = prepare_surface(
         foam_albedo,
         0.0,
-        mix(params.roughness, foam_roughness, foam),
+        mix(roughness_with_variance(params.roughness, slope_variance), foam_roughness, foam),
         normal,
         view_direction,
         WATER_REFLECTANCE,
@@ -171,6 +204,7 @@ void main() {
     );
 
     // The branch holds explicit-lod reads only, so the derivatives above stay in uniform control flow.
+    // A back face that reaches it has the camera under the rest plane.
     if (!gl_FrontFacing) {
         color = water_from_below(frame, params, v_world_pos, normal, view_direction);
         out_color = material_output(color, 1.0, material.flags);

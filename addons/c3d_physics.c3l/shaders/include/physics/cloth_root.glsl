@@ -14,7 +14,7 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-const uint CLOTH_PAYLOAD_OFFSET = 464u; // mirrored as PAYLOAD_OFFSET in gpu/cloth_record.c3; the reference payload follows its root here
+const uint64_t CLOTH_ROOT_BYTES = uint64_t(464u); // mirrored as ClothRoot::size in gpu/cloth_record.c3; the stride of the roots of a batched dispatch
 
 // Mirrors ClothRoot in gpu/cloth_record.c3.
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ClothRoot {
@@ -58,6 +58,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Cl
     float    progress;           // share of the request's motion the dispatched substep ends at
     float    previous_progress;  // share it starts at
     float    stiffness;          // stiffness of the dispatched pass
+    uint     payload_offset;     // bytes from the dispatch's parameters to the reference pairs this root stages
 };
 
 const uint CLOTH_FEATURE_SOFT = 1u;      // mirrored as FEATURE_SOFT in gpu/cloth_pack.c3

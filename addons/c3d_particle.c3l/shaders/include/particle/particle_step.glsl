@@ -12,6 +12,10 @@ const uint PARTICLE_SHAPE_CONE = 3u;
 const uint PARTICLE_RESPONSE_BOUNCE = 1u; // mirrored by CollisionResponse in particle.c3
 const uint PARTICLE_RESPONSE_STICK = 2u;
 const uint PARTICLE_RESPONSE_DIE = 3u;
+const uint PARTICLE_TRIGGER_DEATH = 0u; // mirrored by ParticleTrigger in particle.c3
+const uint PARTICLE_TRIGGER_IMPACT = 1u;
+const uint PARTICLE_TRIGGER_BIRTH = 2u;
+const uint PARTICLE_EVENT_BYTES = 48u; // mirrored as EVENT_BYTES in gpu/system.c3
 const uint PARTICLE_SCAN_BLOCKS = 0u; // mirrored by ScanMode in gpu/system.c3
 const uint PARTICLE_SCAN_TOTALS = 1u;
 const uint PARTICLE_FLIPBOOK_FPS = 1u; // bits of StepRoot.flipbook_flags; mirrored in gpu/system.c3
@@ -30,8 +34,8 @@ struct ParticleGpu {
     float spin;
     uint seed;
     uvec2 spawn; // low word, then high word of the spawn ordinal
+    uint fresh; // nonzero from delivery until the next step raises the child's BIRTH event
     uint _pad0;
-    uint _pad1;
 };
 
 // Mirrors StepRoot in gpu/system.c3.
@@ -102,6 +106,19 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer St
     uint _pad5;
     float width_over_trail[8];
     vec4 color_over_trail[8];
+    uint64_t events; // both halves; unused while event_capacity is zero
+    uint64_t source_control; // the system that delivers: its control block and event halves
+    uint64_t source_events;
+    uint event_capacity; // events one step of this system can keep
+    uint source_event_capacity;
+    uvec4 event_accept; // by trigger: the sub-emitters that react, one bit each
+    uint delivery_sub; // the sub-emitter that delivers
+    uint delivery_count;
+    float delivery_inherit; // share of the event velocity added to each child
+    float impact_speed;
+    uint delivery_valid; // zero when the target cannot take children, so the events are only counted
+    uint mesh; // nonzero when the records are InstanceGpu
+    uint64_t mirror; // host mirror of a traced mesh system; zero without one
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleControl {
@@ -113,10 +130,33 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleCon
     uint dropped_high;
     uint spawn_low; // next spawn ordinal
     uint spawn_high;
+    uint step; // steps taken; the step in flight appends events to half step & 1
+    uint delivered; // children delivered since the last step, after the alive particles of the home buffer
+    uint event_counts[2]; // events appended to each half; they pass event_capacity until the step publishes
+    uint dropped_events_low;
+    uint dropped_events_high;
+    uint skipped_events_low;
+    uint skipped_events_high;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleStates {
     ParticleGpu values[];
+};
+
+// An occurrence that sub-emitters react to; mirrored as EVENT_BYTES in gpu/system.c3.
+struct ParticleEventGpu {
+    vec3 position;
+    uint seed; // of the particle that raised it
+    vec3 velocity;
+    uint key; // particle_event_key
+    uint accepted; // bit s is set when sub-emitter s reacts
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleEvents {
+    ParticleEventGpu values[];
 };
 
 // One particle's trail cursor; mirrored as TRAIL_HEADER_BYTES in gpu/system.c3.
@@ -192,6 +232,37 @@ void particle_copy_trail(StepRoot root, bool to_alternate, uint source, uint tar
         to_points.values[target * size + slot] = from_points.values[source * size + slot];
         to_distances.values[target * size + slot] = from_distances.values[source * size + slot];
     }
+}
+
+// Particles the step starts with: the survivors of the last step and the children delivered since.
+uint particle_pool_size(ParticleControl control) {
+    return control.alive + control.delivered;
+}
+
+ParticleEvents particle_events(StepRoot root, uint half_index) {
+    return ParticleEvents(root.events + uint64_t(half_index) * uint64_t(root.event_capacity) * PARTICLE_EVENT_BYTES);
+}
+
+// Keeps one event for the sub-emitters that react to the trigger. An event past the capacity is counted when the
+// step publishes.
+void particle_raise_event(StepRoot root, ParticleControl control, ParticleGpu particle, uint trigger) {
+    uint accepted = root.event_accept[trigger];
+    if (accepted == 0u) return;
+
+    uint half_index = control.step & 1u;
+    uint slot = atomicAdd(control.event_counts[half_index], 1u);
+    if (slot >= root.event_capacity) return;
+
+    particle_events(root, half_index).values[slot] = ParticleEventGpu(
+        particle.position,
+        particle.seed,
+        particle.velocity,
+        particle_event_key(particle.spawn, control.step, trigger),
+        accepted,
+        0u,
+        0u,
+        0u
+    );
 }
 
 // Admitted particles of this step; the free slots after the survivors bound it.

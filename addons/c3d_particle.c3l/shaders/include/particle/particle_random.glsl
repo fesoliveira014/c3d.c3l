@@ -30,6 +30,18 @@ uint particle_spawn_hash(uint stream, uvec2 ordinal, uint draw) {
     return particle_pcg_hash(high + draw);
 }
 
+// Mirrors child_seed in step.c3; the key is the event index of the CPU path and particle_event_key here.
+uint particle_child_seed(uint parent_seed, uint key, uint sub_index) {
+    return particle_pcg_hash(particle_pcg_hash(particle_pcg_hash(parent_seed) + key) + sub_index);
+}
+
+// Names one event of one particle: its spawn ordinal, the step that raised it and the trigger. The CPU path keys by
+// event index instead, so the two paths give different children.
+uint particle_event_key(uvec2 ordinal, uint step, uint trigger) {
+    uint spawned = particle_pcg_hash(particle_pcg_hash(ordinal.x) + ordinal.y);
+    return particle_pcg_hash(particle_pcg_hash(spawned + step) + trigger);
+}
+
 // Mirrors SpawnDraws.unit in step.c3.
 float particle_unit(uint stream, uvec2 ordinal, uint draw) {
     return float(particle_spawn_hash(stream, ordinal, draw) >> 8u) * PARTICLE_UNIT_SCALE;

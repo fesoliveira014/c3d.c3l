@@ -193,7 +193,7 @@ gpu::update(&gpu, &renderer, &scene, delta_seconds, wind_velocity)!;
 // render_view and finish_view for each camera, then end_frame
 ```
 
-`create_gpu_particles` adds the six compute stages to the store, once per store, and takes the number of systems the
+`create_gpu_particles` adds the seven compute stages to the store, once per store, and takes the number of systems the
 context simulates, `DEFAULT_MAX_SYSTEMS` (16) by default. Each GPU system owns one renderer buffer, created at its
 first update, and the context owns one more for the counters; the renderer holds 64 application buffers in all, and a
 system past the context's limit faults `CAPACITY_EXCEEDED`. `update` retires the buffer of a system whose node died;
@@ -201,19 +201,23 @@ system past the context's limit faults `CAPACITY_EXCEEDED`. `update` retires the
 
 The application calls `update` once per frame, after `update_world` and before the views render. Each system records
 one step: the queued origin shift (only after a rebase), expiry, a prefix scan, admission with spawning, advance and
-collision, a second scan, and publication. Every dispatch covers the system's capacity; there is no indirect dispatch.
+collision, a second scan, and publication. Once every system has recorded its step, each sub-emitter records one
+[delivery](#gpu-sub-emitters). Every dispatch covers the system's capacity, or the system's `max_events` for a
+delivery; there is no indirect dispatch.
 The pool stays in spawn order. A system's buffer holds 208 bytes per particle: two copies of the particle state, the
-scan scratch and one billboard record; a [trail](#gpu-trails) adds `80 + 88 x max_points` bytes. The draw child is a
-core `DEVICE` [billboard batch](billboards.md#device-batches) over the same buffer, so every view culls and sorts the
-records the compute stages wrote, and no record is uploaded or copied by the CPU.
+scan scratch and one billboard record, or one 128-byte instance record for MESH; a [trail](#gpu-trails) adds `80 + 88 x max_points` bytes, and
+[sub-emitters](#gpu-sub-emitters) add 96 bytes per event of `max_events`. The draw child is a
+core `DEVICE` [billboard batch](billboards.md#device-batches) over the same buffer, or for MESH a `DEVICE`
+[instanced batch](instancing.md#device-batches), so every view culls and sorts the records the compute stages wrote, and
+no record is uploaded or copied by the CPU.
 
 ### Supported subset
 
 - Supported: every emitter shape, rate and bursts; gravity, drag, wind and turbulence; lifetime tables, colour and
-  flipbooks; BILLBOARD and STRETCHED draw modes; trails; REFUSE saturation; and `CollisionResponse` BOUNCE, STICK or DIE
-  against `ground_plane`.
-- Refused with `UNSUPPORTED` at prepare: sub-emitters, MESH draws, `DROP_OLDEST` and a collision response without
-  `ground_plane`. `ParticleSystem.set_collision` requires a CPU system, because the callback is application code.
+  flipbooks; BILLBOARD, STRETCHED and MESH draw modes; trails; sub-emitters between GPU systems; REFUSE saturation; and
+  `CollisionResponse` BOUNCE, STICK or DIE against `ground_plane`.
+- Refused with `UNSUPPORTED` at prepare: `DROP_OLDEST` and a collision response without `ground_plane`.
+  `ParticleSystem.set_collision` requires a CPU system, because the callback is application code.
 
 ### GPU trails
 
@@ -230,11 +234,66 @@ nothing. A terminating break follows the last strip. The count word is the numbe
 `max_points + 1`, which the CPU never reads; the renderer turns it into the draw's segment count on the device. Widths,
 colours and texture coordinates follow [Publication](#publication).
 
+### GPU mesh debris
+
+A MESH system publishes one `InstanceGpu` record for each drawn particle, in spawn order, with the count word after the
+records. The record holds the matrix the CPU publishes (the position, a turn of `rotation` about +Y and a uniform scale
+of the drawn size) packed by core's `pack_instance_record`, and the particle's colour. The batch node keeps the identity
+pose of a WORLD child, so the records are in scene space. The records come out as the CPU's within the
+[tolerance](#determinism-and-tolerance) below, with one difference: the instance seed, which sway and fade read, is a
+hash of the particle's seed, where the CPU path hashes the position, so it does not change as the particle moves.
+
+The draw child is a core `DEVICE` [instanced batch](instancing.md#device-batches). The batch's `cast_shadow` is
+`mesh_cast_shadow`, and the shadow layers cull the device records with the same count word as the view, so shadows
+appear in the frame that spawns the debris. A device batch has no per-instance history, so motion vectors follow the
+batch node alone: debris shows no object motion in a temporal view. Picking and `SceneIndex` skip the batch.
+
+`mesh_trace` is served by a host mirror, because the scene trace reads CPU transforms. A traced system owns a second
+`READBACK` buffer of 16 bytes and 48 bytes per particle of `capacity`, which the renderer copies to the host every frame. Publication writes each drawn particle's
+position, size, rotation and colour there, and each `update` copies the snapshot that is `FRAMES_IN_FLIGHT` frames old
+into the batch's `transforms` and `colors`, sets `count` and marks the batch dirty. The scene trace therefore sees
+debris as it was that many frames earlier, and sees none until the first snapshot arrives. A rebase within those frames
+moves the traced debris once. The copy is the only per-particle readback; a system without `mesh_trace` has no mirror
+and is not traced. A traced system takes two of the renderer's 64 application buffers.
+
+### GPU sub-emitters
+
+A step appends an event for each birth, death and impact that a sub-emitter of the system accepts, with the particle's
+position, velocity and seed. Events go to one of two halves of `max_events` entries, so the deliveries that follow a
+step read its half while the next step fills the other. An event past `max_events` is dropped, and counted in
+`dropped_events` when the step publishes. Birth events come from admission, death events from expiry, from a newborn
+that expires in its first step and from a `DIE` response, and impact events from the ground plane, all by the CPU's
+rules for the position and velocity they carry.
+
+After every system has recorded its step, `update` records one delivery per sub-emitter of every system that stepped.
+It runs one invocation per event slot. An invocation whose event the sub-emitter accepts claims up to `count` free
+slots in the target and spawns the children there, at the event position, through the target's own descriptor and
+emitter orientation, with the parent's velocity times `inherit_velocity` added. Children that do not fit are counted in
+the target's `dropped`. The target may be the same system.
+
+Differences from the CPU path:
+
+- A delivery between a GPU system and a CPU system is skipped and counted in the source's `skipped_events`, as is one
+  to a target that is dead, not prepared or past the context's `max_systems`. Keep a sub-emitter's target on the
+  processor of its source.
+- The children are drawn from the next `update`: a delivery writes the target's pool after the target's step, so the
+  next step ages them, moves them and publishes them. A delivered child raises its own `BIRTH` event at that step,
+  as the CPU does at the next update.
+- A child draws `spawn_hash` with a stream hashed from the parent's seed, a key and the sub-emitter index, and its index
+  in the delivery as the ordinal. The key hashes the parent's spawn ordinal, the number of steps the system has taken
+  and the trigger, where the CPU uses the index of the event, so the two paths do not spawn identical children. Replay
+  on one device is deterministic; the order of the children in the pool, and so which of them a full target drops, is
+  not.
+- The target's [bound](#bounds) includes the box of every source that delivers to it, and grows by the velocity the
+  children inherit. A source with large or fast particles therefore widens its targets' bounds.
+
 ### Counters and latency
 
-The simulation state lives on the device. `alive` and `dropped` are read back from a `READBACK` buffer and reach the CPU
-`FRAMES_IN_FLIGHT` frames late; both read 0 before the first copy, and a frame without a copy keeps the previous
-values. Nothing waits for the device.
+The simulation state lives on the device. `alive`, `dropped`, `dropped_events` and `skipped_events` are read back from a
+`READBACK` buffer and reach the CPU `FRAMES_IN_FLIGHT` frames late; all read 0 before the first copy, and a frame without
+a copy keeps the previous values. A traced mesh system's [mirror](#gpu-mesh-debris) arrives the same way. A delivery's
+`dropped` and `skipped_events` reach the buffer with the target's or source's next step, one update later than the rest.
+Nothing waits for the device.
 
 ### Aborted frames
 
@@ -263,8 +322,8 @@ Both paths draw every spawned value from `spawn_hash`, which `particle_random.gl
 system with one descriptor spawn the same particles. They differ only by floating-point order: the stages use float
 where the CPU uses double for the spawn samples and the flipbook, and the device's sine, cosine and fused operations.
 Replay is deterministic on one device and driver; there is no bit equality across devices, drivers or compilers.
-The acceptance case compares positions within 1e-3 m and sizes within 1e-5 m, and the stored points of a trail within
-1e-3 m.
+The acceptance case compares positions within 1e-3 m and sizes within 1e-5 m, the stored points of a trail within
+1e-3 m, and the matrix elements of a mesh record within 1e-3 and its colour within 1e-4.
 
 ### Bounds
 
@@ -276,7 +335,8 @@ sets the draw child's bounds override to that union grown by:
 - the fall `½·|g|·T·(T + 0.1 s)` along gravity, one-sided;
 - with non-zero drag, the winds of the last lifetime times `T`, one-sided, and the turbulence speed bound times `T`,
   where the bound is the curl supremum 8.5 times the octave amplitudes;
-- the largest drawn half-extent, from the size tables and the stretch;
+- the largest drawn half-extent, from the size tables and the stretch, or for MESH the largest size times the distance
+  from the origin of the geometry to the farthest corner of its bound;
 - for a ground-plane response, the plane's height and one collision radius above it.
 
 The trail child takes the same box grown by half the widest strip on every axis, because a stored point is a past
@@ -353,8 +413,9 @@ The children draw `spawn_hash` with a stream hashed from the parent particle's s
 sub-emitter index, and with their index in the delivery as the ordinal. They use none of the target's own `seed`,
 and equal inputs replay equal children.
 
-A target that is not alive, is not a particle system, or is not prepared is skipped, and each skipped delivery is
-counted in the source system's `skipped_events`. Update adds and removes no nodes, so targets must exist and be
+A target that is not alive, is not a particle system, is not prepared, or runs on the other processor than the source
+is skipped, and each skipped delivery is counted in the source system's `skipped_events`. A GPU source delivers as
+[GPU sub-emitters](#gpu-sub-emitters) describe. Update adds and removes no nodes, so targets must exist and be
 prepared before the update runs; attach pending systems and call `prepare_subtree` first.
 
 A delivery requests `count` particles from the target as a burst would, so the target's
@@ -486,7 +547,7 @@ core handles per-camera projection and the zero/parallel-direction fallback. Bot
 write world-space `BillboardRecord` values into a `RECORDS` [batch](billboards.md#sources)
 that core copies relative to the frame origin, so no per-particle conversion runs in the renderer.
 Rotation is an extra in-plane turn. MESH publishes the supplied geometry/material
-with uniform scale and rotation about world +Y. Mesh particles inherit that
+with uniform scale and rotation about world +Y; a GPU system publishes [device records](#gpu-mesh-debris) instead. Mesh particles inherit that
 material's alpha/depth behaviour. Zero-area/zero-scale output is omitted without removing the simulated
 particle. Pick indices identify compacted draw records, not stable particles.
 
@@ -767,8 +828,9 @@ stretched sparks and mesh debris, with emitting/burst controls, wind, smoke
 lighting/soft distance, spark blending and a second camera. Validation is always
 enabled. `--frames N` closes an interactive smoke test after N frames.
 
-`--gpu` gives the smoke, sparks and embers systems GPU execution where the [subset](#supported-subset) allows it,
-so `--sparks` keeps the sparks on the CPU, and the debris stays on the CPU as a mesh. It needs the
+`--gpu` gives the smoke, sparks, debris and embers systems, and the smoke that `--sparks` feeds, GPU execution where the
+[subset](#supported-subset) allows it. `--capacity` scales the debris pool and rate with the spark pool, from 1,024 and
+450 per second at the default 4,096 sparks. It needs the
 `particles_gpu` build, which enables `C3D_PARTICLE_GPU`, and applies to the window and to `--benchmark`, which then
 prints `execution,gpu`, the `gpu_particle_ms` of the custom compute pass, and `not_applicable` for the CPU-only
 `sparks_bounds_ms` and `sparks_copy_ms`. With `--collide` the sparks collide with the ground plane only. The flag
@@ -776,7 +838,8 @@ does not combine with `--stress`.
 
 `--sparks` adds a smoke system that each dying spark feeds through a `DEATH`
 sub-emitter, and shows its live count with the event counters. It applies to the
-window and to `--benchmark`, which also prints them.
+window and to `--benchmark`, which also prints them. The smoke pool and the event queue grow with `--capacity`. Under
+`--gpu` the sparks and the smoke both run on the GPU, so the sub-emitter delivers on the device.
 
 `--smoke` plays a generated 4x4 sprite sheet on the smoke system, in `FPS` mode with `random_start` and `blend`.
 Each 64-texel cell holds one puff inside an 8-texel border at zero alpha, and the batch `inset` is half a texel, so the

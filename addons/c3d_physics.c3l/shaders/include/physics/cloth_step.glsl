@@ -15,7 +15,7 @@ const uint PASS_OUTPUT = 16u;        // mirrored in gpu/cloth_record.c3; write t
 const uint PASS_FINAL_SUBSTEP = 32u; // mirrored in gpu/cloth_record.c3; the pass belongs to the request's last substep
 const uint PASS_SOFT_BEFORE = 64u;   // mirrored in gpu/cloth_record.c3; project the soft attachments after predicting
 const uint PASS_SOFT_AFTER = 128u;   // mirrored in gpu/cloth_record.c3; project the soft attachments after colliding
-const uint PASS_STAGE = 256u;        // mirrored in gpu/cloth_record.c3; copy the payload that follows the root into the reference
+const uint PASS_STAGE = 256u;        // mirrored in gpu/cloth_record.c3; copy the reference pairs the root names into the reference
 const float MIN_EDGE_LENGTH = 1e-7;  // metres; mirrored as MIN_CONSTRAINT_LENGTH in solve.c3
 
 layout(buffer_reference, std430, buffer_reference_align = 16) CLOTH_COHERENT buffer StepVectors {
@@ -47,7 +47,7 @@ void step_initialize(ClothRoot root, uint index) {
 }
 
 void step_stage(ClothRoot root, uint index) {
-    ClothVectors payload = ClothVectors(DispatchRoot(pc.root_gpu).parameters + uint64_t(CLOTH_PAYLOAD_OFFSET));
+    ClothVectors payload = ClothVectors(DispatchRoot(pc.root_gpu).parameters + uint64_t(root.payload_offset));
     StepVectors(root.reference).values[index] = payload.values[index];
 }
 

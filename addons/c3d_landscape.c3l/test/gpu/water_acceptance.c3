@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
 import c3d::landscape::water @public;
+import c3d::light;
 import c3d::material;
 import c3d::maths;
 import c3d::physics;
@@ -70,6 +71,17 @@ const Vec3 STRIPE_POSITION @local = { 0, 1.5f, -10 };
 const Vec3 STRIPE_SIZE @local = { 0.4f, 3, 0.4f };
 const Vec3 MARCH_CAMERA_POSITION @local = { 0, 1, 4 };
 const Vec3 AMBIENT @local = { 0.2f, 0.1f, 0.05f };
+const Vec3 EDGE_CAMERA_POSITION @local = { 0, 3, 0 };
+const Vec3 EDGE_CAMERA_FORWARD @local = { 0, -0.7f, -1 }; // 35 degrees down: every pixel of a 40 degree lens sees water
+const float EDGE_FOV_DEGREES @local = 40;
+const float EDGE_DISTORTION @local = 1; // far past the offset limit: any tilt above a twentieth saturates it
+const Vec4 EDGE_MIRROR_COLOR @local = { 4, 2, 1, 1 }; // the mirror's whole target; twenty times AMBIENT
+const uint EDGE_SIDE_SAMPLES @local = 16;
+const uint EDGE_SAMPLES @local = 4 * EDGE_SIDE_SAMPLES; // one readback
+const int EDGE_FIRST @local = 2;
+const int EDGE_STRIDE @local = 4;
+const float EDGE_SEPARATION_MINIMUM @local = 0.02f; // mirror over environment at every sampled pixel, weakest Fresnel
+$assert EDGE_SAMPLES <= READBACK_POINTS;
 const float MURKY_EXTENT @local = 40; // metres along the murky body's side, and along its plates
 const Vec3 MEDIUM_TRANSMITTANCE @local = { 0.5f, 0.25f, 0.125f }; // after MEDIUM_DISTANCE metres; tells paths apart
 const float MEDIUM_DISTANCE @local = 4;
@@ -83,6 +95,10 @@ const float SLANT_PITCH @local = 0.364f; // tangent of 20 degrees: the diver loo
 const float TIR_ELEVATION_DEGREES @local = 30; // 60 from the vertical, past the critical angle of 48.75
 const float TIR_REACH @local = 10; // metres along the ray to the world point that locates its pixel
 const float TIR_FOG_RATIO @local = 0.5f; // the reflected path is many absorption distances: far under half remains
+const float BACK_FACE_EXTENT @local = 10; // metres along the quad's side: it covers the view's centre
+const Vec3 BACK_FACE_CAMERA @local = { 0, 5, 8.66f }; // 60 degrees off the normal, past the critical angle
+const Vec3 BACK_FACE_BED_COLOR @local = { 0.2f, 0.6f, 1 }; // no channel is zero: shading from below returns black here
+const float CHANNEL_STEP @local = 1.0f / 255; // one 8-bit step
 const Vec3 MIRROR_BACKGROUND_POINT @local = { -4, 4, -8 }; // above the plane, off every box
 const uint MIRROR_SAMPLES @local = 2;
 const int[<2>][3] CENTRE_PIXELS @local = { { 32, 32 }, { 26, 30 }, { 36, 38 } }; // near the axis of the view
@@ -145,6 +161,17 @@ const int[<2>][9] BED_PIXELS @local = {
 };
 const float AO_MATCH_TOLERANCE @local = 0.03f; // relative to the untraced bed: the open-ground bound of the AO cases
 const float OCCLUDED_RATIO_MAXIMUM @local = 0.5f; // the bed under a double-sided row measures 0.09 of the untraced one
+
+const uint FILTER_MAP_SIZE @local = 64; // seven mip levels
+const uint FILTER_CHANNELS @local = 4;
+const float FILTER_UV_SCALE @local = 8; // periods per metre: 28 texels to a pixel of the twin's view, mip level 5
+const float FILTER_TILT @local = 0.5f; // x of each texel's normal, leaning either way in turn: its mip is 0.87 long
+const float FILTER_CELL_SIZE @local = 0.5f; // the body is flat
+const uint FILTER_PATCH @local = 5; // pixels along the side of the patch around the optical axis
+const float FILTER_SUN_INTENSITY @local = 1;
+const float FILTER_PEAK_RATIO_MAXIMUM @local = 0.1f; // the widened lobe measures five orders under the narrow one
+const float NORMALIZED_TOLERANCE @local = 0.05f; // relative to the body without a reference
+const float FLAT_MAP_TOLERANCE @local = 0.01f; // relative to the body without a reference
 
 const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with default_water_desc, the example's waves
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
@@ -332,10 +359,10 @@ fn Node* add_camera_node(
     return node;
 }
 
-fn Node* add_emissive_box(Fixture* fixture, Vec3 position, Vec3 size) @local {
+fn Node* add_emissive_box(Fixture* fixture, Vec3 position, Vec3 size, Vec3 color = { 1, 1, 1 }) @local {
     StandardParams glow = material::STANDARD_PARAMS_DEFAULT;
     glow.base_color = { 0, 0, 0, 1 };
-    glow.emissive = { 1, 1, 1 };
+    glow.emissive = color;
     glow.emissive_strength = EMISSIVE_STRENGTH;
     MaterialId glowing = fixture.assets.add_material(material::standard(glow))!!;
     Node* node = fixture.scene.add_mesh(fixture.box, glowing, name: "emissive")!!;
@@ -1236,6 +1263,77 @@ fn void test_each_viewing_view_reflects_the_mirror_it_is_given() @test {
     check_validation(&fixture.renderer);
 }
 
+// Pixels along the four sides of the view, the sides offset from each other so no two share a corner.
+fn int[<2>][EDGE_SAMPLES] edge_pixels() @local {
+    int last = (int)MIRROR_SIZE - 1;
+    int[<2>][EDGE_SAMPLES] pixels;
+    for (uint step = 0; step < EDGE_SIDE_SAMPLES; step++) {
+        int along = EDGE_FIRST + (int)step * EDGE_STRIDE;
+        pixels[step] = { 0, along };
+        pixels[EDGE_SIDE_SAMPLES + step] = { last, along };
+        pixels[2 * EDGE_SIDE_SAMPLES + step] = { along, 0 };
+        pixels[3 * EDGE_SIDE_SAMPLES + step] = { along, last };
+    }
+    return pixels;
+}
+
+fn void test_planar_reflection_holds_at_the_frame_edge() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    fixture.scene.background = { .kind = COLOR, .color = EDGE_MIRROR_COLOR };
+    fixture.scene.ambient_color = AMBIENT;
+    fixture.scene.ambient_intensity = 1;
+    WaterDesc desc = surface_desc(CHOPPY_WAVES[..], 40, 0.5f);
+    desc.reflection_distortion = 0;
+    Node* water_node = add_water_node(&fixture, desc);
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: EDGE_FOV_DEGREES,
+        position:    EDGE_CAMERA_POSITION,
+        forward:     EDGE_CAMERA_FORWARD,
+        up:          { 0, 1, 0 },
+    );
+    Mirrored mirrored = add_mirrored(
+        fixture:     &fixture,
+        body:        water_node,
+        mirror_slot: 0,
+        view_slot:   0,
+        viewing:     camera_node,
+    );
+    Viewer[1] without_mirror = { { .camera = camera_node, .view = add_view(&fixture, MIRROR_SIZE) } };
+    Viewer[1] with_mirror = {
+        { .camera = camera_node, .view = add_view(&fixture, MIRROR_SIZE), .mirrors = (&mirrored)[:1] },
+    };
+    int[<2>][EDGE_SAMPLES] pixels = edge_pixels();
+
+    Vec4[EDGE_SAMPLES] environment;
+    environment[..] = render_viewers(&fixture, without_mirror[..], 0, pixels[..])!![..];
+    Vec4[EDGE_SAMPLES] undistorted;
+    undistorted[..] = render_viewers(&fixture, with_mirror[..], 0, pixels[..])!![..];
+    foreach (index, pixel : pixels) {
+        float separation = luminance(undistorted[index]) - luminance(environment[index]);
+        assert(separation >= EDGE_SEPARATION_MINIMUM, "pixel %d, %d: mirror leads by %f", pixel.x, pixel.y, separation);
+    }
+
+    desc.reflection_distortion = EDGE_DISTORTION;
+    water::set_desc(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   water_node,
+        desc:   desc,
+    )!!;
+    Vec4[] distorted = render_viewers(&fixture, with_mirror[..], 0, pixels[..])!!;
+    foreach (index, expected : undistorted) {
+        for (uint channel = 0; channel < 3; channel++) {
+            float slack = SHIFT_TOLERANCE + SHIFT_RELATIVE_TOLERANCE * expected[channel];
+            float error = math::abs(distorted[index][channel] - expected[channel]);
+            assert(error <= slack, "sample %d channel %d is off the mirror by %f", (int)index, channel, error);
+        }
+    }
+    check_validation(&fixture.renderer);
+}
+
 fn void test_two_bodies_in_one_view_each_reflect_their_own_mirror() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
@@ -2071,6 +2169,64 @@ fn void test_underwater_surface_reflects_the_fogged_bed_past_the_window() @test 
     check_validation(&fixture.renderer);
 }
 
+fn GeometryId add_backwards_quad(Fixture* fixture, float extent) @local {
+    GeometryId quad_id;
+    @pool() {
+        Geometry quad = geometry::plane(tmem, extent, extent);
+        for (usz first = 0; first < quad.indices.len; first += 3) {
+            @swap(quad.indices[first + 1], quad.indices[first + 2]);
+        }
+        quad_id = fixture.assets.add_geometry(&quad)!!;
+    };
+    return quad_id;
+}
+
+fn void test_back_faces_seen_from_above_draw_nothing() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    WaterDesc desc = surface_desc({}, BACK_FACE_EXTENT, 1);
+    desc.geometry = add_backwards_quad(&fixture, BACK_FACE_EXTENT);
+    desc.absorption_color = { 1, 1, 1 };
+    Node* water_node = add_water_node(&fixture, desc);
+    add_emissive_box(
+        fixture:  &fixture,
+        position: BED_POSITION,
+        size:     PLATE_SIZE,
+        color:    BACK_FACE_BED_COLOR,
+    );
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: 60,
+        position:    BACK_FACE_CAMERA,
+        forward:     -BACK_FACE_CAMERA,
+        up:          { 0, 1, 0 },
+    );
+    ViewId view = add_view(&fixture, MIRROR_SIZE);
+
+    Vec4 over_body = shoot_pixel(
+        fixture:     &fixture,
+        camera_node: camera_node,
+        view:        view,
+        pixel:       CENTRE_PIXELS[0],
+    );
+    fixture.scene.remove(water_node);
+    Vec4 bed = shoot_pixel(
+        fixture:     &fixture,
+        camera_node: camera_node,
+        view:        view,
+        pixel:       CENTRE_PIXELS[0],
+    );
+
+    assert(bed.x > DARK_LIMIT, "the bed is not seen: %f", bed.x);
+    for (uint channel = 0; channel < 3; channel++) {
+        float found = over_body[channel];
+        float miss = math::abs(found - bed[channel]);
+        assert(miss <= CHANNEL_STEP, "channel %d: %f over the body, %f without it", channel, found, bed[channel]);
+    }
+    check_validation(&fixture.renderer);
+}
+
 fn void test_water_mirror_is_not_darkened_by_its_own_medium() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
@@ -2377,4 +2533,99 @@ fn void test_traced_simulated_water_agrees_with_the_drawn_surface() @test {
         assert(agreement.worst <= SURFACE_TOLERANCE, "worst %f at %f s", agreement.worst, time);
     }
     check_validation(&fixture.renderer);
+}
+
+fn TextureId add_filter_map(Fixture* fixture, TextureSemantic semantic, float tilt) @local {
+    TextureId map;
+    @pool() {
+        usz texels = (usz)FILTER_MAP_SIZE * FILTER_MAP_SIZE;
+        ushort[] pixels = alloc::new_array(tmem, ushort, (sz)(texels * FILTER_CHANNELS));
+        float upright = math::sqrt(1 - tilt * tilt);
+        for (usz texel = 0; texel < texels; texel++) {
+            uint column = (uint)(texel % FILTER_MAP_SIZE);
+            uint row = (uint)(texel / FILTER_MAP_SIZE);
+            float lean = ((column + row) & 1) != 0 ? tilt : -tilt;
+            ushort[FILTER_CHANNELS] encoded = {
+                asset::encode_texture_half(0.5f + 0.5f * lean),
+                asset::encode_texture_half(0.5f),
+                asset::encode_texture_half(0.5f + 0.5f * upright),
+                asset::encode_texture_half(1),
+            };
+            pixels[texel * FILTER_CHANNELS:FILTER_CHANNELS] = encoded[..];
+        }
+        material::TextureDesc desc = material::texture_2d_desc(FILTER_MAP_SIZE, FILTER_MAP_SIZE, RGBA16_FLOAT);
+        desc.semantic = semantic;
+        map = fixture.assets.add_texture(desc, ((char*)pixels.ptr)[:pixels.len * ushort::size])!!;
+    };
+    return map;
+}
+
+fn MaterialId add_filter_reference(Fixture* fixture, TextureId map) @local {
+    StandardParams params = material::STANDARD_PARAMS_DEFAULT;
+    params.normal_map = material::texture_slot(
+        texture:   map,
+        transform: { .scale = { FILTER_UV_SCALE, FILTER_UV_SCALE } },
+    );
+    return fixture.assets.add_material(material::standard(params))!!;
+}
+
+// The peak luminance of the patch around the optical axis, over a flat body that draws the reference's ripples.
+fn float filter_peak(Fixture* fixture, Node* camera_node, ViewId view, MaterialId ripples) @local {
+    Wave[] calm = {};
+    WaterDesc desc = surface_desc(calm, TWIN_EXTENT, FILTER_CELL_SIZE);
+    desc.ripples = ripples;
+    Node* water_node = add_water_node(fixture, desc);
+    defer fixture.scene.remove(water_node);
+
+    int[<2>][FILTER_PATCH * FILTER_PATCH] pixels;
+    int first = (int)TWIN_SIZE / 2 - (int)FILTER_PATCH / 2;
+    foreach (index, &pixel : pixels) {
+        *pixel = { first + (int)(index % FILTER_PATCH), first + (int)(index / FILTER_PATCH) };
+    }
+    Vec4[] colors = render_and_read(
+        fixture:  fixture,
+        viewing:  camera_node,
+        view:     view,
+        time:     0,
+        pixels:   pixels[..],
+        depth:    false,
+    )!!;
+    check_validation(&fixture.renderer);
+    float peak;
+    foreach (color : colors) peak = math::max(peak, luminance(color));
+    return peak;
+}
+
+fn void test_ripple_filter_widens_a_minified_ripple_highlight() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    fixture.scene.ambient_intensity = 0;
+    Node* sun = fixture.scene.add_light(light::directional({ 1, 1, 1 }, FILTER_SUN_INTENSITY, shadow: false))!!;
+    sun.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 }); // over the optical axis: the mirror angle
+    Node* camera_node = add_camera_node(
+        fixture:     &fixture,
+        fov_degrees: TWIN_FOV_DEGREES,
+        position:    TWIN_CAMERA_POSITION,
+        forward:     { 0, -1, 0 },
+        up:          { 0, 0, -1 },
+    );
+    ViewId view = add_view(&fixture, TWIN_SIZE);
+
+    MaterialId flat_reference = add_filter_reference(&fixture, add_filter_map(&fixture, COLOR, 0));
+    MaterialId filtered_reference = add_filter_reference(&fixture, add_filter_map(&fixture, COLOR, FILTER_TILT));
+    MaterialId unfiltered_reference = add_filter_reference(&fixture, add_filter_map(&fixture, NORMAL_RGB, FILTER_TILT));
+    float bare = filter_peak(&fixture, camera_node, view, {});
+    float flat = filter_peak(&fixture, camera_node, view, flat_reference);
+    float filtered = filter_peak(&fixture, camera_node, view, filtered_reference);
+    float unfiltered = filter_peak(&fixture, camera_node, view, unfiltered_reference);
+
+    io::printfn("Ripple peaks: bare %g, flat %g, renormalized %g, filtered %g", bare, flat, unfiltered, filtered);
+    assert(bare > 0, "the sun's highlight is not seen");
+    float flat_miss = math::abs(flat - bare);
+    assert(flat_miss <= FLAT_MAP_TOLERANCE * bare, "a flat map moved the highlight: %f, %f", flat, bare);
+    float renormalized_miss = math::abs(unfiltered - bare);
+    assert(renormalized_miss <= NORMALIZED_TOLERANCE * bare, "a renormalized map moved it: %f, %f", unfiltered, bare);
+    float kept = FILTER_PEAK_RATIO_MAXIMUM * unfiltered;
+    assert(filtered <= kept, "the minified map kept its highlight: %f, not under %f", filtered, kept);
 }

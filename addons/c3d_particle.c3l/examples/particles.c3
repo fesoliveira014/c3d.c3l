@@ -28,9 +28,10 @@ const uint HEIGHT @local = 1080;
 const uint SPRITE_SIZE @local = 64;
 const uint SMOKE_CAPACITY @local = 8192; // about 1 MiB of simulation and scene draw data
 const uint SPARK_CAPACITY @local = 4096;
-const uint DEBRIS_CAPACITY @local = 1024;
-const uint PUFF_CAPACITY @local = 8192; // 448 KiB pool; above the puffs alive at the spark death rate
-const uint SPARK_EVENTS @local = 512; // 24 KiB queue; above the deaths one step raises at the spark rate
+const uint DEBRIS_CAPACITY @local = 1024; // at SPARK_CAPACITY sparks; scales with --capacity
+const float DEBRIS_RATE @local = 450; // per second at SPARK_CAPACITY; scales with --capacity
+const uint PUFF_CAPACITY @local = 8192; // 448 KiB pool at SPARK_CAPACITY sparks; above the puffs alive
+const uint SPARK_EVENTS @local = 512; // 24 KiB queue at SPARK_CAPACITY sparks; above the deaths one step raises
 const float OBSTACLE_THICKNESS @local = 0.12f;
 const Vec3 CANOPY_SIZE @local = { 2.4f, OBSTACLE_THICKNESS, 2.4f };
 const Vec3 CANOPY_POSITION @local = { 0, 1.7f, 0 };
@@ -350,6 +351,10 @@ fn void? cycle_smoke_look(Demo* demo, Input* input) @local {
     if (changed) apply_smoke_params(demo)!;
 }
 
+fn uint scaled_with_sparks(uint base, uint spark_capacity) @local {
+    return (uint)math::max((ulong)base, ((ulong)base * spark_capacity + SPARK_CAPACITY - 1) / SPARK_CAPACITY);
+}
+
 fn Node*? add_system(
     Demo* demo,
     Options options,
@@ -508,7 +513,7 @@ fn Demo? create_demo(Options options) @local {
 
     if (options.sparks) {
         ParticleSystemDesc puff = particle::default_particle_system_desc();
-        puff.capacity = PUFF_CAPACITY;
+        puff.capacity = scaled_with_sparks(PUFF_CAPACITY, options.capacity);
         puff.seed = 4;
         puff.material = demo.smoke;
         puff.lifetime = { .min = 1, .max = 1.8f };
@@ -521,8 +526,12 @@ fn Demo? create_demo(Options options) @local {
         puff.gravity_scale = -0.05f;
         puff.size_over_life.values = { 0.6f, 1, 1.5f, 2, 2.6f, 3, 3.4f, 3.8f };
         foreach (index, alpha : opacity) puff.color_over_life.values[index] = { 1, 1, 1, alpha };
-        // Deliveries write the target's CPU pool, so a sub-emitter target keeps CPU execution.
-        demo.spark_puffs = demo.scene.add_particle_system(puff, name: "spark smoke")!;
+        demo.spark_puffs = add_system(
+            demo: &demo,
+            options: options,
+            desc: puff,
+            name: "spark smoke",
+        )!;
     }
 
     ParticleSystemDesc sparks = particle::default_particle_system_desc();
@@ -544,7 +553,7 @@ fn Demo? create_demo(Options options) @local {
     sparks.color_max = { 1, 1, 0.6f, 0.7f };
     foreach (index, alpha : opacity) sparks.color_over_life.values[index] = { 1, 1, 1, 1 - (float)index / 7 };
     if (options.sparks) {
-        sparks.max_events = SPARK_EVENTS;
+        sparks.max_events = scaled_with_sparks(SPARK_EVENTS, options.capacity);
         sparks.sub_emitter_count = 1;
         sparks.sub_emitters[0] = {
             .trigger = DEATH,
@@ -570,7 +579,7 @@ fn Demo? create_demo(Options options) @local {
     demo.emitters[1].local.position = { 0, 0.2f, 0 };
 
     ParticleSystemDesc debris = particle::default_particle_system_desc();
-    debris.capacity = DEBRIS_CAPACITY;
+    debris.capacity = scaled_with_sparks(DEBRIS_CAPACITY, options.capacity);
     debris.seed = 3;
     debris.render_mode = MESH;
     debris.material = debris_material;
@@ -579,7 +588,7 @@ fn Demo? create_demo(Options options) @local {
     debris.shape = CONE;
     debris.radius = 0.2f;
     debris.cone_angle = 0.5f;
-    debris.rate = 450;
+    debris.rate = DEBRIS_RATE * options.capacity / SPARK_CAPACITY;
     debris.lifetime = { .min = 2, .max = 3 };
     debris.speed = { .min = 4, .max = 7 };
     debris.size = { .min = 0.06f, .max = 0.15f };
@@ -587,7 +596,12 @@ fn Demo? create_demo(Options options) @local {
     debris.spin = { .min = -4, .max = 4 };
     debris.gravity_scale = 1;
     debris.size_over_life.values = { 1, 1, 1, 1, 1, 0.8f, 0.4f, 0 };
-    demo.emitters[2] = demo.scene.add_particle_system(debris, name: "debris")!;
+    demo.emitters[2] = add_system(
+        demo: &demo,
+        options: options,
+        desc: debris,
+        name: "debris",
+    )!;
     demo.emitters[2].local.position = { 3, 0.2f, 0 };
 
     if (options.embers) {

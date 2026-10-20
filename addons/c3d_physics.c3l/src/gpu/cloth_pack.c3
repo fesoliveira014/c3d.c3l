@@ -8,7 +8,7 @@ import c3d::render;
 import c3d::scene;
 import std::math;
 
-const float REACH_FACTOR @private = 1; // rest diagonals the bounds grow by; the sheet cannot stretch past its extent
+const float REACH_FACTOR @private = 1; // rest diagonals the bounds grow by; the pins hold the sheet, so a pinless cloth that falls further leaves the box
 const uint FIRST_COLOR_BIT @private = 0; // bit of a particle's mark: it is on a constraint of the first pass; mirrored by member_bit
 const uint LAST_COLOR_BIT @private = 1; // bit of a particle's mark: it is on a constraint of the last pass
 const uint FEATURE_SOFT @private = 1; // mirrored in cloth_root.glsl

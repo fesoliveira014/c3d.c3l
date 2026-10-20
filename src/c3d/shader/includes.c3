@@ -32,6 +32,7 @@ const char[*] C3D_COMMON_IBL_TEXT @private = $embed("../../../shaders/common/ibl
 const char[*] C3D_COMMON_IMPOSTOR_TEXT @private = $embed("../../../shaders/common/impostor.glsl");
 const char[*] C3D_COMMON_IMPOSTOR_SURFACE_TEXT @private = $embed("../../../shaders/common/impostor_surface.glsl");
 const char[*] C3D_COMMON_INSTANCE_EFFECTS_TEXT @private = $embed("../../../shaders/common/instance_effects.glsl");
+const char[*] C3D_COMMON_INSTANCE_RECORD_TEXT @private = $embed("../../../shaders/common/instance_record.glsl");
 const char[*] C3D_COMMON_INSTANCE_WORLD_TEXT @private = $embed("../../../shaders/common/instance_world.glsl");
 const char[*] C3D_COMMON_IRRADIANCE_TEXT @private = $embed("../../../shaders/common/irradiance.glsl");
 const char[*] C3D_COMMON_LIGHT_SPATIAL_TEXT @private = $embed("../../../shaders/common/light_spatial.glsl");
@@ -83,7 +84,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../shaders/gpu/ray_t
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[76] SHADER_INCLUDES = {
+const asset::ShaderInclude[77] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
@@ -113,6 +114,7 @@ const asset::ShaderInclude[76] SHADER_INCLUDES = {
     { .name = "impostor.glsl", .text = (String)C3D_COMMON_IMPOSTOR_TEXT[..] },
     { .name = "impostor_surface.glsl", .text = (String)C3D_COMMON_IMPOSTOR_SURFACE_TEXT[..] },
     { .name = "instance_effects.glsl", .text = (String)C3D_COMMON_INSTANCE_EFFECTS_TEXT[..] },
+    { .name = "instance_record.glsl", .text = (String)C3D_COMMON_INSTANCE_RECORD_TEXT[..] },
     { .name = "instance_world.glsl", .text = (String)C3D_COMMON_INSTANCE_WORLD_TEXT[..] },
     { .name = "irradiance.glsl", .text = (String)C3D_COMMON_IRRADIANCE_TEXT[..] },
     { .name = "light_spatial.glsl", .text = (String)C3D_COMMON_LIGHT_SPATIAL_TEXT[..] },

@@ -1,9 +1,13 @@
 #version 460
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
+#include "instance_record.glsl"
 #include "particle/particle_step.glsl"
 
 layout(local_size_x = 256) in; // mirrored as GROUP_SIZE in gpu/system.c3
+
+const uint PARTICLE_INSTANCE_SEED_SALT = 2654435769u; // keeps the instance seed apart from the colour fraction
+const uint64_t PARTICLE_MIRROR_HEADER_BYTES = 16ul; // mirrored as MIRROR_HEADER_BYTES in gpu/system.c3
 
 layout(push_constant) uniform Push {
     uint64_t root_gpu;
@@ -11,6 +15,24 @@ layout(push_constant) uniform Push {
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleRecords {
     BillboardGpu values[];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer MeshRecords {
+    InstanceGpu values[];
+};
+
+// Mirrors MirrorRecord in gpu/system.c3.
+struct ParticleMirrorGpu {
+    vec4 position_size; // xyz: position; w: size
+    vec4 color;
+    float rotation;
+    float _pad0;
+    float _pad1;
+    float _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer MirrorRecords {
+    ParticleMirrorGpu values[];
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer RibbonRecords {
@@ -22,7 +44,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer ParticleCoun
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleCounters {
-    uvec4 value; // alive, dropped low and high words, unused
+    uvec4 values[2]; // alive, dropped low and high words, unused; then dropped events and skipped events, low and high
 };
 
 // Mirrors flipbook_frame in flipbook.c3, in float.
@@ -53,6 +75,38 @@ vec4 particle_color(StepRoot root, ParticleGpu particle) {
     return (root.color_min * (1.0 - fraction) + root.color_max * fraction) * particle_color_scale(root, life);
 }
 
+// Unit value that sways and fades the particle's instance; the CPU path hashes the position instead, which changes
+// as the particle moves.
+float particle_instance_seed(ParticleGpu particle) {
+    return float(particle_pcg_hash(particle.seed + PARTICLE_INSTANCE_SEED_SALT) >> 8u) * PARTICLE_UNIT_SCALE;
+}
+
+// Mirrors write_mesh_blocks in update.c3: a turn about +Y and a uniform scale, in the scene's space.
+InstanceGpu particle_instance(StepRoot root, ParticleGpu particle) {
+    float size = particle_draw_extent(root, particle);
+    float turn_cos = cos(particle.rotation) * size;
+    float turn_sin = sin(particle.rotation) * size;
+    mat4 model = mat4(
+        vec4(turn_cos, 0.0, -turn_sin, 0.0),
+        vec4(0.0, size, 0.0, 0.0),
+        vec4(turn_sin, 0.0, turn_cos, 0.0),
+        vec4(particle.position, 1.0)
+    );
+    return pack_instance_record(model, particle_color(root, particle), particle_instance_seed(particle));
+}
+
+// Copies the drawn particle for the host to read FRAMES_IN_FLIGHT frames later.
+ParticleMirrorGpu particle_mirror(StepRoot root, ParticleGpu particle) {
+    return ParticleMirrorGpu(
+        vec4(particle.position, particle_draw_extent(root, particle)),
+        particle_color(root, particle),
+        particle.rotation,
+        0.0,
+        0.0,
+        0.0
+    );
+}
+
 // Mirrors write_billboard_blocks, relative to the frame origin.
 BillboardGpu particle_record(StepRoot root, ParticleGpu particle) {
     float width = particle_draw_extent(root, particle);
@@ -73,6 +127,19 @@ BillboardGpu particle_record(StepRoot root, ParticleGpu particle) {
         frame,
         0u
     );
+}
+
+// Writes the drawn particle as the batch's record and, for a traced mesh system, into the host mirror.
+void write_drawn(StepRoot root, ParticleGpu particle, uint slot) {
+    if (root.mesh == 0u) {
+        ParticleRecords(root.records).values[slot] = particle_record(root, particle);
+        return;
+    }
+
+    MeshRecords(root.records).values[slot] = particle_instance(root, particle);
+    if (root.mirror != 0ul) {
+        MirrorRecords(root.mirror + PARTICLE_MIRROR_HEADER_BYTES).values[slot] = particle_mirror(root, particle);
+    }
 }
 
 // Mirrors LifetimeTable.sample in lifetime.c3 over the trail width table.
@@ -155,6 +222,20 @@ void write_trail(StepRoot root, ParticleGpu particle, uint index, uint rank) {
     }
 }
 
+// Counts the events past the capacity as dropped, clears the half the next step appends to, and ends the step. The
+// deliveries that follow read the half this step filled.
+void close_events(StepRoot root, ParticleControl control) {
+    uint half_index = control.step & 1u;
+    uint produced = control.event_counts[half_index];
+    uint kept = min(produced, root.event_capacity);
+    uint carry;
+    control.dropped_events_low = uaddCarry(control.dropped_events_low, produced - kept, carry);
+    control.dropped_events_high += carry;
+    control.event_counts[half_index] = kept;
+    control.event_counts[1u - half_index] = 0u;
+    control.step += 1u;
+}
+
 // Packs the live particles and their trails back to the home buffer, writes the drawn particles as records and the
 // trails as strips, and publishes the counts.
 void main() {
@@ -173,12 +254,22 @@ void main() {
                 write_trail(root, particle, index, rank);
             }
         }
-        if (flags.y != 0u) ParticleRecords(root.records).values[flags.w + base.y] = particle_record(root, particle);
+        if (flags.y != 0u) write_drawn(root, particle, flags.w + base.y);
     }
     if (index == 0u) {
         control.alive = control.live_total;
+        control.delivered = 0u;
         ParticleCountWord(root.count).value = control.drawn_total;
-        ParticleCounters(root.counters).value = uvec4(control.live_total, control.dropped_low, control.dropped_high, 0u);
+        if (root.mirror != 0ul) ParticleCountWord(root.mirror).value = control.drawn_total;
+        close_events(root, control);
+        ParticleCounters counters = ParticleCounters(root.counters);
+        counters.values[0] = uvec4(control.live_total, control.dropped_low, control.dropped_high, 0u);
+        counters.values[1] = uvec4(
+            control.dropped_events_low,
+            control.dropped_events_high,
+            control.skipped_events_low,
+            control.skipped_events_high
+        );
         if (root.trail_max_points != 0u) {
             uint points = control.live_total * (root.trail_max_points + 1u);
             ParticleCountWord(root.ribbon_count).value = points;

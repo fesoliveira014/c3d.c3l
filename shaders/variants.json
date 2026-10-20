@@ -330,6 +330,7 @@
     { "include": "instance_effects.glsl", "stage": "comp", "defines": [] },
     { "include": "quadtree_morph.glsl", "stage": "vert", "defines": [] },
     { "include": "quadtree_morph.glsl", "stage": "comp", "defines": [] },
+    { "include": "instance_record.glsl", "stage": "comp", "defines": [] },
     { "include": "trace_pose.glsl", "stage": "comp", "defines": [] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": [] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["INSTANCED"] },

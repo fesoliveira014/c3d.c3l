@@ -53,6 +53,7 @@ fn MirrorState? place_mirror(
 ) @private {
     Plane plane = rest_plane(node.world);
     Node* mirror = scene.node(runtime.mirrors[slot]);
+    // Twin of camera_under_plane in water.frag.glsl.
     if (plane.normal.dot(viewing.local.position) + plane.d < 0) {
         scene.get(mirror, Camera).layers = 0;
         return MirrorState.BELOW;
