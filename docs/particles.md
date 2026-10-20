@@ -249,7 +249,7 @@ appear in the frame that spawns the debris. A device batch has no per-instance h
 batch node alone: debris shows no object motion in a temporal view. Picking and `SceneIndex` skip the batch.
 
 `mesh_trace` is served by a host mirror, because the scene trace reads CPU transforms. A traced system owns a second
-`READBACK` buffer of 16 bytes and 48 bytes per particle of `capacity`. Publication writes each drawn particle's
+`READBACK` buffer of 16 bytes and 48 bytes per particle of `capacity`, which the renderer copies to the host every frame. Publication writes each drawn particle's
 position, size, rotation and colour there, and each `update` copies the snapshot that is `FRAMES_IN_FLIGHT` frames old
 into the batch's `transforms` and `colors`, sets `count` and marks the batch dirty. The scene trace therefore sees
 debris as it was that many frames earlier, and sees none until the first snapshot arrives. A rebase within those frames

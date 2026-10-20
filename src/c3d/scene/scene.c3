@@ -270,9 +270,8 @@ fn void? Scene.set_instance_quadtree(
         InstanceQuadtree candidate = { .parents = parents, .split_pixels = split_pixels, .hysteresis = hysteresis };
         check_instance_quadtree(&candidate, batch.count)!;
 
-        if (batch.trace || batch.mirrored_count() || self.has(node, LodGroup) || batch.source == InstanceSource.DEVICE) {
-            return c3d::UNSUPPORTED~;
-        }
+        bool device = batch.source == InstanceSource.DEVICE;
+        if (batch.trace || batch.mirrored_count() || self.has(node, LodGroup) || device) return c3d::UNSUPPORTED~;
 
         if (!quadtree.parents.ptr) {
             quadtree.parents = alloc::new_array(self.allocator, uint, batch.transforms.len);

@@ -10,7 +10,7 @@ import std::math;
 <*
  GPU particle systems one context simulates by default.
 *>
-const uint DEFAULT_MAX_SYSTEMS = 16; // one buffer each, two for a traced mesh, and one for counters, of the renderer's 64
+const uint DEFAULT_MAX_SYSTEMS = 16; // a buffer each, two for a traced mesh, and one for counters, of the renderer's 64
 
 const String SHIFT_KEY @private = "c3d_particle/particle_shift";
 const String EXPIRE_KEY @private = "c3d_particle/particle_expire";
