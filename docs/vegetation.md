@@ -196,8 +196,8 @@ not the whole layer. A `FACE` layer never reads the ring, so a ring change re-pl
   in density-map texels. A layer reads `regions_since(placed revision)` on the map. A region maps through the
   map's span of the ground to a range of cells, which count, stage and commit again; the other cells keep their
   nodes and arrays. `assets.mark_texture_dirty`, a replacement or a log that no longer reaches back re-scatter the
-  whole layer. A density map with generated mips filters its whole level plane on the CPU for each upload; the
-  [terrain cost](terrain.md#region-uploads) gives the time for a 1024² map.
+  whole layer. A density map with generated mips filters every level on the CPU for its first region upload and
+  only the touched boxes after it; see the [terrain cost](terrain.md#region-uploads).
 
 A re-place writes arrays in place, never allocates, keeps every node and capacity and marks the batch. A
 re-scatter may change counts: cells that empty lose their node, cells that fill gain one, a cell whose count grew
