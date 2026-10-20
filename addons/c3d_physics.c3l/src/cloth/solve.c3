@@ -112,6 +112,7 @@ fn void? solve_cloth(
             commit_angle:    false,
         )!;
         place_shapes(state, (double)substep / total)!;
+        reset_contact_push(state);
 
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
             if (state.soft_attachments.len) {
@@ -161,6 +162,8 @@ fn void? solve_cloth(
             (void)contact_pass(world: world, state: state, positions: state.predicted, apply: true)!;
         }
 
+        // The constraint passes undo most of the earlier pushes, so the final passes get a bound of their own.
+        reset_contact_push(state);
         resolve_contacts(world, state, state.predicted)!;
         certify_hinge_step(state, state.positions, state.predicted)!;
         foreach (index, &position : state.positions) {
@@ -213,6 +216,7 @@ fn void? prepare_publication(PhysicsWorld* world, ClothState* state, bool solved
         end: 1,
     )!;
     place_shapes(state, 1)!;
+    reset_contact_push(state);
     resolve_contacts(world, state, state.published)!;
     certify_hinge_step(
         state:           state,

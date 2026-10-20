@@ -266,6 +266,25 @@ fn float? certify_hinge_path(
     return (float)unwrapped_end;
 }
 
+fn void? reseed_hinge_angles(ClothState* state) @private {
+    foreach (index, &hinge : state.hinges) {
+        Vec3[4] points = {
+            state.positions[hinge.p0],
+            state.positions[hinge.p1],
+            state.positions[hinge.p2],
+            state.positions[hinge.p3],
+        };
+        double? angle = evaluate_hinge_angle(points);
+        if (catch angle) {
+            state.contact_result.stage = ClothContactStage.BEND;
+            return BEND_UNRESOLVED~;
+        }
+
+        hinge.last_angle = (float)angle;
+        if (index < state.interior_edges.len) state.interior_edges[index].base_hinge.last_angle = hinge.last_angle;
+    }
+}
+
 fn void? project_dihedral_bends(ClothState* state, float dt) @private {
     if (!state.hinges.len) return;
     double step_squared = (double)dt * (double)dt;

@@ -320,6 +320,9 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .inverse_mass_storage          = physics::carve(cursor, float, counts.vertices),
         .particle_mass_storage         = physics::carve(cursor, double, has_cuts ? counts.vertices : 0),
         .base_masses                   = physics::carve(cursor, double, has_cuts ? counts.base_vertices : 0),
+        .push_limits                   = physics::carve(cursor, float, counts.base_vertices),
+        .push_totals                   = physics::carve(cursor, Vec3, counts.vertices),
+        .push_bounded                  = physics::carve(cursor, bool, counts.vertices),
         .particle_bases                = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .split_parents                 = physics::carve(cursor, uint, has_cuts ? counts.vertices : 0),
         .pin_storage                   = physics::carve(cursor, uint, counts.pins),
@@ -439,6 +442,8 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
     if (!cursor.base) return null;
     states[0] = state;
     states[0].velocity_storage[..] = (Vec3){};
+    states[0].push_totals[..] = (Vec3){};
+    states[0].push_bounded[..] = false;
     states[0].staged_velocities[..] = (Vec3){};
     states[0].shape_starts[..] = (Vec3){};
     states[0].shape_ends[..] = (Vec3){};
