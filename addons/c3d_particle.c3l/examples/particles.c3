@@ -1052,13 +1052,13 @@ fn Options? parse_options(String[] args) @local {
             case "--stress": options.stress = true;
             case "--sparks": options.sparks = true;
             case "--smoke": options.smoke = true;
+            case "--embers": options.embers = true;
+            case "--trails": options.trails = true;
             case "--lit-smoke": options.lit_smoke = true;
             case "--lighting":
                 options.lighting = parse_lighting(option_value(args, &index)!)!;
                 options.single_lighting = true;
             case "--normal": options.normal = parse_normal(option_value(args, &index)!)!;
-            case "--embers": options.embers = true;
-            case "--trails": options.trails = true;
             case "--debris-shadows": options.debris_shadows = true;
             case "--collide": options.collide = true;
             case "--drop-oldest": options.drop_oldest = true;
@@ -1071,11 +1071,10 @@ fn Options? parse_options(String[] args) @local {
     }
     bool scene_effect = options.sparks || options.smoke || options.collide || options.lit_smoke
         || options.debris_shadows;
-    bool companion_effect = options.sparks || options.smoke || options.collide || options.embers || options.trails
-        || options.debris_shadows;
     bool lit_option = options.single_lighting || options.normal != ParticleNormal.SPHERICAL;
     if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
-        || (options.lit_smoke && companion_effect)
+        || (options.lit_smoke && (options.sparks || options.smoke || options.embers || options.trails
+            || options.collide || options.debris_shadows))
         || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;

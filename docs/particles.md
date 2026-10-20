@@ -622,14 +622,6 @@ sheet follows the edge rules for four sampled mip levels. It applies to the wind
 save the image with `--capture-rgba`. The inspector's smoke controls drive both smoke materials. The flag does not
 combine with `--stress`.
 
-`--lit-smoke` shows only the smoke, lit: a plume with a point light circling it, under a directional light
-whose shadow an overhead slab casts across part of the plume. The L key cycles the lighting through its four
-modes and the N key cycles the normal through its three. `--lighting` and `--normal` set the starting modes
-by lowercase name, for example `--lighting direct_shadowed --normal volume`. With `--benchmark`, the run
-reports the transparent pass for AMBIENT, DIRECT and DIRECT_SHADOWED as the segments `ambient`, `direct`
-and `direct_shadowed`, or for the `--lighting` mode alone. Sparks and debris do not emit, and the flag does
-not combine with `--stress`, `--sparks`, `--smoke`, `--embers`, `--trails` or `--collide`.
-
 `--embers` adds a system of rising additive embers whose drag follows a three-octave turbulence field that scrolls
 upward. It applies to the window, which shows the live count, and to `--benchmark`, which prints `embers,alive`. With
 `--stress` it gives the stress system the same turbulence, and each segment prints `turbulence_octaves`; run `--stress`
@@ -640,6 +632,14 @@ narrowing to nothing over 0.4 seconds, drawn additively with a generated soft-ed
 `--collide` for sharp turns at the bounces. It applies to the window and to `--benchmark`. With `--stress` it gives the
 stress system the same trail, and each segment prints `trail_points`, `trail_draw_count` and the core `ribbon_bounds_ms`
 and `ribbon_pack_ms` beside the billboard timings; run `--stress` with and without `--trails` to compare the update cost.
+
+`--lit-smoke` shows only the smoke, lit: a plume with a point light circling it, under a directional light
+whose shadow an overhead slab casts across part of the plume. The L key cycles the lighting through its four
+modes and the N key cycles the normal through its three. `--lighting` and `--normal` set the starting modes
+by lowercase name, for example `--lighting direct_shadowed --normal volume`. With `--benchmark`, the run
+reports the transparent pass for AMBIENT, DIRECT and DIRECT_SHADOWED as the segments `ambient`, `direct`
+and `direct_shadowed`, or for the `--lighting` mode alone. Sparks and debris do not emit, and the flag does
+not combine with `--stress`, `--sparks`, `--smoke`, `--embers`, `--trails` or `--collide`.
 
 `--debris-shadows` sets `mesh_cast_shadow` on the debris system, gives the sun a shadow map and draws the ground
 with a Standard material, which receives the shadows. It applies to the window and to `--benchmark`, and does not
