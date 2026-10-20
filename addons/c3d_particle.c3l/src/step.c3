@@ -173,7 +173,7 @@ fn void emit_particle(
     system.spin[index] = sample_range(random, desc.spin);
     system.seed[index] = random.next_int();
     system.spawn[index] = system.next_spawn++;
-    raise_event(system, ParticleTrigger.BIRTH, ParticleEventCause.EXPIRED, index);
+    raise_event(system, index, { .trigger = ParticleTrigger.BIRTH });
 }
 
 fn uint admit_particles(ParticleSystem* system, uint128 requested) @private {
@@ -184,36 +184,29 @@ fn uint admit_particles(ParticleSystem* system, uint128 requested) @private {
     return emitted;
 }
 
-fn bool accepts_event(SubEmitter* sub_emitter, ParticleTrigger trigger, ParticleEventCause cause) @private {
-    if (sub_emitter.trigger != trigger) return false;
-    return trigger != ParticleTrigger.DEATH || cause != ParticleEventCause.EVICTED || sub_emitter.on_evict;
+fn bool accepts_event(SubEmitter* sub_emitter, ParticleEvent* event) @private {
+    if (sub_emitter.trigger != event.trigger) return false;
+    return event.trigger != ParticleTrigger.DEATH
+        || event.cause != ParticleEventCause.EVICTED
+        || sub_emitter.on_evict;
 }
 
-fn void raise_event(
-    ParticleSystem* system,
-    ParticleTrigger trigger,
-    ParticleEventCause cause,
-    uint index,
-) @private {
+fn void raise_event(ParticleSystem* system, uint index, ParticleEvent event) @private {
     bool wanted;
     foreach (&sub_emitter : system.desc.sub_emitters[:system.desc.sub_emitter_count]) {
-        wanted = wanted || accepts_event(sub_emitter, trigger, cause);
+        wanted = wanted || accepts_event(sub_emitter, &event);
     }
     if (!wanted) return;
 
-    ulong event_index = system.next_event++;
+    event.parent_seed = system.seed[index];
+    event.index = system.next_event++;
+    event.position = system.position[index];
+    event.velocity = system.velocity[index];
     if (system.event_count == system.events.len) {
         system.dropped_events = saturating_add(system.dropped_events, 1);
         return;
     }
-    system.events[system.event_count++] = {
-        .trigger = trigger,
-        .cause = cause,
-        .parent_seed = system.seed[index],
-        .index = event_index,
-        .position = system.position[index],
-        .velocity = system.velocity[index],
-    };
+    system.events[system.event_count++] = event;
 }
 
 fn ulong saturating_add(ulong value, ulong amount) @private {
@@ -221,7 +214,7 @@ fn ulong saturating_add(ulong value, ulong amount) @private {
 }
 
 fn void expire_particle(ParticleSystem* system, uint index, ParticleEventCause cause) @private {
-    raise_event(system, ParticleTrigger.DEATH, cause, index);
+    raise_event(system, index, { .trigger = ParticleTrigger.DEATH, .cause = cause });
     remove_particle(system, index);
 }
 

@@ -103,7 +103,7 @@ struct LifetimeColorTable {
 struct SubEmitter {
     ParticleTrigger trigger;
     Entity target; // another particle system's node, inside the same exported subtree when serialized
-    uint count; // particles per event
+    uint count;
     float inherit_velocity; // share of the parent particle's velocity added to each child, [0, 1]
     bool on_evict; // DEATH also fires for evicted particles; off bounds cascades
 }
@@ -175,7 +175,7 @@ struct ParticleSystem {
     uint event_count;
     uint event_due; // events raised by this system's last step; later entries wait for the next update
     ulong next_event;
-    ulong dropped_events; // events lost to a full queue
+    ulong dropped_events;
     ulong skipped_events; // sub-emitter deliveries whose target is dead, not a particle system or not prepared
     double emit_accumulator;
     Sfc32Random random;
@@ -310,7 +310,7 @@ fn void? prepare_subtree(Scene* scene, Node* root = null) {
 }
 
 <*
- Move every particle by the negated offset and put draw children back at the origin.
+ Move every particle and queued event by the negated offset and put draw children back at the origin.
  Call after Scene.shift_origin and before update_world.
  @param [&inout] self : "Prepared systems are written; pending ones are skipped."
  @require offset.y == 0

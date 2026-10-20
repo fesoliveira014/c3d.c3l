@@ -50,7 +50,7 @@ fn void process_events(Scene* scene, ParticleSystem* source) @private {
     for (uint queued = 0; queued < due; queued++) {
         ParticleEvent* event = &source.events[queued];
         foreach (sub_index, &sub_emitter : source.desc.sub_emitters[:source.desc.sub_emitter_count]) {
-            if (!accepts_event(sub_emitter, event.trigger, event.cause)) continue;
+            if (!accepts_event(sub_emitter, event)) continue;
 
             ParticleSystem* target;
             Node* node;
