@@ -49,8 +49,9 @@ aggregate cache is library-owned. Component pointers are short-lived ECS borrows
 - **`BILLBOARDS`**, the default, holds node-local `Billboard` values in `billboards`. Core converts them to world-space
   records once per revision.
 - **`RECORDS`** holds world-space `BillboardRecord` values in `records`, in the renderer's 64-byte layout. The owner writes
-  `records[:count]`, sets each `facing` to the batch's `BillboardFacing` ordinal, and calls `mark_billboards_dirty`. Core
-  subtracts the frame origin as it copies them to the upload, and builds no `Billboard`.
+  `records[:count]`, sets each `facing` to the batch's `BillboardFacing` ordinal and each `direction` to a unit vector
+  or zero, and calls `mark_billboards_dirty`. Core subtracts the frame origin as it copies them to the upload, and
+  builds no `Billboard`.
 
 A RECORDS batch is drawn without its node's world matrix, so its node must keep an identity world; a WORLD child with
 an identity pose does. Records are not validated: the owner keeps them finite. Passing `billboards` with `RECORDS`
