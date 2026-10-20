@@ -421,8 +421,11 @@ water::update(
   the ripple.
 - **Walls.** The grid's edges and its dry cells reflect like the walls of a pool: a wet vertex counts a neighbour that is
   past the edge or dry as its own height. There is no sponge layer.
-- **Bound.** Heights are clamped to `±SIMULATION_MAX_HEIGHT` (1 m). That bound takes the place of the Gerstner
-  amplitude in `Mesh.local_bounds`, in the [medium](#underwater)'s offset and in the mirror's clip plane.
+- **Bound and reach.** Heights are clamped to `±SIMULATION_MAX_HEIGHT` (1 m), and that clamp takes the place of the
+  Gerstner amplitude in `Mesh.local_bounds`. The [medium](#underwater)'s offset and the mirror's clip plane follow the
+  body's reach instead: the largest height magnitude since it woke (`SimulationState.reach`), 0 for a calm pond and again
+  after it settles. A step that raises the reach writes the medium node again, so a calm pond is fogged from its
+  surface, and a ripple moves the box's top and the clip plane down to the deepest trough it has drawn and no further.
 
 ### Dry cells
 
@@ -658,9 +661,9 @@ mirror.
 
 `update_mirror(scene, body, slot, viewing_camera)` sets the slot's camera node's `local` to the viewing camera's
 reflected across the image of the node's local XZ plane, gives it the viewing camera's lens with the water node's
-layers removed, and writes `WaterRuntime.clip_plane`: the rest plane lowered by the total amplitude, so everything
-above the deepest trough stays. The plane belongs to the body, so every slot of it is the same. The application
-owns the targets, the views and the order.
+layers removed, and writes `WaterRuntime.clip_plane`: the rest plane lowered by the total amplitude (a simulated
+body's reach), so everything above the deepest trough stays. The plane belongs to the body, so every slot of it is the
+same. The application owns the targets, the views and the order.
 
 **Bodies do not reflect each other.** A mirror camera is the viewing camera reflected across its body's rest plane, so
 it looks from under that plane, and the clip plane keeps only what lies above it. Another level body is then either
@@ -872,10 +875,11 @@ store.
   is `t · c / λ` in float ([Time](#time)); a sea state's offsets carry the same limit.
 - **Query accuracy**: the inversion stops at 0.1 mm or after 8 steps; `residual` reports where it stopped, and
   the drawn surface agrees within 1 cm.
-- **Simulated surface**: a built grid of 16 to 256 cells per side, with no ocean, no horizontal motion and no wave foam; walls reflect and there is no sponge, so a ripple returns from the edges;
-  `SIMULATION_MAX_HEIGHT` bounds the heights; the view borrows the grid; the dry mask follows reported terrain edits only
-  ([Dry cells](#dry-cells)); at most four steps run per update. Each awake frame uploads the whole texture
-  ([Simulated surface](#simulated-surface)).
+- **Simulated surface**: a built grid of 16 to 256 cells per side, with no ocean, no horizontal motion and no wave foam;
+  walls reflect and there is no sponge, so a ripple returns from the edges; `SIMULATION_MAX_HEIGHT` bounds the heights
+  and the mesh's bounds, and the medium and the clip plane follow the reach; the view borrows the grid; the dry mask
+  follows reported terrain edits only ([Dry cells](#dry-cells)); at most four steps run per update. Each awake frame
+  uploads the whole texture ([Simulated surface](#simulated-surface)).
 - **Transforms**: drawing takes any node transform (waves scale and rotate with the node; the mirror reflects
   across the image of the local XZ plane); queries require translation plus rotation about Y.
 - **One body per lake**: the waves of a `BODY` are node-local, so two bodies do not match at a shared edge. Two
@@ -891,7 +895,8 @@ store.
   and the mirror's side test is the rest plane. A camera in the band from the box's top to a crest (`amplitude + skin`
   under the rest plane to `amplitude` over it) can stand under the water and outside the medium, unfogged, and its mirror
   follows the plane's side, not the waves'. The water between the surface and the box's top is not absorbed: a bed seen
-  through a crest misses up to about twice the amplitude of absorption.
+  through a crest misses up to about twice the amplitude of absorption. A simulated body's amplitude is its reach, the
+  largest height magnitude since it woke: the box's top is `MEDIUM_SKIN` under the rest plane while the pond is calm.
 - **Underwater views**: no light shafts and no caustics. The window and the reflection show this view's snapshot and the
   environment elsewhere, so near the frame's edge the window changes from the snapshot to the environment. The surface
   shows no glints or foam from below.
@@ -1074,15 +1079,15 @@ about a device.
 
 | Line | Three runs |
 | --- | ---: |
-| `update_us` median, waves segment (96 × 96 cells, one substep, 30 awake frames) | 33.0 to 33.8 |
-| `update_us` p99, waves segment | 56.0 to 62.2 |
-| `update_us` median, settle segment (wave speed 60 m/s: two substeps, 283 awake frames) | 53.9 to 54.9 |
+| `update_us` median, waves segment (96 × 96 cells, one substep, 30 awake frames) | 35.4 to 38.1 |
+| `update_us` p99, waves segment | 86.2 to 105.0 |
+| `update_us` median, settle segment (wave speed 60 m/s: two substeps, 283 awake frames) | 57.2 to 66.6 |
 | `upload_bytes` per awake frame | 150,544 (97 × 97 texels × 16 B) |
-| `sample_ns` median (the twin on a triangle) | 21.7 to 22.1 |
+| `sample_ns` median (the twin on a triangle) | 22.2 to 42.3 |
 
 The still and orbit segments upload nothing for the simulation, the pond settled 283 frames into the settle segment
 and uploaded nothing after it in every run, and the three gates pass, the density gate with a worst submerged fraction
 of 0.6062. `update_us` is the whole of `water::update` on those frames, which also covers the ground check and the
-ripple scroll.
+ripple scroll, and the medium rewrite of a step that raises the reach.
 
 Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).
