@@ -489,7 +489,12 @@ fn void apply_wind(Scene* scene, Batches* batches, bool wind) @local {
     scene.get(batches.pulses, InstancedMesh).sway = sway;
 }
 
-fn bool draw_controls(Controls* controls, Scene* scene, Batches* batches, uint upload_bytes) @local {
+fn bool draw_controls(
+    Controls* controls,
+    Scene* scene,
+    Batches* batches,
+    uint upload_bytes,
+) @local {
     bool changed;
     imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -586,7 +591,12 @@ fn void? run(
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
 
-        bool changed = draw_controls(&controls, scene, &batches, renderer.stats.upload_bytes);
+        bool changed = draw_controls(
+            controls:     &controls,
+            scene:        scene,
+            batches:      &batches,
+            upload_bytes: renderer.stats.upload_bytes,
+        );
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;
