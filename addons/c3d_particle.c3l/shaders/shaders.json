@@ -10,6 +10,7 @@
     {"shader": "particle_scan", "source": "particle_scan.comp.glsl", "stage": "comp", "defines": []},
     {"shader": "particle_admit", "source": "particle_admit.comp.glsl", "stage": "comp", "defines": []},
     {"shader": "particle_advance", "source": "particle_advance.comp.glsl", "stage": "comp", "defines": []},
-    {"shader": "particle_publish", "source": "particle_publish.comp.glsl", "stage": "comp", "defines": []}
+    {"shader": "particle_publish", "source": "particle_publish.comp.glsl", "stage": "comp", "defines": []},
+    {"shader": "particle_deliver", "source": "particle_deliver.comp.glsl", "stage": "comp", "defines": []}
   ]
 }

@@ -658,7 +658,7 @@ fn void? check_particle_execution(ParticleSystemDesc* desc) @private {
     $else
         ParticleCollision* collision = &desc.collision;
         bool needs_depth = collision.response != CollisionResponse.NONE && !collision.ground_plane;
-        bool refused = desc.sub_emitter_count || needs_depth
+        bool refused = needs_depth
             || desc.render_mode == ParticleRenderMode.MESH || desc.saturation == ParticleSaturation.DROP_OLDEST;
         if (refused) return c3d::UNSUPPORTED~;
     $endif

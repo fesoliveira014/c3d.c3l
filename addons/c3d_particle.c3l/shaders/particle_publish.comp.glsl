@@ -22,7 +22,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer ParticleCoun
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleCounters {
-    uvec4 value; // alive, dropped low and high words, unused
+    uvec4 values[2]; // alive, dropped low and high words, unused; then dropped events and skipped events, low and high
 };
 
 // Mirrors flipbook_frame in flipbook.c3, in float.
@@ -155,6 +155,20 @@ void write_trail(StepRoot root, ParticleGpu particle, uint index, uint rank) {
     }
 }
 
+// Counts the events past the capacity as dropped, clears the half the next step appends to, and ends the step. The
+// deliveries that follow read the half this step filled.
+void close_events(StepRoot root, ParticleControl control) {
+    uint half_index = control.step & 1u;
+    uint produced = control.event_counts[half_index];
+    uint kept = min(produced, root.event_capacity);
+    uint carry;
+    control.dropped_events_low = uaddCarry(control.dropped_events_low, produced - kept, carry);
+    control.dropped_events_high += carry;
+    control.event_counts[half_index] = kept;
+    control.event_counts[1u - half_index] = 0u;
+    control.step += 1u;
+}
+
 // Packs the live particles and their trails back to the home buffer, writes the drawn particles as records and the
 // trails as strips, and publishes the counts.
 void main() {
@@ -177,8 +191,17 @@ void main() {
     }
     if (index == 0u) {
         control.alive = control.live_total;
+        control.delivered = 0u;
         ParticleCountWord(root.count).value = control.drawn_total;
-        ParticleCounters(root.counters).value = uvec4(control.live_total, control.dropped_low, control.dropped_high, 0u);
+        close_events(root, control);
+        ParticleCounters counters = ParticleCounters(root.counters);
+        counters.values[0] = uvec4(control.live_total, control.dropped_low, control.dropped_high, 0u);
+        counters.values[1] = uvec4(
+            control.dropped_events_low,
+            control.dropped_events_high,
+            control.skipped_events_low,
+            control.skipped_events_high
+        );
         if (root.trail_max_points != 0u) {
             uint points = control.live_total * (root.trail_max_points + 1u);
             ParticleCountWord(root.ribbon_count).value = points;
