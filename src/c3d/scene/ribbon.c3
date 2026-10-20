@@ -19,6 +19,11 @@ const RibbonPoint RIBBON_POINT_DEFAULT = {
 };
 
 <*
+ Bytes of one record in a DEVICE batch's buffer.
+*>
+const usz RIBBON_RECORD_BYTES = 48; // pinned to RibbonPointGpu in render/ribbons.c3
+
+<*
  Where a ribbon batch's strip points live.
 *>
 enum RibbonSource {

@@ -10,6 +10,7 @@ import gpu;
 import std::math;
 
 $assert scene::RIBBON_BREAK == shader::RIBBON_POINT_BREAK;
+$assert scene::RIBBON_RECORD_BYTES == RibbonPointGpu::size;
 
 <*
  Pack world-space ribbon points in source order, then the terminating break point.
