@@ -229,6 +229,7 @@ fn void write_billboard_blocks(void* data, uint first, uint count) @private {
             };
         }
     }
+
     if (job.slots.carried) job.slots.total = written;
 }
 
@@ -254,6 +255,7 @@ fn void write_mesh_blocks(void* data, uint first, uint count) @private {
             batch.colors[written++] = particle_color(system, index, life);
         }
     }
+
     if (job.slots.carried) job.slots.total = written;
 }
 
