@@ -1,6 +1,7 @@
 module c3d::render;
 
 faultdef
+    NOT_READY,
     PIPELINE_REJECTED,
     NO_INSTANCE_BOUND,
     NO_PROBE_SLOT,

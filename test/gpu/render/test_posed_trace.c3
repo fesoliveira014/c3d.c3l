@@ -160,6 +160,12 @@ fn void? posed_render(
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame({ .time = time })!;
     defer catch render::abort_frame(renderer);
+    return posed_record_frame(fixture, harness, kind);
+}
+
+// The open frame's views, the trace readback and the close.
+fn void? posed_record_frame(Fixture* fixture, PosedHarness* harness, TraceKind kind) @private {
+    Renderer* renderer = &fixture.renderer;
     renderer.render_view(&harness.scene, harness.camera, fixture.view)!;
     Camera* camera = harness.scene.get(harness.camera, Camera);
     CameraMatrices matrices = camera::derive_matrices(*camera, harness.camera.world, { TARGET_SIZE, TARGET_SIZE });
@@ -1466,6 +1472,46 @@ fn void test_vertex_motion_revision_updates_without_rebuilding() @test {
             assert(renderer.stats.trace_refits == 1 && renderer.stats.uploads == 1);
         }
         motion_assert_hit(&fixture, &quad, true, "rotated");
+
+        posed_render(&fixture, &quad.harness, kind)!!;
+        assert(renderer.stats.trace_refits == 0 && renderer.stats.blas_updates == 0 && renderer.stats.blas_builds == 0);
+        check_validation(renderer);
+    }
+}
+
+fn void test_geometry_write_refits_the_vertex_motion_slot() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MotionQuad quad;
+        motion_create_quad(&fixture, &quad)!!;
+        defer posed_destroy_harness(&fixture, &quad.harness);
+        Renderer* renderer = &fixture.renderer;
+        TraceKind kind = ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE;
+        ComputeShaderId shader = add_compute_shader(&fixture, (String)DISPLACE_GEOMETRY_SOURCE[..])!!;
+        renderer.upload_geometry(quad.geometry)!!;
+
+        posed_render(&fixture, &quad.harness, kind)!!;
+        PosedTraceRes* slot = posed_slot_of(&fixture, &quad.harness, quad.mesh);
+        gpu::AccelerationStructureHandle blas = slot.blas;
+        GpuGeometry* mirror = &renderer.geometries[quad.geometry.index];
+        uint tree_revision = mirror.trace.revision;
+
+        renderer.begin_frame()!!;
+        displace_geometry(&fixture, quad.geometry, shader, { 0, MOTION_LIFT, 0 })!!;
+        posed_record_frame(&fixture, &quad.harness, kind)!!;
+        // The arrays only supply the expected hit; they are not marked dirty, so nothing uploads.
+        foreach (&position : fixture.assets.geometry(quad.geometry).data.positions) position.y += MOTION_LIFT;
+        assert(renderer.stats.trace_poses == 0 && renderer.stats.uploads == 0);
+        assert(slot == posed_slot_of(&fixture, &quad.harness, quad.mesh));
+        assert(mirror.trace.revision == tree_revision);
+        if (ray_queries) {
+            assert(renderer.stats.blas_updates == 1 && renderer.stats.blas_builds == 0 && slot.blas == blas);
+        } else {
+            assert(renderer.stats.trace_refits == 1);
+        }
+        motion_assert_hit(&fixture, &quad, true, "written");
 
         posed_render(&fixture, &quad.harness, kind)!!;
         assert(renderer.stats.trace_refits == 0 && renderer.stats.blas_updates == 0 && renderer.stats.blas_builds == 0);

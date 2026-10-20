@@ -38,6 +38,7 @@ enum VertexHistory @private {
     UNTRACKED,
     UNCHANGED,
     CHANGED,
+    DEVICE,
     INVALID,
 }
 
@@ -345,7 +346,7 @@ fn void? record_raster_view(
             renderer.stats.dangling_refs += counts.dangling;
             foreach (index, count : counts.lod_objects_visible) renderer.stats.lod_objects_visible[index] += count;
         };
-        if (temporal) check_vertex_sources(renderer.assets, candidates)!;
+        if (temporal) check_vertex_sources(renderer, candidates)!;
 
         InstanceEffectsView effects_view = {
             .scene       = scene,
@@ -925,18 +926,17 @@ fn void? record_raster_view(
 
                 VertexHistory vertices = VertexHistory.UNTRACKED;
                 if (temporal && item.candidate.vertex_motion) {
-                    vertices = vertex_history_of(
-                        assets:    renderer.assets,
-                        candidate: item.candidate,
-                        pose:      has_previous ? record.history.previous_pose(scene, node) : null,
-                    );
+                    PoseRecord* previous = has_previous ? record.history.previous_pose(scene, node) : null;
+                    vertices = device_written(renderer, item.candidate.geometry)
+                        ? device_vertex_history(renderer, item.candidate, previous)
+                        : vertex_history_of(renderer.assets, item.candidate, previous);
                 }
 
                 // A pose from before the view's previous frame is no history for this view.
                 if (item.posed.committed != record.history.submitted) item.posed.previous = (gpu::GpuAddress)0;
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
                   || item.candidate.batch || item.candidate.animated_lod || vertices == VertexHistory.CHANGED
-                  || item.posed.active;
+                  || vertices == VertexHistory.DEVICE || item.posed.active;
                 item.moved = (temporal && item.candidate.lod) || vertices == VertexHistory.INVALID
                   || crowd_history_invalid
                   || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
@@ -955,6 +955,8 @@ fn void? record_raster_view(
                         pose:              pose,
                         instances:         &previous_instances,
                         positions:         vertices == VertexHistory.CHANGED,
+                        device_positions:  vertices == VertexHistory.DEVICE
+                          ? item.geometry.previous_positions : (gpu::GpuAddress)0,
                         stale_deformation: stale_deformation,
                     )!;
                 }
@@ -1922,6 +1924,7 @@ fn gpu::GpuAddress? upload_previous_pose(
     PoseRecord* pose,
     PreviousInstanceCache* instances,
     bool positions,
+    gpu::GpuAddress device_positions,
     bool stale_deformation,
 ) @private {
     MeshCandidate* candidate = item.candidate;
@@ -1979,7 +1982,9 @@ fn gpu::GpuAddress? upload_previous_pose(
             offset:   offset,
         );
     }
-    if (positions) {
+    if (device_positions) {
+        previous.positions = device_positions;
+    } else if (positions) {
         usz history_bytes = pose.vertices.len * Vec3::size;
         previous.positions = upload_bytes(renderer, pose.vertices.ptr, history_bytes)!;
         renderer.stats.vertex_history_bytes += (uint)history_bytes;
@@ -2010,11 +2015,28 @@ fn VertexHistory vertex_history_of(AssetStore* assets, MeshCandidate* candidate,
     return pose.vertex_revision == geometry.header.revision ? VertexHistory.UNCHANGED : VertexHistory.CHANGED;
 }
 
-fn void? check_vertex_sources(AssetStore* assets, MeshCandidate[] candidates) @local {
+// The arrays of a geometry the device wrote no longer describe it; only the identity and token carry over.
+fn VertexHistory device_vertex_history(Renderer* renderer, MeshCandidate* candidate, PoseRecord* pose) @local {
+    if (!pose) return VertexHistory.INVALID;
+    if (!c3d::same_id(pose.vertex_geometry, candidate.geometry)
+      || pose.vertex_history_token != candidate.vertex_history_token) {
+        return VertexHistory.INVALID;
+    }
+
+    // A frame that wrote nothing moved nothing, and the history buffer then holds the frame before the last write.
+    bool wrote = renderer.geometries[candidate.geometry.index].history_frame == renderer.frame_index + 1;
+    return wrote ? VertexHistory.DEVICE : VertexHistory.UNCHANGED;
+}
+
+fn bool device_written(Renderer* renderer, GeometryId geometry) @local {
+    GpuGeometry* mirror = &renderer.geometries[geometry.index];
+    return c3d::same_id(mirror.asset, geometry) && mirror.device_written;
+}
+
+fn void? check_vertex_sources(Renderer* renderer, MeshCandidate[] candidates) @local {
     foreach (&candidate : candidates) {
-        if (candidate.vertex_motion && !assets.geometry(candidate.geometry).data.positions.len) {
-            return c3d::ASSET_DATA_UNAVAILABLE~;
-        }
+        if (!candidate.vertex_motion || device_written(renderer, candidate.geometry)) continue;
+        if (!renderer.assets.geometry(candidate.geometry).data.positions.len) return c3d::ASSET_DATA_UNAVAILABLE~;
     }
 }
 

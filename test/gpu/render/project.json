@@ -75,6 +75,7 @@
         "test_custom_velocity.c3",
         "test_instance_effects.c3",
         "test_vertex_motion.c3",
+        "test_geometry_write.c3",
         "test_clip_plane.c3",
         "test_published_stages.c3",
         "test_r16_texture.c3",

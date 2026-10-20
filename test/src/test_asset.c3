@@ -46,6 +46,29 @@ fn TextureDesc make_texture_desc() @local {
     );
 }
 
+fn void test_geometry_bounds_override_lasts_until_a_cpu_revision() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+
+    Geometry quad = make_quad(tmem);
+    GeometryId geometry = assets.add_geometry(&quad)!!;
+    Aabb source = assets.geometry(geometry).data.bounds;
+    Aabb written = { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } };
+
+    assets.override_geometry_bounds(geometry, written);
+    assets.override_geometry_bounds(geometry, written);
+    assert(assets.geometry(geometry).data.bounds.max == written.max);
+
+    assets.mark_geometry_range_dirty(geometry, { .positions = true }, 0, 4);
+    assert(assets.geometry(geometry).data.bounds.max == source.max);
+    assert(!assets.geometry(geometry).bounds_overridden);
+
+    assets.override_geometry_bounds(geometry, written);
+    assets.replace_geometry(geometry, &quad)!!;
+    assert(assets.geometry(geometry).data.bounds.max == source.max);
+    assert(!assets.geometry(geometry).bounds_overridden);
+}
+
 fn void test_revision_starts_at_one_and_marks_increment() @test {
     AssetStore assets = make_store();
     defer asset::destroy_asset_store(&assets);

@@ -29,6 +29,8 @@ struct GeometryAsset {
     uint        validated_revision;  // header.revision whose arrays form a triangle list; 0 when unknown
     uint        rejected_revision;   // header.revision whose arrays form none, or whose topology is not TRIANGLES
     GeometryDirty dirty;             // edits the renderer has not yet copied
+    Aabb        source_bounds;       // data.bounds before the first override; valid while bounds_overridden
+    bool        bounds_overridden;   // data.bounds is a dispatch's; the arrays no longer describe the drawn vertices
 }
 
 struct GeometryShape @private {
@@ -160,7 +162,20 @@ fn void AssetStore.mark_geometry_dirty(&self, GeometryId geometry) {
     GeometryAsset* record = self.geometries.get(geometry);
     record.header.revision++;
     record.dirty.whole = true;
+    restore_source_bounds(record);
     refresh_derived_geometry(self.allocator, record, { .positions = true, .joints = true, .weights = true });
+}
+
+<*
+ Replace the bounds of a geometry whose streams a dispatch writes; the next CPU revision restores them.
+ Picking falls back to the bounds while the override holds.
+ @require self.geometries.is_live(geometry)
+*>
+fn void AssetStore.override_geometry_bounds(&self, GeometryId geometry, Aabb bounds) {
+    GeometryAsset* record = self.geometries.get(geometry);
+    if (!record.bounds_overridden) record.source_bounds = record.data.bounds;
+    record.data.bounds = bounds;
+    record.bounds_overridden = true;
 }
 
 <*
@@ -296,9 +311,17 @@ fn void apply_geometry(Allocator allocator, GeometryAsset* record, Geometry geom
     record.joints_u16 = geometry.joints_exceed_byte();
     record.validated_revision = 0;
     record.rejected_revision = 0;
+    record.bounds_overridden = false;
 
     mark_replaced(&record.header);
     record.dirty.whole = true;
+}
+
+fn void restore_source_bounds(GeometryAsset* record) @private {
+    if (!record.bounds_overridden) return;
+
+    record.data.bounds = record.source_bounds;
+    record.bounds_overridden = false;
 }
 
 fn void free_triangle_tree(Allocator allocator, GeometryAsset* record) @private {
@@ -463,6 +486,7 @@ fn void replace_prepared_geometry(
     record.joints_u16 = derived.joints_u16;
     record.validated_revision = 0;
     record.rejected_revision = 0;
+    record.bounds_overridden = false;
 
     derived.skin_bounds = {};
     derived.morph_bounds = {};

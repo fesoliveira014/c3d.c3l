@@ -331,7 +331,8 @@ fn PickFaces face_policy(AssetStore* assets, MaterialId material, PickFaces face
  @pure
 *>
 fn bool triangles_are_static(GeometryAsset* record, bool skinned, bool has_bounds_override) {
-    return !skinned && !has_bounds_override && record.target_count == 0 && record.data.topology == Topology.TRIANGLES;
+    return !skinned && !has_bounds_override && !record.bounds_overridden && record.target_count == 0
+      && record.data.topology == Topology.TRIANGLES;
 }
 
 fn bool nearest_triangle(
