@@ -543,6 +543,8 @@ root LightingResolveRoot {
     TextureIndex reflection_texture;
     TextureIndex brdf_lut;
     float        max_reflection_roughness;
+    TextureIndex msaa_edges;
+    float        msaa_edge_tolerance;
 }
 
 root SsaoRoot {

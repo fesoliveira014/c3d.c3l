@@ -100,6 +100,7 @@ enum ShaderName : int {
     STANDARD_GBUFFER,
     PHYSICAL_GBUFFER,
     LIGHTING_RESOLVE,
+    MSAA_EDGES,
     TRACE_POSE,
     TRACE_SWAY,
     TRACE_REFIT,
@@ -215,6 +216,11 @@ const uint SHADER_FLAG_BENT_NORMALS = 1 << 20;
  Flag bit for HI_Z.
 *>
 const uint SHADER_FLAG_HI_Z = 1 << 21;
+
+<*
+ Flag bit for MULTISAMPLE_PIXEL.
+*>
+const uint SHADER_FLAG_MULTISAMPLE_PIXEL = 1 << 22;
 
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
@@ -443,6 +449,12 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_MULTISAMPLE_SPIRV @private = $embed(".
 const char[*] LIGHTING_RESOLVE_RT_SHADOWS_RT_SHADOWS_HARD_MULTISAMPLE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_rt_shadows_hard_multisample.spv");
 const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_MULTISAMPLE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_scene_trace_bvh_multisample.spv");
 const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_RT_SHADOWS_HARD_MULTISAMPLE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_scene_trace_bvh_rt_shadows_hard_multisample.spv");
+const char[*] LIGHTING_RESOLVE_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_multisample_multisample_pixel.spv");
+const char[*] LIGHTING_RESOLVE_RT_SHADOWS_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_multisample_multisample_pixel.spv");
+const char[*] LIGHTING_RESOLVE_RT_SHADOWS_RT_SHADOWS_HARD_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_rt_shadows_hard_multisample_multisample_pixel.spv");
+const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_scene_trace_bvh_multisample_multisample_pixel.spv");
+const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_RT_SHADOWS_HARD_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_scene_trace_bvh_rt_shadows_hard_multisample_multisample_pixel.spv");
+const char[*] MSAA_EDGES_SPIRV @private = $embed("../../../shaders/spv/msaa_edges.spv");
 const char[*] TRACE_POSE_SPIRV @private = $embed("../../../shaders/spv/trace_pose.spv");
 const char[*] TRACE_POSE_SKINNED_U16_SPIRV @private = $embed("../../../shaders/spv/trace_pose_skinned_u16.spv");
 const char[*] TRACE_POSE_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/trace_pose_instanced.spv");
@@ -454,7 +466,7 @@ const char[*] SAMPLE_ZERO_SPIRV @private = $embed("../../../shaders/spv/sample_z
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[234] SHADER_ENTRIES = {
+const ShaderEntry[240] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -682,6 +694,12 @@ const ShaderEntry[234] SHADER_ENTRIES = {
     { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_RT_SHADOWS_HARD | SHADER_FLAG_MULTISAMPLE }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_RT_SHADOWS_HARD_MULTISAMPLE_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_MULTISAMPLE }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_MULTISAMPLE_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_RT_SHADOWS_HARD | SHADER_FLAG_MULTISAMPLE }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_RT_SHADOWS_HARD_MULTISAMPLE_SPIRV[..] },
+    { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_MULTISAMPLE | SHADER_FLAG_MULTISAMPLE_PIXEL }, .spirv = LIGHTING_RESOLVE_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV[..] },
+    { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_MULTISAMPLE | SHADER_FLAG_MULTISAMPLE_PIXEL }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV[..] },
+    { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_RT_SHADOWS_HARD | SHADER_FLAG_MULTISAMPLE | SHADER_FLAG_MULTISAMPLE_PIXEL }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_RT_SHADOWS_HARD_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV[..] },
+    { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_MULTISAMPLE | SHADER_FLAG_MULTISAMPLE_PIXEL }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV[..] },
+    { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH | SHADER_FLAG_RT_SHADOWS_HARD | SHADER_FLAG_MULTISAMPLE | SHADER_FLAG_MULTISAMPLE_PIXEL }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_RT_SHADOWS_HARD_MULTISAMPLE_MULTISAMPLE_PIXEL_SPIRV[..] },
+    { .variant = { .shader = MSAA_EDGES }, .spirv = MSAA_EDGES_SPIRV[..] },
     { .variant = { .shader = TRACE_POSE }, .spirv = TRACE_POSE_SPIRV[..] },
     { .variant = { .shader = TRACE_POSE, .flags = SHADER_FLAG_SKINNED_U16 }, .spirv = TRACE_POSE_SKINNED_U16_SPIRV[..] },
     { .variant = { .shader = TRACE_POSE, .flags = SHADER_FLAG_INSTANCED }, .spirv = TRACE_POSE_INSTANCED_SPIRV[..] },

@@ -573,6 +573,13 @@ fn void list_view_pipelines(
         if (desc.shading == ShadingPath.DEFERRED) {
             uint shadow_flags = rt_shadow_flags(renderer, desc.ray_tracing.shadows, soft_shadows);
             list_prepare_key(requests, lighting_resolve_pipeline_key(shadow_flags, msaa_sample_count(desc.msaa)));
+            if (msaa_edges_wanted(renderer, desc)) {
+                list_prepare_key(requests, msaa_edges_pipeline_key());
+                list_prepare_key(
+                    requests,
+                    lighting_resolve_pipeline_key(shadow_flags, msaa_sample_count(desc.msaa), pixel_rate: true),
+                );
+            }
         }
 
         if (msaa_normal_copy_wanted(desc)) {

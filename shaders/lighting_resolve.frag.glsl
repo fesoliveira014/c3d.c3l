@@ -22,12 +22,26 @@ layout(push_constant) uniform Push {
     uint64_t fragment_root_gpu;
 } pc;
 
+#ifdef MULTISAMPLE_PIXEL
+// Reading SampleId would force sample rate, so the pixel-rate form names sample 0.
+#define LIGHTING_SAMPLE 0
+#else
+#define LIGHTING_SAMPLE gl_SampleID
+#endif
+
 void main() {
     LightingResolveRoot root = LightingResolveRoot(pc.fragment_root_gpu);
 #ifdef MULTISAMPLE
-    // One invocation per sample: it reads its own sample of every channel, flags and layers included.
     ivec2 texel = ivec2(gl_FragCoord.xy);
-    float depth = gpu_fetch_ms(root.depth, texel, gl_SampleID).r;
+#ifdef MULTISAMPLE_PIXEL
+    // The pixel-rate draw lights pixels whose samples agree; the sample-rate draw lights the rest.
+    if (gpu_fetch_uint(root.msaa_edges, texel, 0) != 0u) discard;
+#else
+    // A zero mask index means the view lights every pixel per sample.
+    if (root.msaa_edges != 0u && gpu_fetch_uint(root.msaa_edges, texel, 0) == 0u) discard;
+#endif
+    // Each invocation reads one sample of every channel, flags and layers included.
+    float depth = gpu_fetch_ms(root.depth, texel, LIGHTING_SAMPLE).r;
 #else
     float depth = sample_texture_2d(root.depth, root.sampler_index, v_uv).r;
 #endif
@@ -36,12 +50,12 @@ void main() {
 
     FrameRoot frame = FrameRoot(root.frame);
 #ifdef MULTISAMPLE
-    vec3 world_position = depth_face_texel_position(frame, texel, DEPTH_FACE_EXTENT(root.depth), depth);
-    vec4 base_color_metallic = gpu_fetch_ms(root.base_color_metallic, texel, gl_SampleID);
-    vec4 normal_roughness = gpu_fetch_ms(root.normal_roughness, texel, gl_SampleID);
-    vec4 emissive_specular = gpu_fetch_ms(root.emissive_specular, texel, gl_SampleID);
-    uint layers = gpu_fetch_ms_uint(root.layers, texel, gl_SampleID);
-    uint flags = gpu_fetch_ms_uint(root.flags, texel, gl_SampleID);
+    vec3 world_position = depth_face_texel_position(frame, root.depth, texel, DEPTH_FACE_EXTENT(root.depth), depth);
+    vec4 base_color_metallic = gpu_fetch_ms(root.base_color_metallic, texel, LIGHTING_SAMPLE);
+    vec4 normal_roughness = gpu_fetch_ms(root.normal_roughness, texel, LIGHTING_SAMPLE);
+    vec4 emissive_specular = gpu_fetch_ms(root.emissive_specular, texel, LIGHTING_SAMPLE);
+    uint layers = gpu_fetch_ms_uint(root.layers, texel, LIGHTING_SAMPLE);
+    uint flags = gpu_fetch_ms_uint(root.flags, texel, LIGHTING_SAMPLE);
 #else
     vec3 world_position = reconstruct_world_position(frame, v_uv, depth);
     vec4 base_color_metallic = sample_texture_2d(root.base_color_metallic, root.sampler_index, v_uv);

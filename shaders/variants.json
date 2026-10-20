@@ -2,7 +2,7 @@
   "flags": [
     "DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS",
     "SCENE_TRACE_BVH", "WEIGHTED_BLEND", "REFLECTION_PREPASS", "POSED_INSTANCED", "TEMPORAL", "TRANSFORMED",
-    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING", "MULTISAMPLE", "BENT_NORMALS", "HI_Z"
+    "BACKDROP", "WORLD", "RT_SHADOWS_HARD", "OUTLINE", "DEPTH_PRUNING", "MULTISAMPLE", "BENT_NORMALS", "HI_Z", "MULTISAMPLE_PIXEL"
   ],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
@@ -254,6 +254,17 @@
       "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH", "MULTISAMPLE"] },
     { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag",
       "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH", "RT_SHADOWS_HARD", "MULTISAMPLE"] },
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag",
+      "defines": ["MULTISAMPLE", "MULTISAMPLE_PIXEL"] },
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag",
+      "defines": ["RT_SHADOWS", "MULTISAMPLE", "MULTISAMPLE_PIXEL"] },
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag",
+      "defines": ["RT_SHADOWS", "RT_SHADOWS_HARD", "MULTISAMPLE", "MULTISAMPLE_PIXEL"] },
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag",
+      "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH", "MULTISAMPLE", "MULTISAMPLE_PIXEL"] },
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag",
+      "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH", "RT_SHADOWS_HARD", "MULTISAMPLE", "MULTISAMPLE_PIXEL"] },
+    { "shader": "msaa_edges", "source": "msaa_edges.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["SKINNED_U16"] },
     { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["INSTANCED"] },

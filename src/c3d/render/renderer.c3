@@ -229,6 +229,7 @@ struct Renderer {
     gpu::PipelineHandle      cluster_pruned_pipeline;
     gpu::PipelineHandle      cluster_depth_pipeline;
     bool                     validation;
+    MsaaEdgeMode             msaa_edge_mode;
 
     uint                    output_width;
     uint                    output_height;
@@ -638,6 +639,7 @@ fn void? record_fullscreen_pass(
     gpu::LoadOp load,
     Vec4 clear_color = {},
     gpu::ColorTargetState color_state = gpu::color_blend_disabled(),
+    gpu::PipelineHandle second_pipeline = {},
 ) @private {
     gpu::ColorTargetDesc[1] colors = {{
         .view     = target.attachment,
@@ -657,15 +659,22 @@ fn void? record_fullscreen_pass(
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
-    gpu::cmd_draw(
-        commands:       &renderer.commands,
-        vertex_root:    (gpu::GpuAddress)0,
-        fragment_root:  fragment_root,
-        vertex_count:   FULLSCREEN_VERTEX_COUNT,
-        instance_count: 1,
-    )!;
+    gpu::PipelineHandle[2] pipelines = { pipeline, second_pipeline };
+    foreach (index, drawn : pipelines) {
+        if (!drawn.is_valid()) continue;
+
+        if (index > 0) gpu::cmd_bind_pipeline(&renderer.commands, drawn)!;
+        gpu::cmd_draw(
+            commands:       &renderer.commands,
+            vertex_root:    (gpu::GpuAddress)0,
+            fragment_root:  fragment_root,
+            vertex_count:   FULLSCREEN_VERTEX_COUNT,
+            instance_count: 1,
+        )!;
+        renderer.stats.draws++;
+    }
+
     gpu::cmd_end_render_pass(&renderer.commands)!;
-    renderer.stats.draws++;
     renderer.work_recorded = true;
 }
 
@@ -932,6 +941,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .shadow_frusta        = alloc::new_array(allocator, ShadowFrustum, max_shadow_layers),
         .shadow_set           = { .lights = alloc::new_array(allocator, ShadowSetLight, max_shadow_layers) },
         .validation           = desc.validation,
+        .msaa_edge_mode       = read_msaa_edge_mode(),
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
         .shaders              = alloc::new_array(allocator, ShaderRes, assets.shaders.items.len),

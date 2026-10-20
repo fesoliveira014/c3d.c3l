@@ -6,7 +6,7 @@ import c3d::shader;
 import gpu;
 import std::math;
 
-$assert LightingResolveRoot::size == 48;
+$assert LightingResolveRoot::size == 56;
 $assert GBUFFER_CHANNEL_COUNT == KEY_COLOR_TARGETS;
 
 fn ShaderVariant gbuffer_fragment(Material* material) @private {
@@ -76,8 +76,10 @@ fn gpu::PipelineHandle? default_gbuffer_pipeline(
 fn PipelineKey lighting_resolve_pipeline_key(
     uint shadow_flags,
     gpu::SampleCount samples = gpu::SampleCount.ONE,
+    bool pixel_rate = false,
 ) @private {
     uint multisample = samples == gpu::SampleCount.ONE ? 0 : shader::SHADER_FLAG_MULTISAMPLE;
+    if (pixel_rate) multisample |= shader::SHADER_FLAG_MULTISAMPLE_PIXEL;
     return {
         .vertex        = { .shader = FULLSCREEN },
         .fragment      = { .shader = LIGHTING_RESOLVE, .flags = shadow_flags | multisample },
@@ -212,6 +214,7 @@ fn void? record_lighting_pass(
     Vec4 clear_color,
 ) @private {
     bool multisample = record.desc.msaa != MsaaSamples.ONE;
+    bool classified = record.msaa_edges.texture.is_valid();
     Target* color = multisample ? &record.msaa_color : &record.hdr_color;
     Target* depth = multisample ? &record.msaa_depth : &record.depth;
     foreach (&target : record.gbuffer) target.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
@@ -233,28 +236,36 @@ fn void? record_lighting_pass(
         .reflection_texture       = reflections ? record.reflection_blur.view.index : (gpu::TextureIndex)0,
         .brdf_lut                 = reflections ? renderer.environment_state.brdf_lut.view.index : (gpu::TextureIndex)0,
         .max_reflection_roughness = record.desc.ray_tracing.max_reflection_roughness,
+        .msaa_edges               = classified ? record.msaa_edges.view.index : (gpu::TextureIndex)0,
+        .msaa_edge_tolerance      = renderer.msaa_edge_mode == MsaaEdgeMode.TOLERANT ? MSAA_EDGE_COLOR_TOLERANCE : 0,
     };
+    if (classified) record_msaa_edges(renderer, record, root.address)!;
+
+    uint shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows, record.soft_shadows);
+    gpu::SampleCount samples = msaa_sample_count(record.desc.msaa);
     gpu::PipelineHandle pipeline = renderer.pipelines.get(
         &renderer.device,
-        lighting_resolve_pipeline_key(
-            shadow_flags: rt_shadow_flags(
-                renderer,
-                record.desc.ray_tracing.shadows,
-                record.soft_shadows,
-            ),
-            samples:      msaa_sample_count(record.desc.msaa),
-        ),
+        lighting_resolve_pipeline_key(shadow_flags, samples),
     )!;
+    gpu::PipelineHandle second_pipeline;
+    if (classified) {
+        second_pipeline = pipeline;
+        pipeline = renderer.pipelines.get(
+            &renderer.device,
+            lighting_resolve_pipeline_key(shadow_flags, samples, pixel_rate: true),
+        )!;
+    }
 
     @profile_pass(renderer, Pass.LIGHTING) {
         record_fullscreen_pass(
-            renderer:      renderer,
-            target:        color,
-            pipeline:      pipeline,
-            fragment_root: root.address,
-            rect:          {},
-            load:          gpu::LoadOp.CLEAR,
-            clear_color:   clear_color,
+            renderer:        renderer,
+            target:          color,
+            pipeline:        pipeline,
+            fragment_root:   root.address,
+            rect:            {},
+            load:            gpu::LoadOp.CLEAR,
+            clear_color:     clear_color,
+            second_pipeline: second_pipeline,
         )!;
     }!;
 }

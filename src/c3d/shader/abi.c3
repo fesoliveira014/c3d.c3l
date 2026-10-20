@@ -1047,8 +1047,10 @@ struct LightingResolveRoot {
     TextureIndex reflection_texture;
     TextureIndex brdf_lut;
     float        max_reflection_roughness;
+    TextureIndex msaa_edges;
+    float        msaa_edge_tolerance;
 }
-$assert LightingResolveRoot::size == 48;
+$assert LightingResolveRoot::size == 56;
 $assert $reflect(LightingResolveRoot.frame).offset == 0;
 $assert $reflect(LightingResolveRoot.base_color_metallic).offset == 8;
 $assert $reflect(LightingResolveRoot.normal_roughness).offset == 12;
@@ -1060,6 +1062,8 @@ $assert $reflect(LightingResolveRoot.sampler_index).offset == 32;
 $assert $reflect(LightingResolveRoot.reflection_texture).offset == 36;
 $assert $reflect(LightingResolveRoot.brdf_lut).offset == 40;
 $assert $reflect(LightingResolveRoot.max_reflection_roughness).offset == 44;
+$assert $reflect(LightingResolveRoot.msaa_edges).offset == 48;
+$assert $reflect(LightingResolveRoot.msaa_edge_tolerance).offset == 52;
 
 struct SsaoRoot {
     GpuAddress   frame;

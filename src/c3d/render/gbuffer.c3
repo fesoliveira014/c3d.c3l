@@ -93,10 +93,23 @@ fn void? acquire_gbuffer(Renderer* renderer, ViewRecord* record) @private {
             samples:    msaa_sample_count(record.desc.msaa),
         )!;
     }
+
+    if (msaa_edges_wanted(renderer, &record.desc) && !record.msaa_edges.texture.is_valid()) {
+        record.msaa_edges = allocate_target(
+            device:     &renderer.device,
+            width:      record.hdr_color.width,
+            height:     record.hdr_color.height,
+            format:     MSAA_EDGES_FORMAT,
+            usage:      MSAA_EDGES_USAGE,
+            debug_name: "msaa_edges",
+        )!;
+    }
 }
 
 fn void release_gbuffer(gpu::Device* device, ViewRecord* record) @private {
     foreach (&target : record.gbuffer) {
         if (target.texture.is_valid()) release_target(device, target);
     }
+
+    if (record.msaa_edges.texture.is_valid()) release_target(device, &record.msaa_edges);
 }

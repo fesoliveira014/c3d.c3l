@@ -685,6 +685,8 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer LightingReso
     uint reflection_texture;
     uint brdf_lut;
     float max_reflection_roughness;
+    uint msaa_edges;
+    float msaa_edge_tolerance;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsaoRoot {
