@@ -38,6 +38,8 @@ retains the foliage authoring. Water has no landscape preparation dependency.
 Publish node world matrices before preparing foliage or water.
 Pending foliage can instead scatter as ranges on any scheduler with `foliage::scatter_job` and
 `foliage::commit_scatter` ([detached scatter](../../docs/vegetation.md#detached-scatter)).
+Pending terrain can likewise build its bounds as ranges with `terrain::bounds_job` and
+`terrain::commit_bounds` ([detached bounds](../../docs/terrain.md#detached-bounds-build)).
 
 A prepared owner is a no-op for preparation, except a terrain [tile](../../docs/terrain.md#tile-sets), which
 re-validates and relinks. Each pending owner either receives
@@ -56,6 +58,13 @@ The copied foliage LOD data belongs to the component; do not replace or free its
 pointer or slices. Prepared foliage also owns a separate frozen runtime copy.
 Removing authored foliage frees its authoring copy immediately. Existing runtime
 and cells remain valid until the next foliage update removes the orphans.
+
+## Spectral water
+
+A water body with the `SPECTRAL` wave model needs the `C3D_LANDSCAPE_GPU` feature and the application's call of
+`water_gpu::update(renderer, scene, assets)` each frame. Without the feature, preparing such a body faults
+`UNSUPPORTED`, so a consumer that never enables it keeps water in the scene layer. See [the water
+contract](../../docs/water.md#spectral-surface).
 
 ## Serialization
 

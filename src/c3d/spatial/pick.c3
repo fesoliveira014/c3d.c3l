@@ -53,6 +53,7 @@ struct PickHit {
     Node* node;
     bool  instanced;
     bool  billboard;
+    bool  ribbon;
     bool  lod_group;
     uint  instance_index;
     uint  part_index;
@@ -99,6 +100,9 @@ fn PickHit[] pick(
     };
     scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
         capacity += batch.count;
+    };
+    scene.@each(RibbonBatch; Entity entity, RibbonBatch* batch) {
+        capacity++;
     };
     PickHit[] hits = alloc::new_array(allocator, PickHit, (sz)capacity);
     usz count;
@@ -180,6 +184,21 @@ fn PickHit[] pick(
             }
         }
     };
+    scene.@each(RibbonBatch; Entity entity, RibbonBatch* batch) {
+        Node* node = scene.node(entity);
+        if (batch.count > 1 && node.visible_effective && (options.layers & node.layers)
+            && ribbon_batch_is_live(assets, batch)) {
+            SceneEntry entry = ribbon_entry(node, batch);
+            if (hit_entry(
+                assets: assets,
+                scene: scene,
+                entry: &entry,
+                ray: ray,
+                options: options,
+                hit: &hits[count],
+            )) count++;
+        }
+    };
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
         LodGroupState* state = group.state;
@@ -229,6 +248,15 @@ fn bool hit_entry(
     float distance;
     if (!maths::ray_intersects_aabb(ray, entry.bounds, &distance)) return false;
     Node* node = entry.node;
+    if (entry.flags.ribbon) {
+        *hit = {
+            .node = node,
+            .ribbon = true,
+            .distance = distance,
+            .position = ray.origin + ray.direction * distance,
+        };
+        return true;
+    }
     if (entry.flags.billboard) {
         *hit = {
             .node = node,

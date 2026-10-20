@@ -64,15 +64,18 @@ struct CullItem @private {
  CPU twin of the cull shader's box test.
  @param [&in] frustum : "Normalized inward-facing planes."
  @param local_bounds : "Instance-local bound."
- @param model : "Instance world matrix."
+ @param model : "Instance matrix relative to its batch node."
  @param margin : "World distance a corner may lie outside a plane; the sway amplitude."
+ @param node_world : "Batch node world matrix; the identity for pre-composed models."
 *>
 fn bool instance_visible(
     Frustum* frustum,
     Aabb local_bounds,
     Mat4 model,
     float margin = 0,
+    Mat4 node_world = matrix::IDENTITY4,
 ) {
+    Mat4 world_model = node_world.mul(model);
     Vec3[8] corners;
     foreach (uint corner, &world : corners) {
         Vec3 local = {
@@ -80,7 +83,7 @@ fn bool instance_visible(
             corner & 2 ? local_bounds.max.y : local_bounds.min.y,
             corner & 4 ? local_bounds.max.z : local_bounds.min.z,
         };
-        *world = maths::transform_point(model, local);
+        *world = maths::transform_point(world_model, local);
     }
     foreach (&plane : frustum.planes[:frustum.plane_count]) {
         bool outside = true;
@@ -98,6 +101,7 @@ fn bool instance_visible(
 fn Aabb? cull_bound(MeshCandidate* candidate, GpuGeometry* geometry) @private {
     if (candidate.lod) return candidate.lod.state.object_bounds;
     if (candidate.billboards) return candidate.world_bounds;
+    if (candidate.ribbons) return NO_INSTANCE_BOUND~;
     if (candidate.crowd) return candidate.crowd.pose_bounds;
     if (candidate.batch.has_bounds_override) return NO_INSTANCE_BOUND~;
     return geometry.bounds;
@@ -143,6 +147,7 @@ fn BatchAddresses batch_addresses(
     };
     if (candidate.batch || candidate.lod) addresses.instance_data = offset_by_instances(records, offset, InstanceGpu::size);
     if (candidate.billboards) addresses.instance_data = offset_by_instances(records, offset, BillboardGpu::size);
+    if (candidate.ribbons) addresses.instance_data = offset_by_instances(records, offset, RibbonPointGpu::size);
     return addresses;
 }
 
@@ -204,7 +209,7 @@ fn CullItem[] batch_cull_items(
             .records    = item.instance_data,
             .frustum    = frustum,
             .range      = &item.range,
-            .sorted     = !item.candidate.impostor && !item.weighted
+            .sorted     = !item.candidate.impostor && !item.candidate.ribbons && !item.weighted
               && assets.material(item.material.asset).data.common.alpha_mode == AlphaMode.BLEND,
             .depth_axis = depth_axis,
             .effects    = item.effects,
@@ -360,6 +365,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 .kind             = item.candidate.billboards
                     ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
                 .depth_axis       = item.depth_axis,
+                .node_world       = bitcast(maths::rebase(item.candidate.node.world, renderer.frame_origin), Mat4f),
             };
             if (item.candidate.quadtree) {
                 root.lod_mode = shader::QUADTREE_CULL;

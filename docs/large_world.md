@@ -224,9 +224,9 @@ With a per-axis cell-multiple offset and shifted nodes that are root children or
 world-space nodes, the next frame packs bitwise the same relative data as
 without the shift. There is no instance re-upload, no top-level rebuild and no
 accumulation reset. Nested content, whose worlds gained precision, repacks its
-instance records and trace rows once, without motion. An offset that is not a
-cell multiple changes the packing origin like any reference change: records
-rewrite once and path accumulation resets.
+trace rows once, without motion; its instance records hold no world and do not
+rewrite. An offset that is not a cell multiple changes the packing origin like
+any reference change: trace rows and billboard records rewrite once and path accumulation resets.
 
 Other renderer caches key on the relative values or recompute per frame and
 need no change: volumetric fog, ambient occlusion, auto exposure, reflection

@@ -53,6 +53,7 @@ const uint INSTANCE_SORT_WRITE_LIST = 8;
 const uint INSTANCE_KIND_MESH = 0;
 const uint INSTANCE_KIND_BILLBOARD = 1;
 const uint INSTANCE_KIND_LOD = 2;
+const uint INSTANCE_KIND_RIBBON = 3;
 const uint LOD_SELECT = 1;
 const uint LOD_CULL = 2;
 const uint LOD_FINALIZE = 3;
@@ -67,6 +68,7 @@ const uint QUADTREE_METRIC_SPHERE_PIXELS = 0;
 const uint QUADTREE_METRIC_BOX_RANGES = 1;
 const uint BILLBOARD_CAMERA = 0;
 const uint BILLBOARD_DIRECTIONAL = 1;
+const uint RIBBON_POINT_BREAK = 1;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
@@ -857,8 +859,9 @@ struct InstanceCullRoot {
     float      quadtree_world_scale;
     GpuAddress quadtree_params;
     GpuAddress quadtree_depths;
+    Mat4f      node_world;
 }
-$assert InstanceCullRoot::size == 416;
+$assert InstanceCullRoot::size == 480;
 $assert $reflect(InstanceCullRoot.instances).offset == 0;
 $assert $reflect(InstanceCullRoot.bounds_instances).offset == 8;
 $assert $reflect(InstanceCullRoot.visible).offset == 16;
@@ -901,6 +904,7 @@ $assert $reflect(InstanceCullRoot.quadtree_pixel_scale).offset == 392;
 $assert $reflect(InstanceCullRoot.quadtree_world_scale).offset == 396;
 $assert $reflect(InstanceCullRoot.quadtree_params).offset == 400;
 $assert $reflect(InstanceCullRoot.quadtree_depths).offset == 408;
+$assert $reflect(InstanceCullRoot.node_world).offset == 416;
 
 struct InstanceSortRoot {
     GpuAddress keys;
@@ -969,6 +973,22 @@ $assert $reflect(BillboardAtlasGpu._pad0).offset == 12;
 $assert $reflect(BillboardAtlasGpu.inset).offset == 16;
 $assert $reflect(BillboardAtlasGpu._pad1).offset == 24;
 $assert $reflect(BillboardAtlasGpu._pad2).offset == 28;
+
+struct RibbonPointGpu {
+    Vec4f position_width;
+    Vec4f color;
+    float v;
+    uint  flags;
+    uint  _pad0;
+    uint  _pad1;
+}
+$assert RibbonPointGpu::size == 48;
+$assert $reflect(RibbonPointGpu.position_width).offset == 0;
+$assert $reflect(RibbonPointGpu.color).offset == 16;
+$assert $reflect(RibbonPointGpu.v).offset == 32;
+$assert $reflect(RibbonPointGpu.flags).offset == 36;
+$assert $reflect(RibbonPointGpu._pad0).offset == 40;
+$assert $reflect(RibbonPointGpu._pad1).offset == 44;
 
 struct SwayGpu {
     Vec4f direction_amplitude;

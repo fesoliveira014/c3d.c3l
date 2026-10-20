@@ -265,7 +265,7 @@ fn gpu::GpuAddress? resolve_animated_lod_parts(Renderer* renderer, MeshCandidate
     for (uint source = 0; source < count; source++) {
         write_instance(
             record: &records[source],
-            world: animated_lod_part_local(candidate, source),
+            model: animated_lod_part_local(candidate, source),
             color: { 1, 1, 1, 1 },
             seed: 0,
         );

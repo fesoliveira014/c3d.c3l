@@ -54,7 +54,8 @@ uint logical_source(DrawRoot draw) {
     return uint(InstanceArray(draw.instance_data).values[instance_source(draw)].normal_2.w);
 }
 
-// The batch record of an instance in world space: model, normal rows, seed, parity, source index and colour.
+// The batch record of an instance in world space: model and normal rows composed with the node's, then seed, parity,
+// source index and colour.
 InstanceGpu world_instance(DrawRoot draw, uint source) {
     return instance_to_world(draw, InstanceArray(draw.instance_data).values[source]);
 }
@@ -62,13 +63,15 @@ InstanceGpu world_instance(DrawRoot draw, uint source) {
 
 #if defined(VELOCITY) && defined(INSTANCED)
 // The world model the view drew an instance with last time. An instance without a previous matrix did not change,
-// so draw.prev_model carries only the batch node's motion.
+// so draw.prev_model carries only the batch node's motion; prev_model * model is the node's previous world.
 mat4 previous_world_model(DrawRoot draw, uint source, mat4 current_world) {
     PreviousPoseGpu previous_pose = PreviousPoseGpu(draw.previous_pose);
     mat4 previous_world;
     if (previous_pose.instances != 0ul
         && source >= previous_pose.instances_first && source < previous_pose.instances_end) {
-        previous_world = PreviousInstanceArray(previous_pose.instances).values[source - previous_pose.instances_first];
+        mat4 previous_local = PreviousInstanceArray(previous_pose.instances)
+            .values[source - previous_pose.instances_first];
+        previous_world = (draw.prev_model * draw.model) * previous_local;
     } else {
         previous_world = draw.prev_model * current_world;
     }

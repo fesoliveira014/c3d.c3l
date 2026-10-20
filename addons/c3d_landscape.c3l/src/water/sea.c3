@@ -42,6 +42,12 @@ struct SeaBlend {
     double[MAX_WAVES] phase;     // cycles each wave has run, integrated from the update that started the blend
 }
 
+// Significant height and peak period of the sea a wind raises over a fetch.
+struct SeaScales @private {
+    float significant_height; // metres
+    float peak_period;        // seconds
+}
+
 // One wave of the table, relative to the sea's peak wave.
 struct SeaBand @private {
     float wavelength_share;
@@ -77,7 +83,24 @@ fn void? set_sea_state(
     if (!(transition_seconds >= 0) || !math::is_finite(transition_seconds)) return c3d::INVALID_ARGUMENT~;
 
     Water* water = scene.world.get(node, Water);
-    if (water.desc.wave_model != WaterWaveModel.GERSTNER) return c3d::UNSUPPORTED~;
+    if (water.desc.wave_model == WaterWaveModel.SIMULATED) return c3d::UNSUPPORTED~;
+    if (water.desc.wave_model == WaterWaveModel.SPECTRAL) {
+        if (!scene.world.has(node, WaterRuntime)) return c3d::UNSUPPORTED~;
+
+        WaterRuntime* runtime = scene.world.get(node, WaterRuntime);
+        Vec3 local_wind = maths::transform_dir(
+            maths::inverse_affine(scene.node(node).world),
+            { wind_velocity.x, 0, wind_velocity.y },
+        );
+        blend_spectral(
+            assets:             assets,
+            runtime:            runtime,
+            wind_velocity:      { local_wind.x, local_wind.z },
+            transition_seconds: transition_seconds,
+        );
+        place_bounds(scene, scene.node(node), runtime);
+        return;
+    }
 
     Mat4 world = scene.node(node).world;
     if (!scene.world.has(node, WaterRuntime)) {
@@ -134,6 +157,16 @@ fn void blend_to(
     place_bounds(scene, scene.node(node), runtime);
 }
 
+fn SeaScales sea_scales(float speed, float fetch) @private {
+    float fetch_ratio = SEA_GRAVITY * fetch / (speed * speed);
+    float height_ratio = min(SEA_FETCH_HEIGHT * math::sqrt(fetch_ratio), SEA_FULL_HEIGHT);
+    float period_ratio = min(SEA_FETCH_PERIOD * math::pow(fetch_ratio, 1.0f / 3), SEA_FULL_PERIOD);
+    return {
+        .significant_height = height_ratio * speed * speed / SEA_GRAVITY,
+        .peak_period        = period_ratio * speed / SEA_GRAVITY,
+    };
+}
+
 fn Wave[MAX_WAVES] sea_waves(
     WaterDesc* desc,
     Vec2 rest_min,
@@ -158,12 +191,9 @@ fn Wave[MAX_WAVES] sea_waves(
     float peak_wavelength;
     if (speed > 0) {
         float fetch = fetch_length(rest_min, rest_max, direction) * horizontal_scale;
-        float fetch_ratio = SEA_GRAVITY * fetch / (speed * speed);
-        float height_ratio = min(SEA_FETCH_HEIGHT * math::sqrt(fetch_ratio), SEA_FULL_HEIGHT);
-        float period_ratio = min(SEA_FETCH_PERIOD * math::pow(fetch_ratio, 1.0f / 3), SEA_FULL_PERIOD);
-        float peak_period = period_ratio * speed / SEA_GRAVITY;
-        significant_height = height_ratio * speed * speed / SEA_GRAVITY;
-        peak_wavelength = SEA_GRAVITY * peak_period * peak_period / (2 * (float)math::PI);
+        SeaScales scales = sea_scales(speed, fetch);
+        significant_height = scales.significant_height;
+        peak_wavelength = SEA_GRAVITY * scales.peak_period * scales.peak_period / (2 * (float)math::PI);
     }
 
     Wave[MAX_WAVES] waves;
@@ -233,11 +263,12 @@ fn void place_bounds(Scene* scene, Node* node, WaterRuntime* runtime) @private {
     write_medium(scene, node, runtime);
     if (runtime.desc.mode == WaterMode.OCEAN) {
         place_ocean_bounds(
-            scene: scene,
-            node:  node,
-            ocean: &runtime.ocean,
-            desc:  &runtime.desc,
-            waves: bounding_waves(runtime),
+            scene:    scene,
+            node:     node,
+            ocean:    &runtime.ocean,
+            desc:     &runtime.desc,
+            waves:    bounding_waves(runtime),
+            envelope: spectral_envelope(runtime),
         );
         return;
     }
@@ -246,7 +277,12 @@ fn void place_bounds(Scene* scene, Node* node, WaterRuntime* runtime) @private {
         .min = { runtime.rest_min.x, 0, runtime.rest_min.y },
         .max = { runtime.rest_max.x, 0, runtime.rest_max.y },
     };
-    scene.get(node, Mesh).local_bounds = drawn_bounds(rest, &runtime.desc, bounding_waves(runtime));
+    scene.get(node, Mesh).local_bounds = drawn_bounds(
+        rest:     rest,
+        desc:     &runtime.desc,
+        waves:    bounding_waves(runtime),
+        envelope: spectral_envelope(runtime),
+    );
 }
 
 // Uploads the blended waves each update while a blend runs, then once more so the previous waves catch up.

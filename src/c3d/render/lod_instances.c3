@@ -1,7 +1,6 @@
 module c3d::render;
 
 import c3d;
-import c3d::maths;
 import c3d::scene;
 import c3d::shader;
 import gpu;
@@ -14,7 +13,6 @@ fn uint pack_lod_records(
     LodMetadataGpu[] metadata,
     uint[] unmirrored,
     uint[] mirrored,
-    Mat4 world,
     LodGroupState* state,
 ) @private {
     uint unmirrored_count;
@@ -22,7 +20,7 @@ fn uint pack_lod_records(
     foreach (uint index, transform : state.transforms[:state.count]) {
         write_instance(
             record: &records[index],
-            world: world.mul(transform.to_mat4()),
+            model: transform.to_mat4(),
             color: state.colors[index],
             seed: instance_seed(transform.position),
         );
@@ -49,13 +47,11 @@ fn gpu::GpuAddress? resolve_lod_instances(Renderer* renderer, LodSelection* sele
     GpuInstances* slot = &renderer.instances.slots[index];
     selection.instances = slot;
     if (slot.capacity < state.transforms.len || slot.revision != state.revision
-      || slot.world != selection.node.world || slot.lod_identity != state.identity
-      || slot.origin != renderer.frame_origin) {
+      || slot.lod_identity != state.identity) {
         upload_lod_records(
             renderer: renderer,
             index: index,
             state: state,
-            world: selection.node.world,
         )!;
     }
     return slot.records;
@@ -65,7 +61,6 @@ fn void? upload_lod_records(
     Renderer* renderer,
     uint index,
     LodGroupState* state,
-    Mat4 world,
 ) @private {
     GpuInstances* slot = &renderer.instances.slots[index];
     acquire_instance_records(
@@ -91,7 +86,6 @@ fn void? upload_lod_records(
         metadata: metadata,
         unmirrored: unmirrored,
         mirrored: mirrored,
-        world: maths::rebase(world, renderer.frame_origin),
         state: state,
     );
     usz mirrored_at = unmirrored_at + align_up((usz)split * uint::size, STREAM_ALIGNMENT);
@@ -118,8 +112,6 @@ fn void? upload_lod_records(
     slot.lod_unmirrored_count = split;
     slot.lod_identity = state.identity;
     slot.revision = state.revision;
-    slot.world = world;
-    slot.origin = renderer.frame_origin;
     renderer.pending_instance_uploads.push(index);
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)(records_bytes + metadata_bytes + (usz)state.count * uint::size);

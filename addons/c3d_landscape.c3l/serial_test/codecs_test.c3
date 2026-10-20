@@ -237,7 +237,8 @@ fn void test_water_v4_fixtures_read_as_gerstner_with_their_depth() @test {
             assert(desc.wave_model == WaterWaveModel.GERSTNER && !desc.ground.generation);
             WaterDesc defaults = water::default_water_desc();
             assert(desc.simulation.wave_speed == defaults.simulation.wave_speed);
-            assert(desc.simulation.damping == defaults.simulation.damping && desc.spectrum.seed == 0);
+            assert(desc.simulation.damping == defaults.simulation.damping);
+            assert(desc.spectrum.seed == defaults.spectrum.seed && desc.spectrum.patch_size == defaults.spectrum.patch_size);
         };
     }
 }
