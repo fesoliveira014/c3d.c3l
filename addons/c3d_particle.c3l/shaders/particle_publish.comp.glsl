@@ -44,7 +44,9 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer ParticleCoun
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ParticleCounters {
-    uvec4 values[2]; // alive, dropped low and high words, unused; then dropped events and skipped events, low and high
+    // alive, dropped low and high words, unused; then dropped events and skipped events, low and high; then evicted
+    // low and high words, unused
+    uvec4 values[3];
 };
 
 // Mirrors flipbook_frame in flipbook.c3, in float.
@@ -270,6 +272,7 @@ void main() {
             control.skipped_events_low,
             control.skipped_events_high
         );
+        counters.values[2] = uvec4(control.evicted_low, control.evicted_high, 0u, 0u);
         if (root.trail_max_points != 0u) {
             uint points = control.live_total * (root.trail_max_points + 1u);
             ParticleCountWord(root.ribbon_count).value = points;
