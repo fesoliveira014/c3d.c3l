@@ -1,5 +1,6 @@
 module c3d::render;
 
+import c3d::asset;
 import c3d::material;
 import c3d::test::loading_fixtures;
 import std::math;
@@ -165,4 +166,115 @@ fn void test_generated_layout_has_no_base_snapshot_or_empty_allocation() @test {
     assert(layout.output_texels == 0 && layout.byte_count == 0);
     assert(chain.first_mip == 1 && chain.mip_count == 0 && chain.pixels.len == 0);
     assert(tracker.allocs_total == 0 && tracker.allocated() == 0);
+}
+
+const uint RETAINED_WIDTH @local = 37;
+const uint RETAINED_HEIGHT @local = 23;
+const TextureBox RETAINED_BOX_INTERIOR @local = { .first_x = 5, .end_x = 16, .first_y = 4, .end_y = 11 };
+const TextureBox RETAINED_BOX_CORNER @local = { .first_x = 30, .end_x = 37, .first_y = 15, .end_y = 23 };
+const TextureBox RETAINED_UNREPORTED_TEXEL @local = { .first_x = 32, .end_x = 33, .first_y = 6, .end_y = 7 };
+
+fn void invert_texels(char[] pixels, TextureBox box) @local {
+    for (uint row = box.first_y; row < box.end_y; row++) {
+        for (uint column = box.first_x; column < box.end_x; column++) {
+            for (usz channel = 0; channel < TEXEL_BYTES; channel++) {
+                usz index = ((usz)row * RETAINED_WIDTH + column) * TEXEL_BYTES + channel;
+
+                pixels[index] = (char)(255 - pixels[index]);
+            }
+        }
+    }
+}
+
+fn void filter_retained_box(TextureAsset* record, TextureMipChain* retained, TextureBox box) @local {
+    TextureBox[material::TEXTURE_MIP_CAPACITY] boxes;
+
+    boxes[0] = box;
+    filter_texture_region_levels(
+        record:           record,
+        generated_levels: retained,
+        region:           { .width = box.end_x - box.first_x, .height = box.end_y - box.first_y, .depth = 1 },
+        boxes:            boxes[..],
+        incremental:      true,
+    )!!;
+}
+
+fn void expect_chain_matches_whole_plane(material::TextureDesc desc, char[] pixels, TextureMipChain* retained) @local {
+    TextureMipChain reference = create_texture_mips(mem, desc, pixels)!!;
+    defer destroy_texture_mips(&reference);
+
+    assert(retained.pixels == reference.pixels[reference.offsets[1]..]);
+}
+
+fn void test_region_filter_on_a_retained_chain_matches_the_whole_plane() @test {
+    material::TextureDesc desc = material::texture_2d_desc(RETAINED_WIDTH, RETAINED_HEIGHT, RGBA8_SRGB);
+    char[] pixels = random_texels((usz)RETAINED_WIDTH * RETAINED_HEIGHT * TEXEL_BYTES, IMAGE_SEED);
+    defer alloc::free(mem, pixels.ptr);
+    TextureAsset record = { .desc = desc, .source_kind = MIP_ZERO, .pixels = pixels };
+    TextureMipChain retained = create_generated_texture_mips(mem, desc)!!;
+    defer destroy_texture_mips(&retained);
+
+    fill_generated_texture_mips(desc, pixels, &retained)!!;
+    expect_chain_matches_whole_plane(desc, pixels, &retained);
+
+    foreach (box : (TextureBox[2]){ RETAINED_BOX_INTERIOR, RETAINED_BOX_CORNER }) {
+        invert_texels(pixels, box);
+        filter_retained_box(&record, &retained, box);
+        expect_chain_matches_whole_plane(desc, pixels, &retained);
+    }
+}
+
+fn void test_region_filter_on_a_retained_chain_stays_inside_the_dirty_window() @test {
+    material::TextureDesc desc = material::texture_2d_desc(RETAINED_WIDTH, RETAINED_HEIGHT, RGBA8_SRGB);
+    char[] pixels = random_texels((usz)RETAINED_WIDTH * RETAINED_HEIGHT * TEXEL_BYTES, IMAGE_SEED);
+    defer alloc::free(mem, pixels.ptr);
+    char[] reported = alloc::clone_slice(mem, pixels);
+    defer alloc::free(mem, reported.ptr);
+    TextureAsset record = { .desc = desc, .source_kind = MIP_ZERO, .pixels = pixels };
+    TextureMipChain retained = create_generated_texture_mips(mem, desc)!!;
+    defer destroy_texture_mips(&retained);
+
+    fill_generated_texture_mips(desc, pixels, &retained)!!;
+    invert_texels(pixels, RETAINED_BOX_INTERIOR);
+    invert_texels(reported, RETAINED_BOX_INTERIOR);
+    invert_texels(pixels, RETAINED_UNREPORTED_TEXEL);
+    filter_retained_box(&record, &retained, RETAINED_BOX_INTERIOR);
+
+    expect_chain_matches_whole_plane(desc, reported, &retained);
+}
+
+fn void test_retained_levels_stage_the_bytes_of_a_temporary_chain_from_every_base() @test {
+    material::TextureDesc desc = material::texture_2d_desc(RETAINED_WIDTH, RETAINED_HEIGHT, RGBA8_SRGB);
+    char[] pixels = random_texels((usz)RETAINED_WIDTH * RETAINED_HEIGHT * TEXEL_BYTES, IMAGE_SEED);
+    defer alloc::free(mem, pixels.ptr);
+    TextureAsset record = { .desc = desc, .source_kind = MIP_ZERO, .pixels = pixels };
+    Renderer renderer = { .allocator = mem };
+    TextureRes mirror;
+    defer release_retained_levels(&renderer, &mirror);
+
+    for (uint base = 0; base < texture_chain_mips(&record); base++) {
+        TextureMipChain reference = create_texture_mips(
+            allocator: mem,
+            desc:      desc,
+            pixels:    pixels,
+            first_mip: base,
+        )!!;
+        defer destroy_texture_mips(&reference);
+        RetainedSources sources = refill_retained_levels(
+            renderer: &renderer,
+            record:   &record,
+            mirror:   &mirror,
+            base:     base,
+        )!!;
+        char[] staged = alloc::new_array(mem, char, (sz)sources.layout.total_bytes);
+        defer alloc::free(mem, staged.ptr);
+
+        staged[:sources.level_zero.len][..] = sources.level_zero[..];
+        staged[sources.level_zero.len..][..] = sources.levels[..];
+
+        assert(sources.layout.total_bytes == reference.pixels.len);
+        assert(sources.layout.mip_count == reference.mip_count && sources.layout.layer_count == reference.layer_count);
+        assert(sources.layout.offsets == reference.offsets);
+        assert(staged == reference.pixels);
+    }
 }

@@ -6,11 +6,17 @@ import c3d::material;
 import gpu;
 import std::math;
 
-struct TextureBox @local {
+struct TextureBox @private {
     uint first_x;
     uint end_x;
     uint first_y;
     uint end_y;
+}
+
+struct RetainedSources @private {
+    TextureMipLayout layout;
+    char[] level_zero; // staged ahead of the retained levels; empty above base 0
+    char[] levels;     // retained levels from the first staged one
 }
 
 fn uint texture_scale_floor(uint value, uint numerator, uint denominator) @local {
@@ -33,6 +39,75 @@ fn TextureBox filtered_texture_box(TextureBox box, material::TextureDesc* desc, 
         .first_y = texture_scale_floor(box.first_y, height, source_height),
         .end_y   = texture_scale_ceil(box.end_y, height, source_height),
     };
+}
+
+fn bool texture_retains_chain(TextureAsset* record) @private {
+    return record.source_kind == TextureSourceKind.MIP_ZERO
+        && record.desc.generate_mips && record.desc.coverage != CoveragePolicy.THRESHOLD;
+}
+
+fn bool texture_chain_current(TextureRes* mirror) @local {
+    return mirror.mip_chain.len > 0 && mirror.chain_revision != 0 && mirror.chain_revision == mirror.revision;
+}
+
+fn TextureMipChain? acquire_retained_levels(
+    Renderer* renderer,
+    TextureRes* mirror,
+    material::TextureDesc* desc,
+) @private {
+    GeneratedTextureLayout layout = generated_texture_mip_layout(*desc)!;
+
+    if (!mirror.mip_chain.len && layout.byte_count) {
+        mirror.mip_chain = alloc::alloc_array(renderer.allocator, char, (sz)layout.byte_count);
+        mirror.chain_revision = 0;
+    }
+
+    return {
+        .first_mip   = 1,
+        .mip_count   = layout.mip_count,
+        .layer_count = layout.layer_count,
+        .offsets     = layout.offsets,
+        .pixels      = mirror.mip_chain,
+    };
+}
+
+fn void release_retained_levels(Renderer* renderer, TextureRes* mirror) @private {
+    alloc::free(renderer.allocator, mirror.mip_chain.ptr);
+    mirror.mip_chain = {};
+    mirror.chain_revision = 0;
+}
+
+fn RetainedSources? refill_retained_levels(
+    Renderer* renderer,
+    TextureAsset* record,
+    TextureRes* mirror,
+    uint base,
+) @private {
+    material::TextureDesc* desc = &record.desc;
+    TextureMipChain levels = acquire_retained_levels(renderer, mirror, desc)!;
+
+    check_texture_mip_zero(*desc, record.pixels)!;
+    fill_generated_texture_mips(*desc, record.pixels, &levels)!;
+
+    usz skipped = base ? levels.offsets[base - 1] : 0;
+    usz level_zero_bytes = base ? 0 : record.pixels.len;
+    RetainedSources sources = {
+        .layout = {
+            .total_bytes = level_zero_bytes + levels.pixels.len - skipped,
+            .mip_count   = levels.mip_count + 1 - base,
+            .layer_count = levels.layer_count,
+        },
+        .level_zero = record.pixels[:level_zero_bytes],
+        .levels     = levels.pixels[skipped..],
+    };
+
+    for (uint index = 0; index < sources.layout.mip_count; index++) {
+        uint mip = base + index;
+
+        sources.layout.offsets[index] = mip ? level_zero_bytes + levels.offsets[mip - 1] - skipped : 0;
+    }
+
+    return sources;
 }
 
 fn bool texture_upload_staged(Renderer* renderer, TextureRes* mirror) @local {
@@ -84,6 +159,7 @@ fn bool texture_regions_stageable(
 fn void? stage_texture_regions(
     Renderer* renderer,
     TextureAsset* record,
+    TextureRes* mirror,
     PendingTextureUpload* pending,
     TextureRegion[] regions,
     uint base,
@@ -108,13 +184,17 @@ fn void? stage_texture_regions(
     }
 
     if (generated) {
-        generated_levels = create_generated_texture_mips(tmem, *desc)!;
+        bool incremental = texture_chain_current(mirror);
+
+        generated_levels = acquire_retained_levels(renderer, mirror, desc)!;
         filter_texture_region_levels(
             record:           record,
             generated_levels: &generated_levels,
             region:           regions[0],
             boxes:            boxes[..],
+            incremental:      incremental,
         )!;
+        pending.chain_revision = record.header.revision;
     }
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -180,23 +260,31 @@ fn void? filter_texture_region_levels(
     TextureMipChain* generated_levels,
     TextureRegion region,
     TextureBox[] boxes,
-) @local {
+    bool incremental,
+) @private {
     material::TextureDesc* desc = &record.desc;
     uint chain_mips = texture_chain_mips(record);
 
-    // The smallest level averages the whole image, so every row of every level feeds a copied band.
     for (uint mip = 1; mip < chain_mips; mip++) {
         boxes[mip] = filtered_texture_box(boxes[mip - 1], desc, mip);
+    }
+
+    if (!incremental) return fill_generated_texture_mips(*desc, record.pixels, generated_levels);
+
+    for (uint mip = 1; mip < chain_mips; mip++) {
+        TextureBox box = boxes[mip];
 
         for (uint plane = region.z; plane < region.z + region.depth; plane++) {
             write_texture_filter_band(
-                desc:      *desc,
-                mip:       mip,
-                layer:     plane,
-                first_row: 0,
-                row_count: material::texture_mip_extent(desc.height, mip),
-                mip_zero:  record.pixels,
-                chain:     generated_levels,
+                desc:         *desc,
+                mip:          mip,
+                layer:        plane,
+                first_row:    box.first_y,
+                row_count:    box.end_y - box.first_y,
+                mip_zero:     record.pixels,
+                chain:        generated_levels,
+                first_column: box.first_x,
+                column_count: box.end_x - box.first_x,
             )!;
         }
     }
