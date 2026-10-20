@@ -1071,23 +1071,4 @@ the settle segment to 20 frames, three runs each (i9-14900K):
 The device test's four cases pass validation-clean in 2.4 s. The steady-upload gate passed in every run; a
 full-length settle segment in the same configuration passed the density gate (mean 0.599, worst 0.604).
 
-### WSL, llvmpipe, simulated surface
-
-The same CPU-only configuration with `--waves simulated`: `--opt O3`, `--benchmark 30 --size 1025 --width 160 --height 90`,
-16 crates, three runs (i9-14900K). The CPU lines are the simulation's; the frame times are llvmpipe's and say nothing
-about a device.
-
-| Line | Three runs |
-| --- | ---: |
-| `update_us` median, waves segment (96 × 96 cells, one substep, 30 awake frames) | 35.4 to 38.1 |
-| `update_us` p99, waves segment | 86.2 to 105.0 |
-| `update_us` median, settle segment (wave speed 60 m/s: two substeps, 283 awake frames) | 57.2 to 66.6 |
-| `upload_bytes` per awake frame | 150,544 (97 × 97 texels × 16 B) |
-| `sample_ns` median (the twin on a triangle) | 22.2 to 42.3 |
-
-The still and orbit segments upload nothing for the simulation, the pond settled 283 frames into the settle segment
-and uploaded nothing after it in every run, and the three gates pass, the density gate with a worst submerged fraction
-of 0.6062. `update_us` is the whole of `water::update` on those frames, which also covers the ground check and the
-ripple scroll, and the medium rewrite of a step that raises the reach.
-
 Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).
