@@ -29,7 +29,8 @@ layout(push_constant) uniform Push {
     uint64_t fragment_root_gpu;
 } pc;
 
-// Turned and scaled so the second tiling never realigns with the first.
+// Turned and scaled so the second tiling never realigns with the first;
+// twin of second_layer_coordinates in water/mirror.c3.
 vec2 ripple_second_uv(vec2 first_uv) {
     float cosine = cos(RIPPLE_CROSS_ANGLE);
     float sine = sin(RIPPLE_CROSS_ANGLE);

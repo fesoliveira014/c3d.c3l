@@ -48,7 +48,7 @@ const float RIPPLE_CROSS_ANGLE = 0.6f; // crossing layers never line up; mirrore
 <*
  Texture periods of the second ripple layer per period of the first.
 *>
-const float RIPPLE_SECOND_SCALE = 1.618034f; // golden ratio, so the tilings never realign; mirrored as RIPPLE_SECOND_SCALE in water.frag.glsl
+const float RIPPLE_SECOND_SCALE = 1.618034f; // golden ratio: the tilings never realign at no extra fetch; mirrored as RIPPLE_SECOND_SCALE in water.frag.glsl
 
 <*
  Cells along one chunk edge of an ocean at every level.
