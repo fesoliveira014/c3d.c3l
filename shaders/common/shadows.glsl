@@ -4,6 +4,7 @@
 #include "buffer_reference.glsl"
 #include "descriptor_heap.glsl"
 #include "lights.glsl"
+#include "medium.glsl"
 #include "texture_fetch.glsl"
 #ifdef RT_SHADOWS
 #if !defined(SCENE_TRACE_BVH) && !defined(SCENE_TRACE_RAY_QUERY)
@@ -257,25 +258,34 @@ float cloud_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_positi
     return mix(1.0, pow(transmittance, layer_above), inside);
 }
 
+// Share of the sun the view's media let through to the point; one for any other light.
+vec3 medium_shadow_transmittance(FrameRoot frame, LightGpu light, vec3 world_position) {
+    if ((light.flags & LIGHT_MEDIUM_SHADOW) == 0u) return vec3(1.0);
+    return medium_sun_transmittance(SkyFogGpu(frame.sky_fog), world_position);
+}
+
+// The media's channels count by their mean here; shadow_transmittance keeps them apart.
 float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
     float clouds = cloud_shadow_visibility(frame, light, world_position);
+    float media = dot(medium_shadow_transmittance(frame, light, world_position), vec3(1.0 / 3.0));
 #ifdef RT_SHADOWS
     if ((light.flags & LIGHT_RT_SHADOW) != 0u && (frame.flags & FRAME_TRACE_PRESENT) != 0u) {
-        return clouds * ray_shadow_visibility(frame, light, world_position, normal);
+        return clouds * media * ray_shadow_visibility(frame, light, world_position, normal);
     }
 #endif
-    return clouds * atlas_shadow(frame, light, world_position, normal, view_depth, false).x;
+    return clouds * media * atlas_shadow(frame, light, world_position, normal, view_depth, false).x;
 }
 
 // Share of the light reaching the point per channel. Traced lights and the float form above ignore the tint.
 vec3 shadow_transmittance(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
     float clouds = cloud_shadow_visibility(frame, light, world_position);
+    vec3 media = medium_shadow_transmittance(frame, light, world_position);
 #ifdef RT_SHADOWS
     if ((light.flags & LIGHT_RT_SHADOW) != 0u && (frame.flags & FRAME_TRACE_PRESENT) != 0u) {
-        return vec3(clouds * ray_shadow_visibility(frame, light, world_position, normal));
+        return vec3(clouds * ray_shadow_visibility(frame, light, world_position, normal)) * media;
     }
 #endif
-    return clouds * atlas_shadow(frame, light, world_position, normal, view_depth, true);
+    return clouds * media * atlas_shadow(frame, light, world_position, normal, view_depth, true);
 }
 
 #endif

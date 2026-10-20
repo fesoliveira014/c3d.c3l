@@ -26,7 +26,8 @@ struct LightList {
 };
 
 bool light_casts_shadow(LightGpu light) {
-    return light.shadow_count != 0u || (light.flags & (LIGHT_RT_SHADOW | LIGHT_CLOUD_SHADOW)) != 0u;
+    uint shadow_flags = LIGHT_RT_SHADOW | LIGHT_CLOUD_SHADOW | LIGHT_MEDIUM_SHADOW;
+    return light.shadow_count != 0u || (light.flags & shadow_flags) != 0u;
 }
 
 bool global_light(LightGpu light) {

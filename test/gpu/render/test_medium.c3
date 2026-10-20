@@ -15,6 +15,11 @@ const float MEDIUM_BOX_HALF @private = 50;
 const float MEDIUM_MIRROR_BOX @private = 1000;
 const float SECOND_BOX_ENTRY @private = 5;      // metres along the level ray where the second box begins
 const float MEDIUM_RAISE @private = 10;         // metres the second box top sits above the first, deepening the camera
+const float FLOOR_DEPTH @private = 2;           // metres from the box top down to the floor
+const float FAR_FACE @private = 15;             // half extent along z: the floor of row 27 is inside, row 19's past it
+const float SUN_COSINE @private = 0.6f;         // the sun's cosine to the box's up
+const uint FLOOR_OUTSIDE_ROW @private = 19;
+const Vec3 FLOOR_ABSORPTION @private = { 0.1f, 0.2f, 0.05f };
 const MediumVolume MEDIUM_WATER @private = {
     .absorption  = { 0.02f, 0.05f, 0.01f },
     .scattering  = { 0.01f, 0, 0.03f },
@@ -241,4 +246,67 @@ fn void test_medium_sun_term_follows_its_phase_and_its_column() @test {
     target.scene.update_world();
     check_rgb_close(level_pixel(&fixture, &target, &fog_view), ambient, "a sun below the top face scatters nothing");
     check_validation(&fixture.renderer);
+}
+
+// Metres along a ray to the horizontal plane at a height; the ray must slope toward it.
+fn float distance_to_height(FogRay ray, float height) @private {
+    return (height - ray.origin.y) / ray.direction.y;
+}
+
+// Ambient zero leaves the sun the floor's only light, so a pixel inside the box is the pixel without it scaled by the
+// medium's transmittance over the sun's path up to the top face and the view's path back to it. The camera lies above
+// the box, so the view path is the floor's depth along the ray. A sun term without the cosine leaves the floor 7 to
+// 31 % brighter per channel.
+fn void check_sun_on_a_submerged_floor(ShadingPath shading) @private {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    FogScene target = create_fog_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    target.scene.ambient_intensity = 0;
+
+    Node* floor = target.scene.add_mesh(target.plane, add_matte_material(&fixture, { 0.8f, 0.8f, 0.8f, 1 })!!)!!;
+    floor.local.position = { 0, -FLOOR_DEPTH, 0 };
+    target.scene.get(floor, Mesh).cast_shadow = false;
+    add_plain_sun(&target, { 0, SUN_COSINE, 0.8f }, false)!!;
+
+    FogView fog_view = create_fog_view(&fixture, shading)!!;
+    defer destroy_fog_view(&fixture, &fog_view);
+    Vec4[] without = render_fog_pixels(&fixture, &target, &fog_view)!!;
+    defer free(without);
+
+    MediumVolume medium = {
+        .absorption  = FLOOR_ABSORPTION,
+        .half_extent = { MEDIUM_BOX_HALF, FAR_FACE },
+        .depth       = MEDIUM_DEPTH,
+    };
+    add_medium_box(&target, medium, { 0, 0, 0 })!!;
+    Vec4[] with = render_fog_pixels(&fixture, &target, &fog_view)!!;
+    defer free(with);
+
+    FogRay inside = pixel_ray(&target, SKY_LOWER_ROW);
+    Vec3 floor_point = inside.origin + inside.direction * distance_to_height(inside, -FLOOR_DEPTH);
+    assert(math::abs(floor_point.z) < FAR_FACE, "the descending ray meets the floor inside the box: %f", floor_point.z);
+
+    float sun_path = FLOOR_DEPTH / SUN_COSINE;
+    float view_path = FLOOR_DEPTH / -inside.direction.y;
+    Vec3 floor_without = pixel_at(without, SKY_CENTRE, SKY_LOWER_ROW).xyz;
+    Vec3 expected = absorbed(extinction_of(&medium), sun_path + view_path, floor_without);
+    check_rgb_close(pixel_at(with, SKY_CENTRE, SKY_LOWER_ROW), expected, "the floor inside the box");
+
+    FogRay outside = pixel_ray(&target, FLOOR_OUTSIDE_ROW);
+    Vec3 top_point = outside.origin + outside.direction * distance_to_height(outside, 0);
+    assert(-top_point.z > FAR_FACE, "the shallow ray reaches the top plane past the far face: %f", top_point.z);
+
+    check_rgb_close(
+        pixel_at(with, SKY_CENTRE, FLOOR_OUTSIDE_ROW),
+        pixel_at(without, SKY_CENTRE, FLOOR_OUTSIDE_ROW).xyz,
+        "the floor outside the box",
+    );
+    check_validation(&fixture.renderer);
+}
+
+fn void test_medium_attenuates_the_sun_on_a_submerged_floor() @test {
+    check_sun_on_a_submerged_floor(ShadingPath.FORWARD);
+    check_sun_on_a_submerged_floor(ShadingPath.DEFERRED);
 }

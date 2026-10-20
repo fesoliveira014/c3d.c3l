@@ -140,6 +140,7 @@ const uint PREVIEW_MODE_DISTANCE = 11u;
 const uint LIGHT_RT_SHADOW = 1u;
 const uint LIGHT_VOLUMETRIC = 2u;
 const uint LIGHT_CLOUD_SHADOW = 4u;
+const uint LIGHT_MEDIUM_SHADOW = 8u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;

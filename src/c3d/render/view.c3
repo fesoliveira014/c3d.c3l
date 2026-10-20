@@ -721,6 +721,7 @@ fn void? record_raster_view(
                 LightGpu* sun = &extraction.lights[fog_sun - 1];
                 media.to_sun = -sun.direction_cos_outer.xyz;
                 media.sun_illuminance = sun.color_intensity.xyz * sun.color_intensity.w;
+                if (media.count) sun.flags |= shader::LIGHT_MEDIUM_SHADOW;
             }
             if (cloud_pass.layer) {
                 cloud_pass.sun = cloud_sun(
