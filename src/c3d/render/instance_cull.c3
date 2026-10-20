@@ -101,6 +101,7 @@ fn bool instance_visible(
 fn Aabb? cull_bound(MeshCandidate* candidate, GpuGeometry* geometry) @private {
     if (candidate.lod) return candidate.lod.state.object_bounds;
     if (candidate.billboards) return candidate.world_bounds;
+    if (candidate.ribbons) return NO_INSTANCE_BOUND~;
     if (candidate.crowd) return candidate.crowd.pose_bounds;
     if (candidate.batch.has_bounds_override) return NO_INSTANCE_BOUND~;
     return geometry.bounds;
@@ -146,6 +147,7 @@ fn BatchAddresses batch_addresses(
     };
     if (candidate.batch || candidate.lod) addresses.instance_data = offset_by_instances(records, offset, InstanceGpu::size);
     if (candidate.billboards) addresses.instance_data = offset_by_instances(records, offset, BillboardGpu::size);
+    if (candidate.ribbons) addresses.instance_data = offset_by_instances(records, offset, RibbonPointGpu::size);
     return addresses;
 }
 
@@ -207,7 +209,7 @@ fn CullItem[] batch_cull_items(
             .records    = item.instance_data,
             .frustum    = frustum,
             .range      = &item.range,
-            .sorted     = !item.candidate.impostor && !item.weighted
+            .sorted     = !item.candidate.impostor && !item.candidate.ribbons && !item.weighted
               && assets.material(item.material.asset).data.common.alpha_mode == AlphaMode.BLEND,
             .depth_axis = depth_axis,
             .effects    = item.effects,

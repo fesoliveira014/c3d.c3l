@@ -7,6 +7,7 @@ indices, and uploads an unchanged consumed batch once across all views.
 `c3d::scene::BillboardBatch` draws fixed-capacity arrays of view-facing quads.
 Billboards use the existing transparent material, culling, sorting and view
 pipeline. The renderer never advances the application data that populates them.
+Camera-facing strips through a list of points are [ribbons](ribbons.md).
 
 ## Create and update a batch
 

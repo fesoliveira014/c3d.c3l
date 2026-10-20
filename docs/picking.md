@@ -91,7 +91,9 @@ index.refresh(&assets, &scene)!;
 
 `revision` advances when a refresh finds any entry changed, and the next pick rebuilds the tree. A bound that changes from 0 to -0 counts as a change and costs one rebuild. A refresh visits every mesh; a batch whose node world matrix, geometry and its revision, batch revision, count and flags match the previous refresh keeps its entries without visiting its instances. Readings are in [Benchmarking](benchmarking.md#scene-index-and-triangle-trees): on an i9-14900K at O3, a refresh with nothing changed takes 14 µs for 2,000 meshes and a 4,096-instance batch; the tree rebuild over those 6,096 entries 0.52 ms; 64 bounds picks 0.27 ms through the index against 11 ms through the scan.
 
-`capacity` counts meshes plus batch instances. A refresh that finds more faults `c3d::CAPACITY_EXCEEDED` and leaves `count` at zero, so picks return nothing until a refresh fits. The index allocates once at creation: 40 bytes per entry, a 100-byte batch key per entry, 32 bytes per tree node (2 × capacity − 1) and 4 per primitive. At a capacity of 65,536 that is 2.6 MB of entries, 6.6 MB of keys, 4.2 MB of nodes and 0.26 MB of primitives; each tree rebuild takes 24 bytes per entry of temporary memory. `dangling` counts meshes and batches the last refresh skipped for dead ids.
+A [ribbon batch](ribbons.md) is one hit and one entry, bounded by the whole batch, with `ribbon` set on the hit.
+
+`capacity` counts meshes plus batch instances and ribbon batches. A refresh that finds more faults `c3d::CAPACITY_EXCEEDED` and leaves `count` at zero, so picks return nothing until a refresh fits. The index allocates once at creation: 40 bytes per entry, a 100-byte batch key per entry, 32 bytes per tree node (2 × capacity − 1) and 4 per primitive. At a capacity of 65,536 that is 2.6 MB of entries, 6.6 MB of keys, 4.2 MB of nodes and 0.26 MB of primitives; each tree rebuild takes 24 bytes per entry of temporary memory. `dangling` counts meshes and batches the last refresh skipped for dead ids.
 
 ## Querying your own boxes
 

@@ -1,8 +1,8 @@
 # Custom shaders
 
 Fragment-only custom materials with `AlphaMode.BLEND` can also shade core
-[billboard batches](billboards.md). Core supplies their view-facing vertex stage;
-custom vertex forms are not compatible with that primitive.
+[billboard batches](billboards.md) and [ribbon batches](ribbons.md). Core supplies their
+view-facing vertex stages; custom vertex forms are not compatible with those primitives.
 
 A custom material draws a mesh with user SPIR-V. The store owns the stages as a `ShaderAsset`, the material carries a parameter payload and up to eight ordinary texture slots, and the renderer builds the pipelines like any built-in family: keyed by the shader id and revision, replaced atomically when the revision moves, retired after their last submitted frame.
 
@@ -586,7 +586,7 @@ In `INSTANCED` forms `write_mesh_outputs` applies the batch's [sway and fade](in
 
 ### Billboard varying
 
-`mesh_vertex.glsl` declares `layout(location = 8) out vec3 v_billboard`, and every `write_mesh_outputs` form writes `(uv0, 0)` to it, depth and velocity forms included. The built-in billboard stage writes `(quad u, quad v, fract(frame))` instead, with v running from the quad's top edge down: the quad coordinate and the blend weight toward the next cell of a [sprite sheet](billboards.md#sprite-sheets). A fragment stage reads it with `layout(location = 8) in vec3 v_billboard;` on any draw, and it is zero in `.z` wherever no sprite sheet applies.
+`mesh_vertex.glsl` declares `layout(location = 8) out vec3 v_billboard`, and every `write_mesh_outputs` form writes `(uv0, 0)` to it, depth and velocity forms included. The built-in billboard stage writes `(quad u, quad v, fract(frame))` instead, with v running from the quad's top edge down: the quad coordinate and the blend weight toward the next cell of a [sprite sheet](billboards.md#sprite-sheets). The built-in ribbon stage writes `(u, v, 0)`, the coordinates of [ribbons](ribbons.md#texture-coordinates). A fragment stage reads it with `layout(location = 8) in vec3 v_billboard;` on any draw, and it is zero in `.z` wherever no sprite sheet applies.
 
 A custom vertex stage that writes its outputs itself instead of calling `write_mesh_outputs` must write location 8 before a fragment that reads it is paired with it. Location 8 is reserved by `mesh_vertex.glsl`: a stage that includes it and declares its own output at that location no longer compiles, so extra varyings start at location 9.
 

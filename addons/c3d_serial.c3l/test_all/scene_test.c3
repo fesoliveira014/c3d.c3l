@@ -46,6 +46,8 @@ fn void assert_authoring(Fixture* fixture, Node* root) @private {
     BillboardBatch* cards = scene.get(child_named(root, "billboards"), BillboardBatch);
     assert(cards.count == 1 && cards.billboards.len == 3 && cards.facing == DIRECTIONAL);
     assert(cards.billboards[0].rotation == 0.5f);
+    RibbonBatch* strip = scene.get(child_named(root, "ribbons"), RibbonBatch);
+    assert(strip.count == 2 && strip.points.len == 3 && strip.points[1].position == (Vec3){ 0, 1, 0 });
     LodGroupState* lod = scene.get(child_named(root, "lod"), LodGroup).state;
     assert(lod.desc.parts[0].local.m01 == 0.25f && lod.desc.parts[0].local.m03 == 2);
     Node* rig = child_named(root, "rig");

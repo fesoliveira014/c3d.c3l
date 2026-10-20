@@ -56,6 +56,7 @@ const uint INSTANCE_SORT_WRITE_LIST = 8u;
 const uint INSTANCE_KIND_MESH = 0u;
 const uint INSTANCE_KIND_BILLBOARD = 1u;
 const uint INSTANCE_KIND_LOD = 2u;
+const uint INSTANCE_KIND_RIBBON = 3u;
 const uint LOD_SELECT = 1u;
 const uint LOD_CULL = 2u;
 const uint LOD_FINALIZE = 3u;
@@ -70,6 +71,7 @@ const uint QUADTREE_METRIC_SPHERE_PIXELS = 0u;
 const uint QUADTREE_METRIC_BOX_RANGES = 1u;
 const uint BILLBOARD_CAMERA = 0u;
 const uint BILLBOARD_DIRECTIONAL = 1u;
+const uint RIBBON_POINT_BREAK = 1u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
@@ -637,6 +639,15 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer BillboardAtl
     vec2 inset;
     uint _pad1;
     uint _pad2;
+};
+
+struct RibbonPointGpu {
+    vec4 position_width;
+    vec4 color;
+    float v;
+    uint flags;
+    uint _pad0;
+    uint _pad1;
 };
 
 struct SwayGpu {
