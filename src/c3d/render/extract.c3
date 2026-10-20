@@ -157,7 +157,7 @@ fn MeshCandidate[] extract_candidates(
     };
     scene.@each(RibbonBatch; Entity entity, RibbonBatch* batch) {
         Node* node = scene.node(entity);
-        if (batch.count > 1 && node.visible_effective && (layers & node.layers)) {
+        if (batch.draw_count() > 1 && node.visible_effective && (layers & node.layers)) {
             include_ribbons(
                 candidates: candidates,
                 scene: scene,
@@ -427,7 +427,7 @@ fn void include_ribbons(
         .view_depth = center_view_depth(camera, world),
         .ribbons = batch,
         .scene_identity = scene.identity,
-        .instance_count = batch.count - 1,
+        .instance_count = batch.draw_count() - 1,
     };
 }
 

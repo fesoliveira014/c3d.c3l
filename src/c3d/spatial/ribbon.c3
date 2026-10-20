@@ -40,11 +40,14 @@ fn Aabb ribbon_bounds(Mat4 world, RibbonPoint[] points) {
  @param [&in] node : "Published node transform."
  @param [&inout] batch : "Valid points; cached bounds may be refreshed."
  @param origin : "Absolute origin of the returned bounds; zero preserves world."
- @require batch.count > 0
+ @require batch.draw_count() > 0
+ @require batch.has_bounds_override || batch.source != RibbonSource.DEVICE
 *>
 fn Aabb ribbon_world_bounds(Node* node, RibbonBatch* batch, Vec3 origin = {}) {
-    RibbonAggregate* aggregate = &batch.aggregate;
     Mat4 world = maths::rebase(node.world, origin);
+    if (batch.has_bounds_override) return maths::aabb_transform(batch.local_bounds, world);
+
+    RibbonAggregate* aggregate = &batch.aggregate;
     if (aggregate.revision == batch.revision && aggregate.world == world) return aggregate.bounds;
     Aabb bounds = ribbon_bounds(world, batch.points[:batch.count]);
     *aggregate = { .world = world, .bounds = bounds, .revision = batch.revision };
