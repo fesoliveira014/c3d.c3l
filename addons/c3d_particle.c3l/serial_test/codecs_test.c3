@@ -114,6 +114,10 @@ fn void create_fixture(Fixture* fixture, ParticleRenderMode mode, uint capacity 
     };
     foreach (index, &width : desc.trail.width_over_trail.values) *width = 1 - (float)index / 8;
     foreach (index, &color : desc.trail.color_over_trail.values) *color = { 1, 0.5f, (float)index * 0.1f, 0.9f };
+    if (mode == MESH) {
+        desc.mesh_cast_shadow = true;
+        desc.mesh_trace = true;
+    }
     fixture.source.attach_particle_system(fixture.root, desc)!!;
     fixture.source.get(fixture.root, ParticleSystem).emitting = false;
 }
@@ -211,10 +215,14 @@ fn void test_serial_layout_registration() @test {
     assert(serial::described_type(particle::ParticleAuthoringV6)!!.layout == 0x5cdb9677e6a87b8c);
     assert(serial::described_type(ParticleTrail)!!.version == 1);
     assert(serial::described_type(ParticleTrail)!!.layout == 0x8ca2db8e1e495b9f);
-    assert(serial::described_type(ParticleSystemDesc)!!.version == 7);
-    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0x4c53c2a840dc4b22);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 7);
-    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0xa19169c0d642b947);
+    assert(serial::described_type(particle::ParticleSystemDescV7)!!.version == 7);
+    assert(serial::described_type(particle::ParticleSystemDescV7)!!.layout == 0x4c53c2a840dc4b22);
+    assert(serial::described_type(particle::ParticleAuthoringV7)!!.version == 7);
+    assert(serial::described_type(particle::ParticleAuthoringV7)!!.layout == 0xa19169c0d642b947);
+    assert(serial::described_type(ParticleSystemDesc)!!.version == 8);
+    assert(serial::described_type(ParticleSystemDesc)!!.layout == 0xf4e634d538fb6561);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.version == 8);
+    assert(serial::described_type(particle::ParticleAuthoring)!!.layout == 0x80aadf92bb6def28);
     @pool() {
         String schema = serial::write_schema(tmem)!!;
         assert(schema.contains("particle_system") && schema.contains("emitting"));
@@ -225,6 +233,7 @@ fn void test_serial_layout_registration() @test {
         assert(schema.contains("flipbook") && schema.contains("random_start") && schema.contains("OVER_LIFE"));
         assert(schema.contains("turbulence") && schema.contains("octaves") && schema.contains("scroll"));
         assert(schema.contains("trail") && schema.contains("width_over_trail") && schema.contains("TILE"));
+        assert(schema.contains("mesh_cast_shadow") && schema.contains("mesh_trace"));
     };
 }
 
@@ -292,6 +301,7 @@ fn void test_particles_both_encodings_restore_pending_inputs_and_emitting() @tes
                 assert(trail.color_over_trail.values == source.desc.trail.color_over_trail.values);
                 assert(fixture.assets.materials.is_live(trail.material));
                 assert(!c3d::same_id(trail.material, system.desc.material));
+                assert(system.desc.mesh_cast_shadow == (mode == MESH) && system.desc.mesh_trace == (mode == MESH));
                 assert(system.desc.color_over_life.values[7] == source.desc.color_over_life.values[7]);
                 assert(restored.first_child && restored.first_child.name == "authored-child");
                 assert(fixture.destination.count(BillboardBatch) == 0 && fixture.destination.count(InstancedMesh) == 0);

@@ -92,6 +92,7 @@ struct Options @local {
     bool lit_smoke;
     bool embers;
     bool trails;
+    bool debris_shadows;
     bool collide;
     bool drop_oldest;
     bool limit_frames;
@@ -365,7 +366,16 @@ fn Demo? create_demo(Options options) @local {
         Geometry plane = geometry::plane(tmem, 30, 30);
         floor = demo.assets.add_geometry(&plane)!;
     };
-    MaterialId ground_material = demo.assets.add_material(material::basic({ .color = { 0.08f, 0.11f, 0.15f, 1 } }))!;
+    MaterialId ground_material;
+    if (options.debris_shadows) {
+        StandardParams ground = material::STANDARD_PARAMS_DEFAULT;
+        ground.base_color = { 0.35f, 0.4f, 0.45f, 1 };
+        ground.metallic = 0;
+        ground.roughness = 0.9f;
+        ground_material = demo.assets.add_material(material::standard(ground))!;
+    } else {
+        ground_material = demo.assets.add_material(material::basic({ .color = { 0.08f, 0.11f, 0.15f, 1 } }))!;
+    }
     Node* ground = demo.scene.add_mesh(floor, ground_material)!;
     demo.scene.get(ground, Mesh).cast_shadow = false;
     StandardParams surface = material::STANDARD_PARAMS_DEFAULT;
@@ -373,7 +383,8 @@ fn Demo? create_demo(Options options) @local {
     surface.metallic = 0;
     surface.roughness = 0.7f;
     MaterialId debris_material = demo.assets.add_material(material::standard(surface))!;
-    Node* sun = demo.scene.add_light(light::directional({ 1, 0.9f, 0.8f }, 2, options.lit_smoke))!;
+    bool sun_shadow = options.lit_smoke || options.debris_shadows;
+    Node* sun = demo.scene.add_light(light::directional({ 1, 0.9f, 0.8f }, 2, sun_shadow))!;
     sun.local.rotation = maths::look_rotation({ -0.5f, -1, -0.3f }, { 0, 1, 0 });
     if (options.lit_smoke) add_lit_smoke_props(&demo)!;
 
@@ -475,6 +486,7 @@ fn Demo? create_demo(Options options) @local {
     debris.render_mode = MESH;
     debris.material = debris_material;
     debris.geometry = box;
+    debris.mesh_cast_shadow = options.debris_shadows;
     debris.shape = CONE;
     debris.radius = 0.2f;
     debris.cone_angle = 0.5f;
@@ -1047,6 +1059,7 @@ fn Options? parse_options(String[] args) @local {
                 options.lighting = parse_lighting(option_value(args, &index)!)!;
                 options.single_lighting = true;
             case "--normal": options.normal = parse_normal(option_value(args, &index)!)!;
+            case "--debris-shadows": options.debris_shadows = true;
             case "--collide": options.collide = true;
             case "--drop-oldest": options.drop_oldest = true;
             case "--frames":
@@ -1056,11 +1069,12 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    bool scene_effect = options.sparks || options.smoke || options.collide || options.lit_smoke;
+    bool scene_effect = options.sparks || options.smoke || options.collide || options.lit_smoke
+        || options.debris_shadows;
     bool lit_option = options.single_lighting || options.normal != ParticleNormal.SPHERICAL;
     if (!options.frames || (options.stress && options.benchmark) || (scene_effect && options.stress)
         || (options.lit_smoke && (options.sparks || options.smoke || options.embers || options.trails
-            || options.collide))
+            || options.collide || options.debris_shadows))
         || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
         || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;
@@ -1074,7 +1088,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
         io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--smoke] [--embers] [--trails]");
-        io::eprintn("    [--collide] [--lit-smoke [--lighting name] [--normal name]]");
+        io::eprintn("    [--collide] [--debris-shadows] [--lit-smoke [--lighting name] [--normal name]]");
         io::eprintn("    [--frames count] [--capture-rgba path].");
         return 1;
     }

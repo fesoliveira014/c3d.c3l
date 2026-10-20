@@ -275,6 +275,8 @@ struct ParticleSystemDesc {
     ParticleFlipbook flipbook;
     ParticleTurbulence turbulence;
     ParticleTrail trail;
+    bool mesh_cast_shadow; // MESH only; the batch casts into the shadow maps when its material is opaque or masked
+    bool mesh_trace; // MESH only; one scene trace instance per live particle, against the renderer's trace capacity
 }
 
 <*
@@ -429,8 +431,8 @@ fn void? prepare(Scene* scene, Node* emitter) {
             parent: emitter,
         )!;
         InstancedMesh* batch = scene.get(child, InstancedMesh);
-        batch.cast_shadow = false;
-        batch.trace = false;
+        batch.cast_shadow = desc.mesh_cast_shadow;
+        batch.trace = desc.mesh_trace;
     } else {
         child = scene.add_billboards(
             material: desc.material,
@@ -617,6 +619,9 @@ fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
     check_particle_collision(&desc.collision)!;
     check_particle_flipbook(&desc.flipbook, desc.render_mode)!;
     check_particle_turbulence(&desc.turbulence)!;
+    if (desc.render_mode != ParticleRenderMode.MESH && (desc.mesh_cast_shadow || desc.mesh_trace)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
 }
 
 fn void? check_particle_collision(ParticleCollision* collision) @private {

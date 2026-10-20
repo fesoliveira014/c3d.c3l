@@ -448,6 +448,30 @@ fn void test_updates_allocate_nothing_and_removal_releases_owned_children() @tes
     assert(!tracker.has_leaks());
 }
 
+fn void test_mesh_flags_reach_the_instanced_child() @test {
+    Scene scene = make_scene(16);
+    defer scene::destroy_scene(&scene);
+    ParticleSystemDesc desc = quiet_desc();
+    desc.render_mode = MESH;
+    Node* plain = scene.add_particle_system(desc)!!;
+    InstancedMesh* plain_batch = scene.get(scene.node(scene.get(plain, ParticleSystem).draw_node), InstancedMesh);
+    assert(!plain_batch.cast_shadow && !plain_batch.trace);
+
+    desc.mesh_cast_shadow = true;
+    desc.mesh_trace = true;
+    Node* debris = scene.add_particle_system(desc)!!;
+    InstancedMesh* batch = scene.get(scene.node(scene.get(debris, ParticleSystem).draw_node), InstancedMesh);
+    assert(batch.cast_shadow && batch.trace);
+
+    desc.render_mode = BILLBOARD;
+    desc.mesh_cast_shadow = true;
+    desc.mesh_trace = false;
+    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
+    desc.mesh_cast_shadow = false;
+    desc.mesh_trace = true;
+    assert(@catch(scene.add_particle_system(desc)) == c3d::INVALID_ARGUMENT);
+}
+
 fn void test_desc_validation_rejects_unusable_fields_atomically() @test {
     TrackingAllocator tracker;
     tracker.init(mem);

@@ -543,10 +543,11 @@ verified ownership.
 See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).
 
 ParticleSystem restores its descriptor and emitting flag in VALUE. The payload is
-version 7. Version 2 added `saturation`, version 3 the sub-emitters and
-`max_events`, version 4 `collision`, version 5 `flipbook`, version 6 `turbulence`
-and version 7 `trail`; older payloads in both encodings read `REFUSE`, no
-sub-emitters, no collision, no flipbook, no turbulence and no trail. The collision
+version 8. Version 2 added `saturation`, version 3 the sub-emitters and
+`max_events`, version 4 `collision`, version 5 `flipbook`, version 6 `turbulence`,
+version 7 `trail` and version 8 `mesh_cast_shadow` and `mesh_trace`; older payloads
+in both encodings read `REFUSE`, no sub-emitters, no collision, no flipbook, no
+turbulence, no trail and debris that neither casts shadows nor traces. The collision
 callback is runtime-only. Sub-emitter targets are same-subtree entity references. Its pool, event queue,
 random state, counters and draw child restart through explicit preparation.
 A generated draw or trail child selected without its owner is rejected. See
