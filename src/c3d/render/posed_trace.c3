@@ -90,6 +90,7 @@ struct PosedTraceTable {
     List{uint}                   pending;     // slots the current recording staged, posed or built
     ulong                        epoch;       // one per recording: an open frame, or a closed preparation
     ulong                        epoch_frame; // frame_index + 1 of the epoch's open frame; 0 when closed
+    ulong                        exhausted_epoch; // epoch whose vacancy search found no slot; 0 when none did
     usz                          bytes;       // GPU bytes of every live slot
     List{PosedDispatch}          dispatches;  // posing work the current preparation queued
     List{TraceRefitRoot}         refits;      // trees the current preparation queued to refit, in one dispatch
@@ -371,13 +372,17 @@ fn void free_posed_trace_storage(PosedTraceTable* table) @private {
     *table = {};
 }
 
+// Every slot stays claimed for the rest of the epoch once a search finds none free, so later misses fail at once.
 fn uint? vacant_posed_slot(PosedTraceTable* table) @local {
+    if (table.exhausted_epoch == table.epoch) return c3d::CAPACITY_EXCEEDED~;
+
     foreach (uint index, &slot : table.slots) {
         if (!slot.key.scene) return index;
     }
     foreach (uint index, &slot : table.slots) {
         if (slot.claimed_epoch != table.epoch) return index;
     }
+    table.exhausted_epoch = table.epoch;
     return c3d::CAPACITY_EXCEEDED~;
 }
 
@@ -391,6 +396,7 @@ fn void empty_posed_slot(PosedTraceTable* table, PosedTraceRes* slot, RetireList
     }
     if (slot.pose.len) alloc::free(table.allocator, slot.pose.ptr);
     table.bytes -= slot.stream_bytes + (usz)slot.node_count * BvhNodeGpu::size + slot.blas_bytes;
+    table.exhausted_epoch = 0;
     *slot = {};
 }
 
