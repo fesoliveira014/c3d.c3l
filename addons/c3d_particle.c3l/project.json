@@ -28,7 +28,8 @@
         "test/flipbook_test.c3",
         "test/turbulence_test.c3",
         "test/trail_test.c3",
-        "test/parallel_test.c3"
+        "test/parallel_test.c3",
+        "test/reach_test.c3"
       ]
     },
     "particles": {
