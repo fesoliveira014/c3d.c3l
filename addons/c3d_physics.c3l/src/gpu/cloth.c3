@@ -18,10 +18,15 @@ const uint DEVICE_SINGLE_PASS_PARTICLES = 1_500; // one 128-thread group beats f
  Budgets of one device cloth context.
 *>
 struct GpuClothsDesc {
-    uint max_cloths;    // cloths stepped at once
+    uint max_cloths;    // cloths stepped at once; the workgroups of the one dispatch the small ones share
     uint max_particles; // across every cloth; 48 B of device state each, 16 B of it copied out every frame
     usz  table_bytes;   // topology, rest, color and routing tables of every cloth
 }
+
+<*
+ Most cloths a context holds; Vulkan guarantees this many workgroups in one dispatch.
+*>
+const uint MAX_GPU_CLOTHS = 65_535;
 
 <*
  Budgets that fit a handful of flags or capes.
@@ -52,6 +57,7 @@ struct GpuCloths {
     GpuClothsDesc desc;
     ClothStages   stages;
     ClothSlot[]   slots;
+    StepBatch     batch;        // scratch of the update in progress
     BufferId      positions;    // READBACK; the world positions of every cloth, inverse mass in w
     BufferId      work;         // predicted positions, then velocities
     BufferId      tables;       // UPLOAD; topology, rest and routing tables
@@ -74,7 +80,7 @@ fn ClothStepShape step_shape(uint particle_count) {
  Create a context and add its compute stages to the store.
  @param [&inout] assets : "The store the renderer draws from."
  @return? AssetStore.add_compute_shader!
- @require desc.max_cloths > 0 && desc.max_particles > 0 && desc.table_bytes > 0
+ @require desc.max_cloths > 0 && desc.max_cloths <= MAX_GPU_CLOTHS && desc.max_particles > 0 && desc.table_bytes > 0
 *>
 fn GpuCloths? create_gpu_cloths(
     Allocator allocator,
@@ -90,6 +96,7 @@ fn GpuCloths? create_gpu_cloths(
         .desc = desc,
         .stages = stages,
         .slots = alloc::new_array(allocator, ClothSlot, (sz)desc.max_cloths),
+        .batch = create_step_batch(allocator, (sz)desc.max_cloths),
         .tables_cpu = alloc::new_array(allocator, char, (sz)desc.table_bytes),
     };
 }
@@ -105,6 +112,7 @@ fn void destroy_gpu_cloths(GpuCloths* cloths, Renderer* renderer) {
         if (buffer.generation) (void)renderer.destroy_buffer(buffer);
     }
     alloc::free(cloths.allocator, cloths.slots.ptr);
+    destroy_step_batch(cloths.allocator, &cloths.batch);
     alloc::free(cloths.allocator, cloths.tables_cpu.ptr);
     *cloths = {};
 }
@@ -112,6 +120,7 @@ fn void destroy_gpu_cloths(GpuCloths* cloths, Renderer* renderer) {
 <*
  Record the due steps of every prepared GPU cloth.
  An aborted frame is replayed; one followed by FRAMES_IN_FLIGHT frames without an update counts as applied.
+ A fault that closes the frame ends the update and is returned.
  @param [&inout] cloths : "Retires the ranges of cloths it no longer sees."
  @param [&inout] renderer : "Frame open, with no dispatch recorded yet."
  @param [&inout] assets : "Holds the output geometry of every cloth."
@@ -151,6 +160,7 @@ fn void? update(GpuCloths* cloths, Renderer* renderer, AssetStore* assets, Scene
         if (!failure) failure = upload_failure;
     } else {
         foreach (&slot : cloths.slots) {
+            if (!renderer.frame_open) break; // a dispatch fault closed the frame; the first fault is returned below
             if (!slot.cloth.generation || slot.stamp != cloths.stamp) continue;
 
             if (catch excuse = step_cloth(
@@ -162,6 +172,9 @@ fn void? update(GpuCloths* cloths, Renderer* renderer, AssetStore* assets, Scene
                 if (!failure) failure = excuse;
             }
         }
+        if (catch excuse = record_batch(cloths, renderer)) {
+            if (!failure) failure = excuse;
+        }
     }
     if (failure) return failure~;
 }
@@ -172,8 +185,8 @@ fn void? update(GpuCloths* cloths, Renderer* renderer, AssetStore* assets, Scene
  @param [&inout] renderer : "Frame open."
  @param cloth : "A cloth the latest update packed."
  @return "Vectors of world position and inverse mass, one per particle."
- @require renderer.frame_open
  @return? render::NOT_READY, c3d::INVALID_ID, Renderer.read_buffer!
+ @require renderer.frame_open
 *>
 fn Vec4[]? read_positions(GpuCloths* cloths, Renderer* renderer, Entity cloth) {
     ClothSlot* slot = find_slot(cloths, cloth);

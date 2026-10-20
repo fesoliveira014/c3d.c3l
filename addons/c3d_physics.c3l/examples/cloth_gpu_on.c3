@@ -44,7 +44,7 @@ fn void report(
         cloth_gpu::step_shape(particles),
         cloths,
         particles,
-        dispatches / cloths,
+        dispatches,
     );
     io::printfn(
         "gpu_cloth,memory,device_bytes,%d,host_readback_bytes,%d,host_tables_bytes,%d,particles_used,%d,table_bytes_used,%d",
