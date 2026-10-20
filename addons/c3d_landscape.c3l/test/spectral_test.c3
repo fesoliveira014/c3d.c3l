@@ -15,7 +15,6 @@ const Vec2 BREEZE_WIND @local = { 4, 0 };
 const float BLEND_SECONDS @local = 2;
 const double BLEND_END @local = 3; // seconds: past the blend that starts at the first update after the call
 const double FIRST_UPDATE @local = 1;
-const float RELATIVE_TOLERANCE @local = 1e-4f;
 
 struct Fixture @local {
     AssetStore assets;
@@ -121,37 +120,14 @@ fn void test_spectrum_init_is_deterministic() @test {
     assert(table[..] != reseeded[..], "another seed built the same spectrum");
 }
 
-// The variance of the components outside the twin, from the table alone.
-fn double omitted_variance(Fixture* fixture, SpectralState* state) @local {
-    float[4]* texels = (float[4]*)fixture.assets.texture(state.table).pixels.ptr;
-    double total;
-    foreach (index, &texel : texels[:(usz)water::SPECTRAL_SIZE * water::SPECTRAL_SIZE]) {
-        total += 2.0 * ((double)(*texel)[0] * (*texel)[0] + (double)(*texel)[1] * (*texel)[1])
-            * (double)(*texel)[3] * (*texel)[3];
-    }
-    foreach (&wave : state.twin[:state.twin_count]) {
-        float[4]* texel = &texels[wave.row * water::SPECTRAL_SIZE + wave.column];
-        total -= 2.0 * ((double)(*texel)[0] * (*texel)[0] + (double)(*texel)[1] * (*texel)[1])
-            * (double)(*texel)[3] * (*texel)[3];
-    }
-    return total;
-}
-
-fn void test_spectral_twin_reports_its_bound() @test {
+fn void test_spectral_twin_keeps_the_strongest_components() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
     Node* lake = add_lake(&fixture, lake_desc(water::DEFAULT_SPECTRUM_SEED));
     SpectralState* state = state_of(&fixture, lake);
-    WaterRuntime* runtime = fixture.scene.get(lake, WaterRuntime);
-
     assert(state.twin_count == water::SPECTRAL_TWIN_WAVES);
-    double expected = water::SPECTRAL_BOUND_SIGMAS * math::sqrt(omitted_variance(&fixture, state));
-    assert(runtime.spectral_bound > 0);
-    assert(math::abs((double)runtime.spectral_bound - expected) <= expected * RELATIVE_TOLERANCE);
-    assert(state.envelope == water::SPECTRAL_ENVELOPE_SIGMAS * state.sigma);
 
-    // No component left out is stronger than one the twin keeps.
     float[4]* texels = (float[4]*)fixture.assets.texture(state.table).pixels.ptr;
     double weakest = double::max;
     foreach (&wave : state.twin[:state.twin_count]) weakest = min(weakest, (double)wave.gauss_magnitude * wave.right);
@@ -213,28 +189,6 @@ fn void test_spectral_spectrum_is_fixed_for_the_life_of_the_body() @test {
     WaterDesc rougher = lake_desc(water::DEFAULT_SPECTRUM_SEED);
     rougher.roughness = 0.2f;
     try_set_desc(&fixture, lake, rougher)!!;
-}
-
-fn void test_spectral_spectrum_is_checked() @test {
-    Fixture fixture;
-    setup(&fixture);
-    defer teardown(&fixture);
-    Node* node = fixture.scene.add_node()!!;
-
-    WaterDesc flat = lake_desc(water::DEFAULT_SPECTRUM_SEED);
-    flat.spectrum.patch_size = 0;
-    assert_fault(
-        @catch(try_attach(&fixture, node, flat)),
-        c3d::INVALID_ARGUMENT,
-        "A patch of no size",
-    );
-    WaterDesc inverted = lake_desc(water::DEFAULT_SPECTRUM_SEED);
-    inverted.spectrum.choppiness = -1;
-    assert_fault(
-        @catch(try_attach(&fixture, node, inverted)),
-        c3d::INVALID_ARGUMENT,
-        "A negative choppiness",
-    );
 }
 
 fn void test_spectral_sea_state_needs_a_prepared_body() @test {

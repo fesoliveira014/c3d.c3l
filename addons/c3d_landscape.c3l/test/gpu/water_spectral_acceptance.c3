@@ -28,6 +28,10 @@ const int FIELD_ROW_STEP @local = 3;
 const Vec2 CALMER_WIND @local = { 8, 0 };
 const float BLEND_SECONDS @local = 2;
 const double BLEND_START @local = 10;
+const int[<2>][4] LATTICE_VERTICES @local = { { 1, 2 }, { -3, 1 }, { 2, -2 }, { -1, -3 } }; // vertices on texels
+const int LATTICE_STEP_TEXELS @local = 8; // texels between them: 0.75 m, where the 5 cm cells meet the 9.4 cm texels
+const float LATTICE_SPACING @local = 0.75f; // metres between those vertices
+const float LATTICE_TOLERANCE @local = 0.0005f; // metres: the half-float texel and the depth's reconstruction
 
 fn void? evolve_fields(Fixture* fixture) @private {
     return water_gpu::update(&fixture.renderer, &fixture.scene, &fixture.assets);
@@ -83,11 +87,11 @@ fn Node* add_sea(Fixture* fixture, WaterDesc desc, Vec3 position = {}) @local {
     return node;
 }
 
-fn Node* add_overhead_camera(Fixture* fixture, float centre = 0) @local {
+fn Node* add_overhead_camera(Fixture* fixture, float centre_x = 0, float centre_z = 0) @local {
     return add_camera_node(
         fixture:     fixture,
         fov_degrees: TWIN_FOV_DEGREES,
-        position:    TWIN_CAMERA_POSITION + (Vec3){ centre, 0, 0 },
+        position:    TWIN_CAMERA_POSITION + (Vec3){ centre_x, 0, centre_z },
         forward:     { 0, -1, 0 },
         up:          { 0, 0, -1 },
     );
@@ -217,25 +221,30 @@ fn void test_spectral_tiles_meet_at_the_patch_edge() @test {
     check_validation(&fixture.renderer);
 }
 
-// A frame that evolves the fields, then the texels of the displacement or of the one before it.
+fn int[<2>][SEAM_PIXELS] diagonal_texels() @local {
+    int[<2>][SEAM_PIXELS] texels;
+    foreach (index, &texel : texels) *texel = { (int)index * FIELD_COLUMN_STEP, (int)index * FIELD_ROW_STEP };
+    return texels;
+}
+
+// A frame that evolves the fields, then the listed texels of the displacement or of the one before it.
 fn Vec4[SEAM_PIXELS] read_field(
     Fixture* fixture,
     SpectralState* state,
     bool previous,
     double time,
+    int[<2>][] texels,
 ) @local {
     update_water(fixture, time);
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame({ .time = time, .delta = (float)VELOCITY_STEP })!!;
     defer catch render::abort_frame(renderer);
     update_fields(fixture)!!;
-    int[<2>][SEAM_PIXELS] texels;
-    foreach (index, &texel : texels) *texel = { (int)index * FIELD_COLUMN_STEP, (int)index * FIELD_ROW_STEP };
     TextureId field = previous ? state.previous : state.displacement;
-    record_readback(fixture, render::read_texture(field), texels[..])!!;
+    record_readback(fixture, render::read_texture(field), texels)!!;
     renderer.end_frame()!!;
     Vec4[SEAM_PIXELS] values;
-    values[..] = read_texels(fixture, SEAM_PIXELS)[:SEAM_PIXELS];
+    values[:texels.len] = read_texels(fixture, texels.len)[:texels.len];
     return values;
 }
 
@@ -245,30 +254,35 @@ fn void test_spectral_previous_field_is_the_last_frames_displacement() @test {
     defer destroy_fixture(&fixture);
     Node* water_node = add_sea(&fixture, spectral_desc(plane_at(&fixture, 0)));
     SpectralState* state = fixture.scene.get(water_node, WaterRuntime).spectral;
+    int[<2>][SEAM_PIXELS] diagonal = diagonal_texels();
 
     Vec4[SEAM_PIXELS] first = read_field(
         fixture:  &fixture,
         state:    state,
         previous: false,
         time:     SPECTRAL_TIMES[0],
+        texels:   diagonal[..],
     );
     Vec4[SEAM_PIXELS] kept = read_field(
         fixture:  &fixture,
         state:    state,
         previous: true,
         time:     SPECTRAL_TIMES[1],
+        texels:   diagonal[..],
     );
     Vec4[SEAM_PIXELS] second = read_field(
         fixture:  &fixture,
         state:    state,
         previous: false,
         time:     SPECTRAL_TIMES[2],
+        texels:   diagonal[..],
     );
     Vec4[SEAM_PIXELS] kept_again = read_field(
         fixture:  &fixture,
         state:    state,
         previous: true,
         time:     SPECTRAL_TIMES[0],
+        texels:   diagonal[..],
     );
     float moved;
     foreach (index, texel : first) {
@@ -289,6 +303,7 @@ fn void test_spectral_previous_field_is_the_last_frames_displacement() @test {
         state:    other_state,
         previous: true,
         time:     SPECTRAL_TIMES[0],
+        texels:   diagonal[..],
     );
     foreach (index, texel : first) assert(unmoved[index] == texel, "the first frame moved at %d", index);
     check_validation(&fixture.renderer);
@@ -345,13 +360,19 @@ fn void test_spectral_blend_follows_the_twin() @test {
     check_validation(&fixture.renderer);
 }
 
+// The texel of the field a plane vertex stands on, by its cell offsets from the node's origin in lattice steps.
+fn int[<2>] lattice_texel(int[<2>] vertex) @local {
+    int mask = (int)water::SPECTRAL_SIZE - 1;
+    return { (vertex.x * LATTICE_STEP_TEXELS) & mask, (vertex.y * LATTICE_STEP_TEXELS) & mask };
+}
+
 fn void test_spectral_trace_matches_the_drawn_surface() @test {
     Fixture fixture;
     create_fixture(&fixture, false)!!;
     defer destroy_fixture(&fixture);
     WaterDesc desc = spectral_desc(plane_at(&fixture, 0));
     desc.trace = true;
-    add_sea(&fixture, desc);
+    Node* water_node = add_sea(&fixture, desc);
     Node* camera_node = add_overhead_camera(&fixture);
     TraceProbe probe = create_trace_probe(&fixture, camera_node, false)!!;
     defer destroy_trace_probe(&fixture, &probe);
@@ -363,6 +384,45 @@ fn void test_spectral_trace_matches_the_drawn_surface() @test {
         TraceAgreement agreement = trace_agreement(&fixture, &probe);
         assert(agreement.covered >= COVERAGE_MINIMUM && agreement.mismatch == 0);
         assert(agreement.worst <= SURFACE_TOLERANCE, "worst %f at %f s", agreement.worst, time);
+    }
+
+    // A vertex on a lattice point of the field draws at its rest point plus that texel of the displacement, which the
+    // trace pose, running the same function, poses alike: the camera's axis goes through the displaced vertex.
+    SpectralState* state = fixture.scene.get(water_node, WaterRuntime).spectral;
+    int[<2>][LATTICE_VERTICES.len] texels;
+    foreach (index, vertex : LATTICE_VERTICES) texels[index] = lattice_texel(vertex);
+    double time = SPECTRAL_TIMES[1];
+    Vec4[SEAM_PIXELS] displacements = read_field(
+        fixture:  &fixture,
+        state:    state,
+        previous: false,
+        time:     time,
+        texels:   texels[..],
+    );
+    ViewId view = add_view(&fixture, TWIN_SIZE);
+    int[<2>][1] centre = { { (int)TWIN_SIZE / 2, (int)TWIN_SIZE / 2 } };
+    foreach (index, vertex : LATTICE_VERTICES) {
+        Vec4 displacement = displacements[index];
+        Vec3 rest = { (float)vertex.x * LATTICE_SPACING, 0, (float)vertex.y * LATTICE_SPACING };
+        Node* eye = add_overhead_camera(&fixture, rest.x + displacement.x, rest.z + displacement.z);
+        CameraMatrices matrices = matrices_of(&fixture, eye, TWIN_SIZE);
+        Vec4[] depths = render_and_read(
+            fixture:  &fixture,
+            viewing:  eye,
+            view:     view,
+            time:     time,
+            pixels:   centre[..],
+            depth:    true,
+        )!!;
+        Vec3 drawn = unproject(
+            matrices: &matrices,
+            pixel:    centre[0],
+            size:     TWIN_SIZE,
+            depth:    depths[0].x,
+        );
+        float error = math::abs(drawn.y - displacement.y);
+        assert(error <= LATTICE_TOLERANCE, "drawn %f against texel %f at %d", drawn.y, displacement.y, index);
+        fixture.scene.remove(eye);
     }
     check_validation(&fixture.renderer);
 }
