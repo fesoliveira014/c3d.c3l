@@ -20,6 +20,8 @@ fn void? update(
     Scene* scene,
     float dt,
     Vec3 wind,
+    ViewId depth_view,
+    Entity depth_camera,
 ) {}
 
 fn void destroy(Context* context, Renderer* renderer) {}
