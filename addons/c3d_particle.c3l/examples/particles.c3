@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
 import c3d::gui;
+import c3d::job;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
@@ -35,6 +36,8 @@ const Vec3 CANOPY_POSITION @local = { 0, 1.7f, 0 };
 const Vec3 CRATE_SIZE @local = { 0.7f, 0.7f, 0.7f };
 const Vec3[2] CRATE_POSITIONS @local = { { -1.7f, 0.35f, 0.4f }, { 1.5f, 0.35f, -0.3f } };
 const uint STRESS_CAPACITY @local = 100_000; // about 18 MiB of pool, draw and packed records
+const uint MAX_VIEWS @local = 2;
+const float SPARK_RATE @local = 3200; // per second at SPARK_CAPACITY; scales with --capacity to keep the pool full
 const float SATURATED_REQUEST_FRACTION @local = 0.1f; // share of the pool requested every step of the saturated segment
 const uint DEFAULT_BENCHMARK_FRAMES @local = 300;
 const uint WARMUP_FRAMES @local = 60; // warm pipelines, uploads and delayed timestamp readback
@@ -98,15 +101,25 @@ struct Options @local {
     bool limit_frames;
     bool single_lighting;
     uint frames;
+    uint workers;
+    uint views;
+    uint capacity;
     ParticleLighting lighting;
     ParticleNormal normal;
     String capture_rgba;
+}
+
+struct Workers @local {
+    JobPool pool;
+    bool pooled;
+    uint count;
 }
 
 struct Demo @local {
     AssetStore assets;
     Scene scene;
     PhysicsWorld physics;
+    Workers workers;
     bool has_physics;
     Node*[3] emitters;
     Node*[2] cameras;
@@ -127,6 +140,7 @@ struct Metrics @local {
     double update_ms;
     double frame_ms;
     double[3] alive;
+    ulong upload_bytes;
     double gpu_sort_ms;
     double gpu_transparent_ms;
     uint gpu_samples;
@@ -156,6 +170,44 @@ fn ParticleTrail spark_trail(MaterialId material) @local {
     float[8] fade = { 1, 0.8f, 0.6f, 0.45f, 0.3f, 0.2f, 0.1f, 0 };
     foreach (index, alpha : fade) trail.color_over_trail.values[index] = { 1, 1, 1, alpha };
     return trail;
+}
+
+fn void run_on_pool(
+    void* context,
+    ParallelRangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) @local {
+    JobPool* pool = context;
+    pool.wait(pool.run(
+        range: range,
+        data:  data,
+        count: count,
+        batch: batch,
+    ));
+}
+
+fn void? create_workers(Workers* workers, uint count) @local {
+    if (!count) return;
+
+    JobPoolDesc desc = job::default_job_pool_desc();
+    desc.worker_count = count;
+    desc.background_workers = job::default_background_workers(count);
+    workers.pool = job::create_job_pool(mem, desc)!;
+    workers.pooled = true;
+    workers.count = count;
+}
+
+fn void destroy_workers(Workers* workers) @local {
+    if (workers.pooled) job::destroy_job_pool(&workers.pool);
+    workers.pooled = false;
+}
+
+fn ParallelFor Workers.parallel(&self) {
+    if (!self.pooled) return {};
+
+    return { .run = &run_on_pool, .context = &self.pool };
 }
 
 fn double elapsed_ms(time::Clock started) @local {
@@ -230,6 +282,7 @@ fn TextureId? add_smoke_sheet(AssetStore* assets) @local {
 }
 
 fn void destroy_demo(Demo* demo) @local {
+    destroy_workers(&demo.workers);
     if (demo.has_physics) {
         demo.scene.get(demo.emitters[1], ParticleSystem).set_collision(null, null);
         physics::destroy_physics_world(&demo.physics);
@@ -299,6 +352,7 @@ fn Demo? create_demo(Options options) @local {
         .lit_smoke = options.lit_smoke,
     };
     defer catch destroy_demo(&demo);
+    create_workers(&demo.workers, options.workers)!;
     particle::register_particles(&demo.scene)!;
     demo.scene.background.color = { 0.018f, 0.025f, 0.04f, 1 };
     demo.scene.ambient_color = { 1, 1, 1 };
@@ -442,14 +496,14 @@ fn Demo? create_demo(Options options) @local {
     }
 
     ParticleSystemDesc sparks = particle::default_particle_system_desc();
-    sparks.capacity = SPARK_CAPACITY;
+    sparks.capacity = options.capacity;
     sparks.seed = 2;
     sparks.material = demo.sparks;
     sparks.render_mode = STRETCHED;
     sparks.shape = CONE;
     sparks.radius = 0.15f;
     sparks.cone_angle = 0.4f;
-    sparks.rate = 3200;
+    sparks.rate = SPARK_RATE * options.capacity / SPARK_CAPACITY;
     sparks.lifetime = { .min = 1, .max = 1.6f };
     sparks.speed = { .min = 5, .max = 8 };
     sparks.size = { .min = 0.025f, .max = 0.05f };
@@ -475,7 +529,7 @@ fn Demo? create_demo(Options options) @local {
         sparks.collision.restitution = 0.45f;
         sparks.collision.friction = 0.3f;
         sparks.collision.ground_plane = true;
-        sparks.collision.max_queries = SPARK_CAPACITY; // one ray per spark, so none wait
+        sparks.collision.max_queries = options.capacity; // one ray per spark, so none wait
     }
     demo.emitters[1] = demo.scene.add_particle_system(sparks, name: "sparks")!;
     demo.emitters[1].local.position = { 0, 0.2f, 0 };
@@ -626,6 +680,7 @@ fn void report_metrics(String segment, Metrics totals, uint frames) @local {
     io::printfn("%s,alive_smoke,%.1f", segment, totals.alive[0] / frames);
     io::printfn("%s,alive_sparks,%.1f", segment, totals.alive[1] / frames);
     io::printfn("%s,alive_debris,%.1f", segment, totals.alive[2] / frames);
+    io::printfn("%s,upload_bytes,%.1f", segment, (double)totals.upload_bytes / frames);
     io::printfn("%s,gpu_samples,%d", segment, totals.gpu_samples);
     if (totals.gpu_samples) {
         if (totals.sorted) {
@@ -644,6 +699,27 @@ fn void report_metrics(String segment, Metrics totals, uint frames) @local {
     }
 }
 
+fn void? report_batch_costs(Demo* demo, Renderer* renderer, String segment, uint frames) @local {
+    Node* child = demo.scene.node(demo.scene.get(demo.emitters[1], ParticleSystem).draw_node);
+    BillboardBatch* batch = demo.scene.get(child, BillboardBatch);
+    BillboardGpu[] records = mem::new_array(BillboardGpu, batch.capacity());
+    defer free(records);
+    double bounds_ms;
+    double copy_ms;
+    for (uint frame = 0; frame < frames; frame++) {
+        demo.scene.mark_billboards_dirty(child);
+        time::Clock started = clock::now();
+        spatial::billboard_world_bounds(child, batch, renderer.frame_origin);
+        bounds_ms += elapsed_ms(started);
+        started = clock::now();
+        render::copy_billboard_records(records, batch, renderer.frame_origin);
+        copy_ms += elapsed_ms(started);
+    }
+    io::printfn("%s,sparks_live,%d", segment, batch.count);
+    io::printfn("%s,sparks_bounds_ms,%.6f", segment, bounds_ms / frames);
+    io::printfn("%s,sparks_copy_ms,%.6f", segment, copy_ms / frames);
+}
+
 fn void? run_benchmark(Options options) @local {
     Demo demo = create_demo(options)!;
     defer destroy_demo(&demo);
@@ -657,11 +733,24 @@ fn void? run_benchmark(Options options) @local {
     ViewDesc desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
     desc.post.anti_aliasing = AntiAliasing.NONE;
     ViewId view = render::create_view(&renderer, desc)!;
+    ViewId second_view;
+    if (options.views > 1) {
+        RenderTargetId second_target = render::create_render_target(
+            renderer: &renderer,
+            desc: render::render_target_desc(WIDTH, HEIGHT, PixelFormat.RGBA8_SRGB),
+        )!;
+        ViewDesc second_desc = render::texture_view_desc(second_target, OutputMode.DISPLAY_LDR);
+        second_desc.post.anti_aliasing = AntiAliasing.NONE;
+        second_view = render::create_view(&renderer, second_desc)!;
+    }
     io::printfn("adapter,%s", renderer.adapter_name);
     io::printfn("resolution,%dx%d", WIDTH, HEIGHT);
     io::printfn("frames,%d", options.frames);
     io::printn("validation,on");
-    io::printn("execution,inline");
+    io::printfn("views,%d", options.views);
+    io::printfn("spark_capacity,%d", options.capacity);
+    io::printfn("execution,%s", options.workers ? "workers" : "inline");
+    io::printfn("workers,%d", options.workers);
     uint segments = 2;
     if (options.lit_smoke) segments = options.single_lighting ? 1 : LIT_BENCHMARK_LIGHTING.len;
     for (uint segment = 0; segment < segments; segment++) {
@@ -674,7 +763,7 @@ fn void? run_benchmark(Options options) @local {
         if (active) {
             for (uint step = 0; step < PREWARM_STEPS; step++) {
                 advance_physics(&demo, STEP_SECONDS);
-                particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 });
+                particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 }, demo.workers.parallel());
             }
         }
         Metrics totals;
@@ -688,16 +777,21 @@ fn void? run_benchmark(Options options) @local {
             orbit_lamp(&demo, (double)renderer.frame_index * STEP_SECONDS);
             demo.scene.update_world();
             time::Clock update_start = clock::now();
-            particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 });
+            particle::update(&demo.scene, STEP_SECONDS, { 0.4f, 0, 0 }, demo.workers.parallel());
             double update_ms = elapsed_ms(update_start);
             renderer.begin_frame({ .time = (double)renderer.frame_index * STEP_SECONDS, .delta = STEP_SECONDS })!;
             defer catch render::abort_frame(&renderer);
             renderer.render_view(&demo.scene, demo.cameras[0], view)!;
             renderer.finish_view(view)!;
+            if (options.views > 1) {
+                renderer.render_view(&demo.scene, demo.cameras[1], second_view)!;
+                renderer.finish_view(second_view)!;
+            }
             renderer.end_frame()!;
             if (frame >= WARMUP_FRAMES && frame < (ulong)WARMUP_FRAMES + options.frames) {
                 totals.update_ms += update_ms;
                 totals.frame_ms += elapsed_ms(frame_start);
+                totals.upload_bytes += renderer.stats.upload_bytes;
                 foreach (index, emitter : demo.emitters) {
                     totals.alive[index] += demo.scene.get(emitter, ParticleSystem).alive;
                 }
@@ -716,6 +810,7 @@ fn void? run_benchmark(Options options) @local {
         String name = segment ? "active" : "empty";
         if (options.lit_smoke) name = LIGHTING_NAMES[demo.smoke_params.lighting.ordinal].str_view();
         report_metrics(name, totals, options.frames);
+        if (active) report_batch_costs(&demo, &renderer, name, options.frames)!;
     }
     if (options.collide) {
         io::printfn("sparks,collision_skips,%d", demo.scene.get(demo.emitters[1], ParticleSystem).collision_skips);
@@ -741,7 +836,11 @@ fn void? run_stress(
     ParticleSaturation saturation,
     bool turbulent,
     bool trailed,
+    uint worker_count,
 ) @local {
+    Workers workers;
+    create_workers(&workers, worker_count)!;
+    defer destroy_workers(&workers);
     run_stress_segment(
         segment: "stress",
         frames: frames,
@@ -749,6 +848,7 @@ fn void? run_stress(
         rate: 0,
         turbulent: turbulent,
         trailed: trailed,
+        workers: &workers,
     )!;
     run_stress_segment(
         segment: "saturated",
@@ -757,6 +857,7 @@ fn void? run_stress(
         rate: STRESS_CAPACITY * SATURATED_REQUEST_FRACTION / STEP_SECONDS,
         turbulent: turbulent,
         trailed: trailed,
+        workers: &workers,
     )!;
 }
 
@@ -767,6 +868,7 @@ fn void? run_stress_segment(
     float rate,
     bool turbulent,
     bool trailed,
+    Workers* workers,
 ) @local {
     Scene scene = scene::create_scene(mem, { .max_nodes = 3 });
     defer scene::destroy_scene(&scene);
@@ -794,7 +896,7 @@ fn void? run_stress_segment(
     ParticleSystem* system = scene.get(emitter, ParticleSystem);
     system.emit_burst(STRESS_CAPACITY);
     scene.update_world();
-    particle::update(&scene, 0);
+    particle::update(&scene, 0, {}, workers.parallel());
     Node* child = scene.node(system.draw_node);
     BillboardBatch* batch = scene.get(child, BillboardBatch);
     BillboardGpu[] records = mem::new_array(BillboardGpu, STRESS_CAPACITY);
@@ -816,13 +918,13 @@ fn void? run_stress_segment(
     double checksum;
     for (ulong frame = 0; frame < (ulong)WARMUP_FRAMES + frames; frame++) {
         time::Clock started = clock::now();
-        particle::update(&scene, STEP_SECONDS, { 0.4f, 0, 0 });
+        particle::update(&scene, STEP_SECONDS, { 0.4f, 0, 0 }, workers.parallel());
         double updated = elapsed_ms(started);
         started = clock::now();
         Aabb bounds = spatial::billboard_world_bounds(child, batch);
         double bounded = elapsed_ms(started);
         started = clock::now();
-        render::pack_billboard_records(records, child.world, batch);
+        render::copy_billboard_records(records, batch, {});
         double packed = elapsed_ms(started);
         checksum += (double)(bounds.max.x + records[frame % STRESS_CAPACITY].position_width.x);
         double ribbon_bounded;
@@ -846,6 +948,7 @@ fn void? run_stress_segment(
         }
     }
     io::printfn("%s,frames,%d", segment, frames);
+    io::printfn("%s,workers,%d", segment, workers.count);
     io::printfn("%s,turbulence_octaves,%d", segment, desc.turbulence.strength > 0 ? desc.turbulence.octaves : 0);
     io::printfn("%s,alive,%d", segment, system.alive);
     io::printfn("%s,refused,%d", segment, system.dropped);
@@ -998,7 +1101,7 @@ fn void? run_interactive(Options options) @local {
             orbit_lamp(&demo, elapsed);
             demo.scene.update_world();
             time::Clock started = clock::now();
-            particle::update(&demo.scene, window.clock.delta, { wind, 0, 0 });
+            particle::update(&demo.scene, window.clock.delta, { wind, 0, 0 }, demo.workers.parallel());
             update_ms = elapsed_ms(started);
             elapsed += window.clock.delta;
             renderer.begin_frame({ .time = elapsed, .delta = window.clock.delta })!;
@@ -1043,6 +1146,8 @@ fn ParticleNormal? parse_normal(String name) @local {
 fn Options? parse_options(String[] args) @local {
     Options options = {
         .frames = DEFAULT_BENCHMARK_FRAMES,
+        .views = 1,
+        .capacity = SPARK_CAPACITY,
         .lighting = ParticleLighting.DIRECT_SHADOWED,
         .normal = ParticleNormal.SPHERICAL,
     };
@@ -1066,6 +1171,9 @@ fn Options? parse_options(String[] args) @local {
                 options.frames = option_value(args, &index)!.to_uint()!;
                 options.limit_frames = true;
             case "--capture-rgba": options.capture_rgba = option_value(args, &index)!;
+            case "--workers": options.workers = option_value(args, &index)!.to_uint()!;
+            case "--views": options.views = option_value(args, &index)!.to_uint()!;
+            case "--capacity": options.capacity = option_value(args, &index)!.to_uint()!;
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
@@ -1076,7 +1184,11 @@ fn Options? parse_options(String[] args) @local {
         || (options.lit_smoke && (options.sparks || options.smoke || options.embers || options.trails
             || options.collide || options.debris_shadows))
         || (lit_option && !options.lit_smoke) || (options.drop_oldest && !options.stress)
-        || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
+        || (options.capture_rgba.len && !options.benchmark)
+        || !options.views || options.views > MAX_VIEWS || !options.capacity
+        || ((options.views > 1 || options.capacity != SPARK_CAPACITY) && !options.benchmark)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
     return options;
 }
 
@@ -1087,14 +1199,16 @@ fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark | --stress [--drop-oldest]] [--sparks] [--smoke] [--embers] [--trails]");
-        io::eprintn("    [--collide] [--debris-shadows] [--lit-smoke [--lighting name] [--normal name]]");
+        io::eprintn("Use [--benchmark [--views 1|2] [--capacity sparks] | --stress [--drop-oldest]] [--sparks]");
+        io::eprintn("    [--smoke] [--embers] [--trails] [--collide] [--debris-shadows]");
+        io::eprintn("    [--lit-smoke [--lighting name] [--normal name]] [--workers count]");
         io::eprintn("    [--frames count] [--capture-rgba path].");
         return 1;
     }
     Options options = parsed;
     ParticleSaturation saturation = options.drop_oldest ? ParticleSaturation.DROP_OLDEST : ParticleSaturation.REFUSE;
-    if (catch excuse = (options.stress ? run_stress(options.frames, saturation, options.embers, options.trails)
+    if (catch excuse = (options.stress
+        ? run_stress(options.frames, saturation, options.embers, options.trails, options.workers)
         : options.benchmark ? run_benchmark(options) : run_interactive(options))) {
         io::eprintfn("Particles failed: %s", excuse);
         return 1;

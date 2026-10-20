@@ -108,11 +108,11 @@ fn void publish_billboards(
     BillboardBatch* batch = scene.get(node, BillboardBatch);
     BillboardJob job = { .system = system, .batch = batch };
     uint written = assign_draw_slots(system, parallel);
-    parallel.for_ranges(
+    run_blocks(
+        parallel: parallel,
         range: &write_billboard_blocks,
         data: &job,
-        count: block_count(system.alive),
-        batch: 1,
+        blocks: block_count(system.alive),
     );
 
     bool changed = written || batch.count;
@@ -129,11 +129,11 @@ fn void publish_meshes(
     InstancedMesh* batch = scene.get(node, InstancedMesh);
     MeshJob job = { .system = system, .batch = batch };
     uint written = assign_draw_slots(system, parallel);
-    parallel.for_ranges(
+    run_blocks(
+        parallel: parallel,
         range: &write_mesh_blocks,
         data: &job,
-        count: block_count(system.alive),
-        batch: 1,
+        blocks: block_count(system.alive),
     );
 
     bool changed = written || batch.count;
@@ -147,11 +147,11 @@ fn float draw_extent(ParticleSystem* system, uint index, float life) @private {
 
 fn uint assign_draw_slots(ParticleSystem* system, ParallelFor parallel) @private {
     uint blocks = block_count(system.alive);
-    parallel.for_ranges(
+    run_blocks(
+        parallel: parallel,
         range: &count_drawn_blocks,
         data: system,
-        count: blocks,
-        batch: 1,
+        blocks: blocks,
     );
 
     uint total;

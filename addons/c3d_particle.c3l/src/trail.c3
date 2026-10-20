@@ -88,11 +88,11 @@ fn void record_trails(ParticleSystem* system, float seconds, ParallelFor paralle
     if (!system.desc.trail.max_points) return;
 
     TrailJob job = { .system = system, .seconds = seconds };
-    parallel.for_ranges(
+    run_blocks(
+        parallel: parallel,
         range: &record_trail_blocks,
         data: &job,
-        count: block_count(system.alive),
-        batch: 1,
+        blocks: block_count(system.alive),
     );
 }
 

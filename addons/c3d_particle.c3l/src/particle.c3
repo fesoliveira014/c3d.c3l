@@ -41,7 +41,8 @@ const Vec3 PARTICLE_GRAVITY = { 0, -9.81f, 0 };
 *>
 const uint MAX_SUB_EMITTERS = 4; // each adds one trigger test per raised event
 
-const uint PARTICLE_BLOCK @private = 1024; // particles per range kernel unit; amortizes a fork and still balances workers
+const uint PARTICLE_BLOCK @private = 1024; // particles per kernel unit; amortizes a fork and still balances workers
+const uint BLOCKS_PER_RANGE @private = 1; // blocks a worker claims at once
 const uint DEFAULT_COLLISION_QUERIES @private = 256; // callback casts per step; each is one world query
 const float DEFAULT_IMPACT_SPEED @private = 1; // above the 0.98 m/s gravity adds in the longest step
 const uint DEFAULT_PARTICLE_CAPACITY @private = 1024; // 56 KiB pool for a small effect; draw arrays are additional

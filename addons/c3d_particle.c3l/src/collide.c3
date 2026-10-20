@@ -81,11 +81,11 @@ fn void collide(ParticleSystem* system, float seconds, ParallelFor parallel) @pr
 fn void collide_ground_plane(ParticleSystem* system, float seconds, ParallelFor parallel) @private {
     GroundJob job = { .system = system, .seconds = seconds };
     uint blocks = block_count(system.alive);
-    parallel.for_ranges(
+    run_blocks(
+        parallel: parallel,
         range: &collide_ground_blocks,
         data: &job,
-        count: blocks,
-        batch: 1,
+        blocks: blocks,
     );
 
     uint retired;

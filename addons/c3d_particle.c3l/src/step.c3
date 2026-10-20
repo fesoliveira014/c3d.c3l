@@ -120,11 +120,11 @@ fn void step(
         .turbulent = turbulent,
         .field = field,
     };
-    parallel.for_ranges(
+    run_blocks(
+        parallel: parallel,
         range: &advance_blocks,
         data: &job,
-        count: block_count(system.alive),
-        batch: 1,
+        blocks: block_count(system.alive),
     );
 
     index = survivors;
