@@ -29,6 +29,11 @@ const ulong RETIRE_TIMEOUT_NS @private = 1_000_000; // one bounded presentation 
 const int CLEANUP_FAILURE_EXIT_CODE @private = 1; // Reports failed completion without running unsafe teardown finalizers.
 const uint TEARDOWN_RETIRE_ATTEMPTS @private = 64; // teardown cannot pump events, so its presentation wait is bounded
 
+// Entries the renderer holds in each device table: 14 allocations or 2 top levels, doubled for growth.
+// One count serves both tables because the structure clause never binds first at equal table sizes.
+const uint RENDERER_RESERVED_ENTRIES @private = 32;
+const uint VIEW_RESERVED_ENTRIES @private = 16; // allocations: 7 per view, doubled for growth; the room of 8 posed slots
+
 const ZString[FRAMES_IN_FLIGHT] FRAME_ALLOCATOR_NAMES @private = {
     "frame_allocator_0",
     "frame_allocator_1",
@@ -82,7 +87,7 @@ struct RendererDesc {
     uint             shadow_resolution;
     uint             max_shadow_layers;
     uint             max_trace_instances;
-    uint             max_posed_trace_instances; // zero: DEFAULT_MAX_POSED_TRACE_INSTANCES
+    uint             max_posed_trace_instances; // zero: DEFAULT_MAX_POSED_TRACE_INSTANCES; bounded by the device tables
     uint             max_instance_batches;
     uint             max_resident_crowds; // zero: DEFAULT_MAX_RESIDENT_CROWDS
     usz              instance_cull_bytes;
@@ -819,8 +824,9 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     // Every mesh vertex stage declares ClipDistance, which the backend rejects without the feature.
     if (!caps.clip_distance) return c3d::UNSUPPORTED~;
     uint max_views = desc.max_views ? desc.max_views : DEFAULT_MAX_VIEWS;
+    gpu::MemoryStats memory = gpu::get_memory_stats(&device)!;
     uint max_render_targets = desc.max_render_targets ? desc.max_render_targets : DEFAULT_MAX_RENDER_TARGETS;
-    if (max_render_targets > gpu::get_memory_stats(&device)!.texture_capacity) return c3d::INVALID_ARGUMENT~;
+    if (max_render_targets > memory.texture_capacity) return c3d::INVALID_ARGUMENT~;
     uint max_trace_instances = desc.max_trace_instances ? desc.max_trace_instances : DEFAULT_MAX_TRACE_INSTANCES;
     if (ray_queries && max_trace_instances > caps.acceleration_structures.max_instance_count) {
         return c3d::UNSUPPORTED~;
@@ -829,6 +835,16 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     uint max_resident_crowds = desc.max_resident_crowds ? desc.max_resident_crowds : DEFAULT_MAX_RESIDENT_CROWDS;
     uint max_posed_trace_instances = desc.max_posed_trace_instances
       ? desc.max_posed_trace_instances : DEFAULT_MAX_POSED_TRACE_INSTANCES;
+
+    // Content shares both tables uncounted, so this refuses only a capacity that no scene can hold.
+    ulong required_allocations = (ulong)max_posed_trace_instances * POSED_SLOT_ALLOCATIONS
+      + RENDERER_RESERVED_ENTRIES + (ulong)max_views * VIEW_RESERVED_ENTRIES;
+    if (required_allocations > memory.allocation_capacity) return c3d::INVALID_ARGUMENT~;
+    if (ray_queries
+        && max_posed_trace_instances + RENDERER_RESERVED_ENTRIES > memory.acceleration_structure_capacity) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
     // A device without ray queries or ray-tracing pipelines may reject their stages, so each is named only when enabled.
     bool pipelines = caps.ray_tracing_pipelines.enabled;
     gpu::StageMask consumer_stages = CONSUMER_STAGES;
