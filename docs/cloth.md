@@ -216,6 +216,13 @@ against the local particle bounds before consuming candidate capacity. Heightfie
 use conservatively expanded cell ranges. Neither path copies the whole cooked asset into
 each cloth; compound children use their owning compound's accessors.
 
+Each substep places every shape's world bounds, grown by the contact reach (`thickness`
+plus `contact_tolerance`) and a rounding allowance. A contact pass first rejects shapes
+whose bounds miss the cloth's particle bounds, then rejects each particle outside the
+surviving shapes' bounds, before the narrow query runs. The rejections drop only pairs
+the narrow query would drop, so candidates and contacts match a pass without them.
+Swept passes under `continuous` run the narrow query alone.
+
 Shapes use rigid physics' baked dimensions and local transforms. Native getters supply
 the actual baked hull geometry and mesh scale. The final scene body's translation and
 rotation place them; body node scale is not applied again. The existing native shape
