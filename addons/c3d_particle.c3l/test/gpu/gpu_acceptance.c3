@@ -25,6 +25,7 @@ const uint ABORTED_STEP @private = 5;
 const uint INITIAL_BURST @private = 128;
 const uint ABORTED_BURST @private = 64;
 const uint STEPS_AFTER_ABORT @private = 20;
+const uint GAP_STEPS @private = 10;
 const uint SHIFT_STEPS @private = 28; // the first burst is still alive
 const uint SHIFT_AT @private = 12;
 const uint SHIFT_BURST @private = 100;
@@ -339,6 +340,39 @@ fn void test_gpu_origin_shift_follows_the_cpu_reference() @test {
             dt: dt,
             kind: step + 1 == steps ? FrameKind.FINAL : FrameKind.NORMAL,
             expected_alive: 2 * SHIFT_BURST,
+            expected_dropped: 0,
+        )!!;
+    }
+}
+
+fn void idle_frames(Fixture* fixture, uint count) @private {
+    for (uint frame = 0; frame < count; frame++) {
+        fixture.renderer.begin_frame()!!;
+        fixture.renderer.end_frame()!!;
+    }
+}
+
+fn void test_gpu_step_commits_after_frames_without_an_update() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Pair pair = add_pair(&fixture)!!;
+    uint moving = 1 + GAP_STEPS;
+    uint steps = moving + render::FRAMES_IN_FLIGHT;
+    for (uint step = 0; step < steps; step++) {
+        float dt = step < moving ? STEP_SECONDS : 0;
+        if (step == 0) {
+            pair.cpu.emit_burst(INITIAL_BURST);
+            pair.device.emit_burst(INITIAL_BURST);
+        }
+        if (step == 1) idle_frames(&fixture, render::FRAMES_IN_FLIGHT + 1);
+        particle::update(&fixture.scene, dt, WIND);
+        record_frame(
+            fixture: &fixture,
+            pair: &pair,
+            dt: dt,
+            kind: step + 1 == steps ? FrameKind.FINAL : FrameKind.NORMAL,
+            expected_alive: INITIAL_BURST,
             expected_dropped: 0,
         )!!;
     }

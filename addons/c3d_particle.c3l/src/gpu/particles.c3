@@ -119,6 +119,7 @@ fn void destroy_gpu_particles(GpuParticles* particles, Renderer* renderer) {
 <*
  Record one step of every prepared GPU system and publish its draw.
  Call once per frame after update_world and before the views render.
+ An aborted frame followed by FRAMES_IN_FLIGHT or more frames without an update loses that step's burst and shift.
  @param [&inout] particles : "Retires the buffers of systems that died."
  @param [&inout] renderer : "Frame open, no overlay open."
  @param [&inout] scene : "Registered; matrices current."
@@ -234,7 +235,9 @@ fn void? step_system(
     usz slot_index = slot - particles.slots.ptr;
 
     GpuStepState* state = particle::gpu_step_state(system);
-    particle::settle_gpu_step(system, renderer.frame_was_submitted(state.pending.frame));
+    bool settled = renderer.frame_was_submitted(state.pending.frame)
+        || renderer.frame_index - state.pending.frame > render::FRAMES_IN_FLIGHT;
+    particle::settle_gpu_step(system, settled);
     adopt_counters(
         system: system,
         renderer: renderer,

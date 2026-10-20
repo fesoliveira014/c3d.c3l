@@ -229,6 +229,11 @@ when `Renderer.frame_was_submitted` confirms the frame that recorded it. A frame
 dispatches, so the next `update` steps again from the committed state and takes the same burst. Call `update` once per
 frame.
 
+The renderer stops reporting a frame once `FRAMES_IN_FLIGHT` frames have passed. An `update` that comes later than that,
+after a pause or a loading screen, therefore commits the step, because only an aborted frame is not submitted. The
+residual case is an aborted frame followed by such a gap: the step never ran, but its burst and queued shift count as
+consumed, and the burst is lost.
+
 ### Rebasing
 
 `Scene.shift_particles(offset)` queues the shift for a GPU system. The next `update` subtracts it from every live
