@@ -609,6 +609,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     float quadtree_world_scale;
     uint64_t quadtree_params;
     uint64_t quadtree_depths;
+    uint64_t live_count;
+    uint _pad9;
+    uint _pad10;
     mat4 node_world;
 };
 
