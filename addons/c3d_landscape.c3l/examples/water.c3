@@ -256,6 +256,8 @@ struct Options @local {
     float       debug_cell_scale;
     float       debug_roughness;
     float       debug_ripple_scale;
+    float       debug_jitter;
+    uint        debug_jitter_seed;
     uint        debug_frames;
     float       ripple_age; // seconds a shot lets its ripple spread
     float       dive_at;    // share of the descent a shot stands at; negative follows the clock
@@ -1420,6 +1422,8 @@ fn Options? parse_options(String[] args) @local {
             case "--debug-cell-scale": options.debug_cell_scale = option_value(args, &index)!.to_float()!;
             case "--debug-roughness": options.debug_roughness = option_value(args, &index)!.to_float()!;
             case "--debug-ripple-scale": options.debug_ripple_scale = option_value(args, &index)!.to_float()!;
+            case "--debug-jitter": options.debug_jitter = option_value(args, &index)!.to_float()!;
+            case "--debug-jitter-seed": options.debug_jitter_seed = option_value(args, &index)!.to_uint()!;
             case "--debug-frames": options.debug_frames = option_value(args, &index)!.to_uint()!;
             case "--sea-state": options.sea_state = true;
             case "--ocean": options.ocean = true;
@@ -2481,6 +2485,8 @@ fn int main(String[] args) {
         .no_floor        = options.debug_no_floor,
         .ratio_floor     = options.debug_ratio_floor,
         .floor_cell_size = options.debug_keep_floor ? water::default_water_desc().cell_size : 0,
+        .jitter_degrees  = options.debug_jitter,
+        .jitter_seed     = options.debug_jitter_seed,
         .fetch_scale     = options.ocean && options.debug_cell_scale > 0 ? 1 / options.debug_cell_scale : 0,
     };
     if (options.shot.len) {

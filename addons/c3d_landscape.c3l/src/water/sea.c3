@@ -25,6 +25,8 @@ struct SeaDebug {
     bool  ratio_floor;     // the whole table lifts until the shortest band reaches the floor
     float floor_cell_size; // metres: the floor counts cells of this size instead of the body's; zero keeps the body's
     float fetch_scale;     // multiplies the fetch; zero keeps it
+    float jitter_degrees;  // each band's direction moves by up to this much either way, seeded per body
+    uint  jitter_seed;     // mixed into every body's seed
 }
 
 SeaDebug sea_debug;
@@ -122,6 +124,7 @@ fn void? set_sea_state(
         Aabb rest = rest_bounds(assets, &water.desc);
         water.desc.waves = sea_waves(
             desc:          &water.desc,
+            seed:          body_seed(node),
             rest_min:      { rest.min.x, rest.min.z },
             rest_max:      { rest.max.x, rest.max.z },
             world:         world,
@@ -134,6 +137,7 @@ fn void? set_sea_state(
     WaterRuntime* runtime = scene.world.get(node, WaterRuntime);
     Wave[MAX_WAVES] target = sea_waves(
         desc:          &runtime.desc,
+        seed:          body_seed(node),
         rest_min:      runtime.rest_min,
         rest_max:      runtime.rest_max,
         world:         world,
@@ -178,8 +182,27 @@ fn SeaScales sea_scales(float speed, float fetch) @private {
     };
 }
 
+fn uint body_seed(Entity node) @private {
+    Id id = (Id)node;
+    return (id.index * 2654435761u ^ id.generation) + sea_debug.jitter_seed * 40503u;
+}
+
+// Jarzynski and Olano 2020, as in c3d::landscape's pcg_hash; measurement only.
+fn uint sea_hash(uint value) @private {
+    uint state = value * 747796405u + 2891336453u;
+    uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// A value in [-1, 1) fixed by the body's seed and the band.
+fn float band_jitter(uint seed, sz band) @private {
+    uint word = sea_hash(sea_hash(seed) ^ (uint)band);
+    return (float)(word >> 8) / 8388608.0f - 1.0f;
+}
+
 fn Wave[MAX_WAVES] sea_waves(
     WaterDesc* desc,
+    uint seed,
     Vec2 rest_min,
     Vec2 rest_max,
     Mat4 world,
@@ -218,7 +241,7 @@ fn Wave[MAX_WAVES] sea_waves(
     Wave[MAX_WAVES] waves;
     foreach (index, &wave : waves) {
         SeaBand band = SEA_BANDS[index];
-        float angle = heading + math::deg_to_rad(band.spread_degrees);
+        float angle = heading + math::deg_to_rad(band.spread_degrees + sea_debug.jitter_degrees * band_jitter(seed, index));
         wave.amplitude = band.amplitude_share * significant_height / vertical_scale;
         if (sea_debug.one_wave && index > 0) wave.amplitude = 0;
         wave.wavelength = band.wavelength_share * peak_wavelength * lift / horizontal_scale;
