@@ -21,6 +21,7 @@ fn ClothStepShape? shape_named(String name) @local {
     if (!name.len || name == "pr0") return PR0;
     if (name == "fused") return FUSED;
     if (name == "single") return SINGLE;
+    if (name == "single_cached") return SINGLE_CACHED;
     return c3d::INVALID_ARGUMENT~;
 }
 

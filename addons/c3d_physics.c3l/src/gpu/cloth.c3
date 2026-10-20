@@ -26,6 +26,7 @@ const String INTEGRATE_KEY @private = "c3d_physics/cloth_integrate";
 const String OUTPUT_KEY @private = "c3d_physics/cloth_output";
 const String FUSED_KEY @private = "c3d_physics/cloth_fused";
 const String SINGLE_KEY @private = "c3d_physics/cloth_single";
+const String SINGLE_CACHED_KEY @private = "c3d_physics/cloth_single_cached";
 
 struct Stages @private {
     ComputeShaderId init;
@@ -36,6 +37,7 @@ struct Stages @private {
     ComputeShaderId output;
     ComputeShaderId fused;
     ComputeShaderId single;
+    ComputeShaderId single_cached;
 }
 
 <*
@@ -45,6 +47,7 @@ enum ClothStepShape {
     PR0,
     FUSED,
     SINGLE,
+    SINGLE_CACHED,
 }
 
 // Mirrors ClothRoot in cloth_root.glsl.
@@ -214,7 +217,9 @@ fn void? GpuCloth.step(
         case FUSED:
             self.record_fused(&recorder)!;
         case SINGLE:
-            self.record_single(&recorder)!;
+            self.record_single(&recorder, self.stages.single)!;
+        case SINGLE_CACHED:
+            self.record_single(&recorder, self.stages.single_cached)!;
     }
     self.initialized = true;
     self.dispatches = recorder.dispatches;
@@ -274,7 +279,7 @@ fn void? GpuCloth.record_fused(&self, Recorder* recorder) {
 <*
  One dispatch for the whole step, with workgroup barriers between passes.
 *>
-fn void? GpuCloth.record_single(&self, Recorder* recorder) {
+fn void? GpuCloth.record_single(&self, Recorder* recorder, ComputeShaderId stage) {
     BufferId[2] state_writes = { self.positions, self.work };
     GeometryWrite[1] geometry_writes = {{
         .geometry     = self.geometry,
@@ -284,7 +289,7 @@ fn void? GpuCloth.record_single(&self, Recorder* recorder) {
 
     recorder.root.phases = self.initialized ? 0 : PASS_INITIALIZE;
     return recorder.run_groups(
-        stage:    self.stages.single,
+        stage:    stage,
         groups:   { 1, 1, 1 },
         writes:   state_writes[..],
         geometry: geometry_writes[..],
@@ -479,14 +484,15 @@ fn Vec3 sphere_center(Scene* scene, ClothState* state) @private {
 
 fn Stages? add_stages(AssetStore* assets) @private {
     return {
-        .init      = stage(assets, INIT_KEY, physics::CLOTH_INIT_SPIRV[..])!,
-        .predict   = stage(assets, PREDICT_KEY, physics::CLOTH_PREDICT_SPIRV[..])!,
-        .project   = stage(assets, PROJECT_KEY, physics::CLOTH_PROJECT_SPIRV[..])!,
-        .collide   = stage(assets, COLLIDE_KEY, physics::CLOTH_COLLIDE_SPIRV[..])!,
-        .integrate = stage(assets, INTEGRATE_KEY, physics::CLOTH_INTEGRATE_SPIRV[..])!,
-        .output    = stage(assets, OUTPUT_KEY, physics::CLOTH_OUTPUT_SPIRV[..])!,
-        .fused     = stage(assets, FUSED_KEY, physics::CLOTH_FUSED_SPIRV[..])!,
-        .single    = stage(assets, SINGLE_KEY, physics::CLOTH_SINGLE_SPIRV[..])!,
+        .init          = stage(assets, INIT_KEY, physics::CLOTH_INIT_SPIRV[..])!,
+        .predict       = stage(assets, PREDICT_KEY, physics::CLOTH_PREDICT_SPIRV[..])!,
+        .project       = stage(assets, PROJECT_KEY, physics::CLOTH_PROJECT_SPIRV[..])!,
+        .collide       = stage(assets, COLLIDE_KEY, physics::CLOTH_COLLIDE_SPIRV[..])!,
+        .integrate     = stage(assets, INTEGRATE_KEY, physics::CLOTH_INTEGRATE_SPIRV[..])!,
+        .output        = stage(assets, OUTPUT_KEY, physics::CLOTH_OUTPUT_SPIRV[..])!,
+        .fused         = stage(assets, FUSED_KEY, physics::CLOTH_FUSED_SPIRV[..])!,
+        .single        = stage(assets, SINGLE_KEY, physics::CLOTH_SINGLE_SPIRV[..])!,
+        .single_cached = stage(assets, SINGLE_CACHED_KEY, physics::CLOTH_SINGLE_CACHED_SPIRV[..])!,
     };
 }
 

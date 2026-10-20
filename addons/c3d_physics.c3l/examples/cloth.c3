@@ -1991,7 +1991,7 @@ fn int main(String[] args) {
         io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33|flag128]");
         io::eprintn("  [--still] [--frames count]");
         io::eprintn("  [--gpu]    (flag33 and flag128 only: simulate on the device; python3 scripts/build.py --example cloth_gpu)");
-        io::eprintn("  [--gpu-shape pr0|fused|single]    (with --gpu: how a step lays its passes over dispatches)");
+        io::eprintn("  [--gpu-shape pr0|fused|single|single_cached]    (with --gpu: how a step lays its passes over dispatches)");
         io::eprintn("  [--dump path]    (with --gpu --benchmark --frames n: write the device positions after n steps)");
         io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");

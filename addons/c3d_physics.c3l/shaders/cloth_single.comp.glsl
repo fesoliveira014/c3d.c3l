@@ -1,6 +1,10 @@
 #version 460
 #define CLOTH_LOCAL_SIZE 1024 // the largest group size every desktop device offers
+#ifdef CACHED
+#define CLOTH_COHERENT // not guaranteed visible across invocations without the qualifier; measures its cost only
+#else
 #define CLOTH_COHERENT coherent
+#endif
 #include "physics/cloth_step.glsl"
 
 // Every thread of the one workgroup reaches each of these in step; the loops around them have uniform bounds.
