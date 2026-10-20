@@ -183,6 +183,9 @@ struct ClothState {
     double[]             particle_masses;
     double[]             particle_mass_storage;
     double[]             base_masses;
+    float[]              push_limits;         // per base particle, metres contact may move it between resets
+    Vec3[]               push_totals;         // contact displacement applied to each particle since the last reset
+    bool[]               push_bounded;        // particles whose push total reached their limit
     uint[]               particle_bases;
     uint[]               split_parents;
     uint[]               pins;                // unique and ascending physical particle IDs

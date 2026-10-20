@@ -27,6 +27,10 @@ const uint CONTACT_UPDATES @private = 120;
 const float BONE_RADIUS @private = 0.1f;
 const float SHIFT_OFFSET @private = 16; // metres; rounding at this distance keeps the shifted run within the comparison tolerance
 const uint SHIFT_PRE_UPDATES @private = 20;
+const float LONE_BALL_DISTANCE @private = 0.35f; // metres in front of the cloth; the swing presses the cloth without starting inside it
+const float SPHERE_PROBE_REACH @private = 6; // metres; a quarter of it exceeds the unit sphere's radius plus thickness
+const float BURIAL_DEPTH @private = 0.1f; // metres below the ground; within one substep's contact push of a unit triangle
+const float RAISED_GROUND @private = -0.8f; // metres; one contact push above the hanging grid's bottom row
 
 struct Fixture @private {
     AssetStore   assets;
@@ -395,7 +399,7 @@ fn void test_cloth_zero_step_publication_preserves_simulation() @test {
     velocities[..] = state.velocities[..];
     anchors[..] = state.pin_anchors[..];
 
-    state.desc.ground_height = 10;
+    state.desc.ground_height = RAISED_GROUND;
     for (uint move = 1; move <= 3; move++) {
         fixture.physics.update(0);
         node.local.position = { 0.1f * move, 0, 0 };
@@ -406,7 +410,7 @@ fn void test_cloth_zero_step_publication_preserves_simulation() @test {
         }
         foreach (slot, anchor : anchors) assert(state.pin_anchors[slot] == anchor);
         foreach (pin : pins) assert(near(published_world(&fixture, node, pin), maths::transform_point(node.world, state.rest[pin])));
-        for (uint vertex = 3; vertex < 9; vertex++) assert(published_world(&fixture, node, vertex).y >= 10 - CONTACT_TOLERANCE);
+        for (uint vertex = 3; vertex < 9; vertex++) assert(published_world(&fixture, node, vertex).y >= RAISED_GROUND - CONTACT_TOLERANCE);
     }
     state.desc.ground_height = -0.6f;
 
@@ -472,7 +476,7 @@ fn void test_cloth_wind_and_ground_projection() @test {
     assert(displacement > 0);
     foreach (index, position : calm_state.positions) assert(position == calm_start[index]);
 
-    GeometryId below = add_triangle(&fixture, { 0, -1, 0 });
+    GeometryId below = add_triangle(&fixture, { 0, -BURIAL_DEPTH, 0 });
     Node* buried = add_cloth_node(&fixture, below);
     uint[1] pin = { 0 };
     ClothDesc grounded = pinned_desc(pin[..]);
@@ -481,7 +485,7 @@ fn void test_cloth_wind_and_ground_projection() @test {
     fixture.scene.add_cloth(&fixture.assets, buried, grounded)!!;
     step(&fixture, physics::DEFAULT_FIXED_DT);
     ClothState* state = state_of(&fixture, buried);
-    assert(state.positions[0] == (Vec3){ 0, -1, 0 });
+    assert(state.positions[0] == (Vec3){ 0, -BURIAL_DEPTH, 0 });
     assert(state.positions[1].y >= grounded.thickness - CONTACT_TOLERANCE);
     assert(state.positions[2].y >= grounded.thickness - CONTACT_TOLERANCE);
 }
@@ -646,8 +650,13 @@ fn ColliderDesc capsule(float radius, float half_height, maths::Transform local 
 }
 
 // Vertex 0 is the only free particle; loose constraints leave it to the contacts.
-fn Node* add_probe(Fixture* fixture, Vec3 point, Entity[] colliders) @private {
-    Node* node = add_cloth_node(fixture, add_triangle(fixture, point, PROBE_REACH));
+fn Node* add_probe(
+    Fixture* fixture,
+    Vec3 point,
+    Entity[] colliders,
+    float reach = PROBE_REACH,
+) @private {
+    Node* node = add_cloth_node(fixture, add_triangle(fixture, point, reach));
     uint[2] pins = { 1, 2 };
     ClothDesc desc = pinned_desc(pins[..]);
     desc.stretch_stiffness = 0;
@@ -678,6 +687,7 @@ fn void check_projection(
     Vec3 start,
     Vec3 end,
     Vec3[] points,
+    float reach = PROBE_REACH,
 ) @private {
     Fixture fixture;
     setup(&fixture, weightless());
@@ -686,7 +696,14 @@ fn void check_projection(
     Entity[1] colliders = { body.id };
     float expanded = collider.radius + PROBE_THICKNESS;
     Node*[8] probes;
-    foreach (index, point : points) probes[index] = add_probe(&fixture, point, colliders[..]);
+    foreach (index, point : points) {
+        probes[index] = add_probe(
+            fixture:   &fixture,
+            point:     point,
+            colliders: colliders[..],
+            reach:     reach,
+        );
+    }
 
     publish(&fixture);
     foreach (index, point : points) {
@@ -724,6 +741,7 @@ fn void test_cloth_sphere_and_capsule_projection() @test {
         start:    { 0, 0, 0 },
         end:      { 0, 0, 0 },
         points:   sphere_points[..],
+        reach:    SPHERE_PROBE_REACH,
     );
     Vec3[5] capsule_points = { { 0.2f, 0.5f, 0.1f }, { 0, 0.3f, 0 }, { 0.1f, 1.2f, 0.1f }, { 0.5f, 0, 0 }, { 2, 0, 0 } };
     check_projection(
@@ -918,7 +936,7 @@ fn void test_cloth_contacts_preserve_allocation_and_pins() @test {
     Node* sweeping = add_body_node(&fixture, (&bar)[:1], { 0.5f, -0.5f, 0 });
     Node* crossing = add_body_node(&fixture, (&bar)[:1], { 0.5f, -0.8f, 0 });
     ColliderDesc ball = sphere(0.3f);
-    Node* lone = add_body_node(&fixture, (&ball)[:1], { 5.5f, -0.5f, 0.1f });
+    Node* lone = add_body_node(&fixture, (&ball)[:1], { 5.5f, -0.5f, LONE_BALL_DISTANCE });
 
     Node* draped = add_cloth_node(&fixture, add_grid(&fixture, GRID_CELLS));
     Entity[2] pair = { sweeping.id, crossing.id };
@@ -948,7 +966,7 @@ fn void test_cloth_contacts_preserve_allocation_and_pins() @test {
         float phase = (float)update * 0.1f;
         sweeping.local.position.z = 0.3f * math::sin(phase);
         crossing.local.position.x = 0.5f + 0.4f * math::cos(phase);
-        lone.local.position.z = 0.2f * math::sin(phase);
+        lone.local.position.z = LONE_BALL_DISTANCE + 0.2f * math::sin(phase);
         float dt = update % 3 == 0 ? 0 : (update % 3 == 1 ? physics::DEFAULT_FIXED_DT : 2 * physics::DEFAULT_FIXED_DT);
         fixture.physics.update(dt);
         fixture.scene.update_world();

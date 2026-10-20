@@ -17,6 +17,7 @@ const uint DEFAULT_CONTACT_CANDIDATES = 8192;
 const uint DEFAULT_CONTACTS = 4096;
 <* Distance advances allowed for one candidate path. *>
 const uint DEFAULT_CCD_ITERATIONS = 64;
+const float MAX_CONTACT_PUSH_FRACTION @private = 0.25f; // of the shortest edge between resets; more can fold a hinge
 
 <* Stage of the last contact failure. *>
 enum ClothContactStage : uint {
@@ -136,6 +137,28 @@ fn ContactProjection? evaluate_contact(
     }
 }
 
+fn void reset_contact_push(ClothState* state) @private {
+    state.push_totals[..] = (Vec3){};
+    state.push_bounded[..] = false;
+}
+
+fn Vec3 bounded_correction(ClothState* state, uint particle, Vec3 position, Vec3 target) @local {
+    uint base = state.particle_bases.len ? state.particle_bases[particle] : particle;
+    float limit = state.push_limits[base];
+    Vec3 total = state.push_totals[particle] + (target - position);
+    float length = total.length();
+    if (!(length > limit)) {
+        state.push_totals[particle] = total;
+        return target;
+    }
+
+    total *= limit / length;
+    Vec3 bounded = position + (total - state.push_totals[particle]);
+    state.push_totals[particle] = total;
+    state.push_bounded[particle] = true;
+    return bounded;
+}
+
 fn usz? contact_pass(
     PhysicsWorld* world,
     ClothState* state,
@@ -186,6 +209,8 @@ fn usz? contact_pass(
         if (projection.residual <= state.desc.collisions.contact_tolerance) continue;
 
         result.unresolved++;
+        if (state.push_bounded[candidate.particle]) continue;
+
         if (count == state.contacts.len) return c3d::CAPACITY_EXCEEDED~;
         state.contacts[count++] = {
             .candidate = (uint)index,
@@ -203,11 +228,22 @@ fn usz? contact_pass(
             continue;
         }
         Vec3* position = &positions[candidate.particle];
-        if (*position == contact.original) {
-            *position = contact.corrected;
-        } else {
-            *position = evaluate_contact(world: world, state: state, candidate: candidate, position: *position, correct: true)!.corrected;
+        Vec3 target = contact.corrected;
+        if (*position != contact.original) {
+            target = evaluate_contact(
+                world:     world,
+                state:     state,
+                candidate: candidate,
+                position:  *position,
+                correct:   true,
+            )!.corrected;
         }
+        *position = bounded_correction(
+            state:    state,
+            particle: candidate.particle,
+            position: *position,
+            target:   target,
+        );
     }
     if (count) {
         filter_displacement(

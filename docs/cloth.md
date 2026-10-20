@@ -252,7 +252,30 @@ a guarantee that arbitrary collider sets fit.
 Each structural pass is followed by a contact pass. Up to `contact_iterations` final
 passes then resolve ground, body and enabled self contacts together and check the complete
 residual. Successful publication leaves every participating free particle at external
-separation of at least `thickness - contact_tolerance`. Unresolved competing constraints fail the cloth update.
+separation of at least `thickness - contact_tolerance`, except a particle still carrying a
+contact deeper than its push bound (see below). Unresolved competing constraints fail the cloth update.
+
+### Bounded contact push
+
+A particle's contact displacement is bounded to a quarter of the shortest rest edge incident
+to it. The bound applies separately to a substep's structural passes, to its final contact
+passes and to each publication, and it accumulates over the passes of one such window as a
+net vector, so two contacts that push a particle in opposite directions do not use it up. A push
+shorter than a fraction of a hinge triangle cannot turn the hinge half a revolution in one
+substep, so the certification that raises `BEND_UNRESOLVED` stays as it was and a contact
+that starts deep no longer trips it.
+
+A contact deeper than the bound clears over several substeps. While it does, the simulated
+particle trails the contact, the publication projects the output at most one bound further,
+and `unresolved` and `max_residual` report the remaining depth while the update succeeds. A
+particle whose push reached its bound is carried: the final check and the publication check skip its
+contacts. An unresolved contact on a particle that still has push available fails with
+`CONTACT_UNRESOLVED` after the final passes, exactly as before, so competing constraints such as a
+vertex squeezed between two surfaces still fail the update.
+
+Contact is therefore soft against constraints that pull a particle back by more than the bound each
+substep. A taut pinned cloth cut by a surface it cannot clear stays partly inside it, and
+the publication shows it at most one bound out of the surface.
 
 ## Self-contact and seams
 
@@ -343,7 +366,7 @@ unvisited work as checked.
 | Fault | Meaning |
 | --- | --- |
 | `c3d::CAPACITY_EXCEEDED` | Binding, candidate or contact storage is full; `stage` identifies the buffer. |
-| `cloth::CONTACT_UNRESOLVED` | The bounded contact passes could not satisfy all participating constraints. |
+| `cloth::CONTACT_UNRESOLVED` | A contact within its push bound stayed unresolved after the final passes. |
 | `cloth::CONTACT_NONCONVERGENT` | A CCD advance stalled or exhausted its iteration bound. |
 | `cloth::CONTACT_PRECISION_EXCEEDED` | Arithmetic, correction or float publication cannot establish the configured tolerance. |
 | `cloth::BEND_UNRESOLVED` | A dihedral hinge collapsed, became non-finite, or turned half a revolution within one substep. |
@@ -609,10 +632,9 @@ compliance 0.001 becomes about 1.6. Across that cape's range the drape depends o
 more than on the compliances.
 
 The defaults need no retuning for the areal mass: a default `ClothDesc` with `bend_mode = DIHEDRAL` and no
-`bend_compliance` (a hard hinge) stays resolvable at 0.2 kg/m² on free sheets, at rest and in wind. The
-fragile case is a cloth that starts in contact with a collider. If the contact must push a particle by more
-than a hinge's size in one substep, the update fails with `BEND_UNRESOLVED`, and for some compliances the
-cloth then stays unresolved. Start cloth clear of its colliders, as the example's cape does.
+`bend_compliance` (a hard hinge) stays resolvable at 0.2 kg/m² on free sheets, at rest and in wind. A cloth
+that starts in contact with a collider clears it over its first substeps rather than failing with
+`BEND_UNRESOLVED`; see [Bounded contact push](#bounded-contact-push).
 
 **Aerodynamics.** Cloth reads only `Wind.velocity` and `Wind.max_speed`. `Wind.drag` and `Wind.lift`
 apply to rigid bodies; cloth uses `ClothDesc.drag_coefficient` (default 1.2) and `lift_coefficient`
