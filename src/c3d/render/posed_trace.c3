@@ -19,6 +19,8 @@ import std::math;
 *>
 const uint DEFAULT_MAX_POSED_TRACE_INSTANCES = 64; // 32 two-part characters; a slot: 24-40 B/vertex, 32 B/node, a BLAS
 
+const uint POSED_SLOT_ALLOCATIONS @private = 2; // posed streams and software node copy; a bottom level is a structure
+
 <*
  Identity of one posed trace instance across the scenes a renderer serves.
 *>

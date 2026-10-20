@@ -371,7 +371,7 @@ write it with `image::write_png`. Every render target carries transfer-source us
 | --- | --- | --- |
 | `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 9 KiB |
 | `max_render_targets` | `DEFAULT_MAX_RENDER_TARGETS`, 8 | at most the resolved `texture_capacity`, else `create_renderer` faults `c3d::INVALID_ARGUMENT` |
-| `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | memory, and the device's 4,096-entry allocation and acceleration structure tables, which slots share with the scene's other resources and which fault `gpu::SLOT_TABLE_FULL` past them: a slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams; on the RTX 4090 one mannequin of two posed meshes holds 483,032 B of posed data in software and 1,088,920 B in hardware, about 242 KB and 544 KB per slot, and bottom-level sizes are driver-specific |
+| `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | `2 × max_posed_trace_instances + 32 + 16 × max_views` must fit the device's 4,096-entry allocation table and, with ray queries or ray-tracing pipelines, `max_posed_trace_instances + 32` its 4,096-entry acceleration structure table, else `create_renderer` faults `c3d::INVALID_ARGUMENT`; at most 1,968 at the default 8 views. Content shares both tables uncounted and can still fault `gpu::SLOT_TABLE_FULL` mid-frame ([scene trace](scene_trace.md#posed-instances)). A slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams; on the RTX 4090 one mannequin of two posed meshes holds 483,032 B of posed data in software and 1,088,920 B in hardware, about 242 KB and 544 KB per slot, and bottom-level sizes are driver-specific |
 | `texture_capacity` | `gpu::DEFAULT_TEXTURE_CAPACITY`, 1,024 | 65,536 (`gpu::MAX_SHADER_HEAP_CAPACITY`), else `gpu::INVALID_ARGUMENT` |
 | `texture_heap_capacity` | `gpu::DEFAULT_TEXTURE_HEAP_CAPACITY`, 4,096 | 65,536, else `gpu::INVALID_ARGUMENT`; past the device's descriptor limits no adapter qualifies and `create_renderer` faults `c3d::UNSUPPORTED` |
 
@@ -426,8 +426,8 @@ images are allocated during a frame: the scene color and depth snapshots inside 
 the scene, and the FXAA fallback output inside `finish_view` when FXAA cannot write the output rectangle directly.
 A headless renderer's default view holds none.
 
-Exhaustion faults come unchanged from gpu.c3l: a full texture table or attachment table faults `gpu::SLOT_TABLE_FULL`,
-a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resource: `create_view`,
+Exhaustion faults come unchanged from gpu.c3l: a full texture, attachment, allocation or acceleration structure
+table faults `gpu::SLOT_TABLE_FULL`, a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resource: `create_view`,
 `create_render_target`, `render_to`, `bake_impostor` and the captures release what they acquired. `render_view` and
 `finish_view` can fault for the images they allocate; the frame aborts like any other fault. `resize_render_target`,
 `configure_view` and the window resize in `begin_frame` allocate every new image before they release an old one, so a

@@ -248,9 +248,9 @@ or past the fade end.
   morphed meshes and crowds, so size it for the instances that must follow the wind. Instances are admitted in
   collection order, not by distance. Swayed rows claim after every other kind, so a character that appears later
   still gets a slot. Memory is not the only bound: slots also draw on the device's 4,096-entry allocation and
-  acceleration structure tables, shared with every other resource, and rendering faults `gpu::SLOT_TABLE_FULL`
-  past them. The software kind, whose slots hold more buffers, reaches them with fewer slots than the hardware
-  kind. Keep the capacity well below 4,096.
+  acceleration structure tables, and `create_renderer` refuses a capacity they cannot hold
+  ([scene trace](scene_trace.md#posed-instances)). Content shares the tables, so keep the capacity well below
+  that bound.
 - **At capacity.** An instance without a slot traces at rest, as without `trace_sway`, and each cell holding
   such an instance counts once in `Stats.trace_sway_at_rest`. The error is bounded by the sway reach.
   `Stats.trace_posed_instances` counts the posed instances.
