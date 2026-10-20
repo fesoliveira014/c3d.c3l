@@ -102,7 +102,7 @@ enum HeightSource {
 }
 
 <*
- Side of a height field, in HeightField.neighbours order.
+ Side of a height field, in HeightField.neighbours order, with TerrainNeighbour's offsets.
 *>
 enum HeightFieldSide : int (int x_offset, int z_offset) {
     NEGATIVE_X { -1, 0 },
