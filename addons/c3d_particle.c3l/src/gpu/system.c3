@@ -124,10 +124,6 @@ fn SystemLayout system_layout(uint capacity) @private {
     return layout;
 }
 
-fn Vec4 vec4_of(float first, float second, float third, float fourth) @private {
-    return { first, second, third, fourth };
-}
-
 fn StepRoot step_root(
     ParticleSystem* system,
     GpuStepPlan* plan,
@@ -146,9 +142,11 @@ fn StepRoot step_root(
     Vec3 acceleration = particle::PARTICLE_GRAVITY * (desc.gravity_scale * plan.seconds);
     Vec3 half_extents = desc.half_extents;
     Vec3 tile = plan.turbulence_offset;
+    float tile_length = turbulent ? (float)desc.turbulence.period / desc.turbulence.frequency : 0;
     uint flipbook_flags = (flipbook.mode == FlipbookMode.FPS ? FLIPBOOK_FPS : 0)
         | (flipbook.random_start ? FLIPBOOK_RANDOM_START : 0)
         | (flipbook.blend ? FLIPBOOK_BLEND : 0);
+
     return {
         .control = addresses.base,
         .state_home = addresses.base + layout.state_home,
@@ -165,23 +163,18 @@ fn StepRoot step_root(
         .drag = drag,
         .seed = desc.seed,
         .shape = (uint)desc.shape.ordinal,
-        .acceleration_radius = vec4_of(acceleration.x, acceleration.y, acceleration.z, desc.radius),
-        .wind_cone = vec4_of(wind.x, wind.y, wind.z, desc.cone_angle),
-        .shift_stretch = vec4_of(plan.shift.x, plan.shift.y, plan.shift.z, desc.stretch),
-        .origin_restitution = vec4_of(origin.x, origin.y, origin.z, collision.restitution),
-        .half_extents_friction = vec4_of(half_extents.x, half_extents.y, half_extents.z, collision.friction),
-        .emitter_row0 = vec4_of(emitter_world.m00, emitter_world.m01, emitter_world.m02, emitter_world.m03),
-        .emitter_row1 = vec4_of(emitter_world.m10, emitter_world.m11, emitter_world.m12, emitter_world.m13),
-        .emitter_row2 = vec4_of(emitter_world.m20, emitter_world.m21, emitter_world.m22, emitter_world.m23),
-        .lifetime_speed = vec4_of(desc.lifetime.min, desc.lifetime.max, desc.speed.min, desc.speed.max),
-        .size_rotation = vec4_of(desc.size.min, desc.size.max, desc.rotation.min, desc.rotation.max),
-        .spin_ground = vec4_of(desc.spin.min, desc.spin.max, collision.ground_height, collision.radius_scale),
-        .turbulence_offset = vec4_of(
-            tile.x,
-            tile.y,
-            tile.z,
-            turbulent ? (float)desc.turbulence.period / desc.turbulence.frequency : 0,
-        ),
+        .acceleration_radius = { acceleration.x, acceleration.y, acceleration.z, desc.radius },
+        .wind_cone = { wind.x, wind.y, wind.z, desc.cone_angle },
+        .shift_stretch = { plan.shift.x, plan.shift.y, plan.shift.z, desc.stretch },
+        .origin_restitution = { origin.x, origin.y, origin.z, collision.restitution },
+        .half_extents_friction = { half_extents.x, half_extents.y, half_extents.z, collision.friction },
+        .emitter_row0 = { emitter_world.m00, emitter_world.m01, emitter_world.m02, emitter_world.m03 },
+        .emitter_row1 = { emitter_world.m10, emitter_world.m11, emitter_world.m12, emitter_world.m13 },
+        .emitter_row2 = { emitter_world.m20, emitter_world.m21, emitter_world.m22, emitter_world.m23 },
+        .lifetime_speed = { desc.lifetime.min, desc.lifetime.max, desc.speed.min, desc.speed.max },
+        .size_rotation = { desc.size.min, desc.size.max, desc.rotation.min, desc.rotation.max },
+        .spin_ground = { desc.spin.min, desc.spin.max, collision.ground_height, collision.radius_scale },
+        .turbulence_offset = { tile.x, tile.y, tile.z, tile_length },
         .response = (uint)collision.response.ordinal,
         .collides = collision.response != CollisionResponse.NONE && collision.ground_plane ? 1 : 0,
         .octaves = turbulent ? desc.turbulence.octaves : 0,

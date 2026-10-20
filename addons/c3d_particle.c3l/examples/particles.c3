@@ -807,7 +807,13 @@ fn void? run_benchmark(Options options) @local {
                 if (options.gpu) {
                     renderer.begin_frame({ .time = (double)renderer.frame_index * STEP_SECONDS, .delta = STEP_SECONDS })!;
                     defer catch render::abort_frame(&renderer);
-                    particle_execution::update(&gpu, &renderer, &demo.scene, STEP_SECONDS, { 0.4f, 0, 0 })!;
+                    particle_execution::update(
+                        context: &gpu,
+                        renderer: &renderer,
+                        scene: &demo.scene,
+                        dt: STEP_SECONDS,
+                        wind: { 0.4f, 0, 0 },
+                    )!;
                     renderer.end_frame()!;
                 }
             }
@@ -828,7 +834,13 @@ fn void? run_benchmark(Options options) @local {
             renderer.begin_frame({ .time = (double)renderer.frame_index * STEP_SECONDS, .delta = STEP_SECONDS })!;
             defer catch render::abort_frame(&renderer);
             update_start = clock::now();
-            particle_execution::update(&gpu, &renderer, &demo.scene, STEP_SECONDS, { 0.4f, 0, 0 })!;
+            particle_execution::update(
+                context: &gpu,
+                renderer: &renderer,
+                scene: &demo.scene,
+                dt: STEP_SECONDS,
+                wind: { 0.4f, 0, 0 },
+            )!;
             update_ms += elapsed_ms(update_start);
             renderer.render_view(&demo.scene, demo.cameras[0], view)!;
             renderer.finish_view(view)!;
@@ -1168,7 +1180,13 @@ fn void? run_interactive(Options options) @local {
             renderer.begin_frame({ .time = elapsed, .delta = window.clock.delta })!;
             defer catch render::abort_frame(&renderer);
             started = clock::now();
-            particle_execution::update(&gpu, &renderer, &demo.scene, window.clock.delta, { wind, 0, 0 })!;
+            particle_execution::update(
+                context: &gpu,
+                renderer: &renderer,
+                scene: &demo.scene,
+                dt: window.clock.delta,
+                wind: { wind, 0, 0 },
+            )!;
             update_ms += elapsed_ms(started);
             if (renderer.has_output) {
                 renderer.render_view(&demo.scene, demo.cameras[0], renderer.default_view)!;

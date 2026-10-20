@@ -24,7 +24,13 @@ fn void? update(
     float dt,
     Vec3 wind,
 ) {
-    gpu::update(&context.particles, renderer, scene, dt, wind)!;
+    gpu::update(
+        particles: &context.particles,
+        renderer: renderer,
+        scene: scene,
+        dt: dt,
+        wind: wind,
+    )!;
 }
 
 fn void destroy(Context* context, Renderer* renderer) {

@@ -176,7 +176,13 @@ fn void? record_frame(
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
-    gpu::update(&fixture.particles, renderer, &fixture.scene, dt, WIND)!;
+    gpu::update(
+        particles: &fixture.particles,
+        renderer: renderer,
+        scene: &fixture.scene,
+        dt: dt,
+        wind: WIND,
+    )!;
     copy_records(fixture, pair.device)!;
     if (kind == FrameKind.ABORTED) {
         renderer.render_view(&fixture.scene, fixture.camera, fixture.view)!;
@@ -184,7 +190,12 @@ fn void? record_frame(
         return;
     }
     if (kind == FrameKind.FINAL) {
-        check_records(fixture, pair, expected_alive, expected_dropped);
+        check_records(
+            fixture: fixture,
+            pair: pair,
+            alive: expected_alive,
+            dropped: expected_dropped,
+        );
     }
     renderer.end_frame()!;
 }
@@ -203,7 +214,12 @@ fn void check_counters(Pair* pair, uint alive, ulong dropped) @private {
     assert(pair.device.alive == alive && pair.device.dropped == dropped);
 }
 
-fn void check_records(Fixture* fixture, Pair* pair, uint alive, ulong dropped) @private {
+fn void check_records(
+    Fixture* fixture,
+    Pair* pair,
+    uint alive,
+    ulong dropped,
+) @private {
     check_counters(pair, alive, dropped);
     char[] copied = fixture.renderer.read_buffer(fixture.copied)!!;
     BillboardRecord* device_records = (BillboardRecord*)copied.ptr;
