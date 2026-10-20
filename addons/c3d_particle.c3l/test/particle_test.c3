@@ -64,6 +64,42 @@ fn void test_initial_colors_share_one_fraction_between_palette_endpoints() @test
     }
 }
 
+fn void test_spawn_ordinal_alone_selects_particle_draws() @test {
+    Scene scene = make_scene();
+    defer scene::destroy_scene(&scene);
+    ParticleSystemDesc desc = quiet_desc(16);
+    desc.seed = 7;
+    desc.shape = EmitterShape.BOX;
+    desc.half_extents = { 2, 3, 4 };
+    desc.lifetime = { .min = 4, .max = 8 };
+    desc.speed = { .min = 1, .max = 3 };
+    desc.size = { .min = 0.5f, .max = 1.5f };
+    desc.rotation = { .min = -1, .max = 1 };
+    desc.spin = { .min = -2, .max = 2 };
+    ParticleSystem* whole = scene.get(scene.add_particle_system(desc)!!, ParticleSystem);
+    ParticleSystem* split = scene.get(scene.add_particle_system(desc)!!, ParticleSystem);
+    scene.update_world();
+
+    whole.emit_burst(8);
+    split.emit_burst(3);
+    particle::update(&scene, 0);
+    split.emit_burst(5);
+    particle::update(&scene, 0);
+
+    assert(whole.alive == 8 && split.alive == 8);
+    foreach (index, spawn : split.spawn[:split.alive]) {
+        uint match = uint::max;
+        foreach (candidate, other : whole.spawn[:whole.alive]) {
+            if (other == spawn) match = (uint)candidate;
+        }
+        assert(match != uint::max);
+        assert(split.position[index] == whole.position[match] && split.velocity[index] == whole.velocity[match]);
+        assert(split.lifetime[index] == whole.lifetime[match] && split.size[index] == whole.size[match]);
+        assert(split.rotation[index] == whole.rotation[match] && split.spin[index] == whole.spin[match]);
+        assert(split.seed[index] == whole.seed[match]);
+    }
+}
+
 fn void test_rate_and_burst_counts_with_fractional_credit() @test {
     Scene scene = make_scene();
     defer scene::destroy_scene(&scene);

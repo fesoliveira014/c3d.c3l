@@ -5,7 +5,6 @@ import c3d::ecs;
 import c3d::maths;
 import c3d::scene;
 import std::math;
-import std::math::random;
 
 <*
  Samples in an over-lifetime table.
@@ -317,7 +316,6 @@ struct ParticleSystem {
     void* collision_context;
     double emit_accumulator;
     double turbulence_time; // seconds this system has stepped; the turbulence pattern drifts with it
-    Sfc32Random random;
     Entity draw_node;
     Entity trail_node; // the ribbon child; unset while the trail is disabled
     bool emitting;
@@ -421,7 +419,6 @@ fn void? prepare(Scene* scene, Node* emitter) {
         system.trail_head = @carve_stream(uint, &system, &cursor, desc.capacity);
         system.trail_count = @carve_stream(uint, &system, &cursor, desc.capacity);
     }
-    seed_random(&system.random, desc.seed);
     Node* child;
     if (desc.render_mode == ParticleRenderMode.MESH) {
         child = scene.add_instanced_mesh(

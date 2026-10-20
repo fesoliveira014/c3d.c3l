@@ -2,7 +2,6 @@ module c3d::particle;
 
 import c3d::maths;
 import std::math;
-import std::math::random;
 
 const float RANDOM_UNIT_SCALE @private = 1.0f / 16777216.0f; // high 24 bits fit a float mantissa exactly
 const uint RANDOM_UNIT_SHIFT @private = 8;
@@ -13,7 +12,30 @@ const uint HASH_OUTPUT_MULTIPLIER @private = 277803737;
 const uint HASH_STATE_SHIFT @private = 28;
 const uint HASH_ROTATION_OFFSET @private = 4;
 const uint HASH_OUTPUT_SHIFT @private = 22;
-const uint SEED_BYTE_BITS @private = 8;
+const uint ORDINAL_HIGH_SHIFT @private = 32; // the high word of a spawn ordinal
+const ParticleDraw[3] BOX_AXIS_DRAWS @private = { POSITION_A, POSITION_B, POSITION_C };
+
+<*
+ Value one emitted particle draws; its ordinal is the draw index.
+*>
+enum ParticleDraw {
+    POSITION_A,
+    POSITION_B,
+    POSITION_C,
+    DIRECTION_HEIGHT,
+    DIRECTION_ANGLE,
+    LIFETIME,
+    SPEED,
+    SIZE,
+    ROTATION,
+    SPIN,
+    SEED,
+}
+
+struct SpawnDraws @private {
+    uint stream;
+    ulong ordinal;
+}
 
 <*
  Advance one particle pool without touching scene structure.
@@ -57,7 +79,7 @@ fn void step(
         emit_particle(
             system: system,
             emitter_world: emitter_world,
-            random: &system.random,
+            draws: { .stream = system.desc.seed, .ordinal = system.next_spawn },
             inherited_velocity: {},
         );
     }
@@ -105,8 +127,6 @@ fn void emit_at(
     uint seed,
     uint count,
 ) @private {
-    Sfc32Random random;
-    seed_random(&random, seed);
     emitter_world.m03 = position.x;
     emitter_world.m13 = position.y;
     emitter_world.m23 = position.z;
@@ -116,7 +136,7 @@ fn void emit_at(
         emit_particle(
             system: system,
             emitter_world: emitter_world,
-            random: &random,
+            draws: { .stream = seed, .ordinal = spawned },
             inherited_velocity: inherited_velocity,
         );
     }
@@ -126,24 +146,30 @@ fn uint child_seed(uint parent_seed, ulong event_index, uint sub_index) @private
     return pcg_hash(pcg_hash(pcg_hash(parent_seed) + (uint)event_index) + sub_index);
 }
 
-fn void seed_random(Sfc32Random* random, uint seed) @private {
-    char[uint::size] seed_bytes;
-    foreach (index, &value : seed_bytes) *value = (char)(seed >> (index * SEED_BYTE_BITS));
-    random.set_seed(seed_bytes[..]);
+<*
+ Hash behind one draw of one emitted particle; the GPU path computes the same.
+ @param stream : "The system seed, or a delivery's child seed."
+ @param ordinal : "The spawn ordinal, or the child's index in its delivery."
+ @pure
+*>
+fn uint spawn_hash(uint stream, ulong ordinal, ParticleDraw draw) {
+    uint low = pcg_hash(pcg_hash(stream) + (uint)ordinal);
+    uint high = pcg_hash(low + (uint)(ordinal >> ORDINAL_HIGH_SHIFT));
+    return pcg_hash(high + (uint)draw.ordinal);
 }
 
-fn float random_unit(Sfc32Random* random) @private {
-    return (float)(random.next_int() >> RANDOM_UNIT_SHIFT) * RANDOM_UNIT_SCALE;
+fn float SpawnDraws.unit(&self, ParticleDraw draw) {
+    return (float)(spawn_hash(self.stream, self.ordinal, draw) >> RANDOM_UNIT_SHIFT) * RANDOM_UNIT_SCALE;
 }
 
-fn float sample_range(Sfc32Random* random, ParticleRange range) @private {
-    double fraction = random_unit(random);
+fn float SpawnDraws.sample(&self, ParticleDraw draw, ParticleRange range) {
+    double fraction = self.unit(draw);
     return (float)((double)range.min * (1 - fraction) + (double)range.max * fraction);
 }
 
-fn Vec3 sphere_direction(Sfc32Random* random) @private {
-    float vertical = 1 - 2 * random_unit(random);
-    float angle = FULL_TURN * random_unit(random);
+fn Vec3 sphere_direction(SpawnDraws* draws) @private {
+    float vertical = 1 - 2 * draws.unit(DIRECTION_HEIGHT);
+    float angle = FULL_TURN * draws.unit(DIRECTION_ANGLE);
     float radius = math::sqrt(math::max(0.0f, 1 - vertical * vertical));
     return { radius * math::cos(angle), vertical, radius * math::sin(angle) };
 }
@@ -151,7 +177,7 @@ fn Vec3 sphere_direction(Sfc32Random* random) @private {
 fn void emit_particle(
     ParticleSystem* system,
     Mat4 emitter_world,
-    Sfc32Random* random,
+    SpawnDraws draws,
     Vec3 inherited_velocity,
 ) @private {
     ParticleSystemDesc* desc = &system.desc;
@@ -159,21 +185,21 @@ fn void emit_particle(
     Vec3 direction;
     switch (desc.shape) {
         case POINT:
-            direction = sphere_direction(random);
+            direction = sphere_direction(&draws);
         case BOX:
-            for (usz axis = 0; axis < 3; axis++) {
-                position[axis] = (2 * random_unit(random) - 1) * desc.half_extents[axis];
+            foreach (axis, draw : BOX_AXIS_DRAWS) {
+                position[axis] = (2 * draws.unit(draw) - 1) * desc.half_extents[axis];
             }
-            direction = sphere_direction(random);
+            direction = sphere_direction(&draws);
         case SPHERE:
-            direction = sphere_direction(random);
-            position = direction * (desc.radius * math::pow(random_unit(random), 1.0f / 3));
+            direction = sphere_direction(&draws);
+            position = direction * (desc.radius * math::pow(draws.unit(POSITION_A), 1.0f / 3));
         case CONE:
-            float radius = desc.radius * math::sqrt(random_unit(random));
-            float angle = FULL_TURN * random_unit(random);
+            float radius = desc.radius * math::sqrt(draws.unit(POSITION_A));
+            float angle = FULL_TURN * draws.unit(POSITION_B);
             position = { radius * math::cos(angle), 0, radius * math::sin(angle) };
-            float vertical = 1 - random_unit(random) * (1 - math::cos(desc.cone_angle));
-            angle = FULL_TURN * random_unit(random);
+            float vertical = 1 - draws.unit(DIRECTION_HEIGHT) * (1 - math::cos(desc.cone_angle));
+            angle = FULL_TURN * draws.unit(DIRECTION_ANGLE);
             float lateral = math::sqrt(math::max(0.0f, 1 - vertical * vertical));
             direction = { lateral * math::cos(angle), vertical, lateral * math::sin(angle) };
     }
@@ -183,12 +209,12 @@ fn void emit_particle(
     float direction_length = direction.length();
     if (direction_length > 0) direction /= direction_length;
     system.age[index] = 0;
-    system.lifetime[index] = sample_range(random, desc.lifetime);
-    system.velocity[index] = direction * sample_range(random, desc.speed) + inherited_velocity;
-    system.size[index] = sample_range(random, desc.size);
-    system.rotation[index] = sample_range(random, desc.rotation);
-    system.spin[index] = sample_range(random, desc.spin);
-    system.seed[index] = random.next_int();
+    system.lifetime[index] = draws.sample(LIFETIME, desc.lifetime);
+    system.velocity[index] = direction * draws.sample(SPEED, desc.speed) + inherited_velocity;
+    system.size[index] = draws.sample(SIZE, desc.size);
+    system.rotation[index] = draws.sample(ROTATION, desc.rotation);
+    system.spin[index] = draws.sample(SPIN, desc.spin);
+    system.seed[index] = spawn_hash(draws.stream, draws.ordinal, ParticleDraw.SEED);
     system.spawn[index] = system.next_spawn++;
     reset_trail(system, index);
     raise_event(system, index, { .trigger = ParticleTrigger.BIRTH });
@@ -316,6 +342,9 @@ fn void evict_oldest(ParticleSystem* system, uint128 requested) @private {
     system.evicted = saturating_add(system.evicted, count);
 }
 
+<*
+ @pure
+*>
 fn uint pcg_hash(uint value) @private {
     uint state = value * HASH_MULTIPLIER + HASH_INCREMENT;
     uint word = ((state >> ((state >> HASH_STATE_SHIFT) + HASH_ROTATION_OFFSET)) ^ state) * HASH_OUTPUT_MULTIPLIER;
