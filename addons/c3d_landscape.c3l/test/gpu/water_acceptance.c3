@@ -76,6 +76,16 @@ const float MEDIUM_DISTANCE @local = 4;
 const Vec3 BED_POSITION @local = { 0, -6.5f, 0 }; // a plate with its top face 6 m under the rest plane
 const Vec3 CEILING_POSITION @local = { 0, 3.5f, 0 }; // a plate with its bottom face 3 m over it
 const Vec3 PLATE_SIZE @local = { MURKY_EXTENT, 1, MURKY_EXTENT };
+const float SHALLOW_EXTENT @local = 8; // metres along the shallow body's side, and along its bed
+const float SHALLOW_CELL_SIZE @local = 0.5f;
+const Vec3 SHALLOW_BED_POSITION @local = { 0, -0.6f, 0 }; // a plate with its top face 0.1 m under the rest plane
+const Vec3 SHALLOW_BED_SIZE @local = { SHALLOW_EXTENT, 1, SHALLOW_EXTENT };
+const float BED_ALBEDO @local = 0.8f;
+const int[<2>][9] BED_PIXELS @local = {
+    { 24, 24 }, { 32, 24 }, { 40, 24 }, { 24, 32 }, { 32, 32 }, { 40, 32 }, { 24, 40 }, { 32, 40 }, { 40, 40 },
+};
+const float AO_MATCH_TOLERANCE @local = 0.03f; // relative to the untraced bed: the open-ground bound of the AO cases
+const float OCCLUDED_RATIO_MAXIMUM @local = 0.5f; // the bed under a double-sided row measures 0.09 of the untraced one
 const Vec3 SURFACE_CAMERA_POSITION @local = { 0, 2, 0 }; // over the water, under the ceiling
 const Vec3 DIVER_POSITION @local = { 0, -2, 0 };
 const float OVERHEAD_FOV_DEGREES @local = 90; // wide: the window samples the frame where the refracted direction lies
@@ -1773,6 +1783,102 @@ fn void test_traced_water_agrees_with_the_drawn_surface_and_follows_the_waves() 
         trace_frame(&fixture, &probe, SHADOW_PROBE_TIME, shadow_rays: true)!!;
         TraceAgreement shadowed = trace_agreement(&fixture, &probe);
         assert(shadowed.covered == 0 && shadowed.mismatch >= COVERAGE_MINIMUM, "the water cast a traced shadow");
+        check_validation(renderer);
+    }
+}
+
+fn void add_matte_box(Fixture* fixture, Vec3 position, Vec3 size) @local {
+    StandardParams matte = { .base_color = { BED_ALBEDO, BED_ALBEDO, BED_ALBEDO, 1 }, .roughness = 1 };
+    MaterialId matte_material = fixture.assets.add_material(material::standard(matte))!!;
+    Node* node = fixture.scene.add_mesh(fixture.box, matte_material, name: "matte")!!;
+    node.local.position = position;
+    node.local.scale = size;
+    fixture.scene.update_world();
+}
+
+fn void set_water_trace(Fixture* fixture, Node* water_node, WaterDesc* desc, bool trace) @local {
+    desc.trace = trace;
+    water::set_desc(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   water_node,
+        desc:   *desc,
+    )!!;
+}
+
+fn float bed_luminance(Fixture* fixture, Node* camera_node, ViewId view) @local {
+    Vec4[] colors = render_and_read(
+        fixture: fixture,
+        viewing: camera_node,
+        view:    view,
+        time:    0,
+        pixels:  BED_PIXELS[..],
+        depth:   false,
+    )!!;
+    float total;
+    foreach (color : colors[:BED_PIXELS.len]) total += luminance(color);
+    return total / (float)BED_PIXELS.len;
+}
+
+fn void test_traced_water_does_not_occlude_a_shallow_bed() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(&fixture, ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        Renderer* renderer = &fixture.renderer;
+        fixture.scene.ambient_color = { 1, 1, 1 };
+        fixture.scene.ambient_intensity = 1;
+
+        WaterDesc desc = surface_desc({}, SHALLOW_EXTENT, SHALLOW_CELL_SIZE);
+        desc.absorption_color = { 1, 1, 1 };
+        desc.trace = true;
+        Node* water_node = add_water_node(&fixture, desc);
+        add_matte_box(&fixture, SHALLOW_BED_POSITION, SHALLOW_BED_SIZE);
+
+        Node* camera_node = add_camera_node(
+            fixture:     &fixture,
+            fov_degrees: 60,
+            position:    SURFACE_CAMERA_POSITION,
+            forward:     { 0, -1, 0 },
+            up:          { 0, 0, -1 },
+        );
+        ViewId view = add_view(&fixture, MIRROR_SIZE);
+        ViewDesc view_desc = renderer.views.get(view).desc;
+        view_desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+        view_desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
+        render::configure_view(renderer, view, view_desc)!!;
+
+        float traced = bed_luminance(&fixture, camera_node, view);
+        assert(renderer.stats.trace_instances == 2);
+
+        set_water_trace(&fixture, water_node, &desc, false);
+        float untraced = bed_luminance(&fixture, camera_node, view);
+        assert(renderer.stats.trace_instances == 1);
+
+        set_water_trace(&fixture, water_node, &desc, true);
+        float retraced = bed_luminance(&fixture, camera_node, view);
+        assert(renderer.stats.trace_instances == 2);
+        io::eprintfn(
+            "ray queries %s, shallow bed: traced %f, untraced %f, retraced %f",
+            ray_queries,
+            traced,
+            untraced,
+            retraced,
+        );
+
+        assert(untraced > DARK_LIMIT, "the bed is not seen: %f", untraced);
+        float tolerance = AO_MATCH_TOLERANCE * untraced;
+        assert(math::abs(traced - untraced) <= tolerance, "traced %f, untraced %f", traced, untraced);
+        assert(math::abs(retraced - untraced) <= tolerance, "retraced %f, untraced %f", retraced, untraced);
+
+        fixture.scene.get(water_node, Mesh).trace_facing = TraceFacing.MATERIAL;
+        float occluded = bed_luminance(&fixture, camera_node, view);
+        io::eprintfn("ray queries %s, shallow bed under material facing: %f", ray_queries, occluded);
+        assert(occluded < OCCLUDED_RATIO_MAXIMUM * untraced, "occluded %f, untraced %f", occluded, untraced);
+
+        set_water_trace(&fixture, water_node, &desc, true);
+        float restored = bed_luminance(&fixture, camera_node, view);
+        assert(math::abs(restored - untraced) <= tolerance, "restored %f, untraced %f", restored, untraced);
         check_validation(renderer);
     }
 }
