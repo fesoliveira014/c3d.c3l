@@ -74,9 +74,38 @@ fn BillboardAtlasGpu pack_billboard_atlas(BillboardAtlas atlas) @private {
     };
 }
 
-fn gpu::GpuAddress billboard_atlas_address(BillboardBatch* batch, gpu::GpuAddress records) @private {
+fn gpu::GpuAddress? billboard_atlas_address(
+    Renderer* renderer,
+    BillboardBatch* batch,
+    gpu::GpuAddress records,
+) @private {
     if (batch.atlas.columns == 0) return (gpu::GpuAddress)0;
-    return (gpu::GpuAddress)((ulong)records - BILLBOARD_ATLAS_BYTES);
+    if (batch.source != BillboardSource.DEVICE) return (gpu::GpuAddress)((ulong)records - BILLBOARD_ATLAS_BYTES);
+
+    // The application's buffer has no room before its records, so the header rides the frame's ring.
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan header = frame.upload.take(&renderer.device, BILLBOARD_ATLAS_BYTES, STREAM_ALIGNMENT)!;
+    *(BillboardAtlasGpu*)header.bytes.ptr = pack_billboard_atlas(batch.atlas);
+    return header.address;
+}
+
+fn bool candidate_device_billboards(MeshCandidate* candidate) @private {
+    return candidate.billboards && candidate.billboards.source == BillboardSource.DEVICE;
+}
+
+fn bool device_billboards_lost(Renderer* renderer, MeshCandidate* candidate) @private {
+    return candidate_device_billboards(candidate) && !renderer.buffers.is_live(candidate.billboards.device.buffer);
+}
+
+fn gpu::GpuAddress device_billboard_records(Renderer* renderer, BillboardBatch* batch) @private {
+    return (gpu::GpuAddress)((ulong)renderer.buffer_address(batch.device.buffer) + batch.device.records_offset);
+}
+
+fn gpu::GpuAddress device_billboard_count(Renderer* renderer, MeshCandidate* candidate) @private {
+    if (!candidate_device_billboards(candidate)) return (gpu::GpuAddress)0;
+
+    BillboardDevice* device = &candidate.billboards.device;
+    return (gpu::GpuAddress)((ulong)renderer.buffer_address(device.buffer) + device.count_offset);
 }
 
 fn GpuGeometry*? acquire_billboard_geometry(Renderer* renderer) @private {

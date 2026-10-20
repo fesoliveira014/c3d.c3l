@@ -872,9 +872,12 @@ struct InstanceCullRoot {
     float      quadtree_world_scale;
     GpuAddress quadtree_params;
     GpuAddress quadtree_depths;
+    GpuAddress live_count;
+    uint       _pad9;
+    uint       _pad10;
     Mat4f      node_world;
 }
-$assert InstanceCullRoot::size == 480;
+$assert InstanceCullRoot::size == 496;
 $assert $reflect(InstanceCullRoot.instances).offset == 0;
 $assert $reflect(InstanceCullRoot.bounds_instances).offset == 8;
 $assert $reflect(InstanceCullRoot.visible).offset == 16;
@@ -917,7 +920,10 @@ $assert $reflect(InstanceCullRoot.quadtree_pixel_scale).offset == 392;
 $assert $reflect(InstanceCullRoot.quadtree_world_scale).offset == 396;
 $assert $reflect(InstanceCullRoot.quadtree_params).offset == 400;
 $assert $reflect(InstanceCullRoot.quadtree_depths).offset == 408;
-$assert $reflect(InstanceCullRoot.node_world).offset == 416;
+$assert $reflect(InstanceCullRoot.live_count).offset == 416;
+$assert $reflect(InstanceCullRoot._pad9).offset == 424;
+$assert $reflect(InstanceCullRoot._pad10).offset == 428;
+$assert $reflect(InstanceCullRoot.node_world).offset == 432;
 
 struct InstanceSortRoot {
     GpuAddress keys;

@@ -34,6 +34,11 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer CullArgs {
     uint instance_count;
 };
 
+// A DEVICE billboard batch's live count, written by the dispatch that filled its records.
+layout(buffer_reference, std430, buffer_reference_align = 4) readonly buffer LiveCount {
+    uint value;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CullCounter {
     uint visible;
     uint lod_visible[LOD_LEVEL_COUNT];
@@ -205,6 +210,7 @@ void main() {
     }
     if (slot >= root.count) return;
     uint source = root.first + slot;
+    if (root.live_count != 0ul && source >= LiveCount(root.live_count).value) return;
     if (root.lod_mode == LOD_SELECT) {
         select_lod(root, source);
         return;
