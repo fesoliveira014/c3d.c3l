@@ -26,6 +26,7 @@ fn void update(Scene* scene, float dt, Vec3 wind = {}) {
                 emitter_world: emitter.world,
                 dt: dt,
                 wind: wind,
+                world_shift_y: scene.world_shift.y,
             );
         }
     };

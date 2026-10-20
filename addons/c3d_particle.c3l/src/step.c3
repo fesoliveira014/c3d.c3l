@@ -21,6 +21,7 @@ const uint SEED_BYTE_BITS @private = 8;
  @param emitter_world : "Published affine emitter matrix."
  @param dt : "Finite nonnegative seconds; capped at the maximum step."
  @param wind : "Finite world-space air velocity in metres per second."
+ @param world_shift_y : "Total vertical offset the scene was rebased by; ground heights are absolute."
  @require system.is_prepared()
  @require dt >= 0 && math::is_finite(dt)
  @require math::is_finite(wind.x) && math::is_finite(wind.y) && math::is_finite(wind.z)
@@ -30,6 +31,7 @@ fn void step(
     Mat4 emitter_world,
     float dt,
     Vec3 wind,
+    double world_shift_y = 0,
 ) {
     float seconds = math::min(dt, MAX_PARTICLE_STEP_SECONDS);
     uint index;
@@ -77,6 +79,7 @@ fn void step(
             index++;
         }
     }
+    collide(system, seconds, world_shift_y);
     system.event_due = system.event_count;
 }
 
