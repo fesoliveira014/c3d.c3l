@@ -10,6 +10,7 @@ import std::collections::list;
 struct PendingTextureUpload {
     TextureId asset;
     uint revision;
+    uint chain_revision;
     material::TextureSemantic semantic;
     gpu::TextureHandle texture;
     gpu::TextureState before;
@@ -120,6 +121,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
         if (mirror.texture == pending.texture) {
             mirror.revision = pending.revision;
             mirror.semantic = pending.semantic;
+            mirror.chain_revision = pending.chain_revision;
         }
     }
 
@@ -154,7 +156,10 @@ fn void discard_uploads(Renderer* renderer) @private {
     foreach (&pending : renderer.pending_texture_uploads) {
         TextureRes* mirror = &renderer.textures[pending.asset.index];
 
-        if (mirror.texture == pending.texture) mirror.revision = 0;
+        if (mirror.texture == pending.texture) {
+            mirror.revision = 0;
+            mirror.chain_revision = 0;
+        }
     }
 
     discard_font_uploads(renderer);

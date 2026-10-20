@@ -474,9 +474,9 @@ setup](#physics-and-navigation-setup).
   a pixel release uploads the map whole; see [editing a region](textures.md#editing-a-region) for the
   conditions and the log each texture keeps.
 - **Control map.** Terrain never reads the control map, so the application marks its edits itself, in control-map
-  texels: `assets.mark_texture_region_dirty(control_map, 0, region)!`. The control map keeps its generated mips,
-  and the renderer filters the whole level plane on the CPU for each region upload before it copies the touched
-  boxes. [Region uploads](#region-uploads) gives the time at 1024² texels.
+  texels: `assets.mark_texture_region_dirty(control_map, 0, region)!`. The control map keeps its generated mips.
+  Its first region upload filters every level on the CPU and keeps them; each later one filters only the boxes the
+  edit reaches before it copies them. [Region uploads](#region-uploads) gives the cost.
 - On a [set tile](#tile-sets), `mark_dirty` reaches neither the neighbours' duplicated edge texels nor their border
   rings. After it, call `TerrainSet.propagate_edit`:
 
@@ -925,13 +925,13 @@ viewport (these lines do not depend on it), 300 frames per segment, three runs e
 | `edit_upload_bytes` median (a stamp frame) | 48,450 | 179,522 |
 | of which the height-map region | 4,802 | 4,802 |
 | of which the node records | 43,648 | 174,720 |
-| `control_filter_ms` | 1.84 to 1.87 | 1.88 to 1.90 |
 
 `control_filter_ms` is the CPU time of a control-map region upload at the example's 1024² `RGBA8_UNORM` map with
 generated mips, less the same measurement on a height-map region: `control_region_upload_ms` less
-`height_region_upload_ms`, each the median of five marks and uploads. It is the filter over the whole level plane
-plus the staging of the touched boxes, and it does not depend on the height-map size. A stroke that also paints
-the control map pays it on each frame it marks one.
+`height_region_upload_ms`, each the median of five marks and uploads. The first region upload of a texture filters
+every level whole and keeps the generated levels, about a third of the map's mip 0; each later one filters only the
+boxes its edit reaches. The median therefore measures a later stroke, and it does not depend on the height-map
+size. A stroke that also paints the control map pays that band on each frame it marks one.
 
 ### Collision re-cook
 
