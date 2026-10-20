@@ -30,7 +30,7 @@ struct LayerGrid @private {
 
 struct ScatterFrame @private {
     HeightView    ground;
-    ScatterRules* rules;
+    ScatterRules  rules;         // by value: component storage moves when a component is removed
     Mat4          layer_world;
     float         layer_height;  // world y of the layer origin
     float         cell_size;
@@ -73,7 +73,7 @@ fn ScatterFrame? scatter_frame(
     )!;
     return {
         .ground         = ground,
-        .rules          = &desc.rules,
+        .rules          = desc.rules,
         .layer_world    = node.world,
         .layer_height   = maths::translation(node.world).y,
         .cell_size      = desc.cell_size,
@@ -237,7 +237,7 @@ fn uint place_cell(
     Transform[] transforms,
     Vec4[] colors,
 ) @private {
-    ScatterRules* rules = frame.rules;
+    ScatterRules* rules = &frame.rules;
     uint count;
     for (uint candidate = 0; candidate < frame.strata * frame.strata; candidate++) {
         Candidate at = candidate_at(

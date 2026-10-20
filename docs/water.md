@@ -579,7 +579,9 @@ The CPU twin keeps the `SPECTRAL_TWIN_WAVES` (64) strongest components of the sp
 adds, as Gerstner terms: a component with wave vector `k`, amplitude `A`, phase `φ` and choppiness `λ` draws
 `A cos(k·x − ωt + φ)` and shifts the point by `−λ A sin(…) · k̂`, which is a wave of the Gerstner form with the crest shift
 `λ A`. `surface_view` copies them into the view, so `sample_surface`, `sample_surface_detail` and `fluid_sample` run the
-converged inversion of [Height queries](#height-queries) over them, with the repeat period folding the time. A
+converged inversion of [Height queries](#height-queries) over them, with the repeat period folding the time. A query
+sums 64 components in each of up to eight inversion steps, so it costs about the ratio of the component counts more than
+the four waves'; `SPECTRAL_TWIN_WAVES` is the lever, and a smaller count also widens the bound. A
 `SurfaceView` therefore holds 64 waves of 32 bytes and is 2,208 bytes for every model, and stays a value several threads
 may query. The normal is the twin's Jacobian normal, a little steeper than the drawn slope-only normal.
 
@@ -1109,9 +1111,9 @@ the first frame, the camera stands 12 m west of the centre at 3 m looking west, 
 --example water_gpu` (the `water` target faults at the option with that hint), which adds `-D C3D_LANDSCAPE_GPU` and one
 call of `water_gpu::update` inside each frame before its views. It implies `--sea-state`, so `--wind` and the panel's
 wind controls set the spectrum, blended over four seconds. The lake is 0.5 m cells with a 32 m patch, because the fetch of
-a 120 m lake raises waves of a metre at most (`--wind 20` for the storm, 3 for the calm, `Hs` 0.11 m and 0.003 m); with
-`--ocean` the body is the 20 km sea at the default cell size and a 256 m patch, where `--wind 3` and `--wind 20` are the
-calm and the storm. The panel shows the twin's bound. `--shot FILE.png` writes the frame; it combines with `--ocean`,
+a 120 m lake raises waves of a metre at most: `--wind 20` is its storm (`Hs` 0.11 m, `λp` 1.1 m), and the default 6 m/s
+sea lies almost wholly under the lattice's cut and draws nearly flat. With `--ocean` the body is the 20 km sea at the
+default cell size and a 256 m patch, where `--wind 3` and `--wind 20` are the calm and the storm. The panel shows the twin's bound. `--shot FILE.png` writes the frame; it combines with `--ocean`,
 `--dive` and `--traced` (not with an ocean).
 
 `--split` draws two viewing cameras side by side in the same output, each with its own viewport, terrain levels,
@@ -1230,47 +1232,5 @@ the settle segment to 20 frames, three runs each (i9-14900K):
 
 The device test's four cases pass validation-clean in 2.4 s. The steady-upload gate passed in every run; a
 full-length settle segment in the same configuration passed the density gate (mean 0.599, worst 0.604).
-
-### WSL, llvmpipe, simulated surface
-
-The same CPU-only configuration with `--waves simulated`: `--opt O3`, `--benchmark 30 --size 1025 --width 160 --height 90`,
-16 crates, three runs (i9-14900K). The CPU lines are the simulation's; the frame times are llvmpipe's and say nothing
-about a device.
-
-| Line | Three runs |
-| --- | ---: |
-| `update_us` median, waves segment (96 × 96 cells, one substep, 30 awake frames) | 35.4 to 38.1 |
-| `update_us` p99, waves segment | 86.2 to 105.0 |
-| `update_us` median, settle segment (wave speed 60 m/s: two substeps, 283 awake frames) | 57.2 to 66.6 |
-| `upload_bytes` per awake frame | 150,544 (97 × 97 texels × 16 B) |
-| `sample_ns` median (the twin on a triangle) | 22.2 to 42.3 |
-
-The still and orbit segments upload nothing for the simulation, the pond settled 283 frames into the settle segment
-and uploaded nothing after it in every run, and the three gates pass, the density gate with a worst submerged fraction
-of 0.6062. `update_us` is the whole of `water::update` on those frames, which also covers the ground check and the
-ripple scroll, and the medium rewrite of a step that raises the reach.
-
-### WSL, llvmpipe, spectral surface
-
-The gated `water_gpu` example at `--opt O3` (`python3 scripts/build.py --target water_gpu --opt O3`), `--benchmark 30
---waves spectral --size 1025 --width 160 --height 90`, 16 crates, three runs (i9-14900K; the frame times are
-llvmpipe's and say nothing about a device, so only the CPU lines and the counts are given). The lake's default wind of 6 m/s over its
-120 m fetch raises a sea of 1.7 mm height deviation; the waves segment sets 18 m/s and the settle segment calm.
-
-| Line | Three runs |
-| --- | ---: |
-| `dispatches` of every frame (one body) | 18, `gate spectral_dispatches` passes |
-| `record_us` median of `water_gpu::update`, every segment | 19.2 to 20.6 |
-| `record_us` p99, still and orbit | 29.7 to 105.0 |
-| `record_us` p99, waves (the frame that uploads the table) | 300.8 to 492.5 |
-| table upload | 1,048,576 B on one frame of the waves segment and one of the settle segment, none in still and orbit |
-| `sample_ns` median (the twin over 64 components) | 1,626.8 to 1,660.1 |
-
-The twin costs about twenty times the four-wave one (82 to 86 ns above) per query; `SPECTRAL_TWIN_WAVES` is the
-lever, and a 256-crate step of 2,048 samples reads the surface for about 3.4 ms. The steady-upload gate and the density
-gate (worst submerged fraction 0.5933 over a sea of millimetres) pass in every run, and a `--validation` run is
-validation-clean with both gates. One run of `--ocean` (a 20 km sea at 6 m/s: 0.168 m of height deviation, envelope
-0.84 m, twin bound 0.417 m) records the same 18 dispatches a frame, `record_us` medians of 17.0 to 18.7, the same two
-table uploads and `sample_ns` 1,710; the density gate is skipped without crates.
 
 Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).

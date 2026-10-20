@@ -7,6 +7,7 @@ import c3d;
 import c3d::asset;
 import c3d::ecs;
 import c3d::geometry;
+import c3d::landscape;
 import c3d::landscape::foliage;
 import c3d::landscape::terrain;
 import c3d::maths;
@@ -60,6 +61,8 @@ const float EDITED_LEAN @local = 1.5f; // outside [0, 1]: validate_effects rejec
 const int TILE_GRID @local = 2; // tiles along each edge of the test set
 const uint TILE_LAYERS @local = 4; // TILE_GRID squared
 const uint TILE_CELLS @local = 8; // layer cells along one tile edge: EXTENT / LAYER_CELL
+const ulong SPLIT_SEED @local = 0x5b11d; // orders the job ranges of the split tests
+const uint SPLIT_SPAN @local = 9; // most cells in one job range
 const uint CELL_CANDIDATES @local = 64; // at SPACING over LAYER_CELL
 const uint TILE_CANDIDATES @local = TILE_CELLS * TILE_CELLS * CELL_CANDIDATES; // all pass full density on flat ground
 const float NON_DIVISOR_CELL @local = 7; // 64 m over 7 m is 9.14 cells
@@ -110,6 +113,24 @@ struct CellCopy @local {
     Entity         cell;
     usz            capacity;
     InstanceBits[] instances;
+}
+
+struct CellContents @local {
+    bool        present;
+    uint        count;
+    Transform[] transforms;
+    Vec4[]      colors;
+}
+
+struct JobRange @local {
+    uint first;
+    uint count;
+}
+
+struct LodSource @local {
+    LodLevel[2] levels;
+    LodPart[3]  parts;
+    LodDesc     desc;
 }
 
 // Fails one allocation above a byte, counted from 1; node names take one byte and must not fail.
@@ -310,13 +331,29 @@ fn InstancedMesh* cell_batch(Fixture* fixture, Node* layer, usz index) @local {
 fn usz cell_count(Fixture* fixture, Node* layer) @local => runtime_of(fixture, layer).cells.len;
 
 fn InstanceBits instance_bits(InstancedMesh* batch, uint index) @local {
-    Transform transform = batch.transforms[index];
+    return bits_of(batch.transforms[index], batch.colors[index]);
+}
+
+fn InstanceBits bits_of(Transform transform, Vec4 color) @local {
     return {
         .position = bitcast(transform.position, uint[<3>]),
         .rotation = bitcast(transform.rotation.v, uint[<4>]),
         .scale    = bitcast(transform.scale, uint[<3>]),
-        .color    = bitcast(batch.colors[index], uint[<4>]),
+        .color    = bitcast(color, uint[<4>]),
     };
+}
+
+// A cell of either kind: an instanced batch, or the instanced arrays of a level-of-detail group.
+fn CellContents cell_contents(Fixture* fixture, Node* layer, usz index) @local {
+    Entity cell = runtime_of(fixture, layer).cells[index];
+    if (!cell.generation) return {};
+
+    if (fixture.scene.world.has(cell, LodGroup)) {
+        LodGroupState* state = fixture.scene.world.get(cell, LodGroup).state;
+        return { .present = true, .count = state.count, .transforms = state.transforms, .colors = state.colors };
+    }
+    InstancedMesh* batch = fixture.scene.world.get(cell, InstancedMesh);
+    return { .present = true, .count = batch.count, .transforms = batch.transforms, .colors = batch.colors };
 }
 
 fn bool same_bits(InstanceBits first, InstanceBits second) @local {
@@ -327,13 +364,13 @@ fn bool same_bits(InstanceBits first, InstanceBits second) @local {
 fn bool same_layers(Fixture* fixture, Node* first, Node* second) @local {
     if (cell_count(fixture, first) != cell_count(fixture, second)) return false;
     for (usz index = 0; index < cell_count(fixture, first); index++) {
-        InstancedMesh* a = cell_batch(fixture, first, index);
-        InstancedMesh* b = cell_batch(fixture, second, index);
-        if ((a == null) != (b == null)) return false;
-        if (!a) continue;
-        if (a.count != b.count) return false;
+        CellContents a = cell_contents(fixture, first, index);
+        CellContents b = cell_contents(fixture, second, index);
+        if (a.present != b.present || a.count != b.count) return false;
         for (uint instance = 0; instance < a.count; instance++) {
-            if (!same_bits(instance_bits(a, instance), instance_bits(b, instance))) return false;
+            InstanceBits first_bits = bits_of(a.transforms[instance], a.colors[instance]);
+            InstanceBits second_bits = bits_of(b.transforms[instance], b.colors[instance]);
+            if (!same_bits(first_bits, second_bits)) return false;
         }
     }
     return true;
@@ -1337,6 +1374,7 @@ fn void test_pending_foliage_keeps_owned_lod_through_failure_retry_and_removal()
 
 const float REBASE_CELLS @local = 4; // 256 m cells, so the rebase offset is a render cell multiple
 const float REBASE_OFFSET @local = REBASE_CELLS * 256;
+const float TURN_DEGREES @local = 0.5f; // about 0.009 in the rotation entries, under the translation tolerance
 
 fn Node* add_nested_ground(Fixture* fixture, Node* parent) @local {
     Node* ground = add_ground(fixture, RANDOM, MOVED_GROUND_POSITION);
@@ -1530,4 +1568,268 @@ fn void test_neighbour_ring_change_replaces_only_smooth_layers_along_the_edge() 
     assert_same_layers(&fixture, smooth, fresh);
     assert(runtime_of(&fixture, smooth).placed_cells == TILE_CELLS);
     assert(runtime_of(&fixture, faceted).placed_cells == 0);
+}
+
+// Disjoint ranges that cover every listed cell once, in a shuffled order.
+fn JobRange[] shuffled_ranges(Allocator allocator, uint cells, ulong seed) @local {
+    JobRange[] ranges = alloc::new_array(allocator, JobRange, (sz)cells);
+    ulong state = seed;
+    usz pieces;
+    uint first;
+    while (first < cells) {
+        uint span = min(1 + (uint)(next_random(&state) % SPLIT_SPAN), cells - first);
+        ranges[pieces++] = { .first = first, .count = span };
+        first += span;
+    }
+    for (usz index = pieces; index > 1; index--) {
+        usz other = (usz)(next_random(&state) % index);
+        @swap(ranges[index - 1], ranges[other]);
+    }
+    return ranges[:pieces];
+}
+
+// Counts, reserves and places in shuffled ranges; the output arrays come from the allocator.
+fn void run_job(ScatterJob* job, Allocator allocator, ulong seed = SPLIT_SEED) @local {
+    foreach (range : shuffled_ranges(allocator, job.cell_count(), seed)) job.count_range(range.first, range.count);
+
+    usz total = job.instance_count();
+    job.reserve_output(
+        alloc::new_array(allocator, Transform, (sz)total),
+        alloc::new_array(allocator, Vec4, (sz)total),
+    )!!;
+    foreach (range : shuffled_ranges(allocator, job.cell_count(), seed + 1)) job.place_range(range.first, range.count);
+}
+
+// A layer node at the ground's pose with its foliage attached and no cells.
+fn Node* add_pending_layer(Fixture* fixture, FoliageDesc desc) @local {
+    Node* node = fixture.scene.add_node()!!;
+    node.local = fixture.scene.node(desc.ground).local;
+    fixture.scene.update_world();
+    foliage::attach_foliage(
+        scene:  &fixture.scene,
+        assets: &fixture.assets,
+        node:   node,
+        desc:   desc,
+    )!!;
+    return node;
+}
+
+fn ScatterJob take_job(Fixture* fixture, Node* layer, Allocator allocator) @local {
+    return foliage::scatter_job(
+        scene:   &fixture.scene,
+        assets:  &fixture.assets,
+        layer:   layer.id,
+        scratch: allocator,
+    )!!;
+}
+
+fn fault scatter_job_fault(Fixture* fixture, Node* layer) @local {
+    return @catch(foliage::scatter_job(
+        scene:   &fixture.scene,
+        assets:  &fixture.assets,
+        layer:   layer.id,
+        scratch: tmem,
+    ));
+}
+
+fn void? try_commit(Fixture* fixture, ScatterJob* job) @local {
+    return foliage::commit_scatter(&fixture.scene, &fixture.assets, job);
+}
+
+fn LodDesc* lod_source(Fixture* fixture, LodSource* source) @local {
+    source.levels = {
+        { .part_count = 2, .min_screen_size = 0.2f },
+        { .first_part = 2, .part_count = 1 },
+    };
+    source.parts[..] = {
+        .geometry = fixture.geometry,
+        .material = fixture.material,
+        .local    = maths::TRANSFORM_IDENTITY.to_mat4(),
+    };
+    source.desc = { .levels = source.levels[..], .parts = source.parts[..] };
+    return &source.desc;
+}
+
+fn void assert_commit_is_stale(Fixture* fixture, Node* layer, ScatterJob* job) @local {
+    uint free_nodes = fixture.scene.world.entities.free_count;
+    assert(@catch(try_commit(fixture, job)) == landscape::STALE);
+    assert(fixture.scene.world.entities.free_count == free_nodes);
+    assert(!fixture.scene.has(layer, FoliageRuntime) && !layer.first_child);
+}
+
+fn void test_scatter_job_matches_serial_for_any_range_split() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* ground = add_ground(&fixture, RANDOM);
+    FoliageDesc desc = layer_desc(&fixture, ground);
+    desc.rules.max_slope = ORDER_SLOPE_LIMIT;
+    LodSource source;
+    FoliageDesc lod_desc = desc;
+    lod_desc.lod = lod_source(&fixture, &source);
+    Node* serial = add_layer(&fixture, desc);
+    Node* serial_lod = add_layer(&fixture, lod_desc);
+
+    @pool() {
+        Node* split = add_pending_layer(&fixture, desc);
+        ScatterJob job = take_job(&fixture, split, tmem);
+        assert(job.cell_count() == cell_count(&fixture, serial));
+        run_job(&job, tmem);
+        try_commit(&fixture, &job)!!;
+        assert_same_layers(&fixture, serial, split);
+        assert(runtime_of(&fixture, split).instances == runtime_of(&fixture, serial).instances);
+
+        Node* split_lod = add_pending_layer(&fixture, lod_desc);
+        ScatterJob lod_job = take_job(&fixture, split_lod, tmem);
+        run_job(&lod_job, tmem, SPLIT_SEED + 2);
+        try_commit(&fixture, &lod_job)!!;
+        assert_same_layers(&fixture, serial_lod, split_lod);
+        assert(runtime_of(&fixture, split_lod).instances == runtime_of(&fixture, serial_lod).instances);
+    };
+
+    // A density region and a ground refresh list overlapping cells; each is placed once.
+    char[(DENSITY_SIDE * DENSITY_SIDE * RGBA8_BYTES)] full;
+    full[..] = 255;
+    TextureId density = add_density_map(&fixture, DENSITY_SIDE, full[..]);
+    Node* reference = add_layer(&fixture, layer_desc(&fixture, ground, density));
+    Node* detached = add_layer(&fixture, layer_desc(&fixture, ground, density));
+    stamp(&fixture, ground, { .x = 0, .z = 0, .columns = EDIT_SIDE, .rows = EDIT_SIDE });
+    @pool() {
+        assert(scatter_job_fault(&fixture, detached) == terrain::NOT_PREPARED);
+        update_terrain(&fixture);
+        fixture.assets.texture(density).pixels[0] = 0;
+        fixture.assets.mark_texture_region_dirty(density, 0, { .width = 1, .height = 1, .depth = 1 })!!;
+
+        ScatterJob job = take_job(&fixture, detached, tmem);
+        assert(job.cell_count() == DENSITY_REACH_CELLS * DENSITY_REACH_CELLS);
+        run_job(&job, tmem);
+        try_commit(&fixture, &job)!!;
+    };
+    update_landscape(&fixture);
+    assert_same_layers(&fixture, reference, detached);
+}
+
+fn void test_scatter_job_commit_is_stale_after_a_source_change() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* ground = add_ground(&fixture, RANDOM);
+    char[4] full = { 255, 255, 255, 255 };
+    TextureId density = add_density_map(&fixture, 1, full[..]);
+    FoliageDesc desc = layer_desc(&fixture, ground, density);
+
+    @pool() {
+        Node* edited = add_pending_layer(&fixture, desc);
+        ScatterJob edited_job = take_job(&fixture, edited, tmem);
+        run_job(&edited_job, tmem);
+        stamp(&fixture, ground, { .x = 0, .z = 0, .columns = EDIT_SIDE, .rows = EDIT_SIDE });
+        assert_commit_is_stale(&fixture, edited, &edited_job);
+        update_terrain(&fixture);
+
+        Node* thinned = add_pending_layer(&fixture, desc);
+        ScatterJob thinned_job = take_job(&fixture, thinned, tmem);
+        run_job(&thinned_job, tmem);
+        char[4] half = { 128, 128, 128, 128 };
+        write_density(&fixture, density, half[..]);
+        assert_commit_is_stale(&fixture, thinned, &thinned_job);
+
+        Node* retuned = add_pending_layer(&fixture, desc);
+        ScatterJob retuned_job = take_job(&fixture, retuned, tmem);
+        run_job(&retuned_job, tmem);
+        fixture.scene.get(retuned, Foliage).desc.rules.seed = EDITED_SEED;
+        assert_commit_is_stale(&fixture, retuned, &retuned_job);
+
+        Node* removed = add_pending_layer(&fixture, desc);
+        ScatterJob removed_job = take_job(&fixture, removed, tmem);
+        run_job(&removed_job, tmem);
+        fixture.scene.remove(removed);
+        uint free_nodes = fixture.scene.world.entities.free_count;
+        assert(@catch(try_commit(&fixture, &removed_job)) == landscape::STALE);
+        assert(fixture.scene.world.entities.free_count == free_nodes);
+    };
+}
+
+fn void test_scatter_job_is_stale_after_update_rescattered() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* ground = add_ground(&fixture, RANDOM);
+    char[16] before_edit = { 255, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0 };
+    TextureId density = add_density_map(&fixture, 2, before_edit[..]);
+    Node* layer = add_layer(&fixture, layer_desc(&fixture, ground, density));
+
+    @pool() {
+        assert(scatter_job_fault(&fixture, layer) == c3d::INVALID_ARGUMENT);
+
+        char[16] after_edit = { 0, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0 };
+        write_density(&fixture, density, after_edit[..]);
+        ScatterJob job = take_job(&fixture, layer, tmem);
+        run_job(&job, tmem);
+        update_landscape(&fixture);
+
+        CellCopy[] scattered = copy_cells(tmem, &fixture, layer);
+        assert(@catch(try_commit(&fixture, &job)) == landscape::STALE);
+        foreach (copy : scattered) assert(cell_unchanged(&fixture, layer, copy));
+    };
+}
+
+fn void test_scatter_job_commits_shifted_after_a_rebase() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* anchor = fixture.scene.add_node()!!;
+    anchor.local.position = { REBASE_OFFSET, 0, REBASE_OFFSET };
+    fixture.scene.update_world();
+    Node* ground = add_nested_ground(&fixture, anchor);
+    char[16] before_edit = { 255, 0, 0, 0, 0, 0, 0, 0, 128, 0, 0, 0, 0, 0, 0, 0 };
+    TextureId density = add_density_map(&fixture, 2, before_edit[..]);
+    FoliageDesc desc = layer_desc(&fixture, ground, density);
+    desc.rules.max_slope = ORDER_SLOPE_LIMIT;
+    Node* layer = fixture.scene.add_node(anchor)!!;
+    layer.local = ground.local;
+    fixture.scene.update_world();
+    try_add_layer(&fixture, layer, desc)!!;
+
+    @pool() {
+        char[16] after_edit = { 0, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0 };
+        write_density(&fixture, density, after_edit[..]);
+        ScatterJob job = take_job(&fixture, layer, tmem);
+        run_job(&job, tmem);
+        fixture.scene.shift_origin({ REBASE_OFFSET, 0, REBASE_OFFSET });
+        fixture.scene.update_world();
+        try_commit(&fixture, &job)!!;
+
+        FoliageRuntime* runtime = runtime_of(&fixture, layer);
+        assert(runtime.placed.layer_world == layer.world && runtime.placed.ground_world == ground.world);
+        CellCopy[] committed = copy_cells(tmem, &fixture, layer);
+        uint count_passes = runtime.count_passes;
+        update_landscape(&fixture);
+        assert(runtime.count_passes == count_passes);
+        foreach (copy : committed) assert(cell_unchanged(&fixture, layer, copy));
+
+        write_density(&fixture, density, before_edit[..]);
+        ScatterJob turned = take_job(&fixture, layer, tmem);
+        run_job(&turned, tmem);
+        fixture.scene.shift_origin({ REBASE_OFFSET, 0, REBASE_OFFSET });
+        layer.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::deg_to_rad(TURN_DEGREES));
+        fixture.scene.update_world();
+        assert(@catch(try_commit(&fixture, &turned)) == landscape::STALE);
+    };
+}
+
+fn void test_scatter_job_commit_over_the_node_budget_publishes_nothing() @test {
+    Fixture fixture;
+    setup(&fixture, max_nodes: SMALL_SCENE_NODES);
+    defer teardown(&fixture);
+    Node* ground = add_ground(&fixture, FLAT);
+
+    @pool() {
+        Node* layer = add_pending_layer(&fixture, layer_desc(&fixture, ground));
+        uint free_nodes = fixture.scene.world.entities.free_count;
+        ScatterJob job = take_job(&fixture, layer, tmem);
+        run_job(&job, tmem);
+        assert(@catch(try_commit(&fixture, &job)) == c3d::CAPACITY_EXCEEDED);
+        assert(fixture.scene.world.entities.free_count == free_nodes);
+        assert(!fixture.scene.has(layer, FoliageRuntime) && !layer.first_child);
+    };
 }

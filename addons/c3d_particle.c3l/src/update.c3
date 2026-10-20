@@ -7,7 +7,7 @@ import c3d::scene;
 import std::math;
 
 <*
- Advance prepared particles and publish child draws; skip pending systems.
+ Advance prepared particles, run their sub-emitters and publish child draws; skip pending systems.
  @param [&inout] scene : "Registered; matrices current; no active component iteration."
  @param dt : "Finite nonnegative seconds."
  @param wind : "Finite world-space air velocity in metres per second."
@@ -27,6 +27,14 @@ fn void update(Scene* scene, float dt, Vec3 wind = {}) {
                 dt: dt,
                 wind: wind,
             );
+        }
+    };
+    scene.@each(ParticleSystem; Entity entity, ParticleSystem* system) {
+        if (system.is_prepared()) process_events(scene, system);
+    };
+    scene.@each(ParticleSystem; Entity entity, ParticleSystem* system) {
+        if (system.is_prepared()) {
+            Node* child = scene.node(system.draw_node);
             if (system.desc.render_mode == ParticleRenderMode.MESH) {
                 publish_meshes(scene, child, system);
             } else {
@@ -34,6 +42,41 @@ fn void update(Scene* scene, float dt, Vec3 wind = {}) {
             }
         }
     };
+}
+
+fn void process_events(Scene* scene, ParticleSystem* source) @private {
+    // Events appended while processing, here or by another system, wait for the next update.
+    uint due = source.event_due;
+    for (uint queued = 0; queued < due; queued++) {
+        ParticleEvent* event = &source.events[queued];
+        foreach (sub_index, &sub_emitter : source.desc.sub_emitters[:source.desc.sub_emitter_count]) {
+            if (!accepts_event(sub_emitter, event)) continue;
+
+            ParticleSystem* target;
+            Node* node;
+            if (scene.world.is_alive(sub_emitter.target)) {
+                node = scene.node(sub_emitter.target);
+                target = scene.get(node, ParticleSystem);
+            }
+            if (!target || !target.is_prepared()) {
+                source.skipped_events = saturating_add(source.skipped_events, 1);
+                continue;
+            }
+            emit_at(
+                system: target,
+                emitter_world: node.world,
+                position: event.position,
+                inherited_velocity: event.velocity * sub_emitter.inherit_velocity,
+                seed: child_seed(event.parent_seed, event.index, (uint)sub_index),
+                count: sub_emitter.count,
+            );
+        }
+    }
+
+    uint remaining = source.event_count - due;
+    for (uint kept = 0; kept < remaining; kept++) source.events[kept] = source.events[due + kept];
+    source.event_count = remaining;
+    source.event_due = 0;
 }
 
 fn void publish_billboards(Scene* scene, Node* node, ParticleSystem* system) @private {
