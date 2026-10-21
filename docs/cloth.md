@@ -602,7 +602,7 @@ array so that no two constraints of a color share a particle, then stores it col
 edges stay in ascending `(first, second)` order and bends in the order of their interior edges. A topology
 change after a tear recolors with scratch carved at preparation, so it allocates nothing. The order follows
 the bend mode and has no setting of its own; for a given mesh, `ClothDesc` and update sequence the results
-are deterministic. An array that needs more than 32 colors keeps its previous order. The ordering reports where each color starts; running it again on an ordered array gives the same colors and the same order, which is how the [device solver](#device-solver) recovers the ranges. With
+are deterministic. An array that needs more than 32 colors keeps its previous order. With
 `ClothBendMode.DIHEDRAL`, edges keep the ascending order and hinges the order of the interior edges, whose
 state they carry.
 
@@ -678,67 +678,15 @@ little more; more iterations shrink that gap. In a steady breeze, sheets of diff
 along one edge move together closely. Once the sheet flutters, the motion is chaotic enough that
 tessellations agree only statistically; compare time averages there.
 
-## Device solver
-
-`ClothDesc.execution` selects where a prepared cloth solves, fixed at `prepare`: `CPU` (the default) or `GPU`. A `GPU` cloth is solved by `c3d::render::cloth_gpu`, compiled in the physics add-on under the `C3D_PHYSICS_GPU` feature. That module runs the solver as compute dispatches and writes the result into the cloth's geometry through a [geometry write](custom_shaders.md#geometry-writes). It is render-layer code: it imports core (`c3d::render`) and `c3d::physics::cloth`, records `Renderer.dispatch` passes and never imports `gpu`. A consumer that enables the feature selects the GPU dependencies.
-
-```c3
-ClothDesc desc = cloth::default_cloth_desc();
-desc.pins = pins;
-desc.execution = ClothExecution.GPU;
-scene.add_cloth(&assets, flag, desc, &physics)!;
-GpuCloths cloths = cloth_gpu::create_gpu_cloths(mem, &assets)!;
-defer cloth_gpu::destroy_gpu_cloths(&cloths, &renderer);
-
-physics.update(dt);
-physics.update_cloths();
-scene.update_world();
-renderer.begin_frame(info)!;
-cloth_gpu::update(&cloths, &renderer, &assets, &scene)!;
-renderer.render_view(&scene, camera, view)!;
-```
-
-**Selection.** `prepare` (and so `add_cloth`) returns `UNSUPPORTED` for a `GPU` cloth in a build without the feature, and with it for a cloth outside the subset below. A refused cloth stays unprepared. `update_cloths` never solves or publishes a `GPU` cloth: per update it stores the owner's previous and current world matrices, gravity, the fixed step length, the number of fixed steps and the owner's `Wind`, and for a skinned owner it samples the CPU reference positions as it does for a CPU cloth, and `cloth_gpu::update` consumes them. `Cloth.sleep` and `Cloth.wake` hold and resume it as on the CPU. The `GPU` value is serialized with the cloth (payload version 10); older payloads read `CPU`.
-
-**Subset.** Supported: pins, soft attachments, distance edges and distance bends, rigid and skinned reference transport, wind, gravity, damping, a ground plane and one sphere. `UNSUPPORTED` at prepare for a cloth with dihedral bending, tangent frames, seams, render-particle welds, cut paths, resting (`sleep_speed`), self-contact, continuous contact, a crowd source, more than one collider or a collider other than a point sphere, or an edge or bend set that needs more than 32 colors. Later changes lift these refusals one family at a time.
-
-**Packing.** `create_gpu_cloths` takes the budgets in `GpuClothsDesc` (`GPU_CLOTHS_DEFAULT`: 64 cloths, 65,536 particles, 4 MiB of tables) and fixes them. The context owns three renderer buffers whatever the cloth count, created at the first update that has a cloth: the positions (`READBACK`), the work buffer (predicted positions, velocities, soft-attachment multipliers and the reference pairs) and the tables (`UPLOAD`: initial and rest positions, the constraints of the edges and then the bends, color starts, marks, the triangle adjacency and, for a cloth that has them, the soft compliances and transport weights). Each cloth takes first-fit ranges in them. A cloth that does not fit makes `update` return `CAPACITY_EXCEEDED` after it has stepped the others, and `update` tries it again on its next call. A cloth takes its ranges at the first update that sees it prepared and gives them up at the first that does not, so removing a cloth, preparing it again over a new output copy or destroying its node frees them for the next update. `update` rewrites the tables whole, before the frame's first dispatch, only in a frame where a cloth arrives; it must therefore run before any other dispatch of that frame. `destroy_gpu_cloths` retires the buffers after their last submitted use.
-
-**Cost per particle.** The budgets are per particle, and the table budget usually binds first. Device state takes 96 B per particle (16 B of positions, which are also copied out every frame, and 80 B of work buffer, about 6 MiB at the default 65,536 particles), and the host keeps 32 B of staging per particle (2 MiB at the default) for the reference pairs of skinned cloths. Tables take 32 B per edge and per bend, so a bent sheet needs about 280 B per particle (a 128x128 flag with distance bends takes 4.5 MB against the default 4 MiB) and `table_bytes` must grow with it; the example sizes its own budgets. A skinned cloth also costs one extra dispatch per fused step, which stages its reference pairs into the work buffer (the single shape stages them inside its dispatch). The reference pairs travel through the frame's upload ring once per step because a dispatch's parameters cannot name an earlier ring block.
-
-**Step shapes.** A cloth with at most `DEVICE_SINGLE_PASS_PARTICLES` particles (1,500) has the single shape: its whole step runs in one 128-thread workgroup, the group size Vulkan guarantees, with every substep, iteration and color separated by workgroup barriers over coherent buffer memory, and the geometry write ends it. `update` steps all the awake single-shape cloths of a context in one dispatch with one workgroup per cloth: workgroup `i` steps the `i`-th of them, reading its parameters from the `i`-th entry of one block in the upload ring, and the dispatch carries every cloth's geometry write. The workgroups share no data and never wait for each other. `GpuClothsDesc.max_cloths` (at most `MAX_GPU_CLOTHS`) bounds the workgroup count. A larger cloth has the fused shape and steps in its own fused passes, `substeps * iterations * colors + 1` dispatches, where the colors are those of the edges followed by those of the bends (the bends are skipped at stiffness zero), plus one dispatch that stages the reference pairs of a skinned cloth and, on a cloth's first step with wind, one that initializes it: predict joins the first color of each substep, collide the last color of each iteration, integrate the last pass of each substep, and the output runs alone. A particle on no edge of a merged color is handled by an extra work item, and a mark per particle keeps the others from being handled twice. The shape is a function of the particle count, so it never changes for a cloth. The threshold sits just below the measured crossover on an RTX 4090: one workgroup took 0.52 ms against 0.79 ms for fused passes at 1,089 particles, and it grows by about 0.53 microseconds per particle. The one workgroup also records about 20 times less CPU time. Both shapes produce the same positions for the same cloth, and a cloth's result does not depend on which other cloths share its dispatch.
-
-**Lean stages.** Each stage is also compiled with the feature code removed. A fused cloth, or a batch of single cloths, whose roots set no feature bit (no soft attachments, transport, skinned owner or wind this update) runs the lean stage; one featured member makes a batch use the full one. The root keeps the fields a plain cloth's passes read in its first 368 bytes, in the order the fused stage always had, and a lean fused dispatch copies only those bytes into the frame ring; the feature fields follow them and a layout assertion keeps the copy ending where they start. A constraint record is 16 B and the rest directions sit in a second array after the records, read only for a pair that collapsed onto one point, so a projection reads 16 B per constraint.
-
-**Step.** A step runs `ClothDesc.substeps` substeps for each fixed step the update is due, in the CPU's order. Each predicts the particles (semi-implicit gravity, then damping `max(0, 1 - damping * dt)`), projects the edges color by color, pushes free particles out of the sphere and the ground by the contact offset after each iteration, and integrates the velocities. The colors are those of the CPU ordering, computed once at prepare for the edges and for the bends, so both solvers share the topology; within a color no two constraints share a particle, so the projection is Gauss-Seidel across colors and order independent inside one. A pair that collapses onto one point separates along its stored rest direction, as on the CPU. Each iteration projects the soft attachments, the edge colors, the bend colors and then the contacts; the soft projection joins the first pass of the iteration or the last pass of the one before it, so the order is the CPU's. Pins move from the owner's previous to its current world matrix, or for a skinned owner from the previous to the current reference position, over the substeps, as on the CPU.
-
-**Attachments, transport and wind.** A soft attachment pulls its particle to the reference position with XPBD in single precision: the multiplier of a substep starts at zero and accumulates over the iterations. A cloth with transport weights moves each free particle by its weight times the reference motion of the substep, and the integrated velocity excludes that motion, as on the CPU. The reference of a particle is its rest position under the owner's matrices, summed in the host's order so both solvers round it alike, or for a skinned owner the position the CPU sampled. Wind is gathered per particle: each particle sums the force shares of its incident triangles in triangle order through the particle-to-triangle table, which is the order the CPU adds them in, with no atomics. Drag, lift and the speed cap are the CPU's.
-
-**Limits.** The sphere is placed at its owner's pose at each update and does not move within one. Contacts are projections of single particles with the CPU's thickness offsets, without the CPU's bounded resolution loop, so a device cloth never reports `CONTACT_UNRESOLVED`. A non-finite result is not detected, including one from a soft attachment. A rebase of the world origin is not applied to the device state, and a skinned cloth woken from hold starts from the pose it wakes at. A cloth starts from its prepared pose at the first update: a cloth held or moved by its owner before then does not carry its particles. Output bounds are the rest bounds grown by the rest diagonal, passed as the geometry write's `local_bounds`, so culling, picking and tracing see that box. The bounds assume pins hold the sheet: a pinless cloth that falls further than its rest diagonal leaves the box, and bounds for a pinless cloth are not computed.
-
-**Frames in flight.** The steps a frame records are lost if the frame is not submitted, and the next update initializes a cloth whose first step was lost again. An aborted frame followed by `FRAMES_IN_FLIGHT` frames without an update counts as applied.
-
-**Observation.** The solver state lives on the device. `cloth_gpu::read_positions` returns the world positions `FRAMES_IN_FLIGHT` frames old through a `READBACK` buffer (see [Readback](custom_shaders.md#readback)), and `NOT_READY` before that frame has been copied; `ClothState`, `PhysicsWorld` queries and the cloth's CPU geometry arrays do not see a `GPU` cloth. Tracing a `vertex_motion` cloth refits its slot from the written streams, and the velocity pass reads the renderer-owned previous positions, with no position upload.
-
-Checks: `physics_gpu_test` (selection and refusals, no device) and, on a Vulkan device, the manual target
-
-```text
-c3c test cloth_gpu_acceptance --path addons/c3d_physics.c3l/test/gpu
-```
-
-which compares a pinned flag with distance bends and the ground, a hanging flag in a breeze, a flag whose owner moves with soft attachments and transport, and a flag on a skinned owner, each stepped 60 times on both solvers, once below and once above the threshold, with a tolerance of 2 mm; every case also builds host clothes with one feature removed and requires the feature to move the cloth by more than 4 mm, so a case cannot pass without it. The owner's motion in the last two is small, and those flags and the one in the breeze hang and are heavily damped, on purpose: a flag that falls from the horizontal or flutters is chaotic, and rounding noise of one ulp grows past the tolerance on a device whose arithmetic differs from the host's. It also compares three small flags that differ in size, pins and owner pose, and two skinned flags that differ in size, stepped together in one dispatch; settles a 33x33 flag against a sphere with TAA, motion blur and validation on; and checks the dispatch counts, the readback latency and the packing limits.
-
 ## Example
 
 ```text
 python scripts/build.py --example cloth
-addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
+addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities] [--count 64] [--workers 4] [--hold] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33 [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
-addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|flag33|field|crowd [--count 100] [--workers 4] [--cells 32]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both|contacts|fold|fast|field|crowd|densities [--count 64] [--workers 4] [--hold] [--still] [--ragdoll] [--publish whole|streams]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --cpu-only --scene flag|field|crowd [--count 100] [--workers 4] [--cells 32]
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
-python scripts/build.py --example cloth_gpu
-addons/c3d_physics.c3l/build/cloth_gpu.exe [--benchmark] --gpu --scene flag33 [--count 8] [--cells 127] [--forces]
 ```
 
 Run from `addons/c3d_physics.c3l`: the character model path is relative to it, and from `build/` the
@@ -782,8 +730,6 @@ template: the example adds the cape as a rigid mesh part on the `DEF-spine.003` 
 mean and 95th-percentile staging and commit wall times beside the summed solve time, and the bytes of all
 cloth states. `--cpu-only` steps the scene without a renderer, which keeps rasteriser threads from competing
 with the job pool. `--cells N` sets the benchmark flag's cells per side (default 32).
-
-The `flag33` scene hangs a 33x33-vertex sheet (1.8 m by 1.2 m) from a bar by its first row, laid out horizontally so gravity swings it down, with a static ball under the swing, bend stiffness zero, damping 3 per second and the ground on. It has no wind, which keeps its work to the first device subset, and it runs on the CPU solver by default. `--forces` gives the sheet the default distance bends and a `Wind` that the example's gusts drive, on the CPU and on the device alike. `--gpu`, accepted by the `cloth_gpu` build, sets `ClothDesc.execution` to `GPU` for the flag and runs `cloth_gpu::update` each frame; `--count n` hangs `n` copies of the flag side by side and `--cells n` sizes them (127 gives 128x128 vertices, above the single-dispatch threshold). With `--benchmark` it additionally prints the `CUSTOM_COMPUTE` pass time (`gpu_cloth,custom_compute_ms`), the upload pass time (`gpu_cloth,uploads_ms`), the velocity pass time (`gpu_velocity_ms`), the CPU time that recording the step took (`gpu_cloth,record_ms`), the step shape, the cloth count and the dispatches one step of all the cloths records (`gpu_cloth,shape`) and the context's buffer sizes and use (`gpu_cloth,memory`) beside the existing upload figures; the CPU figures of the same scene come from `--benchmark --cpu-only --scene flag33`.
 
 The `densities` scene hangs the same 1.8 m by 1.2 m flag from two bars side by side, at 12x8 and 24x16 cells,
 with the top row pinned and a 1.5 m/s wind that blows straight at the sheets, under the example's gusts. The

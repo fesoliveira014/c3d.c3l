@@ -6,7 +6,6 @@
   "wincrt": "static",
   "output": "../../../../build/cloth_acceptance",
   "targets": {
-    "cloth_acceptance": {"type": "test", "sources": ["cloth_acceptance.c3"]},
-    "cloth_gpu_acceptance": {"type": "test", "sources": ["cloth_gpu_acceptance.c3"], "features": ["C3D_PHYSICS_GPU"]}
+    "cloth_acceptance": {"type": "test", "sources": ["cloth_acceptance.c3"]}
   }
 }

@@ -10,7 +10,7 @@ import c3d::serial;
 
 struct CrowdClothPartAuthoring @private {
     uint part;
-    ClothSavedAuthoringV9 cloth; // crowd parts select no execution
+    ClothSavedAuthoring cloth;
 }
 
 struct CrowdClothSavedAuthoring @private {
@@ -48,7 +48,7 @@ fn void? register_crowd_cloth_codec() @private {
 fn void defaults_crowd_cloth_part(void* value) @private {
     CrowdClothPartAuthoring* part = value;
     *part = {};
-    defaults_cloth_authoring_v9(&part.cloth);
+    defaults_cloth_authoring(&part.cloth);
 }
 
 fn void defaults_crowd_cloth_authoring(void* value) @private {
@@ -116,7 +116,7 @@ fn void? project_crowd_cloth(void* component, void* value, serial::WriteContext*
     CrowdClothPartAuthoring[] parts = alloc::new_array(tmem, CrowdClothPartAuthoring, owner.state.parts.len);
     foreach (index, &part_record : owner.state.parts) {
         parts[index].part = part_record.part;
-        project_cloth_recipe_v9(part_record.authoring.desc, &parts[index].cloth, context)!;
+        project_cloth_recipe(part_record.authoring.desc, &parts[index].cloth, context)!;
     }
     *(CrowdClothSavedAuthoring*)value = {
         .parts = parts,
@@ -139,7 +139,7 @@ fn void? validate_crowd_cloth(void* value, serial::ReadContext* context) @privat
         for (usz j = 0; j < (usz)i; j++) {
             if (source.parts[j].part == part.part) return c3d::INVALID_ARGUMENT~;
         }
-        ClothDesc desc = cloth_desc_v9(&part.cloth, context)!;
+        ClothDesc desc = cloth_desc(&part.cloth, context)!;
         cloth::check_cloth_desc(desc)!;
         cloth::check_collider_owners(context.scene, desc.colliders)!;
         cloth::check_crowd_part_source_geometry(
@@ -155,7 +155,7 @@ fn void? attach_crowd_cloth(void* value, serial::ReadContext* context) @private 
     CrowdClothSavedAuthoring* source = value;
     if (!source.parts.len) return c3d::INVALID_ARGUMENT~;
     foreach (&part : source.parts) {
-        ClothDesc desc = cloth_desc_v9(&part.cloth, context)!;
+        ClothDesc desc = cloth_desc(&part.cloth, context)!;
         context.scene.attach_crowd_cloth(
             assets: context.assets,
             owner: context.node,
