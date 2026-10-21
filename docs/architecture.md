@@ -80,7 +80,7 @@ import sets are in the same section; the dependencies to list per package are in
 | `c3d_physics` | `c3d::physics`, `physics::collide`, `physics::cloth` | tests `physics_test`, `physics_serial_test`, `physics_serial_policy_test`; acceptance `cloth_acceptance`; examples `physics`, `physics_instanced`, `physics_components`, `vehicle`, `ragdoll`, `collision_math`, `breakable`, `cloth` | [README](../addons/c3d_physics.c3l/README.md) |
 | `c3d_nav` | `c3d::nav` | tests `nav_test`, `nav_serial_test`, `nav_serial_policy_test`; examples `navmesh`, `crowd`, `grid`, `nav_persistence` | [README](../addons/c3d_nav.c3l/README.md) |
 | `c3d_character` | `c3d::character` | tests `character_test`, `character_nav_test`, `character_serial_test`, `character_nav_serial_test`, `character_serial_policy_test`, `character_nav_serial_policy_test`; examples `character`, `character_nav`, `rebase_bench` | [README](../addons/c3d_character.c3l/README.md) |
-| `c3d_physics_gui` | physics panel and inspectors in `c3d::gui` | tests `physics_panel_off`, `physics_panel`, `physics_panel_character`; examples `physics_inspector`, `physics_inspector_character` | [physics inspector](physics_inspector.md) |
+| `c3d_physics_gui` | physics panel and inspectors in `c3d::gui` | tests `physics_panel_off`, `physics_panel`, `physics_panel_character`; examples `physics_inspector`, `physics_inspector_character` | [README](../addons/c3d_physics_gui.c3l/README.md) |
 | `c3d_job` | `c3d::job` | tests `job_test`, `job_profile_test`; example `job_bench` | [jobs](jobs.md) |
 | `c3d_landscape` | `c3d::landscape`, `landscape::terrain`, `landscape::foliage`, `landscape::water`, `landscape::water_gpu` | tests `landscape_test`, `landscape_gpu_test`, `landscape_serial_test`, `landscape_serial_policy_test`; acceptance `terrain_acceptance`, `water_acceptance`, `water_gpu_acceptance`; examples `terrain`, `vegetation`, `water`, `water_gpu` | [README](../addons/c3d_landscape.c3l/README.md) |
 | `c3d_particle` | `c3d::particle`, `particle::gpu` | tests `particle_test`, `particle_serial_test`, `particle_serial_policy_test`; acceptance `particle_acceptance`, `particle_gpu_acceptance`; examples `particles`, `particles_gpu` | [particles](particles.md) |
@@ -158,7 +158,7 @@ Each contract is stated once, on the page named. Contracts that no package page 
   the runtime storage. Static anchor bodies belong to the application; the `Breakable` owns the anchor welds.
 - **Fracture generation** lives in the standalone [c3d_fracture.c3l](https://github.com/fesoliveira014/c3d_fracture.c3l)
   project, which depends on c3d. The physics package keeps the generic authored pieces, multi-hull collision, preparation,
-  welds and read-only authoring views; core keeps store-free glTF source inspection. See [fracture](fracture.md) and
+  welds and read-only authoring views; core keeps store-free glTF source inspection. See [breakables](breakables.md#fracture-generation) and
   [glTF source inspection](gltf_source.md).
 - **Type descriptions.** `c3d::describe` imports only the standard library and core, never GUI, serialization or backend
   libraries. Struct descriptions are registered
