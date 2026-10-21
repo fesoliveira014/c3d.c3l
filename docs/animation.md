@@ -102,8 +102,8 @@ discard its old IDs.
 `Action.time`, `speed`, `weight`, `loop` and `playing` are runtime controls. Numeric values must be finite and `weight`
 nonnegative. `playing` gates only the clock, so paused actions still pose. Everything captured at play (clip, layer,
 additive mode, masks, reference samples, root-motion mode and extraction) is fixed: recreate the action to change it.
-The clip's tracks, duration and target mappings must stay unchanged and live during playback. Blend-space members are
-read-only; their space controls playback.
+The clip must stay live, and its targets, tracks, paths and strides must stay unchanged while an action plays it;
+`replace_clip_owned` enforces this. Blend-space members are read-only; their space controls playback.
 
 ### Pose ownership
 
@@ -231,8 +231,8 @@ An additive action keeps the reference pose it sampled at `play` until it is pla
 | `RootMotion.STRIP_XZ` | Pins root X and Z at the clip's first sample; vertical motion stays. |
 | `RootMotion.EXTRACT` | Pins the same channels and publishes the movement in `Animator.root_motion`. |
 
-Animation never moves the instance root. Import clips with `RootMotion.KEEP` to retain the data. The enum and
-`NO_ROOT_NODE` live in `c3d::anim`, including when used in `RetargetOptions`.
+Animation never moves the instance root. Imported clips keep their root motion in the tracks: the mode is chosen per
+action at `play` and per clip in `RetargetOptions`. The enum and `NO_ROOT_NODE` live in `c3d::anim`.
 
 ```c3
 animator.play(&assets, walk, { .root_motion = RootMotion.EXTRACT })!;
@@ -244,8 +244,8 @@ scene.update_world();
 The selected root is the first skin's first joint whose parent is outside that skin. An unskinned model defaults to
 `NO_ROOT_NODE`; set `animator.root_node` to a model-local index before playing to override it, and keep the selection
 fixed while actions live. The root joint and the ancestors between it and the instance root use `PARENT` transform space
-and keep their authored transforms; their basis is captured at `play`. The instance root itself may use either transform
-space.
+and keep the transforms they had at `play`, when their basis is captured. The instance root itself may use either
+transform space.
 
 `root_yaw = true` also removes the root rotation's Y twist and emits the turn about the root node's reference position;
 tilt stays in the pose. This default planar path requires upright, positive, uniform scale through the captured basis
@@ -273,7 +273,9 @@ Set `PlayDesc.extraction.generalized = true` with `root_motion = EXTRACT` to con
 ancestor chain of the motion node. `translation_axes` selects X, Y and Z in the instance-root frame, `up` is a finite
 unit vector in that frame and `twist` selects turning about it. These captured fields replace `root_yaw` for that action,
 so combining generalized extraction with `root_yaw`, a mode other than `EXTRACT` or `additive` faults `INVALID_ARGUMENT`.
-Keep the motion node and frame fixed while its actions live.
+Keep the motion node and frame fixed while its actions live. Every live `EXTRACT` action of an owner must use the same
+extraction settings: a planar `EXTRACT` action beside a generalized one, or one with different `translation_axes`, `up`
+or `twist`, faults `INVALID_ARGUMENT`.
 
 ```c3
 animator.root_node = motion_node;
@@ -289,8 +291,9 @@ animator.play(&assets, walk, {
 ```
 
 The chain may contain animated proper rotations, translations and finite positive uniform scales. Nonuniform scale,
-reflection, a non-unit baseline rotation, a root outside the model, nonfinite values and zero quaternion keys fault
-`INVALID_ARGUMENT` at `play`. Rotation and scale tracks are checked at their keys; a cubic rotation segment is not
+reflection, a non-unit baseline rotation, a root outside the model, two tracks on one node and path inside the chain,
+a nonpositive or nonuniform instance-root scale, nonfinite values and zero quaternion keys fault `INVALID_ARGUMENT` at
+`play`. Rotation and scale tracks are checked at their keys; a cubic rotation segment is not
 checked between keys and samples as the identity where it crosses zero. A `CUBIC_SPLINE` scale track on the chain faults
 `UNSUPPORTED`, after every `INVALID_ARGUMENT` check. Under generalized extraction, a scale track with nonneutral keys on
 an additive action's consumed chain is invalid in either additive scale mode, including zero-weight or fully masked
@@ -332,8 +335,9 @@ authored ID and time. Applications can filter by current action weight.
   before publication.
 - Delivery follows action play order, then time-crossing order within each action; equal-time markers keep their
   authored order.
-- Forward intervals include the starting instant and exclude the ending instant; reverse intervals do the opposite.
-  Terminal endpoints are included when a non-looping action stops.
+- A step delivers the markers in `[start, end)` in its direction of travel, forward or reverse: the starting instant is
+  included and the ending instant excluded. A non-looping action that reaches the clip end (duration forward, zero in
+  reverse) also delivers the marker at that endpoint.
 - At a loop seam, the closing marker (duration forward, zero backward) fires on arrival and the opening marker fires on
   continuing into the next cycle. A step spanning both delivers closing before opening.
 - Pauses and seeks alone fire nothing.
@@ -418,8 +422,8 @@ Reserve the storage when creating the owner:
 Animator* animator = anim::add_animator(&scene, instance_root, { .inertia_enabled = true });
 ```
 
-For a crowd, set `AnimatedCrowd.inertia_enabled = true` after `attach_crowd` and before `prepare_crowd`; changing it on a
-prepared owner is invalid. Disabled owners reserve none of this storage, and enabled updates allocate nothing.
+For a crowd, set `AnimatedCrowd.inertia_enabled = true` after `attach_crowd` and before `prepare_crowd`; preparation
+fixes the option and a later change has no effect. Disabled owners reserve none of this storage, and enabled updates allocate nothing.
 `Animator.inertial_status()` returns a copied `AnimationInertialStatus` (enabled, active, elapsed, duration).
 
 ```c3
@@ -444,8 +448,10 @@ them. Duration zero switches immediately.
   pose and history unchanged. It needs no spare action slots: 16-to-16 replacement and a crowd's full action capacity
   are supported.
 - **Groups.** `AnimationTransitionSpaceDesc.space` is a `CrowdSpaceAuthoring` description and `phase` is finite in
-  `[0,1)`. Each member starts at `phase * clip.duration`; group clocks override member `start_time`. The phase belongs
-  to the request and is not saved by serialization.
+  `[0,1)`. Its `actions` are ordinals into the request's `actions`; an ordinal appears once, and an action belongs to at
+  most one group. `weight` must be positive and `speed` finite, and a grouped clip needs a positive duration. Each member
+  starts at `phase * clip.duration`; group clocks override member `start_time`. The phase belongs to the request and is
+  not saved by serialization.
 - **Events.** Events come from target actions only.
 - **Onset.** A newly prepared owner exposes its authored baseline before its first update. An immediate request has zero
   source velocity until a positive update establishes history. A zero update freezes transition time.

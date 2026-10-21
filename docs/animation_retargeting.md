@@ -40,9 +40,12 @@ Every animated source node matches a destination template node by its canonical 
 compared case-insensitively, so `mixamorig:Hips` and `Hips` agree. `RetargetOptions.name_map` pairs exact source and
 destination names and takes precedence.
 
-- A source node with tracks and no match faults `ASSET_FORMAT_ERROR` unless `allow_partial` skips it.
-- A destination name shared by two nodes is ambiguous and faults `ASSET_FORMAT_ERROR`.
-- A `name_map` entry whose destination name does not exist faults `ASSET_FORMAT_ERROR`.
+- Under `COPY` only source nodes with tracks are resolved; under `CORRECT` every source node is. A resolved node with
+  tracks and no match faults `ASSET_FORMAT_ERROR` unless `allow_partial` skips it.
+- A canonical destination name shared by two nodes is ambiguous and faults `ASSET_FORMAT_ERROR` when a source node
+  reaches it. `allow_partial` does not suppress this fault.
+- A `name_map` destination matches exactly, and the first node with that name wins. A name that does not exist faults
+  `ASSET_FORMAT_ERROR`.
 
 ### What is copied
 
@@ -59,7 +62,7 @@ into independent arrays.
 | --- | --- |
 | `KEEP` | Copies the root translation. |
 | `STRIP_XZ` | Pins every key's horizontal position to the first key's, giving an in-place clip. Cubic tracks also lose their horizontal tangents. |
-| `EXTRACT` | Strips the root translation and adds one translation track on `options.root_node`, a destination template node, holding that node's rest position plus the horizontal displacement since the first key. |
+| `EXTRACT` | Strips the root's horizontal (X and Z) translation, keeping its height, and adds one translation track on `options.root_node`, a destination template node, holding that node's rest position plus the horizontal displacement since the first key. The new track keeps the source interpolation. |
 
 `EXTRACT` without a root node faults `INVALID_ARGUMENT`. A Mixamo template has no node above `Hips`, so it offers `KEEP`
 and `STRIP_XZ` only. Play the extracted clip with `RootMotion.EXTRACT` and `Animator.root_node` set to that node
@@ -69,7 +72,8 @@ and `STRIP_XZ` only. Play the extracted clip with `RootMotion.EXTRACT` and `Anim
 
 `retarget_by_name(allocator, source, source_nodes, target, options)` retargets a clip you already hold. `source`
 indexes `source_nodes`, which carry the source rig's names and parents, and the returned `AnimationClip` is owned by
-the allocator. Add it to a store with `AssetStore.add_clip_owned`.
+the allocator. Add it to a store with `AssetStore.add_clip_owned`, which requires arrays allocated with the store's
+allocator (`assets.allocator`).
 
 ```c3
 RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
@@ -104,12 +108,12 @@ A corrected clip is baked:
   before writing it into the destination's local frames. This assumes the destination root's ancestors are not mapped.
 - Non-root translations are never emitted; scale and morph tracks are copied as under `COPY`.
 - A corrected clip transfers one root: a source with more than one animated root translation faults
-  `ASSET_FORMAT_ERROR` in every root mode.
+  `ASSET_FORMAT_ERROR` in every root mode. Under `COPY` the same fault applies only with `EXTRACT`.
 
 `root_translation_scale` has two meanings. Under `COPY` it multiplies every root translation key. Under `CORRECT` it
 multiplies the displacement from the source rest. The ratio of the two rigs' hip heights
-(`rest_world_position(nodes, hips).y`) gives the same standing height in both. A zero `root_translation_scale` or
-`bake_rate` stands for its default, so an options literal that omits them keeps the defaults.
+(`rest_world_position(nodes, hips).y`) gives the same standing height in both. In `RetargetOptions`, a zero
+`root_translation_scale` or `bake_rate` stands for its default, so an options literal that omits them keeps the defaults.
 
 Correction transfers motion, not proportions or poses. Both rigs must face the same model axis and rest in the same kind
 of pose (both T or both A); a T-pose source on an A-pose destination keeps the arms offset by the difference for the
@@ -153,7 +157,7 @@ ClipId[] clips = fbx::load_animations_with_profile(
 
 | Field | Default | Meaning |
 | --- | --- | --- |
-| `mapping_mode` | `BY_NAME` | `BY_NAME` for unique name matching with `name_map`, or `BY_INDEX` for authoritative `index_map` rows. |
+| `mapping_mode` | `BY_NAME` | `BY_NAME` for unique name matching with `name_map`, or `BY_INDEX` for authoritative `index_map` rows. `BY_INDEX` with a `name_map`, or `BY_NAME` with an `index_map`, faults `ASSET_FORMAT_ERROR`. |
 | `index_map`, `name_map` | empty | Node correspondences. |
 | `source_calibration`, `target_calibration` | required | One unit rotation per node of each template. |
 | `source_motion_node`, `target_motion_node` | `RETARGET_NO_NODE` | The nodes whose motion is consumed. Leave both unset for no motion chain; when set, they must map to each other. |
@@ -168,11 +172,17 @@ already baked.
 
 - `retarget_with_profile` borrows the current templates and the profile and returns an independently owned
   `AnimationClip`. `RetargetProfile.validate_templates` checks the pair without baking.
+- `create_retarget_profile` requires nonempty templates in which every parent index is lower than its node's index and
+  every authored local has a finite position, a unit rotation and a positive uniform scale, and unit calibration
+  rotations, otherwise `INVALID_ARGUMENT`.
 - Node counts and the per-index names, parents and authored locals must match the prepared pair; a mismatch returns
   `INVALID_ARGUMENT`. Explicit mapping conflicts are format errors, and ambiguous name matches are rejected rather than
   resolved arbitrarily.
 - `RetargetBakeOptions` defaults to `KEEP`, 60 keys per second (`PROFILE_BAKE_RATE_DEFAULT`) with both endpoints, and
-  root translation scale 1; it also has `allow_partial`. A zero-duration clip has one key.
+  root translation scale 1; it also has `allow_partial`. Unlike `RetargetOptions`, a zero or nonfinite `bake_rate` or
+  `root_translation_scale` is `INVALID_ARGUMENT`, not a default. `STRIP_XZ` and `EXTRACT` need a `target_motion_node`,
+  `EXTRACT` needs a `target_carrier`, and a clip longer than `2^24` keys at the bake rate faults `CAPACITY_EXCEEDED`.
+  A zero-duration clip has one key.
 - Animated nonuniform scale or shear on a consumed ancestor faults `UNSUPPORTED`.
 
 The bake composes source motion through animated ancestors, applies calibration and facing, and solves destination locals
@@ -195,9 +205,10 @@ the mesh.
 
 `fbx::load_animations_with_profile(allocator, assets, path, model, profile, variant, options)` borrows a prepared profile,
 a target model and an explicit nonempty variant name. It validates the animation file's actual imported template against
-the profile, including files with no animation stacks. Profiled keys append `#profile/<byte length>:<variant>` to the
-animation key. Distinct variant names keep calibrations separate; reusing a name faults before publication. Failure while
-baking or inserting any stack removes every clip that call inserted.
+the profile, including files with no animation stacks. A profiled clip is keyed
+`<path>#anim/<k>#<model key>#<mode>#profile/<byte length>:<variant>`, with no `#rest`. Distinct variant names keep
+calibrations separate; reusing a name under the same root-motion mode faults before publication. Failure while baking or
+inserting any stack removes every clip that call inserted.
 
 ## Run the example
 
@@ -211,10 +222,12 @@ and shows the rest pose. It needs the Mixamo files listed in `examples/assets/mi
 ## Limits
 
 - Rigs must face the same model axis; correction does not fix proportions or pose style.
-- A corrected or profiled clip is baked on a fixed cadence and carries no cubic tangents.
-- Fault summary: `ASSET_FORMAT_ERROR` for an unmatched, ambiguous or missing mapped node or more than one animated root
-  under `CORRECT`; `INVALID_ARGUMENT` for `EXTRACT` without a root node, a mismatched template pair, a duplicate key or an
-  empty variant; `UNSUPPORTED` for animated nonuniform scale on a consumed ancestor; `INVALID_ID` for a dead model.
+- A corrected or profiled clip bakes its rotation and translation tracks as `LINEAR` keys on a fixed cadence; copied
+  scale and morph tracks keep their interpolation.
+- Fault summary: `ASSET_FORMAT_ERROR` for an unmatched, ambiguous or missing mapped node, more than one animated root
+  and invalid mapping modes; `INVALID_ARGUMENT` for `EXTRACT` without a root node, invalid profile or bake inputs, a
+  mismatched template pair, a duplicate key or an empty variant; `UNSUPPORTED` for animated nonuniform scale on a
+  consumed ancestor; `INVALID_ID` for a dead model; `ASSET_IO_ERROR` and `CAPACITY_EXCEEDED` from file loading.
 
 ## See also
 

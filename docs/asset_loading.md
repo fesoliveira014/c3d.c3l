@@ -56,9 +56,11 @@ its template as a model under the document key. Before the first insertion it ch
 
 - every key against the store and against the other keys of the document;
 - the free slots of every pool the document needs;
-- the content: no `CUSTOM` material, valid skin influences, valid clip events and storage formats on storage textures.
+- the content: no `CUSTOM` material, valid skin influences and tangent streams, valid clip events, valid LOD groups,
+  storage formats on storage textures and the texture semantic and alpha-coverage rules.
 
-A failed check returns its fault with the store and the document untouched. On success the store owns every payload and the
+A failed check returns its fault with the store unchanged and the document intact apart from tangent signs normalized to
+plus or minus one. On success the store owns every payload and the
 document is empty. Call `destroy_model_document` after either outcome.
 
 Inside a document, a reference to one of its entries is a typed ID holding the entry index plus one at generation zero. No
@@ -74,9 +76,9 @@ error and unused capacity costs one entry record.
 
 | Function | Fault | Meaning |
 | --- | --- | --- |
-| `decode_model`, `decode_model_memory` | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED` | As for the loaders in [Models](models.md#faults). |
+| `decode_model`, `decode_model_memory` | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `CAPACITY_EXCEEDED` | As for the loaders in [Models](models.md#faults); `CAPACITY_EXCEEDED` is an allocation failure while decoding. |
 | | `INVALID_ARGUMENT` | An image file has zero bytes. |
-| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, a clip has invalid or unsorted events, a storage texture has a non-storage format, or a template reference is unset, outside the document's entries or a dead store record. |
+| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, a clip has invalid or unsorted events, a storage texture has a non-storage format, a tangent stream or LOD group is invalid, or a template reference is unset, outside the document's entries or a dead store record. |
 | | `CAPACITY_EXCEEDED` | A pool has fewer free slots than the document has entries of that kind; the model pool needs one. |
 | | `UNSUPPORTED` | A texture entry has no source data. |
 | | `ASSET_DATA_UNAVAILABLE` | A texture entry with an alpha-coverage policy has no pixels. |
@@ -104,8 +106,11 @@ Each entry key is one of:
 
 References inside the document and its template are remapped to the matched and added IDs before each entry is replaced.
 A template reference that is unset, outside the document's entries or a dead store record faults `INVALID_ARGUMENT`, as in
-`publish_document`. The check phase decides every fault, so a fault leaves the store and the document as they were; on
-success the document is emptied.
+`publish_document`, as does a clip target index at or beyond the template's node count. The check phase decides every
+fault, so a fault leaves the store unchanged and the document intact apart from tangent signs; on success the document is
+emptied. `replace_document` and `replace_model` also fault `CAPACITY_EXCEEDED` when the added entries do not fit,
+`UNSUPPORTED` and `ASSET_DATA_UNAVAILABLE` as `publish_document` does. A dead model is a contract violation there; only
+the background loader reports it as `INVALID_ID`.
 
 A replacement faults with `INCOMPATIBLE_STRUCTURE` when a matched geometry, texture, skeleton or clip breaks the structural
 rules of its kind ([Replacing geometry, skeletons and clips](assets.md#replacing-geometry-skeletons-and-clips)), a matched
@@ -117,7 +122,8 @@ clip changes its name, or the new template differs in its structural signature f
 - the LOD groups in order: node and the full description.
 
 Node names, local transforms, layers, visibility, lights, cameras and the clip list may change. The serialization add-on
-compares the same field set, so a file saved before a compatible replacement still loads after it. The response to
+compares this signature, plus counts that equal IDs already fix, so a file saved before a compatible replacement still
+loads after it. The response to
 `INCOMPATIBLE_STRUCTURE` is to remove the model, add it again and instantiate again. `replace_model_owned(model, &template)`
 swaps the template alone, under the same signature rule.
 
@@ -207,7 +213,8 @@ cannot succeed against a reused slot. Releasing a request does not unload publis
 IDs.
 
 A removed replacement target fails `INVALID_ID` at publication; an incompatible replacement fails
-`INCOMPATIBLE_STRUCTURE` with the old content intact. `LoadStatus.model` and `report` keep the replaced ID and counts.
+`INCOMPATIBLE_STRUCTURE` with the old content intact. `LoadStatus.model` and `report` hold the replaced ID and counts
+once the request is `PUBLISHED`, and stay zero otherwise.
 
 ### Threads and allocators
 
@@ -229,12 +236,12 @@ report contains only its current call and has no cancellation field or event cur
 | Function | Fault | Meaning |
 | --- | --- | --- |
 | `create_async_loader` | `thread::INIT_FAILED` | Mutex, condition variable or worker initialization failed; owned resources are released. |
-| `request` | `INVALID_ARGUMENT` | The add path is already a model key, a pending request owns the path, or a replacement path differs from its model key. |
+| `request` | `INVALID_ARGUMENT` | The add path is already a key in the store, a pending request owns the path, or a replacement path differs from its model key. The path must be nonempty. |
 | | `CAPACITY_EXCEEDED` | Every slot has an unreleased request. |
 | | `INVALID_ID` | The replacement model is dead. |
 | `cancel`, `release` | `INVALID_ID` | Stale, released or never-issued ID. Releasing a pending request is a programming error. |
 | `status` (`FAILED.failure`) | `INVALID_ID` | Stale, released or zero request ID. |
-| | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ARGUMENT` | Worker decode or independent preparation failed. |
+| | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED`, `ASSET_DATA_UNAVAILABLE` | Worker decode or independent preparation failed. |
 | | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED`, `INCOMPATIBLE_STRUCTURE`, `INVALID_ID` | Owner publication failed without changing existing assets. |
 
 ## Run the example

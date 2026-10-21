@@ -24,7 +24,8 @@ cloth::prepare_subtree(&scene, &assets, null, &physics)!;
 - **Pending.** An owner with authoring but no runtime. It holds copied configuration and validated descriptors, draws
   per the table below and is skipped by system updates.
 - **Prepared.** The complete runtime is installed. `is_prepared` reports it for every owner.
-- **Idempotent.** Preparing an already-prepared owner succeeds without changing it.
+- **Idempotent.** Preparing an already-prepared owner succeeds without changing it. A terrain tile is the exception: it
+  re-validates and relinks, and faults leaving the tile unlinked when the set checks fail.
 - **Atomic.** A failed preparation keeps the pending authoring and releases everything that attempt acquired, so the
   application can fix the cause and retry.
 
@@ -37,8 +38,8 @@ cloth::prepare_subtree(&scene, &assets, null, &physics)!;
 | Cloth | Pending; source geometry, original vertex-motion flag, copied pins and collider identities | The authored source `Mesh` stays visible | `cloth::prepare(scene, assets, node, world = null)` or `cloth::prepare_subtree(scene, assets, root, world)` | Publish node world matrices; synchronize listed physics bodies first or receive `physics::NO_BODY`. No contact bodies means no physics-world dependency. Pass the `PhysicsWorld` for a skinned source |
 | Crowd cloth | Pending; attached part recipes on an `AnimatedCrowd` owner | The crowd's instanced part batch stays visible | `cloth::prepare_crowd_cloth(world, assets, owner, part = all)`, or `cloth::prepare_subtree` with a world | Prepare the crowd first; an unprepared crowd returns `INVALID_ARGUMENT` |
 | Terrain | Pending; validated height map and layer authoring | No generated chunk batch | `terrain::prepare(scene, assets, node)` or `terrain::prepare_subtree(scene, assets, root)` | Prepare before dependent foliage; a [tile](terrain.md#tile-sets) needs its parent's `TerrainSet`, and preparing a prepared tile re-validates its links |
-| Foliage | Pending; validated descriptor and owned optional LOD copy | No generated cells | `foliage::prepare(scene, assets, node)` or `foliage::prepare_subtree(scene, assets, root)` | Prepare terrain and publish world matrices first; pending terrain returns `terrain::NOT_PREPARED` and can be retried |
-| Water | Pending; validated descriptor | No generated surface or mirror camera | `water::prepare(scene, assets, node)` or `water::prepare_subtree(scene, assets, root)` | Publish node world matrices before preparation |
+| Foliage | Pending; validated descriptor and owned optional LOD copy | No generated cells | `foliage::prepare(scene, assets, node)` or `foliage::prepare_subtree(scene, assets, root)` | Prepare terrain and publish world matrices first; pending terrain returns `terrain::NOT_PREPARED` and can be retried. The node's world transform must be a translation plus a rotation about Y |
+| Water | Pending; validated descriptor | No generated surface or mirror camera | `water::prepare(scene, assets, node)` or `water::prepare_subtree(scene, assets, root)` | Publish node world matrices before preparation. A spectral wave model faults `UNSUPPORTED` when `C3D_LANDSCAPE_GPU` is off |
 | Breakable | Pending; copied pieces, hulls and rest frames; explicit recipes also keep edges, strengths and anchors | The authored `Mesh` nodes stay visible | `PhysicsWorld.prepare_breakable(node)` or `prepare_breakable_subtree(root)` | Publish world matrices, provide live hull sources and synchronize required `STATIC` anchor targets. Connected piece poses must match the captured recipe up to common rigid motion; a returned failure keeps pending authoring for retry |
 
 The owner pages describe each runtime: [Instancing](instancing.md#crowds), [Particles](particles.md),

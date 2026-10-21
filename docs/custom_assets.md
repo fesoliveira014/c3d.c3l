@@ -30,14 +30,15 @@ instead of using the pool directly. The next sections show how an owner writes t
 ## Concepts
 
 - **Process slot.** `register($Type, capacity, on_destroy = null, user = null)` gives the type a process-wide slot the
-  first time any store registers it, then allocates this store's pool of `capacity` records. A second call on the same
-  store changes nothing; the first capacity and hook stand.
-- **Per-store pool.** Each store holds its own `CustomPool{T}`, reached with `pool($Type)`. `is_registered($Type)` reports
-  whether this store has one.
+  first time any store registers it, then allocates this store's pool of `capacity` records, which must be positive. A
+  second call on the same store changes nothing; the first capacity and hook stand.
+- **Per-store pool.** Each store holds its own `CustomPool{T}`, reached with `pool($Type)`, which requires the type to be
+  registered. `is_registered($Type)` reports whether this store has a pool.
 - **Ids.** `CustomId{T}` is a distinct struct per kind: an ID of one kind cannot be cast into an ID of another. A record is
   a `CustomAsset{T}` with a `header` and a `data` payload.
 - **Destroy hook.** `on_destroy(allocator, data, user)` runs from `destroy_asset_store` on every live record's payload.
-  Pass `null` when the payload owns no memory. `CustomFreeFn` is the hook type.
+  Core frees `header.key` before the call, so the hook frees the payload only. Pass `null` when the payload owns no
+  memory. `CustomFreeFn` is the hook type.
 - **Capacity.** A process registers at most `asset::MAX_CUSTOM_ASSET_TYPES` (16) distinct types; the next one faults
   `CAPACITY_EXCEEDED`.
 - **Thread.** The slot counter and each type's slot are unsynchronized process globals. Call `register` during setup on one
@@ -47,8 +48,8 @@ instead of using the pool directly. The next sections show how an owner writes t
 
 The owner declares the typed functions of its kind. A builtin kind has `add_clip_owned`, `clip`, `remove_clip` and
 `find_clip` as `AssetStore` methods; the audio add-on uses free functions that take the store, and either shape is valid.
-This excerpt follows `register_audio_clips`, `add_audio_clip` and `remove_audio_clip` of the add-on, with format probing
-left out.
+This excerpt simplifies `register_audio_clips`, `add_audio_clip` and `remove_audio_clip` of the add-on, which also probe
+the encoded format, take a playback mode before the key and reject empty bytes.
 
 ```c3
 module c3d::audio;
@@ -108,19 +109,22 @@ fn void remove_audio_clip(AssetStore* assets, AudioClipId clip) {
 
 `check_key` runs before a pool slot is taken, so a duplicate key faults `INVALID_ARGUMENT` without consuming capacity.
 `check_key`, `register_key`, `forget_key`, `copy_string` and `free_string` are the public key helpers. `custom_ref($Type,
-id)` builds the `AssetRef` a key maps to.
+id)` builds the `AssetRef` a key maps to and requires the type to be registered. The `remove` function frees the key
+itself, as above, whereas the destroy hook must not.
 
 ## Keys and find
 
-`assets.find(key)` returns an `AssetRef` with `kind == AssetKind.CUSTOM` and `slot` set to the type's process slot.
+`assets.find(key)` returns an `AssetRef` with `kind == AssetKind.CUSTOM` and `slot` set to the type's process slot, or
+faults `NOT_FOUND` for an unknown or removed key.
 `asset::custom_id($Type, ref)` turns it into a typed ID and faults `INVALID_ARGUMENT` for a built-in reference or a
 reference of another custom kind. `find_texture` and the other built-in adapters fault `INVALID_ARGUMENT` on a custom key.
 An owner that wants lookup by key wraps these two calls in a function of its own.
 
 ## Lifetime and revisions
 
-- A record with `header.revision == 0` is an empty slot. `add` sets revision 1; `remove` zeroes the record before
-  `pool.remove`.
+- A record with `header.revision == 0` is an empty slot. The owner's `add` function sets revision 1, because the pool
+  leaves it zero and `destroy_asset_store` skips zero-revision records, leaking their key and payload. The owner's
+  `remove` zeroes the record before `pool.remove`.
 - An owner that edits a payload in place advances `header.revision`, as `mark_material_dirty` does for materials, so
   consumers keyed on the revision see the change.
 - An owner that replaces a whole payload also sets `header.replaced_revision` to the new revision, so consumers that

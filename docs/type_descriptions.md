@@ -12,6 +12,7 @@ Describe a component, register it once during setup and validate the registry.
 ```c3
 import c3d;
 import c3d::describe;
+import std::io;
 
 struct Spinner {
     bool enabled;
@@ -75,12 +76,12 @@ visited; it does not capture a fallback during setup. Either registration order 
 
 | Function | Meaning |
 | --- | --- |
-| `register_reflected(Type, after = null)` | Register a struct's reflected fields and an optional reconstruction hook. |
-| `register_reflected_component(Type, after = null)` | The same, also binding the ECS slot. Faults `CAPACITY_EXCEEDED` when slots are exhausted. |
-| `register_type(Type, fields, after = null)` | Register a handwritten fields callback. |
-| `register_component(Type, fields, after = null)` | The same, also binding the ECS slot. |
-| `register_core_components()` | Register the built-in `Mesh`, `Camera`, `Light`, `ProbeVolume`, `Atmosphere`, `HeightFog`, `ReflectionProbe`, `Decal`, `CloudLayer` and `MediumVolume` descriptions and their nested types. |
-| `get(Type)`, `component(slot)` | Borrow an immutable descriptor; fields must not be modified. Fault `MISSING_DESCRIPTION`. |
+| `register_reflected(Type, after = null)` | Register a struct's reflected fields and an optional reconstruction hook. Faults `DESCRIPTION_CONFLICT`. |
+| `register_reflected_component(Type, after = null)` | The same, also binding the ECS slot. Faults `DESCRIPTION_CONFLICT` and, when slots are exhausted, `CAPACITY_EXCEEDED`. |
+| `register_type(Type, fields, after = null)` | Register a handwritten fields callback. Faults `DESCRIPTION_CONFLICT`. |
+| `register_component(Type, fields, after = null)` | The same, also binding the ECS slot. Faults `DESCRIPTION_CONFLICT` and `CAPACITY_EXCEEDED`. |
+| `register_core_components()` | Register the built-in `Mesh`, `Camera`, `Light`, `ProbeVolume`, `Atmosphere`, `HeightFog`, `ReflectionProbe`, `Decal`, `CloudLayer` and `MediumVolume` descriptions and their nested types. Faults `DESCRIPTION_CONFLICT` and `CAPACITY_EXCEEDED`. |
+| `get(Type)`, `component(slot)` | Borrow an immutable descriptor; fields must not be modified. Fault `MISSING_DESCRIPTION`. `slot` must be below `ecs::MAX_COMPONENT_TYPES`. |
 | `validate_descriptions(&missing_type)` | Setup check over every registered description in schema mode. |
 
 - Registration is single-threaded and finishes before traversal. Later concurrent walks read the registry without locks.
@@ -106,7 +107,9 @@ arrays and slices are scopes. Vectors, matrices and quaternions stay leaf values
 - `MAT4` carries all sixteen float coefficients in column-major order (element `4 * column + row`, column-vector
   convention, so translation occupies elements 12, 13 and 14). Each coefficient follows the consumer's `FLOAT` rules,
   including exceptional values, shear and reflection. Consumers must not decompose or normalize a matrix.
-- An unrelated integer or ID typedef does not acquire reference semantics from its size.
+- A distinct integer typedef describes as its base integer type. A typedef of `Id` that is not one of the asset ID types
+  (`SkinId`, `AnimationActionId`, `CrowdInstanceId`, `ViewId`) describes as an asset reference of kind `CUSTOM` with no
+  custom slot.
 
 Reflection rejects unsupported fields at compile time and names the field. Pointers, unions, `constdef`, flags and
 recursive type shapes are unsupported. A transient tag is the only deliberate omission from a reflected description. A
@@ -123,7 +126,7 @@ still hide unsupported raw members, such as owned pointers.
 | `@tag("range", { 0.0, 10.0 })` | Two numbers | Inclusive editing range. Ordered, finite and representable by the field's scalar type; integer endpoints are integral. Applies to numeric scalars, supported floating-point and unsigned vectors and sequences of those, not matrices or quaternions. |
 | `@tag("unit", "m/s")` | String | Unit label. |
 | `@tag("transient", true)` | `true` | Omit the member from the description. |
-| `@tag("asset", AssetKind.GEOMETRY)` | `AssetKind` | The asset kind of a raw `Id` field. Typed asset IDs already supply their kind; a tag that contradicts one, or labels a non-asset field, is rejected. |
+| `@tag("asset", AssetKind.GEOMETRY)` | `AssetKind` | The asset kind of a raw `Id` field, where the tag is mandatory: reflection fails at compile time without it, and a handwritten `@field` has the same requirement. Typed asset IDs already supply their kind; a tag that contradicts one, or labels a non-asset field, is rejected. |
 
 Reflection rejects invalid tags at compilation with the field name; handwritten fields enforce the same rules through
 their metadata contract. Range metadata uses `double`, so it cannot express every 64-bit integer endpoint exactly. An
@@ -148,8 +151,8 @@ A `Visitor` holds a `mode`, the three required callbacks `field`, `begin` and `e
 | Call | Meaning |
 | --- | --- |
 | `walk(Type, &visitor, &value)` | Walk a registered description. Faults `MISSING_DESCRIPTION`. |
-| `walk_descriptor(descriptor, &visitor, &value, name = "")` | Walk a valid descriptor directly. |
-| `@field(visitor, name, field, metadata = {})` | Visit one authored field inside a handwritten fields callback. |
+| `walk_descriptor(descriptor, &visitor, &value, name = "")` | Walk a valid descriptor directly. Faults `MISSING_DESCRIPTION` for an unregistered nested type. |
+| `@field(visitor, name, field, metadata = {})` | Visit one authored field inside a handwritten fields callback. Faults `MISSING_DESCRIPTION` for an unregistered nested type. |
 
 Pass `null` as the value in schema mode.
 
@@ -159,8 +162,8 @@ Pass `null` as the value in schema mode.
 - **Handwritten fields.** A fields callback calls `@field` in its chosen order and combines each returned change flag
   without short-circuiting later visits: `changed = describe::@field(visitor, "speed", value.speed)! || changed;`.
 - **Faults.** Scope exit means that every visited child succeeded; it is not a cleanup callback. A fault stops the walk
-  immediately and propagates unchanged. Later fields, the failed scope's exit and that value's reconstruction do not run.
-  Earlier writes and completed sibling hooks may remain; traversal promises no rollback. Callback fault sets are open:
+  immediately and propagates unchanged. After a field or exit fault, later fields, the failed scope's exit and that
+  value's reconstruction do not run; a fault from the value's own `after` hook comes after its exit callback. Earlier writes and completed sibling hooks may remain; traversal promises no rollback. Callback fault sets are open:
   callback aliases document the consumer's fault in return prose, because C3 0.8.3 cannot express arbitrary
   function-pointer faults in `@return?`.
 - **Sequences.** A fixed-array extent is immutable. A slice supplies its current header and element layout. A reading

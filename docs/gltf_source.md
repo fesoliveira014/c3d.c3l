@@ -84,11 +84,11 @@ distance is in world meters. The mapping to c3d materials is in [Models](models.
 Sampler descriptions in the document hold decoded behavior. The source record also keeps the original filter values,
 including unspecified filters (zero) and the distinction between mipmapped and non-mipmapped minification.
 
-A material slot resolves to the lowest referenced source texture index whose image matches the decoded texture and whose
-sampler decodes to the slot's sampler. Compare sampler values, not document sampler identity. This handles several source
-textures sharing one image and keeps each slot's decoded behavior. Equivalent candidates can lose the distinction between
-an explicit filter and an unspecified filter when both decode identically: the contract preserves decoded equality, not
-the original JSON spelling.
+To map a material slot back to a source texture, pick the lowest index in the material's `textures` whose image matches
+the slot's decoded texture (through `texture_images`) and whose `SourceSampler` decodes to the slot's sampler. Compare
+sampler values, not document sampler identity. This handles several source textures sharing one image and keeps each
+slot's decoded behavior. Equivalent candidates can lose the distinction between an explicit filter and an unspecified
+filter when both decode identically: decoded equality is preserved, not the original JSON spelling.
 
 The record's sRGB and linear handles describe ordinary color variants. Normal and masked-coverage variants resolve through
 the decoded material slots and `texture_images`, which keep their source image identity. All variants of one image share
@@ -98,7 +98,10 @@ its copied encoded bytes.
 
 `decode_model_with_source` and `decode_model_memory_with_source` fault `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`,
 `UNSUPPORTED`, `INVALID_ARGUMENT` and `CAPACITY_EXCEEDED`, as the ordinary decoders do ([Models](models.md#faults)). A
-metadata mismatch between the retained JSON and cgltf is an `ASSET_FORMAT_ERROR` with the diagnostic filled.
+metadata mismatch between the retained JSON and cgltf is an `ASSET_FORMAT_ERROR`. The diagnostic names the material or
+texture for a per-entry mismatch; a count mismatch, a missing array or an unparsable document leaves both indices at
+`NO_SOURCE_INDEX`. The allocator must not be `tmem`; the file entry point needs a nonempty path and the memory entry point
+nonempty bytes and key.
 
 ## Limits
 

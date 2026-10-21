@@ -21,12 +21,12 @@ anim::publish_crowd_pose(&assets, &scene, crowd);
 | --- | --- | --- |
 | `advance(&assets, dt)` | Owner thread | Steps every instance's clocks, fades and groups and writes the crowd-wide event prefix in instance order. |
 | `sample_range(&assets, first, count, &scratch)` | Any thread | Blends the poses and morph weights of instances `[first, first + count)` into their own slices and extracts their root motion, inertial correction and history, writing `slot.root_motion`. |
-| `publish_crowd_pose(&assets, &scene, crowd)` | Owner thread | Publishes palettes, morph weights and part matrices from the sampled poses. |
+| `publish_crowd_pose(&assets, &scene, crowd)` | Owner thread | Publishes palettes and morph weights from the sampled poses and updates the part batches. |
 
 - Call `sample_range` once per instance after each `advance`. A repeat steps inertial history and root motion again.
 - Calls on disjoint ranges may run concurrently in any order, each with its own scratch from
-  `create_crowd_pose_scratch(state)`; free it with `destroy_crowd_pose_scratch(state, scratch)`. The state's own scratch
-  serves `update` and one serial caller.
+  `create_crowd_pose_scratch(state)`, which faults `CAPACITY_EXCEEDED` when its allocation fails; free it with
+  `destroy_crowd_pose_scratch(state, scratch)`. The state's own scratch serves `update` and one serial caller.
 - Nothing structural may change in the store, the crowd or its players until every call returns.
 - A call allocates nothing and writes nothing shared. Each instance's output depends only on its own state, so range
   splits, order and thread count change no pose, morph weight, root motion or event, bit for bit.
@@ -77,8 +77,8 @@ time and hit rate. `job_bench --crowd COUNT --shared-phases` times the same crow
   Cubic spline tracks keep every key, quantize values and tangents and report an analytic per-segment bound. Cubic
   rotations and empty tracks stay raw.
 - **Report.** The call returns a `CompressionReport` with the largest error per path and the bytes before and after. It
-  measures at every source key time, and for rotations also at each segment's midpoint, so a rotation error is the larger
-  of those samples and not a true maximum.
+  measures at every source key time, and for rotations and cubic tracks also at each segment's midpoint, so such an error
+  is the larger of those samples and not a true maximum.
 - **Faults.** `TOLERANCE_EXCEEDED` when an error exceeds its tolerance; `CAPACITY_EXCEEDED` on allocation failure;
   `INVALID_ARGUMENT` for invalid track data. A fault of any kind leaves the clip, its arrays and its revision unchanged.
   On success the raw arrays are freed, one block holds the packed keys and the revision moves once.
@@ -105,7 +105,7 @@ model's clips with a tolerance of 1e-3 on every path and print the bytes before 
 | Prepared 2D storage | See below. |
 | Inertial storage | Per owner when enabled, none otherwise; a crowd reserves it for its full capacity, including inactive placements. Each row holds a previous node pose, velocity and offset rows, one byte per node of scale membership and 28 bytes per logical morph component. |
 
-Per-frame updates allocate nothing. Scratch for evaluation comes from the temporary allocator.
+Per-frame updates allocate nothing: evaluation scratch is allocated once, with the owner.
 
 ### Prepared storage
 

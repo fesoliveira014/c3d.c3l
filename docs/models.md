@@ -26,8 +26,8 @@ right.local.position = { 2, 0, 0 };
 renderer.prepare_scene(&scene)!;
 ```
 
-`load_model(&assets, path, options)` parses the file, converts every sampler, image, material and primitive into store
-assets and stores a `ModelTemplate` under the path as its key. `load_model_memory(&assets, bytes, base_dir, key, options)`
+`load_model(&assets, path, options)` parses the file, converts every sampler, referenced image, material and primitive into
+store assets and stores a `ModelTemplate` under the path as its key. `load_model_memory(&assets, bytes, base_dir, key, options)`
 does the same from bytes, with a caller-supplied key and a base directory for external URIs. Loading never touches a
 scene: placing a model is always `model::instantiate`, and the caller sets the root transform. `fbx::load_model` is the
 FBX equivalent ([FBX import](#fbx-import)).
@@ -73,8 +73,8 @@ The source model and the referenced keyed assets must be live in the destination
 Template nodes are ordered depth first from the default scene's roots, or from every parentless node when the file names
 no scene, with a parent always before its children. `NodeTemplate.parent` is the model-local index of the parent, or `-1`
 for a template root. A source node with a mesh keeps its transform and gains one generated child per primitive, named
-`<node name>/primitive/<j>`, placed before the node's authored children. Matrix nodes are decomposed into position,
-rotation and scale; shear is dropped.
+`<node name>/primitive/<j>`, placed before the node's authored children. A `matrix` node is decomposed into position,
+rotation and scale; shear or non-finite values are `ASSET_FORMAT_ERROR`.
 
 ### Keys
 
@@ -98,7 +98,8 @@ for `load_model_memory`.
 In the image keys, `<fmt>` is the ordinal of the texture's pixel format, `<coverage>` is the alpha-coverage policy
 ordinal and `<hex>` is the bit pattern of the effective alpha threshold.
 
-A key already present in the store makes the load fail with `INVALID_ARGUMENT` before anything is parsed. An image
+A model key already present in the store makes the load fail with `INVALID_ARGUMENT` before anything is parsed; a
+clashing content key faults in `publish_document`, still before anything is inserted. An image
 referenced as base color, emissive, sheen color or specular color becomes an sRGB texture; every other reference becomes a
 linear texture; an image used both ways becomes two textures. Images nothing references are not decoded. Normal-map roles
 and color roles use distinct texture variants, and a glTF masked base texture gets a variant for its effective alpha
@@ -154,14 +155,15 @@ Every texture view becomes a `TextureSlot` carrying its texture, its sampler or 
 UV set. Sampler filters map nearest-or-linear per stage; the mip filter follows the minification filter's mipmap half and
 is linear when the source names none. Wrap modes map to the matching address modes; the W axis repeats. Every factor is
 validated against the constructor domains before the material is built; a value outside them is `ASSET_FORMAT_ERROR`.
+Only UV sets 0 and 1 exist, so a higher `texCoord`, including one set by `KHR_texture_transform`, is the same fault.
 Material and sampler fidelity for tools is in [glTF source inspection](gltf_source.md#material-and-sampler-fidelity).
 
 ### Geometry
 
 Each primitive becomes one `Geometry` asset.
 
-- `POSITION`, `NORMAL`, `TANGENT`, `TEXCOORD_0`, `TEXCOORD_1`, `COLOR_0`, `JOINTS_0` and `WEIGHTS_0` are read. Normalized
-  integer streams are expanded to floats. `COLOR_0` imports as RGBA (RGB gains alpha one) and tints the built-in shading.
+- `POSITION`, `NORMAL`, `TANGENT`, `TEXCOORD_0`, `TEXCOORD_1`, `COLOR_0`, `JOINTS_0` and `WEIGHTS_0` are read; a second
+  influence set is ignored, so a vertex keeps at most four influences. Normalized integer streams are expanded to floats. `COLOR_0` imports as RGBA (RGB gains alpha one) and tints the built-in shading.
 - A primitive with joints but no weights, or the reverse, is `ASSET_FORMAT_ERROR`, as is one whose `POSITION` accessor is
   missing or empty.
 - Point, line and triangle lists pass through; strips, fans and loops are rewritten into indexed lists. Triangle
@@ -190,8 +192,7 @@ the channels address in first-appearance order, and each `Track.target` indexes 
 - Interpolation maps to `STEP`, `LINEAR` or `CUBIC_SPLINE`; cubic keys keep their in-tangent, value and out-tangent triples.
   `duration` is the largest key time.
 - The template lists its clip IDs and every instance copies them. Channels whose target nodes are outside the imported
-  node set are omitted, including for unselected scenes and alternate subtrees skipped during optional LOD fallback. A clip
-  with no imported channels has no tracks. `options.animations = false` skips clips.
+  node set are omitted, such as nodes of unselected scenes. A clip with no imported channels has no tracks. `options.animations = false` skips clips.
 - Clip events import from animation metadata ([Event import schema](animation_reference.md#event-import-schema)).
 
 The renderer builds joint palettes from `SkinBinding` and selects the skinned and morphed vertex variants
@@ -267,8 +268,8 @@ roughness.
   materials. A property connected to a texture takes its value from the texture; the base and emission factors still
   multiply. Opacity below one or an opacity texture selects blending. Base color, emissive, normal and occlusion textures
   map directly. Separate roughness and metalness textures are packed into one metallic-roughness map (roughness in green,
-  metalness in blue), and an opacity texture is multiplied into a copy of the base color's alpha; sources of different
-  sizes are resampled to the larger. Texture bytes come from embedded content, then the relative path next to the file,
+  metalness in blue; sources of different sizes are resampled to the larger), and an opacity texture is multiplied into a
+  copy of the base color's alpha (resampled to the base color's size). Texture bytes come from embedded content, then the relative path next to the file,
   then the absolute path.
 - **Skins.** Each skin deformer becomes a skeleton in cluster order, with the bone's local transform as rest pose and
   ufbx's geometry-to-bone matrix as inverse bind. Vertices keep their four largest weights, renormalized. When a skinned
@@ -287,8 +288,8 @@ roughness.
 Unsupported: texture UV transforms (`UNSUPPORTED`), UV set selection by name (textures use UV set 0), a mesh with more than
 one skin deformer (`UNSUPPORTED`), dual-quaternion skinning (imported as linear), area and volume lights (skipped), NURBS,
 constraints and geometry caches. A texture that has neither embedded content nor a readable file fails with
-`ASSET_IO_ERROR`; any other ufbx load failure, a non-finite material value or invalid in-between weights fail with
-`ASSET_FORMAT_ERROR`. A fault rolls back as for glTF.
+`ASSET_IO_ERROR`; any other ufbx load failure, a texture that does not decode to RGBA8, a skin cluster without a bone node,
+a non-finite material value or invalid in-between weights fail with `ASSET_FORMAT_ERROR`. A fault rolls back as for glTF.
 
 ## Faults
 
@@ -296,10 +297,10 @@ constraints and geometry caches. A texture that has neither embedded content nor
 | --- | --- |
 | `ASSET_IO_ERROR` | The file, an external buffer or an external image could not be read. |
 | `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, a joint lies outside the imported nodes, or a numeric value lies outside the constructor domains. |
-| `UNSUPPORTED` | A required extension or a compressed primitive the importer does not implement. |
+| `UNSUPPORTED` | A required extension or a compressed primitive the importer does not implement, an unsupported required `MSFT_lod` shape, an FBX texture UV transform, an FBX mesh with more than one skin deformer or 65,535 or more clusters, or an FBX texture that is not a file texture and has none. |
 | `CAPACITY_EXCEEDED` | A store pool has fewer free slots than the model needs. |
 | `INVALID_ARGUMENT` | The model key or a content key is already present, an image file is empty, a skin stream has invalid influences, or a storage texture has a non-storage format. |
-| `INVALID_ID` | `instantiate` received a dead model id. |
+| `INVALID_ID` | `instantiate` received a dead model id. `instantiate` also faults `CAPACITY_EXCEEDED` when scene nodes run out, and `INVALID_ARGUMENT` or `UNSUPPORTED` for LOD nodes. |
 | `INCOMPATIBLE_STRUCTURE` | A replacement changes a count or layout that live components were sized against ([Asset loading](asset_loading.md#replace-a-model)). |
 
 A loader decides every store fault before it inserts anything, so a fault leaves the store as it was.

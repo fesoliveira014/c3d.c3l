@@ -9,7 +9,7 @@ skinning poses meshes once per frame. Deformation lives in `c3d::render`; the sw
 - **Skinning.** A mesh node with a `SkinBinding` draws with a joint palette
   `inverse_affine(mesh.world) * joint.world * inverse_bind[i]`, computed once per renderer frame per binding and shared by
   the camera view and every shadow layer of that frame. Joint indices pack as four bytes per vertex, or four 16-bit
-  values when a skin addresses more than 256 joints.
+  values when the geometry stores any joint index above 255.
 - **Morph targets.** A mesh with morph targets and a non-empty `Mesh.morph_weights` draws with its eight largest non-zero
   target weights by magnitude (`MAX_ACTIVE_MORPH_TARGETS`). The rest are dropped for that frame while the CPU weights stay
   complete. Deltas apply before skinning.
@@ -77,7 +77,7 @@ vertex. With few passes it can cost more GPU and CPU time than vertex skinning.
 
 - **Posed.** Ordinary meshes and crowd parts that are skinned, morphed or both.
 - **Out of scope.** Animated LOD parts (of a crowd or a single model), plain and LOD instanced groups, and meshes with
-  `Mesh.vertex_motion` keep vertex skinning. They are outside the scope, not fallbacks, and
+  `Mesh.vertex_motion` keep vertex skinning, as do impostor draws. They are outside the scope, not fallbacks, and
   `Stats.compute_skinning_fallbacks` does not count them. A mesh or crowd part drawn by a material with a custom vertex
   stage also stays out, because that stage applies its own deformation.
 - **Unclaimed.** A mesh or crowd part that no view, shadow layer or trace claims is not posed.
@@ -91,7 +91,8 @@ vertex. With few passes it can cost more GPU and CPU time than vertex skinning.
 
 Each drawn mesh node and each drawn crowd part owns a pair of posed blocks, allocated on first use, reallocated when its
 geometry's layout or the crowd's capacity changes and released after `INSTANCE_ABSENCE_FRAMES` frames without a draw.
-A mesh costs 52 B per vertex plus two root blocks, in one device allocation. A crowd part is sized by the crowd's
+A mesh costs up to 52 B per vertex (positions 12 B, normals 12 B, tangents 16 B and a second positions block of 12 B;
+normals and tangents only when the geometry has them) plus two root blocks, in one device allocation. A crowd part is sized by the crowd's
 capacity, whatever the live count: `capacity * vertex_count * 52 B`. A crowd with more sources than one dispatch can
 address keeps vertex skinning as a whole. Exceeding a cap is never a fault, while a failed device allocation still is
 one.
@@ -110,11 +111,11 @@ prepass or shadow layer that draws it. A crowd part's dispatch poses every live 
 off-screen ones, so a part costs the same whatever its draws show. Later passes and views of the frame reuse the pose.
 
 The previous positions are the pose of the last submitted frame that drew the mesh. A view gets deformation motion only if
-its own previous submitted frame produced that pose. Turning the switch on, a new mesh or crowd part, a reallocated block,
-a view that missed the previous submitted frame, and a crowd slot whose occupant changed through `set_crowd` bind the
-current pose as the previous one: node and instance motion remain and only deformation motion drops for that frame. A view
-that renders every other frame therefore has no deformation motion, where vertex skinning reuses the view's own older
-palette.
+its own previous submitted frame produced that pose. Turning the switch on, a new mesh or crowd part, a reallocated block
+and a view that missed the previous submitted frame bind the current pose as the previous one. So does a crowd after
+`set_crowd`, which renews the playback identity of every part and instance. Node and instance motion remain; only
+deformation motion drops for that frame. A view that renders every other frame therefore has no deformation motion, where
+vertex skinning reuses the view's own older palette.
 
 ### Pipelines
 
@@ -133,7 +134,7 @@ preparation outside a frame. See [scene trace](scene_trace.md#posed-instances).
 - At most eight morph targets draw per mesh per frame.
 - Compute skinning does not cover animated LOD parts, instanced groups, `Mesh.vertex_motion` meshes or custom vertex
   stages.
-- Compute skinning holds `52 B` per vertex resident per posed mesh, capped at 512 MiB and 2,048 posed bindings.
+- Compute skinning keeps up to 52 B per vertex resident per posed mesh, capped at 512 MiB and 2,048 posed bindings.
 - Generic skinned `InstancedMesh` bindings are unsupported.
 
 ## See also

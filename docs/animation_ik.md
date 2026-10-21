@@ -1,8 +1,9 @@
 # Inverse kinematics
 
 `c3d::anim::ik` bends existing joint nodes toward targets after the animator has written its pose. Three types cover
-limbs, feet and looking, and retained foot contacts keep a planted foot on a moving support. The solvers read world
-matrices and write local rotations; they allocate nothing and need no feature flag.
+limbs, feet and looking, and retained foot contacts keep a planted foot on a moving support. `solve`, `align` and
+`align_contact` read world matrices and write local rotations only. `place`, `release` and `reset_contact` move the
+target node and `lower_pelvis` moves the pelvis. Nothing allocates, and no feature flag applies.
 
 ## Quick start
 
@@ -21,8 +22,8 @@ scene.update_world();
 ```
 
 `ik_chain(root, middle, end, target, pole = null)` returns a unit-weight chain without limits. `solve` requires
-`ik_chain_valid(&leg)`: live joints that are each the parent of the next, a target and pole under a parent, and
-nonzero bone lengths.
+`ik_chain_valid(&leg)`: live joints that are each the parent of the next, a root joint, target and pole that each have
+a parent, `PARENT` space on the middle and end joints, and nonzero bone lengths.
 
 ## Concepts
 
@@ -33,8 +34,9 @@ nonzero bone lengths.
 - **`FootIk`** is a leg `IkChain` whose target follows the ground under the ankle.
 - **`LookAt`** turns the `forward` axis of its last joint toward a target, at most `max_angle` from the incoming pose,
   without adding roll. It spreads the turn over up to eight joints by `weights`. `look_at(joints, target, forward)`
-  fills shares that grow toward the tip and sum to 1, so a spine, neck and head chain turns mostly at the head. A
-  second pass corrects the tip's own swing about the lower joints.
+  fills shares that grow toward the tip and sum to 1: joint `i` of `n` takes `(i + 1) / (n * (n + 1) / 2)`, so the tip
+  turns most. A second pass corrects the tip's own swing about the lower joints. `solve` requires `look_at_valid`: every
+  joint has a parent, the later joints use `PARENT` space and the shares sum to 1 within `1e-4`.
 - **Components.** `create_scene` registers all three as components, so the Scene inspector and `DebugDraw.ik` find
   them. Nothing solves them for you: the application calls `solve`, `place`, `release` and `align` in its own order.
 - **Ownership.** Joints, targets and poles are borrowed nodes and must outlive the component that names them.
@@ -99,8 +101,8 @@ were authored on, usually the character root's height. The target must not desce
 The target keeps the clip's ankle motion and moves it by the ground's offset from the floor under the ankle. On flat
 ground at floor height the solve changes nothing, and a swinging foot keeps its arc. `align` tilts the ankle by the
 rotation from world up to the ground normal, faded out over `lift_fade` as the ankle rises above `foot_height`.
-`lower_pelvis` lowers the pelvis by the largest downhill offset of the grounded feet so the lower foot can reach its
-target and returns the drop in metres. Stance feet are not locked: on a slope a planted foot follows the terrain height
+`lower_pelvis` lowers the pelvis by the largest downhill offset of the grounded feet, each scaled by its leg's `weight`,
+so the lower foot can reach its target, and returns the drop in metres. Stance feet are not locked: on a slope a planted foot follows the terrain height
 under it as the body moves.
 
 ### Retained foot contacts
@@ -121,7 +123,8 @@ scale. Static ground is a support whose frame does not move; like any support, i
 shifted after an origin rebase. `FootContactPhase` is `INACTIVE`, `ACQUIRING`, `PLANTED` or `RELEASING`.
 
 - **Faults.** An invalid support, hit, plant setting or incoming pose returns `INVALID_ARGUMENT` and leaves the contact
-  unchanged. Changing the support identity requires an explicit new capture.
+  unchanged. So do a nonfinite or negative `dt` or `foot_height`, a nonfinite `floor_height` and, at `begin_contact`, a
+  sole forward axis parallel to the hit normal. Changing the support identity requires an explicit new capture.
 - **Plant settings.** `FootIk.plant` defaults to 0.12 s of acquisition, 0.20 s of release and ankle-local sole axes
   `+Y` up and `-Z` forward. Set the axes for the rig's authored ankle orientation. Settings and `foot_height` are
   captured at each begin. The height stays in scene metres while the support-local sole point follows changing scale.

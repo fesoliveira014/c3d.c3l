@@ -61,7 +61,8 @@ A key is an optional unique string given when a record is added. An empty key le
 
 The store owns every payload. An `add_*` or `replace_*` function without an `_owned` suffix copies its arguments, so
 arrays may live in temporary memory. An `_owned` function takes over arrays that were allocated with `assets.allocator`
-and frees them with the record; models, clips and skeletons have only this form.
+and frees them with the record, but only on success: after a fault the caller keeps them. Models, clips and skeletons
+have only this form.
 The store has no internal locking: one owner thread mutates it, and a background loader only decodes into private
 documents ([Asset loading](asset_loading.md)). The renderer reads the store through the pointer it was created with, so
 keep the store alive while the renderer uses it.
@@ -106,7 +107,8 @@ Every store holds these built-in assets:
 
 ## Add, find and remove
 
-Every kind has the same shape of calls. Remove calls require a live id, and `find_*` faults `NOT_FOUND`.
+Every kind has the same shape of calls. Remove calls require a live id, and `find_*` faults `NOT_FOUND`. The four
+built-in textures and five built-in samplers can be neither removed nor replaced.
 
 | Kind | Add | Replace | Mark changed | Remove, find |
 | --- | --- | --- | --- | --- |
@@ -123,7 +125,8 @@ Every kind has the same shape of calls. Remove calls require a live id, and `fin
 | Font | `add_font`, `add_font_owned` | `replace_font`, `replace_font_owned` | | `remove_font`, `find_font` |
 
 Add calls return the new id and fault `CAPACITY_EXCEEDED` when the pool is full and `INVALID_ARGUMENT` for a duplicate key
-or invalid content. The per-kind pages cover the payload rules: [Textures](textures.md), [Materials](materials.md),
+or invalid content. Each kind adds its own faults for its payload: textures `UNSUPPORTED` and `ASSET_DATA_UNAVAILABLE`,
+fonts `ASSET_FORMAT_ERROR` and `UNSUPPORTED`, environments `INVALID_ID` and `UNSUPPORTED`. The per-kind pages cover the payload rules: [Textures](textures.md), [Materials](materials.md),
 [Models](models.md), [Animation](animation.md), [Text](text.md) and [Environments](environments.md). Removing a model
 frees its template and leaves the assets it references in the store.
 
@@ -133,8 +136,9 @@ Every record carries `header.revision`, which starts at 1 on add. The renderer c
 uploaded.
 
 - `mark_*_dirty` advances the revision after an in-place edit of the payload.
-- `replace_*` swaps the whole payload, advances the revision once and sets `header.replaced_revision` to the new
-  revision, so consumers that refresh incrementally do not patch replaced content as an edit.
+- `replace_*` swaps the whole payload and advances the revision once. Every kind except shaders and compute shaders also
+  sets `header.replaced_revision` to the new revision, so consumers that refresh incrementally do not patch replaced
+  content as an edit.
 - Replacing never changes an id or key. Call replacements from the owner thread, outside frame recording. The renderer
   retires the old GPU objects after their last submitted frame.
 
@@ -146,18 +150,21 @@ assets.replace_skeleton_owned(skeleton, &source)!;
 assets.replace_clip_owned(clip, &source)!;
 ```
 
-Each call takes the inputs of the matching `add_*` form and rejects the same data with `INVALID_ARGUMENT`. A change that
-live components were sized against faults `INCOMPATIBLE_STRUCTURE` and changes nothing.
+The same rules cover `replace_texture` and its variants. Each call takes the inputs of the matching `add_*` form. Geometry and clip replacement reject the data their add form
+rejects with `INVALID_ARGUMENT`; skeleton replacement checks only the structure. A change that live components were sized
+against faults `INCOMPATIBLE_STRUCTURE` and changes nothing.
 
 | Kind | May change | Faults `INCOMPATIBLE_STRUCTURE` |
 | --- | --- | --- |
 | Geometry | Vertex and index counts, streams other than joints, weights and morph deltas, custom data, bounds, target and channel names. | Topology; presence of joints and weights; a positive-weight joint above the largest one at add; morph target count; per target, presence of position and normal deltas; channel count, `first_target` and weight count. |
 | Skeleton | Rest pose, inverse bind, names. | Joint count, parents. |
 | Clip | Name, interpolation, times, values, events, a positive duration's value. | Targets table, track count, each track's target, path and stride, a duration that is or is not positive. |
+| Texture | Extent, mip count, pixels and a format change that keeps `R16_UINT`-ness. | The cube flag, the storage flag, the layer count, whether depth is zero, and `R16_UINT` against any other format. |
 
 The joint bound is fixed when the geometry is added and survives `release_geometry_cpu`; a replacement may use any range
 up to it. Physics mesh colliders and the navigation rasterizer read the triangle list, so a topology change is
-structural. Replacing a geometry rebuilds its skin and morph bounds and drops its triangle tree; both rebuild on next use.
+structural. Replacing a geometry rebuilds its skin and morph bounds at once and drops its triangle tree, which rebuilds on
+next use.
 A model replacement is described in [Asset loading](asset_loading.md#replace-a-model).
 
 ## File sources
@@ -200,9 +207,10 @@ It never decodes `%`: glTF URIs are decoded as usual, and application paths and 
 | `C:\art\..\a.fbx` | `C:/a.fbx` |
 | FBX texture, relative then absolute | Each in normalized form, in that order. |
 
-Keys never change: a model key and its content keys keep the path exactly as given. With the default source the only
-difference from reading the path directly is that `..` collapses before the operating system sees it, which matters on
-POSIX only when the path crosses a symlinked directory.
+Keys never change: a model key and its content keys keep the path exactly as given. With the default source, the path the
+operating system sees is the normalized one: `\` becomes `/` on every platform (which matters on POSIX for a file name
+that contains a backslash), `.` and empty segments disappear, `..` collapses (which matters on POSIX only when the path
+crosses a symlinked directory) and a path that collapses to nothing becomes `.`.
 
 ## Limits
 
