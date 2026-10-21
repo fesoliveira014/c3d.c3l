@@ -32,26 +32,14 @@
       "features": [ "C3D_PHYSICS_SERIAL" ],
       "dependencies": [ "c3d_physics", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
     },
-    "physics_gpu_test": {
-      "type": "test",
-      "sources": [ "gpu_test/**" ],
-      "features": [ "C3D_PHYSICS_GPU" ],
-      "dependencies": [ "c3d_physics", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
-    },
     "physics_test": {
       "type": "test",
       "sources": [ "test/*", "examples/ragdoll_getup.c3" ]
     },
     "cloth": {
       "type": "executable",
-      "sources": [ "examples/cloth.c3", "examples/ragdoll_bones.c3", "examples/cloth_gpu_off.c3" ],
+      "sources": [ "examples/cloth.c3", "examples/ragdoll_bones.c3" ],
       "features": [ "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL" ],
-      "dependencies": [ "c3d_physics", "c3d_job", "c3d_profile", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
-    },
-    "cloth_gpu": {
-      "type": "executable",
-      "sources": [ "examples/cloth.c3", "examples/ragdoll_bones.c3", "examples/cloth_gpu_on.c3" ],
-      "features": [ "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL", "C3D_PHYSICS_GPU" ],
       "dependencies": [ "c3d_physics", "c3d_job", "c3d_profile", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
     },
     "breakable": {

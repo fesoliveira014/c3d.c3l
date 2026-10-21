@@ -949,7 +949,7 @@ A store texture is writable when its `TextureDesc.storage` is set; block-compres
 A dispatch may write the vertex streams of a resident geometry. `DispatchDesc.geometry` lists `GeometryWrite { geometry, streams, local_bounds }`, where `streams` names the positions, normals and tangents the shader writes. The application packs the stream addresses into its root:
 
 ```c3
-ClothRoot root = {
+DeformRoot root = {
     .positions = (ulong)renderer.geometry_stream_address(geometry, GeometryStream.POSITIONS)!,
     .normals   = (ulong)renderer.geometry_stream_address(geometry, GeometryStream.NORMALS)!,
 };
