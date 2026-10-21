@@ -1,8 +1,7 @@
 # Breakables
 
-A `Breakable` is a set of rigid pieces joined by welds. Until something hits it, the pieces move as one kinematic
-assembly. A qualifying hit releases them into dynamic bodies, and each weld breaks when its force or moment limit is
-reached. The component, its descriptions and the world calls are in `c3d::physics`, in the [physics add-on](physics.md);
+A `Breakable` is a set of rigid pieces joined by welds. By default the pieces move as one kinematic assembly until a
+qualifying hit releases them into dynamic bodies, and each weld breaks when its force or moment limit is reached. The component, its descriptions and the world calls are in `c3d::physics`, in the [physics add-on](physics.md);
 there is no feature flag. Fracture generation, which produces the pieces, lives in a separate project
 ([below](#fracture-generation)).
 
@@ -44,7 +43,7 @@ while (running) {
   follow the root. `PIECES` is one dynamic body per surviving piece, each node committed to world space. A qualifying hit
   on an assembly turns it into `PIECES`. `default_breakable_desc()` selects `ASSEMBLY`; `sleep_until_hit = false` creates
   `PIECES` directly. `wake_breakable(root)` performs the transition explicitly; on live `PIECES` it does nothing.
-- **State.** `Breakable` is an 8-byte component holding a pointer to library-owned state. Read it through
+- **State.** `Breakable` is a pointer-sized component holding a pointer to library-owned state. Read it through
   `scene.get(root, Breakable).state`; keep the root id and reacquire the component after structural changes.
 - **Breaking one weld need not split a piece.** A piece becomes free when every weld that holds it has broken.
 
