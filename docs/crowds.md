@@ -78,7 +78,7 @@ while (window.poll()) {
 `attach_crowd` and `set_crowd` copy each input pose and its start `time` to `AnimatedCrowd.seeds`. The seed is a base
 action, not writable runtime storage. Control playback through the crowd's playback state:
 
-1. `crowd.playback.instance_id(index)` returns the `CrowdInstanceId` of a live instance.
+1. `crowd.playback.instance_id(index)` returns the `CrowdInstanceId` of a live instance, or faults `INVALID_ID`.
 2. `player(id)` borrows a `CrowdPlayer`.
 3. `base_action()` returns the seed action, or faults `INVALID_ID` after the application removed it. `play`, `action`,
    `stop`, `cross_fade` and the 1D and 2D blend-space controls are shared with `Animator`.

@@ -184,6 +184,15 @@ visibility tests, and its shadows reuse those selections, including offscreen ca
   an aligned 4-byte index per placement and level, and sort keys for a main bin with blended parts. The reservation is
   conservative and can exceed the actual use.
 
+## Animated models and crowds
+
+`model::attach_animated_lod` attaches alternatives to a model instance or an animated crowd. See
+[animated LOD](lod_animated.md).
+
+## Static impostors
+
+An `Impostor` adds a baked atlas as the terminal choice after the mesh levels. See [impostors](impostors.md).
+
 ## Other consumers
 
 - **Picking, `SceneIndex`, triangle preparation and tracing** use the level-zero parts. Hits keep the source instance

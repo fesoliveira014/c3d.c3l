@@ -328,6 +328,15 @@ rejected replacement is skipped without a count ([Reload](custom_shaders.md#relo
 instanced pair and `velocity` ([Velocity form](custom_shaders.md#velocity-form)). Without it a batch's velocity uses the
 built-in instanced variant and sees the undisplaced instances. Fragment-only custom materials draw batches unchanged.
 
+## Quadtree selection
+
+An `InstancedMesh` whose instances are the nodes of a quadtree selects, per view, which nodes draw. Terrain and water use
+it. See [instance quadtrees](instancing_quadtree.md).
+
+## Crowds
+
+A crowd draws animated copies of one model through instanced part batches. See [crowds](crowds.md).
+
 ## Picking
 
 `spatial::pick` tests a batch's bound, then each live instance, or each leaf of a [quadtree
