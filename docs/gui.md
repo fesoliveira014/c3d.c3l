@@ -170,7 +170,7 @@ pipeline creation calls and their driver nanoseconds. Cache lookups and hits are
 view and allocation creation calls count actual API work; sampler interning does not expose native
 creation. The frame's preparation work and the renderer's cumulative counters retain work spent
 before a propagated fault or frame abort. Progress reports resource completion separately; see
-[Budgeted preparation](views.md#budgeted-preparation).
+[Budgeted preparation](preparation.md#budgeted-preparation).
 Scene snapshots count the images copied this frame for [scene readers](custom_shaders.md#scene-reads);
 each copy is also one draw.
 Ring usage reports the previous frame slot's head/capacity and overflow allocation count separately;
@@ -198,13 +198,13 @@ allocation and block sizes.
 Call `gui::targets_panel` before `begin_frame`: its Forward/Deferred and Flat/Clustered controls
 apply changes through `configure_view`. Configuration can propagate invalid-argument, unsupported,
 allocation, recording and wait faults; do not treat the panel as an infallible display.
-The [view contract](views.md#light-selection) describes the editable cluster settings.
+The [view contract](lights.md#select-lights-with-clusters) describes the editable cluster settings.
 
 For a clustered view, `Cluster slice` starts at zero and is clamped to the current slice
 count. Expand `clusters` to see that depth slice's tile occupancy. Color is based on
 stored finite-light count divided by per-cell capacity: blue is empty, intermediate
 values add green, red is full, and **magenta marks overflow**. Dark grey marks a cell that
-[depth pruning](many_lights.md#depth-pruning) skipped. Globals are excluded.
+[depth pruning](lights.md#depth-pruning) skipped. Globals are excluded.
 This is a selected-slice heatmap, not the occupancy at visible surfaces or a readback
 of the depth image. Overflow uses complete flat lighting, so magenta does not mean
 lights were dropped.
@@ -220,7 +220,7 @@ live clustered view and an in-range slice (`PreviewSource.level`); a dead view f
 The statistics panel labels cluster view, cell count and overflowing-cell count as
 **Completed**, the skipped-cell count included. They arrive after frame-slot completion, can lag current controls and
 CPU counters, and work with GPU timestamps disabled. With multiple views they follow
-the [last-recorded-view policy](views.md#frames), not an aggregate. Timestamp-enabled
+the [cluster counter policy](lights.md#diagnostics), not an aggregate. Timestamp-enabled
 runs also show completed `LIGHT_CULL` and opaque GPU times. Cull time includes private
 light upload/reset (an unpruned view only), the tile-depth reduction (a pruned view only),
 assignment and counter copy; opaque time alone is not total cost.
@@ -229,5 +229,5 @@ including `FORWARD_OPAQUE` and `GBUFFER`. The occupancy heatmap still displays
 finite-light counts, not decal counts.
 Opening a preview adds work, so close it for the main timing comparison.
 
-The [many-lights example](many_lights.md) combines these panels with fixed workload
+The [many-lights example](lights.md#diagnostics) combines these panels with fixed workload
 presets, range/capacity controls, camera reset and separate wall-interval reporting.
