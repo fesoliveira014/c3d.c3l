@@ -13,7 +13,7 @@ Entry point for every agent session in this repository. Read it once at task sta
 
 ## 1.2 Dependencies
 
-Third-party libraries are git submodules under `lib/`, pinned. Each is imported only by its owner.
+Third-party libraries are git submodules under `lib/`, pinned, except stb, whose C sources sit in `csrc/`. Each is imported only by its owner.
 
 | Library | Module | Imported only by |
 | --- | --- | --- |
@@ -148,7 +148,7 @@ Code is self-documenting; a comment states a non-obvious why. The comment rules 
 
 # 10. Architecture rules
 
-- Two layers, plus the UI add-on above the render layer. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::describe`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`, `c3d::particle`, `c3d::audio`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation. `c3d::ui` fills `c3d::render`'s overlay list and creates no GPU object; it never imports `gpu`.
+- Two layers, plus the UI add-on above the render layer. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::describe`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::debug`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`, `c3d::particle`, `c3d::audio`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation. `c3d::ui` fills `c3d::render`'s overlay list and creates no GPU object; it never imports `gpu`.
 - Two add-on modules are render-layer code on the same terms: `c3d::landscape::water_gpu` (`C3D_LANDSCAPE_GPU`) records compute dispatches into store textures, and `c3d::particle::gpu` (`C3D_PARTICLE_GPU`) records compute dispatches over application buffers and creates buffers only through `Renderer.create_buffer`. Both record through `Renderer.dispatch`, create no GPU object and never import `gpu`. Without the feature, preparing a spectral water body or a GPU particle system faults `UNSUPPORTED`, and `c3d::landscape::water` stays scene-layer.
 - No module declares system externs except `c3d_job`: its `src/affinity_linux.c3` and `src/affinity_win32.c3` declare `@private` externs for the libc and kernel32 calls the standard library already links (`sched_getaffinity`, `sched_setaffinity`, `SetThreadGroupAffinity`, `GetThreadGroupAffinity`, `GetActiveProcessorCount`, `GetActiveProcessorGroupCount`, `GetLogicalProcessorInformationEx`, `SetThreadInformation`), with their native structs pinned by `$assert`.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.

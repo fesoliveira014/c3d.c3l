@@ -35,7 +35,7 @@ camera-relative origins; see [large worlds](large_world.md).
 | `c3d::describe` | Type descriptions and synchronous field visitors; see [type descriptions](type_descriptions.md). |
 | `c3d::asset` | The asset store and its asset kinds. Submodules: `gltf`, `fbx`, `image`, `truetype`, `loader`, `custom`. |
 | `c3d::scene` | The node hierarchy and the built-in components. |
-| `c3d::geometry` | Procedural geometry and tangent generation, over the geometry library. |
+| `c3d::geometry` | Procedural geometry and tangent generation, over c3cg.c3l. |
 | `c3d::camera`, `c3d::material`, `c3d::light` | Camera, material and light descriptions, including atmosphere, fog, cloud layers, medium volumes and probes. |
 | `c3d::anim`, `anim::ik`, `anim::retarget` | Clips, animators, blending, skinning, inverse kinematics and retargeting. |
 | `c3d::model` | Model instantiation, crowds and animated LOD. |
@@ -179,14 +179,14 @@ c3d.c3l/
 ├── .github/workflows/       ci.yml (build and test, Linux and Windows) and release.yml
 ├── abi/c3d.abi              shared C3 and GLSL layouts
 ├── addons/<name>.c3l/       one directory per add-on package, as listed above
-│   ├── manifest.json  project.json  README.md
+│   ├── manifest.json  project.json  README.md   (most packages have a README)
 │   ├── src/                 the package sources; src/serial/ holds the serialization adapter
 │   ├── test/  examples/     CPU tests and example executables; serial_test/ and serial_policy_test/ where it has an adapter
 │   ├── test/gpu/            the manual acceptance project, where the package has one
 │   └── shaders/             the shader package, where the package ships GLSL
 ├── csrc/                    stb_image and stb_truetype sources
 ├── docs/                    guides and references; style.md is the code style baseline
-├── examples/                project.json, src/ (one file or small group per executable), common/ and assets/
+├── examples/                project.json, src/ (one file or small group per executable), common/, shaders/ and assets/
 ├── lib/                     dependency submodules, plus symlinks to this repository and its add-ons so consumers resolve them
 ├── linked-libs/             empty; every dependency ships its own native libraries
 ├── scripts/                 build.py, gen_abi.py, build_shaders.py, package_release.py, benchmark.py and their tests
