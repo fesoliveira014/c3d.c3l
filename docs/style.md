@@ -1,4 +1,4 @@
-The code style baseline for every `.c3`, `.c3i` and `.glsl` file in this repository, and the single home of the code-style rules. Based on gpu.c3l's `docs/contributing/style.md`, extended with the allocator, initializer, contract and docstring rules of this project. [AGENTS.md](../AGENTS.md) sections 6 to 9 point here and add nothing that relaxes it; the module map is in [architecture.md](architecture.md).
+The code style baseline, mandatory for every `.c3`, `.c3i` and `.glsl` file in this repository, and the single home of the code-style rules. Based on gpu.c3l's `docs/contributing/style.md`, extended with the allocator, initializer, contract and docstring rules of this project. [AGENTS.md](../AGENTS.md) sections 6 to 9 point here and add nothing that relaxes it; the module map is in [architecture.md](architecture.md).
 
 # 1. Language target
 
@@ -15,7 +15,7 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d::<area>::internal @private;` | Implementation that must not be visible outside the area. Use only when a symbol would otherwise leak into the public surface. |
 | `module c3d::<package>[::<sub>] [@feat(FLAG)];` | A module of an add-on package, under the `c3d` root, in `addons/<name>.c3l/src/`. A module that exists only under a feature carries `@feat(FLAG)` in its declaration. A package module that needs another module's private helpers opens that module with `@public`, as `c3d::physics::cloth` does with `c3d::physics`. |
 
-Every module is `c3d` or a submodule of it, and no module name carries the repository directory name; the import boundaries are in [AGENTS.md](../AGENTS.md) section 1.
+The module root, the rule that the repository directory name never appears in source, and the import boundaries are in [AGENTS.md](../AGENTS.md) section 1.
 
 `import c3d;` imports every `c3d` submodule recursively, so a name declared in one area can collide inside another. Qualify the module when it does: `time::Clock` inside `c3d::render`, because `c3d::platform` declares a `Clock` of its own.
 
@@ -30,7 +30,7 @@ Every module is `c3d` or a submodule of it, and no module name carries the repos
 | Modules | lowercase, `::`-separated | `c3d::asset::gltf` |
 | Files | `snake_case.c3` | `upload_ring.c3`, `shadow_atlas.c3` |
 
-`fault` is a reserved type keyword, so it is never an identifier: bind a caught value as `excuse`, the term the C3 docs use. Single-letter names only for loop counters and coordinate math inside scopes under ten lines. Abbreviations are allowed only from the architecture vocabulary (`rt`, `gpu`, `uv`, `sh`, `ik`, `abi`, `hdr`); `r`, `mgr`, `ctx`, `tmp`, `buf` are rejected. Ids end in `Id`, GPU-layout structs end in `Gpu`, root structs end in `Root`, renderer mirrors end in `Res`. camelCase appears nowhere. `std::math` supplies the vector, matrix and quaternion types, and c3d declares no aliases for them.
+`fault` is a reserved type keyword, so it is never an identifier: bind a caught value as `excuse`, the term the C3 docs use. Single-letter names only for loop counters and coordinate math inside scopes under ten lines. Abbreviations are allowed only from the architecture vocabulary (`rt`, `gpu`, `uv`, `sh`, `ik`, `abi`, `hdr`); `r`, `mgr`, `ctx`, `tmp`, `buf` are rejected. Ids end in `Id`, GPU-layout structs end in `Gpu`, root structs end in `Root`, and renderer mirrors usually end in `Res` (`TextureRes`). camelCase appears nowhere. `std::math` supplies the vector, matrix and quaternion types; c3d declares no public aliases for them, and a module may declare a `@private` alias for its own use.
 
 # 4. Definition order
 
@@ -82,7 +82,7 @@ return CAPACITY_EXCEEDED~;
 
 - Do not use bool out-parameters, null returns, `-1` sentinels, or global error state. `unreachable()` never stands in for a failure that can occur at runtime.
 - Use the most specific fault that fits. gpu.c3l faults propagate unchanged with `!`; they are never wrapped.
-- One `faultdef` per domain, one fault per line, in `faults.c3` for the root module and in the area's own `faults.c3` when it has faults of its own.
+- One `faultdef` per domain, one fault per line, in `faults.c3` for the root module, and in a module's own `faults.c3` when the module has faults of its own.
 - A precondition only a programming error can violate is a `@require` contract, never a runtime branch. An operational failure (input data, capacity, I/O, device, a dead id at an API entry point) is a fault. Runtime `assert` appears only under `test/`.
 - `$assert` layout pins are required on every ABI-visible struct.
 
@@ -137,7 +137,7 @@ Separate logical blocks within a function with blank lines: setup, resource acqu
 
 # 12. Docstrings
 
-Every public function, method, macro, constant, and type carries a `<* ... *>` docstring. Nothing private does. The order is:
+Every public function, method, macro, constant, and type carries a `<* ... *>` docstring. Nothing else does. The order is:
 
 ```
 summary line
@@ -146,14 +146,14 @@ summary line
 @require, @ensure, @pure, @deprecated
 ```
 
-- The summary is one line, the purpose of the entity, not how it does it. No "this function", no "returns" as the first word, no restatement of the name. Under about twelve words. A second line is allowed only for one dangerous property: "Invalidates component pointers of the same store.", "Exits without running defers."
+- The summary is one line, the purpose of the entity, not how it does it. No "this function", no "returns" as the first word, no restatement of the name. Under about twelve words. One dangerous property, when there is one, goes in the description as a second line, and a second line holds nothing else: "Invalidates component pointers of the same store.", "Exits without running defers."
 - Use only the official directives: `@param [mode] name : "..."`, `@return "..."`, `@return? FAULT_A, FAULT_B`, `@require`, `@ensure`, `@pure`, `@deprecated`.
 - `@param [mode] name : "Phrase."` for every pointer parameter, with its mode (`[&in]`, `[in]`, `[&out]`, `[&inout]`, `[inout]`), and for any parameter whose meaning or unit is not already in its name and type. A parameter the name explains is not documented.
 - `@return "Phrase."` only when the name does not make the value obvious. `@return? FAULT_A, FAULT_B` lists every fault the function can produce and is mandatory on every optional return.
 - `@require` for preconditions that are programming errors. `@require` is executable; never put a recoverable condition in it: invalid handles, missing capabilities, resources in use, exhaustion, timeouts, device loss. Those are faults.
 - `@ensure` only for an invariant the caller relies on. `@pure` where true.
 - Phrases are quoted, start with a capital, end with a period, and stay under about ten words.
-- Narration is a defect: no step lists, history, rationale essays, or examples. Rationale lives in the architecture pages.
+- Narration is a defect: no step lists, history, rationale, or examples. Rationale lives in the architecture pages.
 
 ```c3
 <*
@@ -201,7 +201,7 @@ const uint DEFAULT_CLOTH_SUBSTEPS = 4; // solve cost grows linearly; fewer subst
 
 # 14. Current state only
 
-Code and shipped documentation describe current behavior. No schedules, roadmap labels, ticket ids, milestone names, change ids, or history in identifiers, file names, comments, docstrings, test names, string literals, or `debug_name` values. `AGENTS.md`, `docs/`, and `scripts/` are exempt.
+Code and shipped documentation describe current behavior. No development terminology anywhere in code: no schedules, roadmap labels, milestone names or numbers, ticket or PR references, `TODO` notes that name a milestone, change ids, plan vocabulary, or history in identifiers, file names, comments, docstrings, test names, string literals, or `debug_name` values. `AGENTS.md`, `docs/`, and `scripts/` are exempt.
 
 # 15. Public signature hygiene
 
@@ -217,7 +217,7 @@ Every resource descriptor accepts `debug_name`. Use descriptive `snake_case`: `h
 
 # 18. Tests
 
-`@test` functions with `snake_case` names that state the behavior: `test_stale_id_does_not_resolve`, `test_reparent_keeps_world_position`. Assert the specific fault on fault paths. One file per group under `test/`.
+Ordinary `@test` functions named `test_<what_it_checks>`, in `snake_case`, with a name that states the behavior: `test_stale_id_does_not_resolve`, `test_reparent_keeps_world_position`. Assert the specific fault on fault paths. One file per group under `test/`.
 
 Tests cover contracts and invariants that can break: math identities, pool generations, ECS store invariants, transform hierarchies, geometry packing, animation sampling, parser output, the asset revision protocol. No tests for trivial accessors, none that restate the implementation, no mocks of the GPU device, and no GPU tests in CI.
 
