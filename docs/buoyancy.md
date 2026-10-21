@@ -123,7 +123,7 @@ does not change while it sleeps. A body with no submerged cell receives no force
 `PhysicsWorld.shift_origin` moves bodies but not the fluid. A `FluidSurfaceFn` or `FluidSampleFn` that reads world `x`
 and `z` must receive the shifted coordinates from the application, for example by capturing the accumulated offset, or
 the body floats against a displaced surface after the shift. A `SurfaceView` of the water add-on is taken again after the
-shift. The full order is in [large worlds](large_world.md#origin-rebasing).
+shift. The full order is in [origin rebasing](origin_rebasing.md).
 
 ## Limits
 

@@ -17,7 +17,7 @@ application's.
 - Under `C3D_CHARACTER_SERIAL`, `src/serial/` imports `c3d::serial`. It needs `C3D_PHYSICS_SERIAL`, and navigation-enabled
   serialization also needs `C3D_NAV_SERIAL`. Consumers select `c3d_serial`.
 - Core, the physics package and the nav package never import it. Select it with `c3d_character`, `c3d_physics` and `b3`
-  ([release](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/release.md#using-a-release)).
+  ([release](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/release.md#using-a-release)).
 
 ## Quick start
 
@@ -132,13 +132,13 @@ scene.update_world();
 (`offset.y == 0`). Call it after `world.shift_origin(&scene, offset)`, which moves the kinematic push bodies, and before
 the next `update`. Grounding and velocity are kept. Under `C3D_CHARACTER_NAV` it also shifts the points of each
 `NavDriven.traversal`; the crowd and navmesh have their own shift functions. The full order is in
-[large worlds](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/large_world.md#origin-rebasing).
+[origin rebasing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/origin_rebasing.md).
 
 ## Serialization
 
 With `C3D_CHARACTER_SERIAL` and `C3D_PHYSICS_SERIAL`, call `character::register_serial_codecs()`. A `Character` saves its
 description and restores at the saved node pose; velocity, intent, contact and jump state restart. See
-[serialization](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/serialization.md#character-adapter).
+[serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md#character-adapter).
 
 ## Targets
 
@@ -154,6 +154,6 @@ characters across a nav level while the player walks among them.
 
 ## Documentation
 
-[Physics](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/physics.md) for the world and mover primitives,
-[animation](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/animation.md) for root motion and
-[large worlds](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/large_world.md).
+[Physics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics.md) for the world and mover primitives,
+[animation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/animation.md) for root motion and
+[large worlds](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/large_world.md).

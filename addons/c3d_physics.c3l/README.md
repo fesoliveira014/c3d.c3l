@@ -83,12 +83,12 @@ c3c test physics_test --path addons/c3d_physics.c3l
 
 ## Documentation
 
-[Physics](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/physics.md),
-[collision queries](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/collision_queries.md) and its
-[reference](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/collision_queries_reference.md),
-[ragdolls](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/ragdoll.md),
-[breakables](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/breakables.md),
-[cloth](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/cloth.md) and its
-[reference](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/cloth_reference.md),
-[buoyancy](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/buoyancy.md),
-[physics inspector](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/physics_inspector.md).
+[Physics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics.md),
+[collision queries](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/collision_queries.md) and its
+[reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/collision_queries_reference.md),
+[ragdolls](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/ragdoll.md),
+[breakables](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/breakables.md),
+[cloth](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/cloth.md) and its
+[reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/cloth_reference.md),
+[buoyancy](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/buoyancy.md),
+[physics inspector](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics_inspector.md).

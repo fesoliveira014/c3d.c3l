@@ -328,7 +328,7 @@ same offset (`offset.y` must be 0). It subtracts the offset from every body pose
 static tree once, and moves ragdoll recovery targets and cloth state with them. Velocities, sleep state,
 joints, welds and contacts are kept, so a resting stack stays asleep. Call it between the end of the frame and the
 next `update`. The `FluidSurfaceFn` or `FluidSampleFn` of buoyancy belongs to the application and must follow the
-shift. The full order is in [large worlds](large_world.md#origin-rebasing).
+shift. The full order is in [origin rebasing](origin_rebasing.md).
 
 ## Serialization
 

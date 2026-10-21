@@ -429,7 +429,7 @@ Restoring a supported transform lets later updates retry.
 Cloth state is world-space: `PhysicsWorld.shift_origin(&scene, offset)` subtracts the offset from every prepared cloth,
 including its pins, anchors, collision shapes and body observations, and keeps activity and velocities. The cloth node
 is an ordinary parent moved by `Scene.shift_origin`, so published vertices do not change. `ground_height` is a world
-height and is not shifted. The full order is in [large worlds](large_world.md#origin-rebasing).
+height and is not shifted. The full order is in [origin rebasing](origin_rebasing.md).
 
 ## Serialization
 
