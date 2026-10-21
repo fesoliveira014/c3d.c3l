@@ -1,478 +1,107 @@
 # c3d
 
-A scene-level 3D rendering library for [C3](https://c3-lang.org/): an ECS scene, physics,
-animation, and asset import, on top of Vulkan 1.3 through gpu.c3l. Not a game engine; a base
-for one.
+c3d is a scene-level 3D rendering library for [C3](https://c3-lang.org/). It provides an ECS scene, an asset store with
+glTF and FBX import, animation and a Vulkan 1.3 renderer (through gpu.c3l), plus add-on packages for physics, navigation,
+terrain and water, particles, UI and audio. It is a base for a game engine, not an engine.
 
-See [Scene nodes](docs/scene.md) for hierarchy ownership, transform spaces,
-visibility and explicit transform updates.
-Core [type descriptions](docs/type_descriptions.md) share reflected or handwritten
-field walks with the Scene inspector and application consumers.
-Core [whole-object LOD](docs/lod.md) selects rigid multipart alternatives per view,
-with GPU selection for instanced placements, optional [static impostors](docs/impostors.md)
-and a 5,000-tree example. An impostor cuts triangle work and can cost more GPU time than a
-very coarse mesh.
-Core [billboard batches](docs/billboards.md) provide camera-facing and directional
-quads through the transparent material pipeline, and [ribbon batches](docs/ribbons.md)
-camera-facing strips through lists of points.
-The optional [particle add-on](docs/particles.md) supplies CPU simulation, effect
-materials and the smoke/sparks/debris example.
-
-Target platforms are linux-x64 and windows-x64. C3 0.8.3 exactly. The Vulkan device must support
+The target platforms are linux-x64 and windows-x64, with C3 0.8.3 exactly. The Vulkan device must support
 `shaderClipDistance`; `create_renderer` faults `UNSUPPORTED` without it.
 
-See [Benchmarking](docs/benchmarking.md) for CPU extraction profiles, headless many-light
-sweeps and reproducible CSV measurements. The Sponza scene suite needs
-`python3 scripts/fetch_benchmark_assets.py` once.
+## Features
 
-## Prerequisites
+- **Scene and assets.** A fixed-capacity [node hierarchy](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/scene.md) over an ECS; an [asset store](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/assets.md) with typed generational ids; [glTF and FBX import](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/models.md); [CPU picking](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/picking.md); [camera-relative large worlds](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/large_world.md).
+- **Rendering.** [Views and render targets](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/views.md) with forward, deferred and path-traced [shading paths](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/shading_paths.md); [materials](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/materials.md) and [custom shaders](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/custom_shaders.md); [lights](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/lights.md) and [shadows](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/shadows.md); [sky, fog](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/sky.md) and clouds; [display processing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/post.md); traced [reflections](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/reflections.md) and [path tracing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/path_tracing.md); [instancing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/instancing.md) and [LOD](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/lod.md).
+- **Animation.** [Clips, layers, blend spaces and root motion](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/animation.md), [inverse kinematics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/animation_ik.md) and [crowds](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/crowds.md).
+- **Add-ons.** [Physics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics.md), [navigation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/navigation.md), [terrain](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain.md), [particles](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/particles.md), [UI](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/ui.md), [audio](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/audio.md), a [job pool](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/jobs.md), [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md) and a [profiler](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/profiling.md). Each is a separate package that an application selects in `project.json`; core never imports one. The [index](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/README.md#add-on-packages) links each package's README.
 
-| Tool | Version | Notes |
-| --- | --- | --- |
-| c3c | 0.8.3 | `scripts/build.py` refuses any other version |
-| Python | 3.10 or newer | standard library only |
-| glslang | any | `glslangValidator` on PATH, from `glslang-tools` or a Vulkan SDK |
-| Vulkan loader | any | `libvulkan.so.1`, from `libvulkan1` |
-| SDL3 | 3.4.16 or newer | not packaged by Ubuntu 24.04; build it, see below |
-| CMake and a C compiler | any | native dependencies; the image decoder also compiles during ordinary builds |
-| Bash, curl, tar and sha256sum (or shasum) | any | fetch and verify ImGui release archives |
+## Requirements
 
-On Debian or Ubuntu:
+c3c 0.8.3, Python 3.10 or newer, `glslangValidator` on `PATH`, the Vulkan loader, a C compiler and git. The build script
+downloads SDL3, Dear ImGui and the other native libraries. The
+[getting-started page](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md#requirements) has the
+details and the Windows setup.
 
-```bash
-sudo apt-get install -y glslang-tools libvulkan1 libgl1-mesa-dev cmake ninja-build build-essential
-```
+## Build
 
-## Clone
-
-The checkout directory must keep the name `c3d.c3l`; the example and test projects resolve the
-library by that name.
+The checkout directory must keep the name `c3d.c3l`.
 
 ```bash
 git clone --recurse-submodules https://github.com/fesoliveira014/c3d.c3l
 cd c3d.c3l
+python3 scripts/build.py --init-deps --skip-build   # submodules, natives, generated files, shaders
+python3 scripts/build.py --example hello            # build and run one example
+python3 scripts/build.py                            # build every example
+python3 scripts/build.py --test                     # then run every test target; what CI runs
 ```
 
-If you cloned without `--recurse-submodules`:
-
-```bash
-git submodule update --init --recursive
-```
-
-## Native dependencies
-
-Native libraries come from each dependency's release at the submodule's pinned tag: SDL3 and Dear
-ImGui (static), box3d, VMA, spvreflect's Windows library and shaderc. Each is built in its own
-repository's CI, the Linux ones on Ubuntu 22.04 (glibc 2.35). Fetch them once after cloning:
-
-```bash
-python3 scripts/build.py --init-deps --skip-abi --skip-shaders --skip-build
-```
-
-That downloads the `<name>-<tag>-<platform>.c3l` artifact of each, checks it against the
-release's `SHA256SUMS`, and extracts its native directory into the submodule. Ordinary builds do
-not download anything. They compile the vendored `csrc/stb_image.c` and `csrc/stb_truetype.c` with
-c3c's selected C compiler. Executables load the shaderc shared library from their own directory;
-the build copies it there.
-
-### Windows
-
-Prerequisites: Visual Studio 2022 with the C++ desktop workload, CMake, Ninja, Git for Windows,
-the Vulkan SDK (`glslangValidator` and the loader), Python 3.10 or newer, and c3c 0.8.3 on PATH.
-c3c compiles `csrc/stb_image.c` and `csrc/stb_truetype.c` itself; no separate C compiler setting is needed.
-
-Clone under a short path with symlinks enabled. `lib/c3d.c3l` is a symlink the projects resolve
-through, and Git only creates it as a real link when Developer Mode is on or the shell is elevated:
-
-```powershell
-git clone -c core.symlinks=true --recurse-submodules https://github.com/fesoliveira014/c3d.c3l C:\repos\c3d.c3l
-cd C:\repos\c3d.c3l
-```
-
-Dependency initialization downloads each dependency's Windows artifact:
-
-```powershell
-python scripts\build.py --init-deps --skip-abi --skip-shaders --skip-build
-python scripts\build.py --test
-c3c run cube --path examples
-```
-
-Every Windows native library is built against the static CRT, and the c3d manifest and bundled projects declare `"wincrt": "static"`
-to match; a consumer on the dynamic CRT fails at link with
-`lld-link: error: /failifmismatch: mismatch detected for 'RuntimeLibrary'`.
-
-SDL3 links statically, so no `SDL3.dll` is deployed; the build copies `shaderc_shared.dll` next to executables.
-The Vulkan loader `vulkan-1.dll`, installed by GPU drivers and the SDK, is required at process
-start by every example and by the test binary. Third-party Vulkan layers with broken manifests
-print `loader_get_json` errors at startup; they are harmless.
-
-Half-precision conversions do not link on Windows with c3c 0.8.3, so the library converts
-`RGBA16_FLOAT` texels in software; see the
-[issue record](https://app.notion.com/p/3dacb7903a588141bbb2f208b0f8cccd). No user action is needed.
-
-## Build, test, run
-
-```bash
-python3 scripts/build.py                  # compile SPIR-V, verify committed generated C3, build examples
-python3 scripts/build.py --test           # same, then run every test target; what CI runs
-python3 scripts/build.py --regen          # rewrite the generated ABI twins and registry table, then build
-python3 scripts/build.py --example hello  # build and run one example
-python3 scripts/build.py --clean
-```
-
-`-v` prints every command. GPU examples are run by hand; CI has no GPU.
-
-The ordinary builds below leave profiling out. Before using an example's
-`--gpu-timings` option, compile that target with the add-on selected (replace
-`shadows` with the desired target):
-
-```bash
-c3c build shadows --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
-```
-
-See [profiling](docs/profiling.md) for capture configuration and the headless
-`profile_gpu` example.
-
-`cube` is the first-mesh example. `cube_gui` adds the [GUI overlay](docs/gui.md) to the
-same scene, with transform/material editing, statistics and a Spin toggle that starts off:
-
-```bash
-python3 scripts/build.py --example cube
-python3 scripts/build.py --example cube_gui
-```
-
-`pbr` provides a static metallic/roughness sphere grid with directional, point
-and spot lights, plus base-color, metallic/roughness, normal, occlusion and
-emissive maps. Its GUI edits each selected map's UVs and sampler, switches between
-supplied and derived tangent frames using two sphere assets, and offers mapped
-and scalar-only presets. Material factors, lights, ambient, receiver layers and
-camera projection remain editable:
-
-```bash
-python3 scripts/build.py --example pbr
-```
-
-Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
-See [Materials](docs/materials.md) for the material families, factors, maps, and alpha
-and depth state.
-
-`many_lights` compares flat and clustered Forward+ on a fixed procedural hall with
-64, 256, 1024 or 4096 point lights. The targets panel switches selection modes and
-shows a selected cluster-depth slice; workload controls adjust range and per-cell
-capacity, including deliberate overflow with complete flat fallback:
-
-```bash
-python3 scripts/build.py --example many_lights
-```
-
-See [Lights](docs/lights.md) for light selection, buffer ownership and material
-exceptions.
-
-`materials` combines masked foliage, ordinary premultiplied alpha blending, Toon
-lighting and Physical clearcoat/sheen/specular/anisotropy/transmission in one
-interactive window. Its controls switch presets, active families, base and layer
-maps, two colored lights, ambient fill and either bundled HDR environment:
-
-```bash
-python3 scripts/build.py --example materials
-```
-
-The example generates its alpha, nonuniform ramp and Physical map fixtures in
-memory. It reuses both bundled CC0 HDRs, so it requires no runtime download.
-
-`post` shows [display processing](docs/post.md) on a rolled textured cube, a
-chrome sphere and an emissive sphere under a bright sun. Its panel switches the
-tone mapping operator, FXAA and an identity LUT, and edits contrast, saturation,
-white balance and lift-gamma-gain; the controls panel drives camera exposure:
-
-```bash
-python3 scripts/build.py --example post
-```
-
-`effects` adds the [post-processing effects](docs/post.md) to the same kind of scene: an
-emissive lamp under bloom, a row of marbles for focus pulling, a fast-spinning cube and a camera
-sweep. Effects start enabled; the post panel's sections toggle and tune each one, and key `F` switches
-depth of field to [auto focus](docs/post.md#auto-focus) on the point under the cursor:
-
-```bash
-python3 scripts/build.py --example effects
-```
-
-`taa` shows [temporal anti-aliasing](docs/anti_aliasing.md#temporal-anti-aliasing) on fine checker
-texture, a thin diagonal fence, a spinning cube, the skinned Fox, a morphing cube and a ring of
-individually orbiting instances, through a full-window view and a smaller inset of the same camera.
-Its panel freezes motion, sweeps the camera, cuts the main view and resizes the inset, each view
-with its own history; `--no-aa`, `--fxaa`, `--freeze`, `--sweep` and `--debug-velocity`,
-`--debug-rejection`, `--debug-weight` select a state at start:
-
-```bash
-python3 scripts/build.py --example taa
-```
-
-`deferred` renders one scene forward on the left and deferred on the right, switches either
-half at runtime and shows the G-buffer channels through the targets panel; see the
-[shading paths](docs/shading_paths.md) page.
-
-`shading_paths` renders one scene with many lights and two custom materials through every
-shading path and light selection pair in a 2x2 grid, with a per-view switch and a side-by-side
-stats table:
-
-```bash
-python3 scripts/build.py --example shading_paths
-```
-
-`views` renders the same kind of scene twice per frame through [views and render
-targets](docs/views.md): a producer camera writes a capture target that a monitor slab samples
-through its material, while the window camera shows the whole scene. Its panel resizes the
-capture, switches it between display LDR and linear HDR output, and scales the window view:
-
-```bash
-python3 scripts/build.py --example views
-```
-
-`picking` selects meshes with the mouse through [CPU picking](docs/picking.md): two transformed
-boxes are picked before the first frame, a glTF model is instantiated twice and either instance
-is selected by click, and a click on the monitor slab picks again through the capture camera it
-shows. Its panel switches between bounds and triangle precision and between face policies, and
-reports the hit's distance, triangle and barycentric weights:
-
-```bash
-python3 scripts/build.py --example picking
-./examples/build/picking [model.glb]
-```
-
-`instancing` draws [instanced batches](docs/instancing.md): three colored cubes in one batch, one of
-them mirrored and one bobbing on its own, 4096 props on a grid in a single batch, and eight pulsing
-spheres through a custom vertex stage compiled with `INSTANCED`. The panel toggles motion blur and
-deferred shading, and a left click reports the picked batch and instance index:
-
-```bash
-python3 scripts/build.py --example instancing
-```
-
-`custom_shader` draws a tinted sphere and a pulsing box through [custom shaders](docs/custom_shaders.md):
-their GLSL lives in `examples/shaders/custom/`, is compiled in process, and is reloaded when a file
-changes or on R. The box's vertex deformation is shared by its shadow, P pauses the pulse, and a
-broken edit is rejected by the backend while the previous shader keeps drawing:
-
-```bash
-python3 scripts/build.py --example custom_shader
-```
-
-`custom_compute` runs a particle simulation on the GPU through [compute dispatch](docs/compute.md):
-a compute stage advances a renderer-owned buffer every frame and a custom material draws it from the
-same buffer, with the emitter fed through an upload buffer. All three GLSL files reload on change or
-R, Space reseeds, and a broken compute push block is rejected while the previous revision keeps running:
-
-```bash
-python3 scripts/build.py --example custom_compute
-```
-
-`compute_textures` writes a noise texture on the GPU every frame and fogs the view in place: an empty
-storage texture is filled by a compute stage and bound as a material map, and a second dispatch
-between `render_view` and `finish_view` samples the view's depth and blends fog into its scene image.
-F toggles the fog, N freezes the noise, both GLSL files reload on change or R:
-
-```bash
-python3 scripts/build.py --example compute_textures
-```
-
-`ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
-Its controls independently select lighting and background, adjust rotation and
-intensity, demonstrate diffuse-only occlusion, and apply per-environment processing
-resolutions. Both sources are prepared before the first frame:
-
-```bash
-python3 scripts/build.py --example ibl
-```
-
-See [Environments and image-based lighting](docs/environments.md) for defaults,
-source ownership, preparation and current display limits. The
-[bundled HDRs](examples/assets/ibl/README.md) are CC0 and require no runtime download.
-
-`sky` draws a physical sky with its sun and exponential height fog over readers, transmission and a planar
-mirror, with a time-of-day slider and a scripted benchmark. See [Sky and atmosphere](docs/sky.md), [fog](docs/fog.md) and [clouds](docs/clouds.md):
-
-```bash
-python3 scripts/build.py --example sky
-```
-
-`reflection_probes` shows two rooms lit by captured reflection probes, with metal spheres from mirror to
-rough, a clearcoat and a sheen sphere, box lines, re-capture and a headless benchmark. See
-[Reflection probes](docs/reflection_probes.md):
-
-```bash
-python3 scripts/build.py --example reflection_probes
-```
-
-`shadows` demonstrates sun cascades, spot projection and all six point faces with
-solid, masked and off-camera casters. Its small GUI adjusts kind-specific coverage,
-bias and whole-light atlas priority:
-
-```bash
-python3 scripts/build.py --example shadows
-```
-
-Directional constructors enable shadows by default; point and spot shadows are
-enabled explicitly. The example's six-layer atlas allocates 96 MiB of depth texels
-on first accepted use. See [Shadows](docs/shadows.md) for sun, spot and point
-casting/receiving, layer masks, capacity and per-layer timings.
-
-`gltf_viewer` loads a glTF or GLB file once and instantiates it twice under a
-studio environment with one directional light. The bundled
-[BoxTextured](examples/assets/gltf/README.md) sample is the default; a path
-argument selects another model:
-
-```bash
-python3 scripts/build.py --example gltf_viewer
-./examples/build/gltf_viewer path/to/model.glb
-```
-
-See [Models, glTF and FBX import](docs/models.md) for keys, options, the material
-mapping and the supported extension subset. Its Textures panel sets the texture
-budget and lists each texture's resident mips, bytes and required level
-(`--texture-budget <MiB>` starts under a budget); see
-[Residency and memory budgets](docs/texture_streaming.md#residency-and-memory-budgets).
-
-`animation` instantiates a model twice and plays a different clip on each
-instance through `c3d::anim`, with cross-fades, a quarter-weight action and
-pausing on keys. The bundled [Fox](examples/assets/gltf/README.md) is the
-default; `BoxAnimated.glb` shows node animation and `AnimatedMorphCube.glb`
-morph targets:
-
-```bash
-python3 scripts/build.py --example animation
-./examples/build/animation examples/assets/gltf/BoxAnimated.glb
-```
-
-See [Animation](docs/animation.md) for the update sequence, blending and the
-borrowed-pointer rules.
-
-`mixamo` loads an FBX character through ufbx, instantiates it twice and plays
-Mixamo animation files retargeted onto it by name: keys `1`-`9` cross-fade the
-left instance between clips, the right instance loops the first at half speed,
-`R` toggles between the in-place and the kept-root-motion variant. Without
-arguments it reads `character.fbx`, `walk.fbx` and `run.fbx` from
-`examples/assets/mixamo/`, which are not committed;
-[the README there](examples/assets/mixamo/README.md) gives the Mixamo download
-settings:
-
-```bash
-python3 scripts/build.py --target mixamo
-./examples/build/mixamo path/to/character.fbx path/to/walk.fbx path/to/run.fbx
-```
-
-See [Models, glTF and FBX import](docs/models.md) for the FBX conversion.
-
-`textured` adds PNG/JPEG maps, mip filtering, UV transforms and alpha masking in a
-standalone scene with validation enabled. The default image is embedded:
-
-```bash
-python3 scripts/build.py --example textured
-./examples/build/textured path/to/albedo.jpg
-```
-
-Press N/L/A for nearest/trilinear/anisotropic filtering, S for repeat scale,
-R for rotation, O for offset, U for UV0/UV1 and Backspace to reset. Drag to orbit,
-scroll to zoom, and release Escape to quit. See [Textures and images](docs/textures.md)
-for loading, material slots, HDR data, pixel edits and CPU source release.
-
-`texture_cube` previews a native six-face cube with generated or supplied mips;
-`texture_bc` displays a supplied BC1 chain with a different color at each level:
-
-```bash
-python3 scripts/build.py --example texture_cube
-python3 scripts/build.py --example texture_bc
-```
-
-The cube preview selects faces with 1–6, switches generated/supplied sources with
-C, and controls LOD with L and +/−. The BC example uses N/L/A filtering, mouse
-orbit and wheel zoom. Both enable full validation. See
-[cube loading](docs/textures.md#load-six-cube-faces) and
-[supplied mip data](docs/textures_reference.md#supply-mip-levels) for source ownership and
-the remaining unsupported texture forms.
-
-The `lod` example bakes one prototype at startup and draws 5,000 placements
-with three mesh levels and a terminal impostor. Its near/middle/far buttons,
-mesh-only switch and forced-base switch compare the representations. Run
-`python scripts/build.py --example lod`, or use
-`examples/build/lod.exe --benchmark` for deterministic completed-frame counters
-and per-pass timings. `--frames 30` bounds a windowed smoke run. See
-[whole-object LOD](docs/lod.md) and [static impostors](docs/impostors.md).
-
-## Using c3d from your own project
-
-Each release publishes core as `c3d_core-v<version>.c3l` and every add-on as its own packed library; the
-release notes name the dependency versions to download beside them. See [releases](docs/release.md) for the files,
-the libraries each package needs in `project.json`, and the shader tools for your own shader packages. A checkout
-with submodules works as before.
-
-The optional `c3d_profile` add-on bundles CPU and GPU capture with JSON export.
-CPU-only use needs no renderer or native dependencies; GPU profiling selects its
-backend module explicitly. Core does not require the package in ordinary builds.
-See [profiling](docs/profiling.md) for capture lifetimes, feature selection and
-frame-wide GPU pass summaries. Run its CPU-only example with
-`c3c run capture --path addons/c3d_profile.c3l`.
-
-The optional `c3d_physics` add-on binds box3d rigid bodies to scene nodes. Bodies are ECS data:
-after `register_physics`, a `PhysicsBody` component (`add_physics_body`, or
-`add_static_mesh_bodies` over a model instance) becomes a box3d body on the world's next `update`,
-is rebuilt after `mark_changed`, and leaves with the component; `add_body` authors and builds in
-one call. Colliders are sphere, capsule, box, hull, mesh, height field and static compound, with
-surface materials (friction, restitution, rolling resistance, conveyor tangent velocity, an
-application surface id) per shape or per face. The world steps at a fixed rate with interpolated
-write-back, applies `Wind`, `Force` and `Buoyancy` components every step (buoyancy against a fluid surface the
-application installs, see [buoyancy](docs/buoyancy.md)), takes runtime tuning through
-`set_tuning`, and reports contact, hit, sensor and build-failure events, `raycast`,
-`overlap_sphere`, `explode`, and collider wireframes into the CPU debug sink. Applications select
-the library explicitly; core carries no physics dependency. Examples:
-`python3 scripts/build.py --example physics`; `physics_instanced` is the same scene with every box
-drawn from one instanced batch; `physics_components` builds its level and bodies from components.
-
-The optional `c3d_job` add-on runs a function over index ranges on a fixed pool of worker threads:
-`run` splits the work into ranges, `wait` returns once they have finished, `is_finished` polls a run, and at
-zero workers every frame range runs on the calling thread. Background runs share the workers under a cap and
-frame ranges go first; workers can be bound to processor sets, such as the performance cores of a hybrid
-processor; with `C3D_PROFILE_CPU` the ranges they run appear in profiler captures under their run's name. Core
-never depends on it. See [the job pool](docs/jobs.md) for the rules a range follows, the classes, processors,
-run capacity and temp-memory sizing and the measured cost; `python3 scripts/build.py --example job_bench` runs
-its benchmark.
-
-The optional `c3d_landscape` add-on draws height-field terrain from an `R16_UINT` height map: quadtree
-chunks selected once per frame on projected size, drawn as one instanced batch through a custom material in
-both shading paths and every shadow view, up to four Standard layers blended through a control map, and CPU
-heights that match a physics height-field collider. Core never depends on it. See [terrain](docs/terrain.md);
-`python3 scripts/build.py --example terrain` runs its example and scripted benchmark.
-
-The same add-on scatters vegetation layers over a terrain: a deterministic scatter from a density-map channel
-with slope and altitude rules, one instanced batch per cell drawn with core's sway and distance fade, and the
-application's wind mapped onto each layer's sway. Terrain edits re-place only the cells they touch. See
-[vegetation](docs/vegetation.md); `python3 scripts/build.py --example vegetation` runs its example and scripted
-benchmark.
-
-It also draws water bodies: Gerstner waves over the scene's colour and depth snapshots, planar mirror or
-screen-space reflections with an environment fallback, lit foam and wind-scrolled ripples, and CPU heights,
-normals and velocities that match the drawn surface, which `water::fluid_sample` hands to the physics add-on's
-buoyancy. See
-[water](docs/water.md); `python3 scripts/build.py --example water` runs its example and scripted benchmark.
-
-Add c3d and its dependencies to your `project.json`. A C3 library manifest cannot declare features,
-so every consumer enables them itself. Select `C3D_SHADER_COMPILER` for in-process GLSL; every other
-capability is present whenever its dependency is linked. shaderc stays a declared dependency of
-the package either way:
-
-```json
-{
-  "dependency-search-paths": [ "path/to/c3d.c3l/lib" ],
-  "dependencies": [ "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "shaderc" ],
-  "features": [ "C3D_SHADER_COMPILER" ]
+GPU examples run by hand; CI has no GPU. [Development](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/development.md)
+describes the build pipeline, the test targets and the manual GPU acceptance projects.
+
+## First program
+
+A window, an asset store, a renderer, one box and a camera. `python3 scripts/build.py --example cube` runs a similar
+scene with an orbit camera.
+
+```c3
+module first_program;
+
+import c3d::asset, c3d::camera, c3d::geometry, c3d::material, c3d::platform, c3d::render, c3d::scene;
+
+fn int main() {
+    platform::Window window = platform::create_window(platform::default_window_desc("c3d", 1280, 720))!!;
+    defer platform::destroy_window(&window);
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    render::Renderer renderer = platform::create_window_renderer(
+        allocator: mem,
+        window:    &window,
+        assets:    &assets,
+        desc:      { .validation = true },
+    )!!;
+    defer render::destroy_renderer(&renderer);
+
+    GeometryId box_geometry;
+    @pool() {
+        Geometry box = geometry::box(tmem, 1, 1, 1);
+        box_geometry = assets.add_geometry(&box, "box")!!;
+    };
+    MaterialId red = assets.add_material(material::basic({ .color = { 0.9f, 0.2f, 0.2f, 1 } }), "red")!!;
+
+    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+    scene.add_mesh(box_geometry, red, name: "cube")!!;
+    Node* camera_node = scene.add_camera(camera::perspective_deg(60, 0.1f), name: "camera")!!;
+    camera_node.local.position = { 0, 1, 3 };
+    renderer.prepare_scene(&scene)!!;
+
+    while (window.poll()) {
+        scene.update_world();
+        platform::sync_window(&window, &renderer);
+        renderer.render(&scene, camera_node, { .time = window.clock.total, .delta = window.clock.delta })!!;
+    }
+    return 0;
 }
 ```
 
-| Feature | Enables |
-| --- | --- |
-| `C3D_SHADER_COMPILER` | in-process GLSL compilation (`shader::compile`), and shaderc; custom shaders from SPIR-V bytes work without it |
+## Use c3d in your project
 
-## Contributing
+Each release publishes core as `c3d_core-v<version>.c3l` and every add-on as its own packed library. The
+[releases page](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/release.md) lists the files, the libraries each
+package needs in `project.json`, the feature flags and the shader tools. The
+[getting-started page](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md#use-c3d-in-your-project)
+shows a project that builds this program against a checkout and explains the frame loop.
 
-`AGENTS.md` and `docs/style.md` are mandatory reading. See `CONTRIBUTING.md`.
+## Where next
+
+- [Documentation index](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/README.md): every page by task and by subsystem, and the add-on READMEs.
+- [Getting started](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md): install, your own project, a first scene and the frame loop.
+- [Examples](https://github.com/fesoliveira014/c3d.c3l/blob/main/examples/README.md): every example with its options.
+- [Architecture](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/architecture.md): layers, modules, add-ons and feature flags.
+
+## Contributing and licence
+
+Read [CONTRIBUTING.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/CONTRIBUTING.md), then
+[AGENTS.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/AGENTS.md) and
+[docs/style.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/style.md). c3d is MIT licensed (`LICENSE`). The
+glyph shader port is covered by `LICENSE-slug.txt`; test fixture and example asset notices are in
+[`test/fixtures/LICENSES.md`](https://github.com/fesoliveira014/c3d.c3l/blob/main/test/fixtures/LICENSES.md).
