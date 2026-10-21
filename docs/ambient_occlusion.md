@@ -118,7 +118,7 @@ applies to `SSAO` and `RAY_TRACED`, with or without `temporal`.
   return the pixel's bent normal when the bit is set and the draw has screen-space terms, and
   `normal` otherwise. Standard, Physical and Toon shading, and the deferred lighting resolve, pass it
   as the `irradiance_direction` of `indirect_diffuse_irradiance` and `evaluate_environment_lobes`
-  ([custom shaders](custom_shaders.md#public-includes)).
+  ([custom shaders](custom_shaders_reference.md#public-includes)).
 - Only the direction of the environment's diffuse irradiance changes: the SH lookup and the probe
   volume's atlas direction. A probe volume still biases its lookup position along, and weighs its
   probes by facing, the surface normal. The flat ambient fill, the specular lobes and specular
@@ -152,7 +152,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
   image, so the blur, the receivers and everything under [What it darkens](#what-it-darkens)
   are unchanged.
 - The rays find occluders the screen cannot see: off-screen geometry and surfaces hidden behind
-  nearer ones. Only the traced scene occludes: skinned and morphed meshes occlude at their raster pose, while crowd placements occlude only through `add_crowd(trace: true)`, and custom vertex stages without a [trace-pose stage](custom_shaders.md#trace-pose) and `BLEND` meshes do not.
+  nearer ones. Only the traced scene occludes: skinned and morphed meshes occlude at their raster pose, while crowd placements occlude only through `add_crowd(trace: true)`, and custom vertex stages without a [trace-pose stage](custom_shaders_reference.md#trace-pose) and `BLEND` meshes do not.
 - The ray directions rotate per pixel with interleaved gradient noise, per frame on a TAA view
   or with `temporal`. More rays cost proportionally more: 16 rays at half resolution trace 8.3 M
   rays a frame at 1080p.

@@ -11,7 +11,7 @@ is a Gerstner surface of up to four waves in the node's local XZ, drawn by the p
 custom material the library owns. The vertex stage displaces a grid and supplies the depth and velocity forms, and a
 compute twin poses the grid for [scene traces](#scene-traces);
 the fragment stage reads the scene's colour and depth snapshots after opaque (a scene-read material, see
-[custom shaders](custom_shaders.md)), refracts what lies behind the surface, reflects from a
+[custom shaders](custom_shaders.md#scene-reads)), refracts what lies behind the surface, reflects from a
 planar mirror target, else a screen-space march over the snapshot, else the environment or the frame's
 ambient, adds lit foam, and shades sun glints through the public Standard parts. The body writes a core
 [medium volume](sky.md#medium-volumes) that absorbs and scatters the light in the water, from above and from below,
@@ -946,7 +946,7 @@ drawn one, not a [trace proxy](scene_trace.md#trace-proxies): `Mesh.trace_only` 
 does not apply and the row carries `TRACE_MASK_ALL`.
 
 - **The stage.** The water shader carries a `trace_pose.single` form, `water_trace_pose.comp.glsl`
-  ([trace pose](custom_shaders.md#trace-pose)). It runs the vertex stage's `water_surface_point` over each rest
+  ([trace pose](custom_shaders_reference.md#trace-pose)). It runs the vertex stage's `water_surface_point` over each rest
   vertex at `TraceCustomPoseRoot.time`, the frame time narrowed to a float like `frame.jitter_time.z`, so the traced
   surface is the one drawn in the same frame. It writes the position and, when the geometry has a normals stream, the
   normal; the tangent keeps `w = 1`, as the vertex stage writes it. A built grid carries a normals stream; application

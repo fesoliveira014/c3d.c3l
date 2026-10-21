@@ -153,8 +153,8 @@ python3 scripts/build.py --example pbr
 ```
 
 Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
-See [Materials and lighting](docs/materials.md) for factors, layer masks,
-light capacity and current rendering limits.
+See [Materials](docs/materials.md) for the material families, factors, maps, and alpha
+and depth state.
 
 `many_lights` compares flat and clustered Forward+ on a fixed procedural hall with
 64, 256, 1024 or 4096 point lights. The targets panel switches selection modes and
@@ -259,7 +259,7 @@ broken edit is rejected by the backend while the previous shader keeps drawing:
 python3 scripts/build.py --example custom_shader
 ```
 
-`custom_compute` runs a particle simulation on the GPU through [compute dispatch](docs/custom_shaders.md#compute-dispatch):
+`custom_compute` runs a particle simulation on the GPU through [compute dispatch](docs/compute.md):
 a compute stage advances a renderer-owned buffer every frame and a custom material draws it from the
 same buffer, with the emitter fed through an upload buffer. All three GLSL files reload on change or
 R, Space reseeds, and a broken compute push block is rejected while the previous revision keeps running:

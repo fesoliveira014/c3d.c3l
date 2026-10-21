@@ -80,7 +80,7 @@ blended surfaces. Active Physical transmission keeps its entire direct-light loo
 because exit-point lighting can lie outside the surface cell. Existing custom shaders
 remain flat unless they opt into the shared `LightList` helpers. See
 [views](views.md#light-selection) for configuration, validation and buffer lifetime, and
-[custom shaders](custom_shaders.md#light-selection) for opt-in compatibility.
+[custom shaders](custom_shaders_reference.md#light-selection) for opt-in compatibility.
 
 ## Spatial light lookup
 

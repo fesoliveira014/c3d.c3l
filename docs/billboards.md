@@ -144,7 +144,7 @@ scene.set_billboard_atlas(node, sheet)!;
   UV0 no longer holds the quad coordinate under an
   atlas, so a fragment that needs it reads `v_billboard.xy`. Without an atlas the
   third component is 0. Mesh draws write (uv0, 0); see
-  [custom shaders](custom_shaders.md#billboard-varying).
+  [custom shaders](custom_shaders_reference.md#billboard-varying).
 - **Validation.** `INVALID_ARGUMENT` from `add_billboards`, `set_billboards`,
   `set_billboard_atlas` and the serialization codec for: a `frame` that is not
   finite or is negative; `columns` of 1 or more with `rows` 0; `frame_count`
@@ -180,8 +180,8 @@ corner. Custom fragments use normal scene-read declarations.
 `BlendMode` controls source-over or additive composition. Additive RGB preserves
 destination alpha. In a view with `transparency = WEIGHTED`, a source-over batch
 with a built-in material, or a custom fragment that supplies a
-[weighted form](custom_shaders.md#weighted-transparency), records in the
-[weighted pass](materials.md#weighted-transparency) and skips its sort; an additive batch
+[weighted form](custom_shaders_reference.md#weighted-form), records in the
+[weighted pass](transparency.md#weighted-transparency) and skips its sort; an additive batch
 and a custom fragment without that form keep both. Depth testing follows the material; blended draws do not
 write depth. Fog and per-view clip planes use the existing material/view rules.
 Transparent camera velocity keeps its normal behaviour.

@@ -118,7 +118,7 @@ upside down, with its top at the start; author `v` falling along the travel to p
 
 The vertex stage writes UV0 and UV1 as `(u, v)`, `v_billboard` (location 8) as `(u, v, 0)`, the normal facing the eye,
 the tangent along the strip and the point colour, interpolated. Materials that sample UV0 or UV1 need no ribbon-specific
-setup; custom fragments read the varyings as described in [custom shaders](custom_shaders.md#billboard-varying).
+setup; custom fragments read the varyings as described in [custom shaders](custom_shaders_reference.md#billboard-varying).
 
 ## Materials and supported paths
 
@@ -126,7 +126,7 @@ Ribbons follow the billboard rules: `AlphaMode.BLEND` with Basic, Standard, Toon
 materials, where a custom material has a fragment stage and no vertex stage. Unsupported or dead material references are
 skipped and counted as dangling draws. `BlendMode`, depth testing, fog and per-view clip planes follow the material and the
 view. In a view with `transparency = WEIGHTED`, a source-over batch with a built-in material, or a custom fragment with a
-[weighted form](custom_shaders.md#weighted-transparency), records in the weighted pass.
+[weighted form](custom_shaders_reference.md#weighted-form), records in the weighted pass.
 
 - **Order.** A batch draws its segments in index order and is not sorted by depth within itself. Overlapping source-over
   segments, and a strip that crosses itself, blend in that order; additive blending or weighted transparency is

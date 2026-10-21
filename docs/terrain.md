@@ -101,7 +101,7 @@ UV over [0, 1], divides by the weight sum and shows layer 0 where every weight i
 format would curve the weights, so it faults `UNSUPPORTED`.
 
 **Layers.** Each layer is an ordinary `STANDARD` material, referenced through the custom material's
-`references` (see [materials](materials.md)). The stage samples every set layer on every pixel and blends the
+`references` (see [material references](custom_shaders.md#material-references)). The stage samples every set layer on every pixel and blends the
 samples by weight; a layer without tangents takes derivative normals, and a `TRIPLANAR` terrain gives it the plane's
 frame instead. Tiling comes from each layer's own `TextureSlot` transforms over `uv0`, which is terrain-local metres:
 a `scale` of 0.25 repeats a map every 4 m.
@@ -175,7 +175,7 @@ of the whole extent, built from the same height map and independent of any view.
   and level 2. Its triangles split each cell along the diagonal from `(x + 1, z)` to `(x, z + 1)`, as the drawn chunks
   and the physics height field do. The geometry is shared by every terrain of that side length in a store.
 - **The stage.** The terrain shader carries a `trace_pose.single` form, `terrain_trace_pose.comp.glsl`
-  ([trace pose](custom_shaders.md#trace-pose)) with `trace_pose_grid` declared, so a grid of any size poses in one
+  ([trace pose](custom_shaders_reference.md#trace-pose)) with `trace_pose_grid` declared, so a grid of any size poses in one
   dispatch. Each vertex takes the height of the texel it stands on from the height
   map, and its normal from the central differences the fragment stage uses, through the [border ring](#tile-sets) at a
   linked tile's edge. It reads no time, so the pose runs again only when the height map, the border ring or the
@@ -215,7 +215,7 @@ of the whole extent, built from the same height map and independent of any view.
   zero. The deferred path carries the height per pixel in the G-buffer flags (centimetres, rounded up), so the lighting
   resolve and the ray-traced ambient occlusion and reflections of a deferred view apply the same rule. A forward view
   with ray-traced ambient occlusion gets it from the terrain's prepass fragment, the shader's
-  [prepass stage](custom_shaders.md#prepass-stage), and a multisampled view reads sample 0 of either word. A forward
+  [prepass stage](custom_shaders_reference.md#prepass-stage), and a multisampled view reads sample 0 of either word. A forward
   view's reflections never trace from terrain pixels: a custom material draws with zero specular weight.
 - **Hits.** Traced terrain shades grey and ignores layers, the control map and decals, like any custom material hit.
 - **Lifetime.** The grid is runtime-owned: removing the `Terrain` component or the node removes it at the next `update`
@@ -771,7 +771,7 @@ the crate casts little or no shadow. Traced shadows apply no offset.
 
 ## Decals
 
-Terrain receives material decals ([decals](materials.md#decals)) on the forward and deferred paths. Every decal whose
+Terrain receives material decals ([decals](decals.md)) on the forward and deferred paths. Every decal whose
 `receiver_layers` include the terrain node's `layers` blends into the terrain's completed layer sample before
 lighting or G-buffer output, with the core ordering, angle fade and clustered-overflow rules. The two paths agree
 within the G-buffer quantization. Traced terrain, as used by reflections, GI and path tracing, applies no decals.

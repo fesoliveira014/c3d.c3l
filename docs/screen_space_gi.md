@@ -153,4 +153,4 @@ A custom forward stage takes the term with `draw_screen_space_indirect(frame, dr
 ivec2(gl_FragCoord.xy))` from `screen_space_gi.glsl` (zero without it) and passes it to the
 `evaluate_environment` overload that takes a `vec4 screen_indirect` after the ambient occlusion; its flat
 ambient fill uses `screen_space_base_share(material occlusion, ambient occlusion, screen_indirect)`. See
-[custom shaders](custom_shaders.md).
+[public includes](custom_shaders_reference.md#public-includes).

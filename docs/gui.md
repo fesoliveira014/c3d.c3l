@@ -50,7 +50,7 @@ The built-in `Decal` inspector displays the borrowed material id and edits
 It also edits Fade angle in [0, 90] degrees, Receiver layers (`receiver_layers`)
 and Order. Transform, visibility and camera-layer edits remain on the node.
 These component edits need no material dirty call; shared source material edits
-use the ordinary asset revision rule. See [decals](materials.md#decals).
+use the ordinary asset revision rule. See [decals](decals.md).
 
 ## Profiler panel
 

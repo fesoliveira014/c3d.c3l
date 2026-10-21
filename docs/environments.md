@@ -282,7 +282,7 @@ show their separate effects. Processing sizes are edited per environment and
 take effect with **Apply processing sizes**. The preparation counter stays zero
 when frames reuse prepared resources.
 
-The [materials example](materials.md#interactive-example) uses the same two HDRs
+The `materials` example uses the same two HDRs
 with Physical surfaces. Its initial Studio selection is fully prewarmed through
 `prepare_scene`; Sky is base-prepared through `upload_environment`. Switching to
 Sky under a base-only preset and then enabling the Physical view demonstrates the

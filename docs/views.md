@@ -70,9 +70,9 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `fog_temporal` | Accumulates the fog volume over frames with a jittered sample and the previous frame's reprojected value (see [temporal accumulation](sky.md#temporal-accumulation)); off in both constructors; needs `volumetric_fog` and keeps a second volume |
 | `cloud_temporal` | Accumulates the view's cloud layer over frames with a jittered march and the previous frame's reprojected radiance (see [cloud temporal accumulation](sky.md#cloud-temporal-accumulation)); off in both constructors; keeps a second pair of cloud images |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
-| `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
+| `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](transparency.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
 | `pre_exposure_override` | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a power of two from 2^-16 to 2^16; zero, the default, follows the camera exposure. Any other value faults `INVALID_ARGUMENT` |
-| `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
+| `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](transparency.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
 | `msaa` | `MsaaSamples`: samples per pixel of the opaque scene passes, `ONE`, `TWO`, `FOUR` or `EIGHT` (see [Multisample anti-aliasing](#multisample-anti-aliasing)); `ONE`, the zero value and the value of both constructors, is off |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same
@@ -96,7 +96,7 @@ whose device lacks sample-rate shading, faults `UNSUPPORTED`; a full pool faults
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
 The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
-[weighted transparency](materials.md#weighted-transparency) accumulation and revealage images, the
+[weighted transparency](transparency.md#weighted-transparency) accumulation and revealage images, the
 [sky](sky.md)'s 192 × 108 sky-view table and 32³ aerial perspective volume (418 KiB) on raster views, its
 [fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (`ceil(w / px) × ceil(h / px) × slices × 8` bytes, set by `fog_quality`, twice that with `fog_temporal`), post and
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
@@ -148,7 +148,7 @@ layers and drops higher-order overlays first.
 An overflowing decal cell, inactive coverage or a position outside the grid uses
 the complete ordered decal list. Decal and light overflow are independent.
 `FLAT` views upload the selected decal records through the frame ring and allocate
-no cluster regions. See [decal materials and receivers](materials.md#decals).
+no cluster regions. See [decal materials and receivers](decals.md).
 
 The default 16 × 9 × 24 grid has 3,456 cells. Its additional decal storage is:
 
@@ -188,7 +188,7 @@ Standard, Toon and non-transmitting Physical materials use this selector, includ
 ordinary alpha-blended surfaces. Physical materials with nonzero prepared transmission
 use the flat list for their entire direct-light loop, preserving exit-point lighting.
 Existing custom shaders remain flat unless they opt into the
-[shared light selector](custom_shaders.md#light-selection).
+[shared light selector](custom_shaders_reference.md#light-selection).
 
 See [many lights](many_lights.md) for a controlled comparison and
 [GUI diagnostics](gui.md#cluster-diagnostics) for slice occupancy and completed counters.
@@ -236,7 +236,7 @@ renderer.end_frame()!;
 blur; `finish_view` records depth of field and writes the view's output: `DISPLAY_LDR` grades, tone
 maps and optionally anti-aliases into the output rectangle; `LINEAR_HDR` copies the scene-linear
 image into the target, divided by the view's [pre-exposure](post.md#pre-exposure). Between the two calls a compute dispatch may read the view's depth and read
-or write its scene image (see [custom shaders](custom_shaders.md#views)); `end_frame` faults
+or write its scene image (see [custom shaders](compute.md#dispatch-around-views)); `end_frame` faults
 `INVALID_ARGUMENT` when a rendered view was not finished. A window view records nothing while
 the window is dormant (`has_output` false); a texture view always records. When the window output
 changed, `begin_frame` resizes the swapchain and then every window view. If the views' new images
@@ -509,7 +509,7 @@ ViewId mirror_view = render::create_view(&renderer, desc)!;
 Every mesh vertex stage writes `gl_ClipDistance[0]` from the world position that feeds
 `gl_Position`, so the depth prepass, the G-buffer, `EQUAL` shading and velocity agree along the cut.
 Custom vertex stages clip through `write_mesh_outputs` or `view_clip.glsl` (see
-[custom shaders](custom_shaders.md#vertex-contract)). `FrameRoot.clip_plane` holds `(normal, d)`
+[custom shaders](custom_shaders_reference.md#vertex-contract)). `FrameRoot.clip_plane` holds `(normal, d)`
 when `FRAME_CLIP_PLANE` is set in `FrameRoot.flags`, and zero otherwise; any stage may read it. A
 `PATH_TRACED` view rejects a non-zero plane with `INVALID_ARGUMENT`, like the other raster-only
 settings.
@@ -919,7 +919,7 @@ occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
 `FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, `SCENE_SNAPSHOT` and `SCENE_READ` when the view
 draws scene readers (`SCENE_MIPS` between them when the list holds rough glass; the three repeat for
-each non-empty [transmission layer](materials.md#transmission-layers)), `SCENE_SNAPSHOT`
+each non-empty [transmission layer](transparency.md#transmission-layers)), `SCENE_SNAPSHOT`
 again when a blended draw reads the scene, transparency (a `WEIGHTED` view with participating draws
 records `FORWARD_TRANSPARENT` into its accumulation images, then `TRANSPARENT_COMPOSITE` into
 `hdr_color`, then the sorted blended draws: additive and every custom blended material),
@@ -945,7 +945,7 @@ paths, including eligible Physical draws routed through the forward remainder.
 Decals leave coverage unchanged, so depth prepass and shadow alpha tests retain
 their original material inputs. Impostor receivers and traced-hit shading do not
 apply decals; Physical extension parameters are unchanged. Custom G-buffer stages
-opt in through the same [public decal helper](materials.md#decals).
+opt in through the same [public decal helper](decals.md).
 
 Custom materials take part through their shader: a `ShaderDesc` with a `gbuffer` stage routes
 like `STANDARD` on a deferred view, one without stays forward; see
