@@ -304,7 +304,7 @@ ambient occlusion and the reflection history drop history for those pixels only;
 `c3d::ASSET_DATA_UNAVAILABLE` from `render_view` before recording when a flagged mesh's CPU
 positions were released; its published history stays as it was.
 
-A geometry that a dispatch writes ([geometry writes](custom_shaders.md#geometry-writes)) takes its previous positions from a renderer-owned buffer instead of the pose history: the positions before the frame's first write, bound for the frames that write and omitted, so motion is zero, for the frames that do not. Such a mesh needs no CPU positions, and nothing travels through the frame ring.
+A geometry that a dispatch writes ([geometry writes](compute.md#geometry-writes)) takes its previous positions from a renderer-owned buffer instead of the pose history: the positions before the frame's first write, bound for the frames that write and omitted, so motion is zero, for the frames that do not. Such a mesh needs no CPU positions, and nothing travels through the frame ring.
 
 Every pose slot grows by 32 bytes (176 to 208), 512 KiB per temporal view at the default
 16,384-node scene. Geometry uploads what its edit published, counted in `Stats.upload_bytes`;

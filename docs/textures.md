@@ -51,7 +51,7 @@ Missing or stale ids preserve scalar factors and the geometry normal. Normal
 textures use `TextureDesc.semantic = NORMAL_RGB` or `NORMAL_RG`; RG reconstructs
 positive Z. These semantics require linear formats. Generated normal mips filter
 decoded vectors and normalize them before encoding. A zero decoded vector uses
-neutral +Z. See [tangent frames](materials.md#tangent-frames) for supplied-tangent
+neutral +Z. See [tangent frames](materials_reference.md#tangent-frames) for supplied-tangent
 authority, derivative fallback and unsupported nontriangle/wireframe cases.
 
 The mapped `pbr` example loads four committed fixtures relative to its source file,

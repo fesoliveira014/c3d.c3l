@@ -143,7 +143,7 @@ scene.set_billboard_atlas(node, sheet)!;
 - **`v_billboard`.** Vertex output location 8 holds (quad u, quad v, fraction of `frame`), smoothly interpolated, with v
   running from the quad's top edge down. Under an atlas, UV0 does not hold the quad coordinate, so a fragment that needs
   it reads `v_billboard.xy`. Without an atlas the third component is 0. Mesh draws write (uv0, 0). See [custom
-  shaders](custom_shaders.md#billboard-varying).
+  shaders](custom_shaders_reference.md#billboard-varying).
 - **Validation.** `INVALID_ARGUMENT` from `add_billboards`, `set_billboards`, `set_billboard_atlas` and the
   serialization codec for: a `frame` that is not finite or is negative; `columns` of 1 or more with `rows` 0;
   `frame_count` outside 1 to `columns` x `rows`; an `inset` component that is not finite, is negative, or is at least
@@ -170,7 +170,7 @@ origin at its top-left corner. Custom fragments use normal scene-read declaratio
 
 `BlendMode` controls source-over or additive composition. Additive RGB preserves destination alpha. In a view with
 `transparency = WEIGHTED`, a source-over batch with a built-in material, or a custom fragment that supplies a [weighted
-form](custom_shaders.md#weighted-transparency), records in the [weighted pass](materials.md#weighted-transparency) and
+form](custom_shaders_reference.md#weighted-form), records in the [weighted pass](transparency.md#weighted-transparency) and
 skips its sort. An additive batch and a custom fragment without that form keep both. Depth testing follows the material,
 and blended draws do not write depth. Fog and per-view clip planes follow the material and view rules. Transparent
 camera velocity keeps its normal behavior.
@@ -208,5 +208,5 @@ upload, draw, cull, sort or scene-read request. Zero-area records produce no vis
 - [Explicit instancing](instancing.md#device-batches) for the shared device-batch contract and instance culling.
 - [Ribbons](ribbons.md) for strips.
 - [Particles](particles.md) for a system that publishes billboard batches.
-- [Custom shaders](custom_shaders.md#billboard-varying) for the `v_billboard` varying.
+- [Custom shaders](custom_shaders_reference.md#billboard-varying) for the `v_billboard` varying.
 - [Picking](picking.md#scene-index) for the index capacity rule.

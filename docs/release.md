@@ -74,7 +74,7 @@ Example for core and physics:
 ## Shader packages
 
 An application's own shader package (a directory with `shaders/shaders.json`, see
-[custom shaders](custom_shaders.md#shader-packages)) compiles with the release's shader tools, which carry the
+[custom shaders](shader_packages.md)) compiles with the release's shader tools, which carry the
 same includes core was built with:
 
 ```bash
@@ -84,7 +84,7 @@ python3 c3d_shader_tools/scripts/build_shaders.py --package path/to/package
 
 `--check` verifies the committed output instead of writing it. The tools need Python 3.10+ and `glslangValidator` on
 `PATH`. Rebuild a package with the tools of the release it runs against. A custom stage reads instance data through
-`world_instance` and `previous_world_model` ([vertex contract](custom_shaders.md)); the raw record
+`world_instance` and `previous_world_model` ([vertex contract](custom_shaders_reference.md#vertex-contract)); the raw record
 layouts behind them are not part of the contract.
 
 ## Making a release
