@@ -225,7 +225,7 @@ truncated summary is partial. See [profiling](profiling.md) for the build featur
 
 ## Selection camera
 
-`FrameRoot.selection_camera` holds the camera that selected a pass's [quadtree](instancing.md#quadtree-selection)
+`FrameRoot.selection_camera` holds the camera that selected a pass's [quadtree](instancing_quadtree.md)
 levels: `xyz` is its position relative to the frame origin and `w` its pixel scale, `working_height / (2 * tan(fov_y /
 2))` for a perspective camera and `working_height / ortho_height` for an orthographic one. The working height includes
 `render_scale`. `FrameRoot.previous_selection_camera` is the same camera one rendering earlier. A vertex stage that
@@ -254,4 +254,4 @@ equals the current one.
 - [Views](views.md) for the guide.
 - [MSAA](msaa.md), [shading paths](shading_paths.md) and [preparation](preparation.md).
 - [Lights](lights.md) and [shadows](shadows.md) for the cluster and shadow counters.
-- [Instancing](instancing.md#quadtree-selection) for quadtree batches.
+- [Instance quadtrees](instancing_quadtree.md) for quadtree batches.
