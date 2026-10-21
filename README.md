@@ -3,8 +3,7 @@
 [![ci](https://github.com/fesoliveira014/c3d.c3l/actions/workflows/ci.yml/badge.svg)](https://github.com/fesoliveira014/c3d.c3l/actions/workflows/ci.yml)
 
 `c3d` is a scene-level 3D rendering library for [C3](https://c3-lang.org/). It provides an ECS scene, an asset store with
-glTF and FBX import, animation and a Vulkan 1.3 renderer built on gpu.c3l. Add-on packages cover physics, navigation,
-terrain and water, particles, UI and audio.
+glTF and FBX import, animation and a Vulkan 1.3 renderer built on gpu.c3l. Add-on packages extend it.
 
 c3d is a base for a game engine, not an engine. It has no scheduler and does not run your game loop: the application
 creates the window, the asset store, the renderer and the scene, and calls each system as a function, in the order it
@@ -105,5 +104,6 @@ fn int main() {
 
 ## Contributing and licence
 
-Read [CONTRIBUTING.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/CONTRIBUTING.md) before changing code. c3d is MIT licensed ([LICENSE](https://github.com/fesoliveira014/c3d.c3l/blob/main/LICENSE)). Third-party
-notices sit beside the files they cover; the [example assets](https://github.com/fesoliveira014/c3d.c3l/blob/main/examples/README.md#example-assets) list theirs.
+Read [CONTRIBUTING.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/CONTRIBUTING.md) before changing code. c3d is MIT licensed ([LICENSE](https://github.com/fesoliveira014/c3d.c3l/blob/main/LICENSE)); the glyph
+shader port is under [LICENSE-slug.txt](https://github.com/fesoliveira014/c3d.c3l/blob/main/LICENSE-slug.txt). Other third-party notices sit beside the files they cover;
+the [example assets](https://github.com/fesoliveira014/c3d.c3l/blob/main/examples/README.md#example-assets) list theirs.
