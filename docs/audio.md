@@ -18,7 +18,7 @@ defer scene::destroy_scene(&scene);           // destroy the scene before the sy
 audio::register_audio(&scene, &audio)!;
 
 AudioClipId clip = audio::load_audio_clip(&assets, "sounds/burst.wav")!;
-audio.play(clip, audio::EFFECTS_BUS);
+audio.play(clip, audio::EFFECTS_BUS)!;
 
 // every frame
 scene.update_world();
@@ -59,7 +59,7 @@ audio.update(&scene);
   - The system clears `playing` when a non-looping sound ends.
 - `AudioListener` has `active`, which marks the node the mixer hears from. The first active listener in component order is used and `AudioStats.listeners` counts the active ones. With none, the listener sits at the origin facing −Z. Forward is the node's −Z axis, the world up is +Y, and roll is ignored.
 
-Removing an emitter component or its node stops its voice immediately. Attenuation is miniaudio's inverse model with rolloff 1, clamped between `min_distance` and `max_distance`: gain = `min / (min + (d − min))`, so doubling the distance from `min_distance` halves the gain. Doppler is off. The first few milliseconds of a spatial voice ramp the gain.
+Removing an emitter component or its node stops its voice immediately; the remove hook scans the voice table for voices the entity owns. Attenuation is miniaudio's inverse model with rolloff 1, clamped between `min_distance` and `max_distance`: gain = `min / (min + (d − min))`, so doubling the distance from `min_distance` halves the gain. Doppler is off. The first few milliseconds of a spatial voice ramp the gain.
 
 ## Play one-shots
 
@@ -71,7 +71,7 @@ Removing an emitter component or its node stops its voice immediately. Attenuati
 
 ## Use the null device
 
-With `null_device = true` no output is opened and nothing plays by itself. `mix(float[] frames)` pulls interleaved f32 frames on the calling thread (48000 Hz and 2 channels unless the desc says otherwise). Tests assert levels with it, and offline rendering uses it. A null-device application that wants sound to advance calls `mix` itself.
+With `null_device = true` no output is opened and nothing plays by itself. `mix(float[] frames)` pulls interleaved f32 frames on the calling thread (48000 Hz and 2 channels unless the desc says otherwise). Offline rendering uses it. A null-device application that wants sound to advance calls `mix` itself.
 
 ## Rebase the origin
 

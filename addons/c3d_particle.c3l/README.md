@@ -50,7 +50,7 @@ particle::update(&scene, delta_seconds, wind_velocity);
 | `particle_test` | CPU tests |
 | `particle_serial_test`, `particle_serial_policy_test` | Serialization adapter tests under `C3D_PARTICLE_SERIAL` |
 | `particle_acceptance`, `particle_gpu_acceptance` | Manual Vulkan acceptance in `test/gpu`; not part of CI |
-| `particles`, `particles_gpu` | Examples; the first selects `c3d_physics`, `c3d_job` and `c3d_profile` for its collision, worker and GPU timing options |
+| `particles`, `particles_gpu` | Examples; both select `c3d_physics`, `c3d_job` and `c3d_profile` for their collision, worker and GPU timing options |
 
 ```bash
 python3 scripts/build.py --example particles

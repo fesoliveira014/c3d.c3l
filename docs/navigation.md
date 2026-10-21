@@ -1,8 +1,8 @@
 # Navigation
 
-The `c3d_nav` add-on (`addons/c3d_nav.c3l`, module `c3d::nav`) builds navigation meshes from scene geometry, answers path and surface queries over them, and steers crowds of agents. It is a port of Recast, Detour and DetourCrowd; [the port page](navigation_recast_port.md) lists what is ported. The module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or `c3d::physics`. Core never imports it and has no navigation flag, except `C3D_NAV_SERIAL` for the serialization adapter.
+The `c3d_nav` add-on (`addons/c3d_nav.c3l`, module `c3d::nav`) builds navigation meshes from scene geometry, answers path and surface queries over them, and steers crowds of agents. It is a port of Recast, Detour and DetourCrowd; [the port page](navigation_recast_port.md) lists what is ported. The module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or `c3d::physics`. Core never imports it and has no navigation flag; the package's serialization adapter compiles only under `C3D_NAV_SERIAL`.
 
-Authored shape fields, link endpoints and radius, and the seven numeric agent parameters (`radius`, `height`, `max_acceleration`, `max_speed`, `collision_query_range`, `path_optimization_range`, `separation_weight`) must be finite. `add_nav_*` and serialization share the validators; the domain table is in [serialization](serialization.md#authored-numeric-domains).
+The shape fields that a volume's or obstacle's `kind` selects, a link's endpoints and radius, and the seven numeric agent parameters (`radius`, `height`, `max_acceleration`, `max_speed`, `collision_query_range`, `path_optimization_range`, `separation_weight`) must be finite; inactive shape fields keep any IEEE value. `add_nav_*` and serialization share the validators; the domain table is in [serialization](serialization.md#authored-numeric-domains).
 
 Tile maps, voxel grids and height fields build through [grid sources](navigation_grids.md). A baked mesh saves and loads through [snapshots](navigation_persistence.md).
 
@@ -62,7 +62,7 @@ Destroy the builder before the scene: it installs remove hooks on the scene.
 - **Tiles.** A `NavBuilder` covers world `bounds` with square tiles of `NavBuildConfig.tile_size` voxels (32 by default) and builds each from the geometry that overlaps it. The tile count is fixed at creation. `default_nav_build_config()` gives a 0.3 m by 0.2 m voxel and a 2 m tall agent of radius 0.6 m that climbs 0.9 m and walks slopes up to 45 degrees.
 - **NavMesh.** Tiles of convex polygons (at most `MAX_VERTS_PER_POLY`, 6, vertices) with links across tile borders and off-mesh connections. A polygon has `flags` (a `ushort`) and an `area` from 0 to 63; `NULL_AREA` (0) is not walkable and `WALKABLE_AREA` (63) is the default. `NavMesh.set_poly_flags`, `poly_flags`, `set_poly_area` and `poly_area` read and write them.
 - **Ids and salts.** `PolyRef` and `TileRef` are 64-bit generational ids. Every tile install and removal advances the slot's salt, so a `PolyRef` into a reinstalled tile stops resolving: `NavMesh.is_valid_ref` returns false and queries fault `INVALID_REF`. Find the polygon again with `find_nearest_poly`, or resolve a saved [polygon key](navigation_persistence.md#identify-polygons-across-a-load).
-- **Query and crowd.** A `NavQuery` owns its node pools and answers every query without allocating. It holds its search state, so one thread uses it at a time; give each thread its own query over the same mesh. A `Crowd` steers agents over one mesh and allocates every array at creation.
+- **Query and crowd.** A `NavQuery` owns its node pools and answers every query without allocating. It holds its search state, so one thread uses it at a time; give each thread its own query over the same mesh while no thread changes the mesh. A `Crowd` steers agents over one mesh and allocates every array at creation.
 
 ## Build a navmesh
 
@@ -71,7 +71,7 @@ Author components on nodes, then let `nav_sync` build and install the tiles.
 | Component | Role | Add with |
 | --- | --- | --- |
 | `NavSource` | Geometry rasterized into the mesh. The zero `geometry` id names the node's `Mesh`; `walkable` false rasterizes every triangle as `NULL_AREA`; `area` marks walkable triangles | `Scene.add_nav_source(node, geometry, walkable, area)`; `Scene.add_nav_sources(root, area)` adds one per `Mesh` node under `root` and returns the count |
-| `NavVolume` | Area marking in node space: `BOX`, `CONVEX` (up to `MAX_VOLUME_VERTS`, 12, vertices between `min_y` and `max_y`) or `CYLINDER` | `Scene.add_nav_volume(node, volume)` |
+| `NavVolume` | Area marking in node space: `BOX`, `CONVEX` (3 to `MAX_VOLUME_VERTS`, 12, vertices between `min_y` and `max_y`) or `CYLINDER` | `Scene.add_nav_volume(node, volume)` |
 | `NavLink` | An off-mesh connection between two points in node space, searched for landing polygons within `radius`; `flags` 0 means `POLY_FLAG_WALK`; `bidirectional`, `area`, `user_id` | `Scene.add_nav_link(node, link)` |
 | `NavObstacle` | A `CYLINDER`, `BOX` or `ORIENTED_BOX` (turned by the node's yaw) that blocks walking. Needs `cache_layers` | `Scene.add_nav_obstacle(node, obstacle)` |
 
@@ -83,7 +83,7 @@ Call `mark_changed()` on a component after moving its node or editing it; nothin
 
 `default_nav_builder_desc(bounds, config)` gives two build slots with 2 MiB of scratch each, 16 volumes per tile and no triangle budget. `create_nav_builder(allocator, scene, desc)` allocates tiles, slots and pools once and faults `INVALID_ARGUMENT` for a bad config or bounds and `CAPACITY_EXCEEDED` for an allocation failure. `create_nav_mesh_for(allocator, builder, max_links = 0)` creates a mesh whose tile grid matches the builder's.
 
-The `NavBuilderDesc` fields are `config`, the world `bounds` the tiles cover, `slots` (tile builds in flight), `slot_scratch_bytes` (the arena of one slot; a tile that needs more faults `CAPACITY_EXCEEDED`), `max_volumes_per_tile` (a tile that overlaps more volumes faults `CAPACITY_EXCEEDED`), `rasterize_budget` (triangles per `rasterize_next` call; 0 is unlimited) and `cache_layers` with `max_obstacles`, `cache_scratch_bytes` and `expected_layers_per_tile` ([cached layers](#cached-layers)).
+The `NavBuilderDesc` fields are `config`, the world `bounds` the tiles cover, `slots` (tile builds in flight), `slot_scratch_bytes` (the arena of one slot; a tile that needs more faults `CAPACITY_EXCEEDED`), `initial_spans` (the span pool of each slot), `max_volumes_per_tile` (a tile that overlaps more volumes faults `CAPACITY_EXCEEDED`), `rasterize_budget` (triangles per `rasterize_next` call; 0 is unlimited) and `cache_layers` with `max_obstacles`, `cache_scratch_bytes` and `expected_layers_per_tile` ([cached layers](#cached-layers)).
 
 ### Sync
 
@@ -100,7 +100,7 @@ The `NavBuilderDesc` fields are `config`, the world `bounds` the tiles cover, `s
 
 A failed tile keeps its previous mesh and retries at the next sync.
 
-To build on worker threads, drive the builder by hand: call `builder.sync_sources(&scene, &assets)` and `builder.rasterize_next(&scene, &assets)` on the main thread (they return a `TileJob*`, or `NO_DIRTY_TILES` or `NO_FREE_SLOT`), run `build_tile(job)` on any thread (it touches only its slot), and call `builder.commit(job)` on the main thread. For a builder without `cache_layers`, a later `nav_sync` with `budget` 0 installs the committed tiles. `NavBuilder.mark_dirty(Aabb)` requests a rebuild of the tiles under a box, and `NavBuilder.tile_mesh(tile_x, tile_z)` returns a tile's built `TileMesh` blob.
+To build on worker threads, drive the builder by hand on the main thread: call `builder.sync_sources(&scene, &assets)`, which returns nothing, then `builder.rasterize_next(&scene, &assets)`. `rasterize_next` returns a `TileJob*` that is `READY` when the tile is rasterized, or `RASTERIZING` when `rasterize_budget` ran out (call it again to continue that slot first). It faults `NO_DIRTY_TILES`, `NO_FREE_SLOT` or `CAPACITY_EXCEEDED`. Run `build_tile(job)` on any thread for a `READY` job (it touches only its slot), and call `builder.commit(job)` on the main thread for the `BUILT` or `FAILED` job. For a builder without `cache_layers`, a later `nav_sync` with `budget` 0 installs the committed tiles. `NavBuilder.mark_dirty(Aabb)` requests a rebuild of the tiles under a box, and `NavBuilder.tile_mesh(tile_x, tile_z)` returns a tile's built `TileMesh` blob, which `tile_mesh_view(blob)` borrows as arrays.
 
 ### Link pool
 
@@ -113,7 +113,7 @@ Every polygon edge across a tile border that qualifies gets a portal link in bot
 With `NavBuilderDesc.cache_layers`, `build_tile` stops at the heightfield layers and `commit` stores them in the builder's `TileCache`. `nav_sync` then rebuilds mesh tiles from the cached layers within its budget, marking `NavVolume` areas and obstacles at rebuild time. A volume change rebuilds its tiles from the layers without rasterizing again, and `NavSyncResult.relayered` counts the rebuilds.
 
 - `NavObstacle` components author obstacles. `mark_changed` re-adds an obstacle at the node's current transform; removing the component or the node removes it. A builder without `cache_layers` skips obstacles and counts them in `NavSyncResult.skipped`.
-- The mesh holds `expected_layers_per_tile` (4 by default) slots per tile. A tile with more layers faults `CAPACITY_EXCEEDED` in `commit` and retries.
+- The layer cache and the mesh each hold `expected_layers_per_tile` (4 by default) slots per tile in total, as one pool shared across tiles. A `commit` that finds the cache pool full faults `CAPACITY_EXCEEDED`, and the tile retries.
 - A tile (`tile_size` plus its border) may be at most 255 cells wide; `create_nav_builder` faults `INVALID_ARGUMENT` past that.
 - One obstacle marks at most `MAX_TOUCHED_TILES` (8) layers. Coarse mode marks only the first eight; bounded mode rejects an oversized footprint before changing anything.
 - Obstacle requests queue between updates (`MAX_OBSTACLE_REQUESTS`, 64) and wait while a rebuild is queued.
@@ -122,7 +122,7 @@ With `NavBuilderDesc.cache_layers`, `build_tile` stops at the heightfield layers
 
 ## Query paths
 
-`create_nav_query(allocator, &mesh, max_nodes, max_edge_links = DEFAULT_EDGE_LINKS)` allocates the node pools and the per-edge portal scratch once (`DEFAULT_EDGE_LINKS` is 64). A query takes a `QueryFilter` pointer and caller slices for its results; no query allocates.
+`create_nav_query(allocator, &mesh, max_nodes, max_edge_links = DEFAULT_EDGE_LINKS)` allocates the node pools and the per-edge portal scratch once (`DEFAULT_EDGE_LINKS` is 64). `max_nodes` and `max_edge_links` are at least 1. A query takes a `QueryFilter` pointer and caller slices for its results; no query allocates.
 
 | Query | Result |
 | --- | --- |
@@ -138,12 +138,12 @@ With `NavBuilderDesc.cache_layers`, `build_tile` stops at the heightfield layers
 | `find_random_point`, `find_random_point_around_circle` | A point weighted by polygon area, drawn through a caller `RandomFn` that returns [0, 1); `find_random_point` is linear in the polygon count |
 
 - **Sliced searches.** A `NavQuery` runs one sliced search at a time. Any A* or Dijkstra query on the same query before `finalize_sliced_find_path` corrupts it. The filter passed to `init_sliced_find_path` must outlive the search.
-- **Wall queries.** `move_along_surface` and `poly_wall_segments` fault `CAPACITY_EXCEEDED` when an edge has more passable links than `max_edge_links`. A border edge is a wall only when no link on it passes the filter.
+- **Wall queries.** `move_along_surface`, `move_along_surface_projected`, `find_distance_to_wall` and `poly_wall_segments` fault `CAPACITY_EXCEEDED` when an edge has more passable links than `max_edge_links`. A border edge is a wall only when no link on it passes the filter.
 - **Surfaces.** `poly_surface` and the projected move return the retained ground triangle; with [bounded detail](navigation_grids.md#bounded-scene-surfaces) the surface follows the scene to within the configured error.
 
 ### Filters
 
-`default_query_filter()` passes every polygon at cost 1 per metre. A `QueryFilter` has:
+`default_query_filter()` passes every polygon with a nonzero flag (built polygons carry `POLY_FLAG_WALK`) at cost 1 per metre. A polygon whose flags were set to 0 fails every filter. A `QueryFilter` has:
 
 | Field | Meaning |
 | --- | --- |
@@ -171,7 +171,7 @@ nav::crowd_update(&scene, &crowd, delta_seconds);
 - `Scene.add_nav_agent(node, params)` authors a `NavAgent`; `AGENT_EXISTS` when the node has one. `set_nav_target(node, position)` asks the agent to walk to a world position, snapped to the mesh at the next update. `set_nav_velocity(node, velocity)` asks it to move at a velocity, and `clear_nav_target(node)` stops it.
 - `crowd_update(scene, crowd, dt, debug = null)` removes agents whose node lost its `NavAgent`, adds a crowd slot for each new `NavAgent` (counting the ones that did not fit in `crowd.unbound`), steps the crowd, and writes each non-driven node's position in parent space. `dt` is positive.
 - A `NavAgent` marked `driven` keeps its node's position. The crowd reads the position every update and steers through `CrowdAgent.velocity`; the application applies that velocity to the node itself.
-- A target farther than `CROWD_MAX_PATH` (256) polygons is reached partially. An agent chooses one of the crowd's 16 query filters (`Crowd.filter(index)`) and 8 avoidance configurations (`set_obstacle_avoidance_params(index, params)`) by index in its params.
+- A target farther than `CROWD_MAX_PATH` (256) polygons is reached partially. Each agent's corridor holds two `CROWD_MAX_PATH` `PolyRef` arrays (8 bytes per entry, 4 KiB), the second for atomic movement. An agent chooses one of the crowd's 16 query filters (`Crowd.filter(index)`) and 8 avoidance configurations (`set_obstacle_avoidance_params(index, params)`) by index in its params.
 - Removing an agent's node frees its slot at the next `crowd_update`.
 
 Applications that manage agents without nodes call `Crowd.add_agent`, `update_agent_params`, `remove_agent`, `request_move_target`, `request_move_velocity` and `reset_move_target`, then `Crowd.update(dt, debug)`.

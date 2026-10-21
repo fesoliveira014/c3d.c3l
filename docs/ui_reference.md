@@ -60,12 +60,12 @@ Layout state follows an element's id. A `scroll` with an id keeps its offset acr
 
 - A window's parent is a `panel` or a `scroll`. A window is not the root and not inside a list or grid template. Windows nest. A `window` that breaks these rules faults `c3d::ASSET_FORMAT_ERROR`; the window keys off a window, and `drag_handle` outside every window, fault `UNKNOWN_PROPERTY`.
 - A press anywhere in a window raises it and the windows around it above their siblings. The nearest enclosing `scroll` clips a window; a window directly in a `scroll` scrolls with the content. Hover, press and wheel reach only the topmost window under the pointer.
-- A press on a handle starts a drag after `UI_DRAG_THRESHOLD` layout units of travel. An interactive element between the press and the handle, such as a close button, keeps the press. The offset follows the pointer and is clamped to `drag_bounds` against the previous layout. Escape cancels a drag: the offset returns to its start and `on_move_end` does not fire. A drag also cancels when the window or all of its handles are not laid out in an `update`.
-- Offsets and raise order belong to the window's `id`. `reload_document` keeps them for ids the new tree still has and drops the rest; `unload_document` drops the document's windows. `update` faults `c3d::CAPACITY_EXCEEDED` when the windows' z layers reach the tooltip layer.
+- A press on a handle starts a drag after `UI_DRAG_THRESHOLD` layout units of travel. An interactive element between the press and the handle, such as a close button, keeps the press. A press on an interactive handle that never moves is still a click. The offset follows the pointer and is clamped to `drag_bounds` against the previous layout. Escape cancels a drag: the offset returns to its start and `on_move_end` does not fire. A drag also cancels when the window or all of its handles are not laid out in an `update`.
+- Offsets and raise order belong to the window's `id`. `reload_document` keeps them for ids the new tree still has and drops the rest, and keeps a drag while the new tree has the window and one of its handles, else cancels it; `unload_document` drops the document's windows. `ui.window_offset(document, id)` reads an offset. `ui.set_window_offset(document, id, offset)` moves a window without clamping and cancels a drag of it; both fault `c3d::INVALID_ARGUMENT` for an id that names no window and `c3d::INVALID_ID` for a dead document. `update` faults `c3d::CAPACITY_EXCEEDED` when the windows' z layers reach the tooltip layer.
 
 ## Styles
 
-`load_styles(sheets)` takes an array of JSONC objects, each mapping style names to style objects. A later sheet replaces a style of the same name from an earlier one, and `extends` resolves across sheets.
+`load_styles(sheets)` takes a slice of JSONC strings (`String[]`); each parses to an object that maps style names to style objects. A later sheet replaces a style of the same name from an earlier one, and `extends` resolves across sheets.
 
 | Property | Value |
 | --- | --- |
@@ -87,7 +87,7 @@ Layout state follows an element's id. A `scroll` with an id keeps its offset acr
 | `underline` | `true` or `false` (default) |
 | `skin`, `bar_skin` | `{ "image": key, "slice": n or [l, t, r, b] }`, nine-slice margins in texels. `image` is required |
 | `transition` | `{ "properties": [...], "duration": s, "delay": s, "easing": e }` ([Transitions](#transitions)) |
-| `opacity` | 0 to 1 (default 1). Multiplies the alpha of everything the element and its descendants draw |
+| `opacity` | 0 to 1 (default 1). Multiplies the alpha of everything the element and its descendants draw. Hit testing ignores it |
 | `offset` | `[x, y]`, signed. Moves a floating element: a document root, window, grid item or tooltip |
 
 Lengths (n) are non-negative numbers in layout units. Defaults: transparent fill, white text, `font_size` 16, opacity 1, and no underline, text highlight, border, radius, padding, transition or offset. An image multiplies its texture by `fill`, white when the fill is transparent. `highlight` colors a grid's drop footprint. A bar draws `bar_fill` or `bar_skin` over its content box.
@@ -112,10 +112,10 @@ A bad value faults `c3d::ASSET_FORMAT_ERROR` at its pointer and an unknown key `
 
 - The transition of the state an element changes to times the change. A `transition` in the base style times both directions of a hover; one in the `hover` block times only the way in.
 - `update` advances each running transition by `delta_seconds`. A delta of 0 advances nothing and a large one finishes the transition in that update. A change shows its start value in the `update` that notices it.
-- A change that interrupts a running transition starts from the current value, and the duration scales by the share of the old distance that remains. A property the new state's `transition` does not list snaps.
+- A change that interrupts a running transition starts from the current value, and the duration scales by the share of the old distance that remains, measured by the largest component. A property the new state's `transition` does not list snaps.
 - `size` animates only while `width` and `height` are fixed numbers before and after the change; any other size snaps. `offset` moves floating elements only, so an in-flow element cannot lift on hover.
-- Each element whose inline properties or style blocks set a `transition` holds one entry in a table of `UiDesc.max_transitions` entries. An element that is not laid out in an `update` loses its entry, unless it is exiting. When the table is full, changes of elements without an entry snap. An element with an `id` keeps its entry across `reload_document` and `load_styles` and retargets from its current value.
-- `set_reduced_motion(true)` makes `offset`, `size` and `value` changes instant and snaps running ones at the next `update`. Fades still run.
+- Each element whose inline properties or style blocks set a `transition` holds one entry in a table of `UiDesc.max_transitions` entries. An element that is not laid out in an `update` loses its entry, unless it is exiting. An entry starts at its element's first target without animating. When the table is full, changes of elements without an entry snap, and such an element disappears at once instead of exiting. An element with an `id` keeps its entry across `reload_document` and `load_styles` and retargets from its current value.
+- `set_reduced_motion(true)` makes `offset`, `size` and `value` changes instant and snaps running ones at the next `update`. Fades of `fill`, `border`, `text_color` and `opacity` still run.
 
 ### Enter and exit
 
@@ -125,7 +125,7 @@ An element whose `transition` lists a property that its style's `hidden` block s
 - **Exit.** The element exits when it was laid out in the previous `update` and is not laid out now, and its parent is laid out now or it is a document root: a `visible` binding turned false, its list lost a position, or `set_visible(document, false)` hid its document. `unload_document` exits nothing. An element with no such property disappears at once.
 - **Lists.** List items are keyed by position, so only the last position of a list exits and only an item added at the end enters. Removing an item from the middle shifts the later items up and fades out the old last position, which shows the former last item.
 - **Snapshot.** An exiting element leaves the flow at once and draws as a floating snapshot of its last frame until each of those properties reaches its hidden value. It takes no hover, press or click and calls no getter. An element laid out again while exiting retargets and does not enter again. A snapshot counts against `max_instances`, `text_bytes` and `max_text_pieces`.
-- Under reduced motion an exit whose properties are all motion ends at once. `load_document`, `reload_document`, `unload_document`, `load_styles` and an `update` that faults end every exit at once.
+- Under reduced motion `offset` and `size` jump to their hidden values, and an exit whose properties are all motion ends at once. `load_document`, `reload_document`, `unload_document`, `load_styles` and an `update` that faults end every exit at once.
 
 ## Text templates and markup
 
@@ -152,7 +152,8 @@ An element whose `transition` lists a property that its style's `hidden` block s
 - A label with spans lays its text out itself. Each run that shares its spans resolves its properties (the label's, then each enclosing span's, outermost first). Breaks fall at spaces and newlines, also across span boundaries, and never inside a word: `wrap: words` breaks at both, `newlines` only at newlines and `none` never breaks. A line is as tall as its tallest run, or `line_height` when the label sets one, and all runs on a line share one baseline.
 - A rich label wraps at its fixed `width`, or at `max_width` when its width is not fixed, and at nothing else: it never wraps against the width a `grow` or percent panel gives it. Give a rich label in such a panel a `max_width`. It sizes its `fit` width and height to the text it laid out.
 - Each run on each line is one piece; `UiDesc.max_text_pieces` bounds the pieces of a frame and `ui.stats.text_pieces` counts them. A label without spans uses none.
-- A focused text field owns an edit buffer of `UiDesc.field_bytes`, seeded from `value` on focus. Backspace, Delete, Left, Right, Home and End work per code point, Ctrl+V pastes, Return fires `on_submit` and Escape blurs. There is no selection and no IME preedit display.
+- `underline` and `text_highlight` apply to label, field and placeholder text and inside spans. The underline sits 0.12 em below the baseline and is 0.06 em thick, at least one pixel, because fonts carry no underline metrics. Each piece of text draws its highlight, then its glyphs, then its underline.
+- A focused text field owns an edit buffer of `UiDesc.field_bytes`, seeded from `value` on focus. Backspace, Delete, Left, Right, Home and End work per code point, Ctrl+V pastes, Return fires `on_submit` and Escape blurs the field, which then shows its bound value again. Committed IME text arrives as text input; there is no selection and no IME preedit display.
 
 ## Bindings and actions
 
@@ -179,7 +180,7 @@ Any other field type is a compile error. `visible` and `enabled` take BOOL, a `b
 
 | Function | Purpose |
 | --- | --- |
-| `bind(name, kind, getter, user, list = "")` | One getter under a name. `list` names the owning LIST binding of an item binding |
+| `bind(name, kind, getter, user, list = "")` | One getter under a name. `list` names the owning LIST binding of an item binding; a name that is no registered LIST binding, or a level past `UI_SCOPE_DEPTH`, faults `c3d::INVALID_ARGUMENT` |
 | `@bind_fields(prefix, $Type, instance, $fields = {})` | The fields of one struct instance as `prefix.<field>` |
 | `@bind_list(name, item, $Type, items, $fields = {})` | A slice of structs as the LIST `name` and `item.<field>` per item. `items` points to the slice, read on every update |
 | `@bind_items(name, item, $Type, count, item_at, user, list = "", $fields = {})` | A list through callbacks, for nested lists or containers that are not slices. `list` names the enclosing list when this list is itself an item of another |
@@ -203,7 +204,7 @@ A handler is `fn void (void* user, UiScope* scope, UiEvent* event)`. It runs ins
 
 ## Public state
 
-`ui.wants_text_input` is true while a text field is focused. `ui.stats` (`UiStats`) holds `instances`, `getter_calls`, `text_bytes`, `placement_hits`, `placement_misses`, `placement_clears`, `text_pieces`, `transitions` and `exiting` for the last update and draw. `ui.load_error_document` names the document a failed `load_styles` could not re-resolve, else it is zero. `update` requires `scale > 0` and a finite, non-negative `delta_seconds`.
+`ui.wants_text_input` is true while a text field is focused. `ui.delta_seconds` holds the delta of the last `update`. `ui.stats` (`UiStats`) holds `instances`, `getter_calls`, `text_bytes`, `placement_hits`, `placement_misses`, `placement_clears` and `text_pieces` for the last update and draw, `transitions` (entries with a running transition) and `exiting` (elements exiting). `ui.load_error_document` names the document a failed `load_styles` could not re-resolve, else it is zero. `update` requires `scale > 0` and a finite, non-negative `delta_seconds`.
 
 ## Capacities
 
@@ -258,7 +259,7 @@ Loading faults name the failing value with an RFC 6901 JSON pointer, read with `
 | `UNKNOWN_ASSET` | An image, skin or font key the store lacks; a text element without a font |
 | `c3d::ASSET_FORMAT_ERROR` | A value of the wrong JSON type or out of range, including a `transition` without `properties` or `duration`; an `id` that is not a valid name, repeats or collides; a `window` without an `id`, on the root, in a template or under a parent that is not a `panel` or `scroll`; a `tooltip` as the root or in a template; a `grid` without `columns`, `rows` or a positive `cell_size`; malformed span markup |
 | `c3d::CAPACITY_EXCEEDED` | A UI table full, including the window table and the font sets; lists nested deeper than `UI_SCOPE_DEPTH`; a frame past its instance, text or piece capacity |
-| `c3d::INVALID_ARGUMENT` | A zero required capacity in `create_ui`; a duplicate or malformed binding or action name; text that is not UTF-8; a layout error reported by Clay; `window_offset` or `set_window_offset` with an id that names no window |
+| `c3d::INVALID_ARGUMENT` | A zero required capacity in `create_ui`; a duplicate or malformed binding or action name; an item binding whose `list` is no registered LIST binding or nests past `UI_SCOPE_DEPTH`; text that is not UTF-8; a layout error reported by Clay; `window_offset` or `set_window_offset` with an id that names no window |
 | `c3d::INVALID_ID` | A dead document id |
 | `json::*`, `io::EOF` | Syntax errors from `std::encoding::json` |
 

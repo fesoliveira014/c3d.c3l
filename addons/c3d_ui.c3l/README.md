@@ -29,6 +29,9 @@ List `c3d_ui` and `clay` next to `c3d` and core's dependencies in `project.json`
 ```
 
 ```c3
+String styles = (String)$embed("ui/styles.jsonc"); // $embed yields bytes: cast to String
+String document = (String)$embed("ui/hud.jsonc");
+
 Ui ui = ui::create_ui(mem, &assets, ui::default_ui_desc())!;
 defer ui::destroy_ui(&ui);
 ui.@bind_fields("hud", Hud, &game.hud)!;       // Hud fields tagged @tag("ui", true)
@@ -56,7 +59,7 @@ The [UI guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/ui.md) s
 | --- | --- |
 | `ui_test` | CPU tests; no device |
 | `ui_acceptance` | Manual Vulkan acceptance in `test/gpu`; not part of CI |
-| `ui` | Example: a HUD, an inventory with drag and drop, windows, rich text and transitions |
+| `ui` | Example: a HUD and an inventory with drag and drop; `--windows`, `--rich-text` and `--transitions` add windows, rich text and transitions |
 
 ```bash
 c3c test ui_test --path addons/c3d_ui.c3l

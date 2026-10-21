@@ -21,7 +21,7 @@ List `c3d_profile` in `project.json` and enable the features you need; the [rele
 | `C3D_PROFILE_CPU` | Application scopes and CPU capture and export |
 | `C3D_PROFILE_CPU`, `C3D_PROFILE_INTERNAL` | Also the library scopes inside core |
 | `C3D_PROFILE_GPU` | Application GPU scopes and completed capture history; also select `gpu`, `vk`, `vma`, `spvreflect` |
-| `C3D_PROFILE_GPU`, `C3D_PROFILE_INTERNAL` | Automatic frame, view, pass and shadow-layer intervals |
+| `C3D_PROFILE_GPU`, `C3D_PROFILE_INTERNAL` | Automatic frame, view, pass, pass-stage, shadow-layer and custom-dispatch intervals |
 
 `C3D_PROFILE_INTERNAL` needs `C3D_PROFILE_CPU` or `C3D_PROFILE_GPU`.
 
@@ -43,6 +43,7 @@ profile::@capture(&recorder, frame_id) {
 };
 
 String json = profile::capture_json(mem, recorder.frame(frame_id)!!);
+defer alloc::free(mem, json.ptr);
 ```
 
 Create the recorder before any renderer attached to it and destroy it last. The recorder stays at a stable address while capturing.

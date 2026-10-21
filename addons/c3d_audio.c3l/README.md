@@ -23,7 +23,7 @@ defer audio::destroy_audio_system(&audio);
 audio::register_audio(&scene, &audio)!;     // destroy the scene before the system
 
 AudioClipId clip = audio::load_audio_clip(&assets, "sounds/burst.wav")!;
-audio.play(clip, audio::EFFECTS_BUS);
+audio.play(clip, audio::EFFECTS_BUS)!;
 
 // every frame
 scene.update_world();

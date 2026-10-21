@@ -6,7 +6,7 @@ Particle rendering shares the [frame origin](large_world.md) selected through `F
 
 ## Quick start
 
-Select `c3d_particle` next to core in `project.json` (the [release guide](release.md) lists the names), then register the module, add a shader and material, and create an emitter:
+Select `c3d_particle` next to core in `project.json` (the [release guide](release.md) lists the names), then register the module, add a shader and material, and create an emitter. The snippet imports `c3d`, `c3d::asset`, `c3d::material`, `c3d::particle`, `c3d::scene` and `std::math`:
 
 ```c3
 particle::register_particles(&scene)!;
@@ -47,7 +47,7 @@ particle::update(&scene, delta_seconds, wind_velocity);
 - **Pool.** A system owns one fixed allocation, sized by `capacity` (and the event queue and trail points). Nothing allocates during `update`. The pool holds positions, velocities and per-particle values in separate streams; expiry swap-removes every stream together.
 - **Immutable descriptor.** `ParticleSystemDesc` is captured at creation and stays fixed. Runtime controls are `ParticleSystem.emitting`, `emit_burst(count)`, the emitter's transform and the wind passed to `update`. Material values change through the ordinary asset revision API. Recreate a system to change its capacity, emission, render mode, execution or asset references.
 - **Ownership.** The library owns the pool arrays, counters and draw children. Inspect them as short-lived borrows; do not resize the arrays or remove, reparent or replace the owned children. Removing the emitter or the scene releases the pool at once. Removing only `ParticleSystem` frees the pool, and the next `particle::update` removes the orphaned draw and trail children, so run that update before rendering. Shared materials, shaders, textures and geometry stay in the asset store.
-- **World space.** Positions and velocities are world-space after emission. Emitter scale affects spawn volume, while sampled speed stays in world m/s. Emitter motion after emission does not carry existing particles. Draw children are world-space nodes; hidden emitters keep simulating, and `update` copies the emitter's layer mask to its children because layers are not inherited.
+- **World space.** Positions and velocities are world-space after emission. Emitter scale affects spawn volume, while sampled speed stays in world m/s. Emitter motion after emission does not carry existing particles. A draw child is a world-space child of the emitter: it inherits the emitter's visibility and is removed with its subtree. Hidden emitters keep simulating, and `update` copies the emitter's layer mask to its children because layers are not inherited.
 - **Determinism.** Every value a particle draws comes from a hash of the system `seed`, the particle's spawn ordinal and the quantity drawn, so a particle's values depend on its ordinal alone, not on how many particles a step admits or refuses. Equal seeds, configuration and identical sequences of emitter poses, deltas and winds replay identically within one build. There is no cross-compiler or cross-version bitwise guarantee.
 - **Pending and prepared.** `scene.attach_particle_system(node, desc)` validates and attaches authoring and leaves the system pending, with `emitting = true`: no pool, no draw child, nothing drawn. `particle::prepare(&scene, node)` and `particle::prepare_subtree(&scene, root)` complete one owner or every pending system under a root (null selects the scene). A failed preparation keeps the authoring and can be retried. `particle::update` skips pending systems; `particle::step` needs a prepared system. [Owner readiness](owner_readiness.md) states the shared rules. A codec restores the authored `emitting` after attachment instead of inheriting the default.
 
@@ -95,7 +95,7 @@ A sub-emitter spawns particles in another system where a particle of this one is
 - A step raises `DEATH` events (cause `EXPIRED`, `EVICTED` or `IMPACT`), `BIRTH` events and `IMPACT` events. An event is queued only if some sub-emitter of the system accepts it. An event past `max_events` is lost and counted in `dropped_events`. Size the queue for the most events one update can raise.
 - After every system has stepped, `update` delivers each event to each accepting sub-emitter in store order, then queue order, then sub-emitter index. A delivery spawns `count` particles in the target at the event position, through the target's own emission shape; the target's world matrix supplies orientation and scale. A child's velocity is its emitted velocity plus the parent's velocity times `inherit_velocity`. Children start at age zero and integrate from the next update. They draw their values from a hash of the parent's seed, the event index and the sub-emitter index, not from the target's `seed`.
 - A delivery requests `count` particles as a burst would, so the target's [saturation policy](#saturation) applies. With `DROP_OLDEST` the target evicts to make room and raises `EVICTED` events for its own sub-emitters.
-- A target that is dead, not a particle system, not prepared or on the other processor than the source is skipped and counted in the source's `skipped_events`. `update` adds and removes no nodes, so attach and prepare targets first.
+- A target that is dead, not a particle system, not prepared or on the other processor than the source is skipped and counted in the source's `skipped_events`. `update` creates no nodes, so attach and prepare targets first.
 - Events raised during delivery wait for the next update, so a chain A to B to A advances one level per update and one update's work is bounded by the queue capacities.
 - `on_evict` lets `DEATH` fire for evicted particles; it is off by default to bound cascades under `DROP_OLDEST`.
 
@@ -107,9 +107,9 @@ A step runs expire, evict, emit, integrate, collide. After integration each part
 
 - **Ground plane.** `ground_plane = true` collides with the world plane `y = ground_height` and needs no callback. A particle hits it when a downward segment ends with its centre less than one radius above the plane. A segment that starts at or below that height hits at its start, so a resting particle cannot fall through by rounding. The origin rebase moves nodes horizontally only, so it never moves the plane.
 - **Callback.** `ParticleSystem.set_collision(cast, context)` installs a `ParticleCollisionFn` on a prepared CPU system. The system calls it with the scene-space segment and the collision radius; it fills a `ParticleHit` (`point`, unit `normal` facing the particle, `fraction` along the segment) and returns true on a hit. The package imports no physics; the application adapts a query. The cast runs on the owner thread inside `particle::update`, so a physics world must not be stepping then. `context` must outlive the system or be cleared with `set_collision(null, null)`. The cast and context are not serialized. When the plane and the cast both hit, the smaller fraction wins.
-- **Budget.** At most `max_queries` casts run per step. The step starts at `query_cursor` and visits the pool in order, wrapping. Particles past the budget skip the callback that step and count in `collision_skips`; the plane still applies. The next step starts at the first skipped particle, so no particle is skipped every step. `max_queries = 0` disables the callback.
+- **Budget.** At most `max_queries` casts run per step. The step starts at `query_cursor` and visits the pool in order, wrapping. Particles past the budget skip the callback that step and count in `collision_skips`; the plane still applies. The next step starts at the first skipped particle, so no particle is skipped every step. A particle pressed against a surface hits it on every step and spends one query per step. `max_queries = 0` disables the callback.
 - **Responses.** `BOUNCE` reverses the normal part of the velocity scaled by `restitution` and scales the tangent part by `1 − friction`; a hit on a particle moving away leaves its velocity alone. `STICK` zeroes the velocity. `DIE` removes the particle, raising `DEATH` with cause `IMPACT`.
-- **Impact events.** A hit raises `IMPACT` when the speed into the surface before the response is at least `impact_speed` (default 1 m/s; zero raises one for every hit). A `DIE` hit raises `DEATH` whatever its speed.
+- **Impact events.** A hit raises `IMPACT` when the speed into the surface before the response is at least `impact_speed` (default 1 m/s; zero raises one for every hit). The event is at `point` and carries the velocity from before the response. A `DIE` hit raises `DEATH` whatever its speed.
 
 ```c3
 fn bool cast_physics(void* context, Vec3 from, Vec3 to, float radius, ParticleHit* out) {
@@ -137,9 +137,9 @@ system.set_collision(&cast_physics, &physics);
 
 Billboard modes write world-space `BillboardRecord` values into a `RECORDS` [batch](billboards.md#sources) that core copies relative to the frame origin. `rotation` is an extra in-plane turn. Zero-area output is omitted without removing the simulated particle. Pick indices identify compacted draw records, not stable particles. Mesh particles take their alpha and depth behavior from the supplied material.
 
-`mesh_cast_shadow` and `mesh_trace` apply to `MESH` systems, default to false, and fault `INVALID_ARGUMENT` elsewhere. Both are copied to the owned `InstancedMesh` child at preparation. Debris shadows need an opaque or masked material. `mesh_trace` adds one trace instance per live particle from `RendererDesc.max_trace_instances` (4,096 when zero) and only opaque and masked materials trace; a scene past capacity faults `CAPACITY_EXCEEDED` when the renderer prepares the trace ([scene tracing](scene_trace.md#what-traces)).
+`mesh_cast_shadow` and `mesh_trace` apply to `MESH` systems, default to false, and fault `INVALID_ARGUMENT` elsewhere. Both are copied to the owned `InstancedMesh` child at preparation. Debris shadows follow core's instanced-batch rules: opaque and masked materials cast, a blended Standard material casts only into [colored shadows](shadows.md#colored-shadows), and a custom blended material never casts. `mesh_trace` adds one trace instance per live particle from `RendererDesc.max_trace_instances` (4,096 when zero) and only opaque and masked materials trace; a scene past capacity faults `CAPACITY_EXCEEDED` when the renderer prepares the trace ([scene tracing](scene_trace.md#what-traces)).
 
-**Effect material.** `add_particle_shader` creates a shared fragment-only shader that reads core's depth snapshot and has a [weighted form](custom_shaders.md#weighted-transparency), so source-over particles take part in a view with `transparency = WEIGHTED`. `add_particle_material` copies a 32-byte `ParticleMaterialParams` and creates a blended, depth-tested, double-sided material with depth writes off. Slot 0 is an optional sprite map. `color` multiplies the particle and texture colour. `soft_distance > 0` fades coverage over the scene-depth gap; zero keeps hardware depth testing only. Empty or hidden batches make no draw or snapshot request.
+**Effect material.** `add_particle_shader` creates a shared fragment-only shader that reads core's depth snapshot and has a [weighted form](custom_shaders.md#weighted-transparency), so source-over particles take part in a view with `transparency = WEIGHTED`. `add_particle_material` copies a 32-byte `ParticleMaterialParams` and creates a blended, depth-tested, double-sided material with depth writes off. Slot 0 is an optional sprite map. `color` multiplies the particle and texture colour. `soft_distance > 0` fades coverage over the scene-depth gap; zero keeps hardware depth testing only. The shader always declares depth reads, so a zero `soft_distance` does not remove its snapshot requirement. Empty or hidden batches make no draw or snapshot request.
 
 `lighting` selects the illumination:
 
@@ -150,7 +150,7 @@ Billboard modes write world-space `BillboardRecord` values into a `RECORDS` [bat
 | `DIRECT` | Every punctual and directional light that shares a layer with the system, on top of `AMBIENT` |
 | `DIRECT_SHADOWED` | `DIRECT` with each light times its shadow-map and cloud-shadow visibility, and for the sun in a view with a [medium](sky.md#medium-volumes) the mean of the medium's sun column |
 
-`normal` selects what a lit particle presents: `CAMERA` is the facing axis; `SPHERICAL` bulges toward the camera across the quad as on an inscribed sphere; `VOLUME` has no surface and scatters each light through the Henyey-Greenstein phase function with `anisotropy` in (−1, 1), so a positive value brightens the particle when the camera looks toward the light. The volume response integrates to one over the sphere, a quarter of Lambert's response at normal incidence when `anisotropy` is 0, so a light meant for smoke needs more intensity.
+`normal` selects what a lit particle presents: `CAMERA` is the facing axis; `SPHERICAL` bulges toward the camera across the quad as on an inscribed sphere; `VOLUME` has no surface and scatters each light through the Henyey-Greenstein phase function with `anisotropy` in (−1, 1), so a positive value brightens the particle when the camera looks toward the light. The volume response integrates to one over the sphere, a quarter of Lambert's response at normal incidence when `anisotropy` is 0, so a light meant for smoke needs more intensity. The normal and the anisotropy can change at runtime with the other parameters. `add_particle_material` is the only check of the anisotropy; `@set_custom_params` bypasses it, so keep its magnitude below one.
 
 `DIRECT_SHADOWED` reads the shadow atlas, cloud shadows and the medium's sun column; a light whose only shadow is ray traced contributes unshadowed. Particles cast no shadow and ignore the receive-shadow flag; the lighting mode is the opt-in. `DIRECT` adds a light loop per covered pixel and `DIRECT_SHADOWED` a shadow lookup per shadow-casting light, so the cost grows with covered pixels and reaching lights. Fog applies to the lit colour before coverage is premultiplied.
 
@@ -192,7 +192,7 @@ The trail does not change the simulation or take any spawn draw.
 
 ## Update on a job pool
 
-`particle::update` and `particle::step` take a trailing `ParallelFor`, the neutral fork-join hook that core declares and the [job pool](jobs.md) and the physics package use. A zero value runs every range inline on the calling thread. The package never imports `c3d_job`; the `particles` example adapts a `JobPool` to the hook for its `--workers` option.
+`particle::update` and `particle::step` take a trailing `ParallelFor`, the neutral fork-join hook that core declares and the physics package also takes. The [job pool](jobs.md) does not use it; an application adapts a pool to the hook, as the `particles` example does for its `--workers` option. A zero value runs every range inline on the calling thread. The package never imports `c3d_job`.
 
 The pool splits into blocks of 1,024 particles, and each fork runs one block per range for:
 
@@ -214,7 +214,7 @@ Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle author
 ## Limits
 
 - Particle-particle collision does not exist.
-- The simulation runs inline with no allocation during `update`; draw arrays and persistent GPU records belong to core.
+- The simulation allocates nothing during `update`; draw arrays and persistent GPU records belong to core.
 - A CPU callback or a sub-emitter keeps collision on one thread.
 - Pool order carries no meaning; pick indices identify draw records, not particles.
 - There is no cross-compiler or cross-version bitwise replay.
@@ -225,4 +225,4 @@ Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle author
 - [Particle reference](particles_reference.md): descriptor tables, counters, constants and faults.
 - [GPU particles](particles_gpu.md).
 - [Billboards](billboards.md), [ribbons](ribbons.md), [instancing](instancing.md), [custom shaders](custom_shaders.md), [owner readiness](owner_readiness.md), [job pool](jobs.md).
-- The `particles` example (`python3 scripts/build.py --example particles`) shows smoke, additive sparks and mesh debris; `particles_gpu` builds it with GPU execution.
+- The `particles` example (`python3 scripts/build.py --example particles`) shows smoke, additive sparks and mesh debris; `particles_gpu` builds it with `C3D_PARTICLE_GPU`, and its `--gpu` option selects GPU execution.

@@ -19,6 +19,9 @@ fn void start_game(void* user, UiScope* scope, UiEvent* event) {
     ((Game*)user).starting = true;
 }
 
+String styles = (String)$embed("ui/styles.jsonc"); // $embed yields bytes: cast to String
+String document = (String)$embed("ui/hud.jsonc");
+
 assets.add_font(font_bytes, asset::default_font_desc(), "ui/regular")!;
 
 Ui ui = ui::create_ui(mem, &assets, ui::default_ui_desc())!;
@@ -30,7 +33,7 @@ ui.load_styles({ styles })!;
 UiDocumentId hud = ui.load_document(document)!;
 ```
 
-The styles and the document are JSONC strings, for example embedded with `$embed`:
+The styles and the document are JSONC strings, here embedded with `$embed`. `ui/styles.jsonc` holds:
 
 ```jsonc
 {
@@ -42,6 +45,8 @@ The styles and the document are JSONC strings, for example embedded with `$embed
   }
 }
 ```
+
+and `ui/hud.jsonc`:
 
 ```jsonc
 {
@@ -64,7 +69,7 @@ Fonts and images a style or document names must be in the store when it loads. R
 - **Binding.** A getter that code registers under a dotted name and a value kind. Documents read it as `{name}` in text and in keys such as `visible`, `value` and `items`. Getters run every frame, for declared elements only.
 - **Action.** A handler that code registers under a dotted name. Documents trigger it by name from `on_click` and the other action keys.
 - **Layout units.** Every number in a document is a layout unit. `update` takes the output size in pixels and `scale`, the output pixels per layout unit: pixel density times any user UI scale.
-- **Previous-frame routing.** `route_input` hit-tests the pointer against the layout the last `update` produced. A document loaded this frame takes no input until the next `update`.
+- **Previous-frame routing.** `route_input` hit-tests the pointer against the layout the last `update` produced. Any `load_document`, `reload_document`, `unload_document` or `load_styles` invalidates that layout, so no document takes pointer input until the next `update`. A focused text field still gets keys, and a window drag still ends on release or Escape.
 - **Ownership.** `Ui` is a value that allocates every table once in `create_ui`; nothing allocates per frame. It holds the asset store by pointer, so the store outlives the UI. Fonts gain outlines while `draw` runs. `Ui` is not synchronized: call it from one thread.
 
 ## Frame order
@@ -137,9 +142,9 @@ Text templates, lists, grids, tooltips, visibility, ids and text fields follow t
 { "kind": "panel", "id": "inspector", "window": true, "position": [24, 40], "on_move_end": "inspector.moved",
   "children": [
     { "kind": "panel", "drag_handle": true, "children": [
-        { "kind": "label", "text": "Inspector" },
-        { "kind": "button", "on_click": "inspector.close", "children": [ { "kind": "label", "text": "x" } ] } ] },
-    { "kind": "label", "text": "Contents" }
+        { "kind": "label", "style": "text", "text": "Inspector" },
+        { "kind": "button", "on_click": "inspector.close", "children": [ { "kind": "label", "style": "text", "text": "x" } ] } ] },
+    { "kind": "label", "style": "text", "text": "Contents" }
   ] }
 ```
 
@@ -223,4 +228,4 @@ if (catch excuse = ui.reload_document(hud, text)) {
 
 - [UI reference](ui_reference.md): document format, styles, transitions, capacities and faults.
 - [Overlay list](overlay.md), [text](text.md), [GUI overlay](gui.md), [platform](platform.md).
-- [Package README](../addons/c3d_ui.c3l/README.md). The `ui` example (`python3 scripts/build.py --example ui`) builds a HUD, an inventory with drag and drop, windows, rich text and transitions.
+- [Package README](../addons/c3d_ui.c3l/README.md). The `ui` example (`python3 scripts/build.py --example ui`) builds a HUD and an inventory with drag and drop; `--windows`, `--rich-text` and `--transitions` add the windows, rich text and transitions documents.

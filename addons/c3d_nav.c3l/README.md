@@ -57,7 +57,7 @@ Destroy the query, mesh and builder (with `destroy_nav_query`, `destroy_nav_mesh
 | --- | --- |
 | `nav_test` | CPU tests |
 | `nav_serial_test`, `nav_serial_policy_test` | Serialization adapter tests under `C3D_NAV_SERIAL` |
-| `navmesh`, `crowd`, `grid` | Windowed examples: a scene-built mesh, a crowd, and a tile map with cached updates |
+| `navmesh`, `crowd`, `grid` | Windowed examples: a scene-built mesh, a crowd, and a tile map with tile edits |
 | `nav_persistence` | CPU example: save, replace and query a baked snapshot |
 
 ```bash

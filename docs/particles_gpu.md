@@ -1,8 +1,8 @@
 # GPU particles
 
-`ParticleSystemDesc.execution` selects the processor that steps a [particle system](particles.md): `CPU` (default) or `GPU`. A GPU system keeps its pool in a renderer buffer and steps, collides and publishes it with compute stages, so the CPU never reads or copies a particle. Use it for large pools whose per-frame CPU cost or upload would dominate. `execution` is immutable after `prepare`.
+`ParticleSystemDesc.execution` selects the processor that steps a [particle system](particles.md): `CPU` (default) or `GPU`. A GPU system keeps its pool in a renderer buffer and steps, collides and publishes it with compute stages, so the CPU never reads or copies a particle, except through the `mesh_trace` host mirror. Use it for large pools whose per-frame CPU cost or upload would dominate. `execution` is immutable after `prepare`.
 
-The GPU path exists in builds that enable `C3D_PARTICLE_GPU`, which adds the module `c3d::particle::gpu`. Without the feature, preparing a GPU system faults `c3d::UNSUPPORTED`. The module imports `c3d::render`, records through `Renderer.dispatch`, creates buffers only through `Renderer.create_buffer` and never imports `gpu`. The `particles_gpu` example builds with the feature, and `particles --gpu` selects GPU execution for every system the subset below supports.
+The GPU path exists in builds that enable `C3D_PARTICLE_GPU`, which adds the module `c3d::particle::gpu`. Without the feature, preparing a GPU system faults `c3d::UNSUPPORTED`. The module imports `c3d::render`, records through `Renderer.dispatch`, creates buffers only through `Renderer.create_buffer` and never imports `gpu`. The `particles_gpu` example builds with the feature, and `particles_gpu --gpu` selects GPU execution for every system the subset below supports.
 
 ## Quick start
 
@@ -14,7 +14,13 @@ defer gpu::destroy_gpu_particles(&gpu, &renderer);
 scene.update_world();
 particle::update(&scene, delta_seconds, wind_velocity);   // steps the CPU systems
 renderer.begin_frame()!;
-gpu::update(&gpu, &renderer, &scene, delta_seconds, wind_velocity)!;
+gpu::update(
+    particles: &gpu,
+    renderer:  &renderer,
+    scene:     &scene,
+    dt:        delta_seconds,
+    wind:      wind_velocity,
+)!;
 // render_view and finish_view for each camera, then end_frame
 ```
 

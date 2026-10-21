@@ -96,8 +96,8 @@ All values must be finite. A disabled turbulence reads only the finiteness and s
 | `point_interval` | Seconds of particle age between recorded points; above 0 |
 | `lifetime` | Seconds a recorded point lives; above 0 |
 | `width` | Metres across the strip at the live position; at least 0 |
-| `width_over_trail` | Eight samples of width multiplier by point age over `lifetime`. They may end at 0 |
-| `color_over_trail` | Eight RGBA samples multiplied onto the particle's colour by point age over `lifetime` |
+| `width_over_trail` | Eight samples of width multiplier by point age over `lifetime`; each finite and not negative. They may end at 0 |
+| `color_over_trail` | Eight RGBA samples multiplied onto the particle's colour by point age over `lifetime`; RGB non-negative and finite, alpha in [0, 1], as for `color_over_life` |
 | `uv` | `STRETCH` or `TILE` |
 | `tile_length` | Metres of path per texture coordinate unit under `TILE`; above 0 there |
 | `material` | Blended material of the trail batch, as for [ribbons](ribbons.md#materials-and-supported-paths) |
@@ -127,7 +127,7 @@ Public fields and methods of the component:
 | `emit_burst(count)` | Queues a burst for the next step; stays effective while `emitting` is false |
 | `set_collision(cast, context)` | Installs the callback of a prepared CPU system; a null cast removes it |
 | `is_prepared()` | Whether the pool and draw child exist |
-| `alive` | Live particles (CPU systems) |
+| `alive` | Live particles; a GPU system's count arrives `FRAMES_IN_FLIGHT` frames late |
 | `draw_node`, `trail_node` | The owned draw and trail children |
 | `turbulence_time` | Seconds the system has stepped; restarts at 0 when the system is created or read |
 | `dropped`, `evicted`, `dropped_events`, `skipped_events`, `collision_skips` | Counters, below |
@@ -187,8 +187,10 @@ All are cumulative, start at zero, saturate instead of wrapping and restart when
 | `add_particle_system`, `prepare`, `prepare_subtree` | `c3d::UNSUPPORTED` | `execution = GPU` in a build without `C3D_PARTICLE_GPU` |
 | `add_particle_shader` | `c3d::CAPACITY_EXCEEDED`, `c3d::INVALID_ARGUMENT` | The asset store refuses the shader |
 | `add_particle_material` | `c3d::INVALID_ID` | A dead shader |
+| `add_particle_material` | `c3d::CAPACITY_EXCEEDED` | The asset store refuses the material |
 | `add_particle_material` | `c3d::INVALID_ARGUMENT` | A shader other than the particle shader's shape; a colour, `soft_distance` or `anisotropy` outside its rule |
 | `gpu::create_gpu_particles` | `c3d::CAPACITY_EXCEEDED` | `max_systems` reaches the renderer's buffer capacity, or the store cannot hold the stages |
+| `gpu::create_gpu_particles` | `c3d::INVALID_ARGUMENT` | `AssetStore.add_compute_shader` refuses a stage |
 | `gpu::update` | `c3d::CAPACITY_EXCEEDED`, `c3d::INVALID_ID`, `c3d::INVALID_ARGUMENT` | Context or depth-collision arguments; see [GPU particles](particles_gpu.md#depth-collision) |
 | `gpu::update` | those of `Renderer.create_buffer`, `Renderer.dispatch` and `Renderer.read_buffer` | Inherited unchanged |
 
