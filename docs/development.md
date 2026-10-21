@@ -65,7 +65,7 @@ directories of the submodule. Nothing is compiled.
 - shaderc is a shared library. The build copies `libshaderc_shared.so.1` (Linux) or `shaderc_shared.dll` (Windows) next to the
   example and test executables; on Linux its manifest sets the runpath to `$ORIGIN`. Many projects list shaderc as a dependency, but only an
   executable with code under `C3D_SHADER_COMPILER` needs the library at run time.
-- To build the ImGui natives locally instead of downloading them, see [GUI native build](gui_native_build.md).
+- To build the ImGui natives locally instead of downloading them, see [Rebuild the native archive](gui.md#rebuild-the-native-archive).
 
 ## Shader pipeline
 

@@ -228,7 +228,8 @@ hierarchy.
 - `Pass.LIGHT_CULL` times the cull, including the tile-depth reduction on a pruned view. Decal sampling is timed in
   the receiver's draw pass.
 - `gui::targets_panel` switches `FLAT` and `CLUSTERED` and shows a cluster-slice occupancy heatmap; see
-  [GUI diagnostics](gui.md#cluster-diagnostics). `gui::stats_panel` and `gui::view_stats_table` print the counters.
+  [GUI diagnostics](gui_panels.md#cluster-diagnostics). `gui::stats_panel` ([stats panel](gui_panels.md#stats-panel)) and
+  `gui::view_stats_table` print the counters.
 - `render::cluster_cell` and `render::cluster_index` are the C3 twins of the shader selection, for tools and tests.
 
 To compare `FLAT` and `CLUSTERED`, keep light count, range, capacity, camera and working extent fixed and compare
