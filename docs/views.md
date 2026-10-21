@@ -309,9 +309,9 @@ renderer.render_view(&scene, camera_node, main_view)!;
   sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
 - World-space overlay items draw in a mirror view when their layers match its camera, reflected as the view shows them
   ([world-space items](overlay.md#world-space-items)).
-- Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane, from the
+- Under [fog or an atmosphere](fog.md#where-fog-applies) a mirror view fogs only the path behind its plane, from the
   plane to the reflected surface. The view that shows the surface fogs the path to it, so the reflection carries the
-  reflected path's fog once. Its [medium volumes](sky.md#medium-volumes) follow the same cut. The mirror view owns its
+  reflected path's fog once. Its [medium volumes](fog.md#medium-volumes) follow the same cut. The mirror view owns its
   own sky tables.
 - Water from the landscape add-on places its mirror cameras and clip plane for you and reads each reflection from a
   view texture; see [water](water.md#the-mirror).

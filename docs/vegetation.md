@@ -233,7 +233,7 @@ nothing is stored in the scene. Each layer maps it onto its cells' `InstanceSway
 
 A traced layer shows its cells to traced views in their rest pose, so a ray-traced shadow of a swaying tree stays
 still while the drawn tree moves. `FoliageDesc.trace_sway` poses each instance of a swaying cell for the trace the
-way the vertex stage poses it for the draw ([custom trace poses](scene_trace.md#custom-trace-poses)): ray-traced
+way the vertex stage poses it for the draw ([custom trace poses](scene_trace_reference.md#custom-trace-poses)): ray-traced
 shadows, ambient occlusion, reflections, probe updates and path tracing follow the wind. The pose takes the layer's
 sway at the frame's time and applies no fade, so every instance of the layer traces, near the camera, off the screen
 or past the fade end.
@@ -251,7 +251,7 @@ or past the fade end.
   collection order, not by distance. Swayed rows claim after every other kind, so a character that appears later
   still gets a slot. Memory is not the only bound: slots also draw on the device's 4,096-entry allocation and
   acceleration structure tables, and `create_renderer` refuses a capacity they cannot hold
-  ([scene trace](scene_trace.md#posed-instances)). Content shares the tables, so keep the capacity well below
+  ([scene trace](scene_trace_reference.md#posed-instances)). Content shares the tables, so keep the capacity well below
   that bound.
 - **At capacity.** An instance without a slot traces at rest, as without `trace_sway`, and each cell holding
   such an instance counts once in `Stats.trace_sway_at_rest`. The error is bounded by the sway reach.
@@ -475,7 +475,7 @@ with the same options), `--size`, `--foliage both|grass|none`, `--tree-fade-end 
 again through the [job API](#detached-scatter-in-the-example)), `--validation` and `--sky` (an
 [atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the pass
 lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a
-[froxel volume](sky.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`). Interactive runs always validate; benchmark runs validate only with `--validation`. The tree layer's prepass and shadow-atlas cost is
+[froxel volume](fog.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`). Interactive runs always validate; benchmark runs validate only with `--validation`. The tree layer's prepass and shadow-atlas cost is
 the `both` against `grass` difference; the grass layer's is `grass` against `none`.
 
 ### Detached scatter in the example
