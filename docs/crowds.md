@@ -90,7 +90,7 @@ unchanged.
 
 - **Update.** `anim::crowd_update` advances and samples every live instance once, restores authored defaults for missing
   tracks and publishes palettes, complete logical morph weights and affine part matrices. Mesh and bind transforms apply
-  once. Sampling can run on workers over disjoint ranges ([performance](animation.md#crowd-playback-on-workers)).
+  once. Sampling can run on workers over disjoint ranges ([performance](animation_performance.md#crowd-playback-on-workers)).
 - **Layers and spaces.** Regular and additive layers, boolean or weighted masks, fades, and phase-synchronized 1D and 2D
   spaces use the same evaluator as `Animator` ([animation](animation.md#two-dimensional-blend-spaces)).
   `CrowdPlayer.add_blend_space_2d` accepts 3 to `actions_per_instance` members; the 1D limit is 2 to 8. Creation faults
@@ -130,7 +130,7 @@ unchanged.
   rendered less often than every frame therefore shows no crowd deformation motion. After `set_crowd`, or after an edit
   of the crowd's model, a part geometry or a skeleton, the part draws one frame with zero motion, node and instance
   motion included. An animated LOD part rejects its history instead ([animated LOD](lod_animated.md)).
-- **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a skinned or morphed crowd part poses
+- **Compute skinning.** With [compute skinning](animation_deformation.md#compute-skinning) on, a skinned or morphed crowd part poses
   all its live sources in one dispatch per frame. Frozen and culled instances are posed too, so the dispatch costs the
   same whatever the draws show. Animated LOD parts keep vertex skinning.
 - **Custom materials.** A fragment-only custom material draws with the built-in skinned instanced stage. A custom
@@ -157,13 +157,13 @@ any other. The default is untraced. Raster shadows and temporal views work eithe
 | Storage | Cost |
 | --- | --- |
 | Playback payload per capacity slot | `N * Transform::size + W * float::size + M * float[]::size + A * (Action::size + AnimationActionId::size + 2 * uint::size + N * bool::size) + MAX_BLEND_SPACES * BlendSpace1D::size + CrowdPlaybackSlot::size`, where `N` is the node count, `M` the mesh count, `W` the complete logical morph width and `A` the `actions_per_instance`. |
-| Two-dimensional blend rows | Reserved for every capacity slot, even with no active group ([prepared storage](animation.md#prepared-storage)). |
+| Two-dimensional blend rows | Reserved for every capacity slot, even with no active group ([prepared storage](animation_performance.md#prepared-storage)). |
 | Owner scratch | Copied model baselines and one pose scratch block. Each concurrent `sample_range` caller adds one from `create_crowd_pose_scratch`. Event output and crossing scratch cost `event_capacity * (CrowdEvent::size + EventBookmark::size)`. |
 | Placements, tints, seeds, parts, palettes | Separate arrays; the palettes take `capacity * joints * Mat4::size`. |
 | Cursors, additive references, masks | Allocated at play, sized by the clip. A captured weighted mask adds `N * float::size` per masked action. Retarget clips at load time. |
 | Part records | 128 bytes per instance of capacity per part, on the device ([instancing](instancing.md#uploads-and-residency)). |
 | Resident pose | `2 * capacity * (joints * 64 + morph_parts * 80)` bytes of device memory, where `morph_parts` counts the crowd parts and animated LOD parts that draw with morph weights. |
-| Compute skinning | `capacity * vertex_count * 52` bytes per posed part; see [caps and cost](animation.md#compute-skinning). |
+| Compute skinning | `capacity * vertex_count * 52` bytes per posed part; see [caps and cost](animation_deformation.md#compute-skinning). |
 
 Allocator alignment and metadata add overhead outside these figures. Buffers allocate on first use, again after every
 `set_crowd`, and when the capacity, the joint count or a morph layout changes.

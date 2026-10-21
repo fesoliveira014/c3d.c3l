@@ -76,9 +76,9 @@ the pose with no shader change.
   per node of refit copy, plus a bottom level on the hardware kind. A geometry that can deform adds a depth table to its
   rest trace allocation: 4 bytes per node plus 132 bytes. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
 - **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
-- **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a slot whose mesh or crowd part has a
+- **Compute skinning.** With [compute skinning](animation_deformation.md#compute-skinning) on, a slot whose mesh or crowd part has a
   posed binding this frame takes that pose instead of running its own pose pass; its streams stay allocated, unwritten.
-  The rule and its exceptions are on the animation page.
+  The rule and its exceptions are on the animation deformation page.
 
 ## Vertex-motion slots
 
@@ -179,4 +179,4 @@ and refits a tree copy per distinct pose and builds no bottom level.
 
 - [Scene tracing](scene_trace.md)
 - [Custom shaders](custom_shaders.md) for `trace_pose` and geometry writes
-- [Animation](animation.md#compute-skinning), [instancing](instancing.md), [LOD](lod.md)
+- [Animation deformation](animation_deformation.md#compute-skinning), [instancing](instancing.md), [LOD](lod.md)

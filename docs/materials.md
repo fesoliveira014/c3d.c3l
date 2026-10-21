@@ -282,7 +282,7 @@ material cannot see which geometries draw it ([faults](materials_reference.md#fa
 
 `c3d::asset::gltf` selects Basic for unlit materials, Standard for metallic-roughness and Physical when any layer
 extension is present. It validates every factor against the constructor ranges before building the material.
-`c3d::asset::fbx` builds Standard materials. The mapping tables are in [Models, glTF and FBX import](models.md).
+`c3d::asset::fbx` builds Standard materials. The mapping tables are in [Models, glTF and FBX import](models.md#materials).
 
 ## Limits
 

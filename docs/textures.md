@@ -127,7 +127,7 @@ keys follow the store's existing uniqueness policy and are not replaced.
 `load_texture`, `load_hdr`, `load_cube`, `load_texture_r16` and
 `load_texture_container` read through the store's file source, and `load_image`
 takes a trailing `FileSource file_source = {}`. A null source reads the file
-system. See [File sources](models.md#file-sources).
+system. See [File sources](assets.md#file-sources).
 
 ## Write a PNG
 

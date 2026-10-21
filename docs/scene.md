@@ -113,7 +113,7 @@ Removal frees scene-owned batch arrays and other component payloads. Shared asse
 invalidates the component pointers of every store the subtree used.
 
 IK chains support a `WORLD` first joint and world-space target and pole markers. Every later articulated joint must use
-`PARENT`; see [inverse kinematics](animation.md#inverse-kinematics).
+`PARENT`; see [inverse kinematics](animation_ik.md#transform-spaces).
 
 [Billboard batches](billboards.md) and [ribbon batches](ribbons.md) are scene-owned components with the same transform-space,
 visibility and subtree-lifetime rules as other draw components.

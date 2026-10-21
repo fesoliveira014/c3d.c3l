@@ -133,7 +133,7 @@ placements and colors.
   the current pose and rejects temporal history. Ordinary pose changes alone do not reject it. A skipped or aborted view
   publishes no new observations, so a crowd group draws with rejected history for that view after a skipped frame, while
   an ordinary crowd part loses only its deformation motion.
-- **Compute skinning.** [Compute skinning](animation.md#compute-skinning) leaves animated parts on vertex skinning at
+- **Compute skinning.** [Compute skinning](animation_deformation.md#compute-skinning) leaves animated parts on vertex skinning at
   every level. One binding that poses every source at every level would undo the savings of the levels.
 
 ### Costs
