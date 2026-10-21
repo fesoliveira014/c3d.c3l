@@ -71,7 +71,6 @@ struct ClothDesc {
     ClothTearLimits   tears;
     float             sleep_speed; // m/s; a cloth whose fastest particle stays under it rests; 0 never rests (default)
     uint              sleep_steps; // consecutive simulated steps under sleep_speed before resting (default 30)
-    ClothExecution    execution;   // fixed at prepare; GPU needs the C3D_PHYSICS_GPU build and a subset of the features
 }
 
 <* Last cloth update's CPU solve and publication costs. *>
@@ -301,9 +300,6 @@ struct ClothState {
     ClothSettle          settle;
     ClothSpans           spans;
     ClothWork            work;
-    ColorStarts          edge_color_starts; // first edge of each color; set at prepare for distance-bend cloth
-    uint                 edge_colors;       // zero when the edges need more than MAX_CONSTRAINT_COLORS
-    ClothDeviceStep      device;
     uint[]               selected_paths_scratch;
     uint[]               sector_scratch;
     uint[]               sector_root_scratch;
@@ -614,14 +610,6 @@ fn void? prepare(
             max_shapes: desc.collisions.max_shapes,
             world:      world,
         )!;
-        check_cloth_execution(
-            scene:      scene,
-            node:       node,
-            desc:       &desc,
-            skinned:    authoring.skinned,
-            soft_count: attachment_plan.soft.len,
-            shapes:     capture.shapes,
-        )!;
 
         GeometryId copy = assets.add_geometry(&material_plan.geometry)!;
         defer catch assets.remove_geometry(copy);
@@ -675,8 +663,6 @@ fn void? prepare(
             initial_positions: initial_positions,
         );
         state.published_frame = node.world;
-        state.device = { .anchor = node.world, .target = node.world };
-        if (desc.execution == ClothExecution.GPU && !state.edge_colors) return c3d::UNSUPPORTED~;
 
         authoring.captured_mesh = *mesh;
         state.captured_mesh = *mesh;

@@ -1583,20 +1583,3 @@ fn void test_crowd_cloth_prepares_slots_reconciles_replacements_and_restores_bat
     assert(!fixture.scene.has(crowd_node, CrowdCloth) && batch_node.visible);
     assert(!fixture.scene.world.is_alive(out0.id) && !fixture.scene.world.is_alive(out1.id));
 }
-
-fn void test_gpu_execution_faults_unsupported_without_the_device_build() @test {
-    Fixture fixture;
-    setup(&fixture);
-    defer teardown(&fixture);
-
-    @pool() {
-        Node* node = fixture.scene.add_mesh(add_grid(&fixture, GRID_CELLS), fixture.material)!!;
-        fixture.scene.update_world();
-        ClothDesc desc = cloth::default_cloth_desc();
-        desc.execution = ClothExecution.GPU;
-        fixture.scene.attach_cloth(&fixture.assets, node, desc)!!;
-
-        assert(@catch(cloth::prepare(&fixture.scene, &fixture.assets, node)) == c3d::UNSUPPORTED);
-        assert(!fixture.scene.get(node, Cloth).is_prepared());
-    };
-}

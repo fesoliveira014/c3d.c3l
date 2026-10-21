@@ -11,22 +11,21 @@ struct State {
     bool attached;
 }
 
-fn void? attach(State* state, AssetStore* assets) {
+fn void? attach(
+    State* state,
+    Renderer* renderer,
+    AssetStore* assets,
+    Scene* scene,
+    Node* node,
+) {
     return c3d::UNSUPPORTED~;
 }
 
 fn void? step(
     State* state,
     Renderer* renderer,
-    AssetStore* assets,
     Scene* scene,
-) {}
-
-fn void report(
-    State* state,
-    uint particles,
-    uint cloths,
-    uint dispatches,
+    float step_seconds,
 ) {}
 
 fn void detach(State* state, Renderer* renderer) {}

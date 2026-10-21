@@ -44,7 +44,6 @@ const float DENSITY_WIND_SPEED @local = 1.5f; // m/s; below the speed at which a
 const float DENSITY_WIND_HEADING @local = 90; // degrees off the flag plane; straight at the sheets
 const uint BENCHMARK_CELLS @local = 32; // a 33x33-vertex flag at the default 4x8 solver settings
 const float HANGING_WIDTH @local = 1.8f;
-const float HANGING_COPY_SPACING @local = 2.2f; // metres between the flags of --count copies; keeps neighbours apart
 const float HANGING_DEPTH @local = 1.2f;
 const float HANGING_HEIGHT @local = 3; // metres; the bar the sheet swings down from
 const float HANGING_DAMPING @local = 3; // per second
@@ -180,13 +179,10 @@ struct Demo @local {
     bool         traced;
     Node*        flag;
     Node*        ball;
-    Node*[]      copies;
-    ClothExecution execution;
     cloth_gpu_hooks::State gpu;
     Node*[2]     density_flags;
     uint         flag_columns;
     uint         flag_rows;
-    uint         copy_count;
     Character    character;
     Node*        fold;
     Node*        fast;
@@ -388,12 +384,6 @@ fn void? build_flag33(Demo* demo) @local {
     ColliderDesc collider = physics::default_collider_desc(SPHERE);
     collider.radius = BALL_RADIUS;
     demo.physics.add_body(demo.ball, physics::default_body_desc(STATIC), (&collider)[:1])!;
-
-    demo.copies = alloc::new_array(mem, Node*, demo.copy_count);
-    foreach (index, &copy : demo.copies) {
-        *copy = demo.scene.add_mesh(sheet_geometry, fabric, name: "flag_copy")!;
-        copy.local.position = { (float)(index + 1) * HANGING_COPY_SPACING, HANGING_HEIGHT, 0 };
-    }
 }
 
 fn void? build_densities(Demo* demo) @local {
@@ -519,13 +509,11 @@ fn void? attach_flag33(Demo* demo) @local {
     desc.damping = HANGING_DAMPING;
     desc.collide_ground = true;
     desc.colliders = (&demo.ball.id)[:1];
-    desc.execution = demo.execution;
     @pool() {
         uint[] pins = alloc::new_array(tmem, uint, (sz)(demo.flag_columns + 1));
         foreach (column, &pin : pins) *pin = (uint)column;
         desc.pins = pins;
         demo.scene.add_cloth(&demo.assets, demo.flag, desc, &demo.physics)!;
-        foreach (copy : demo.copies) demo.scene.add_cloth(&demo.assets, copy, desc, &demo.physics)!;
     };
 }
 
@@ -860,7 +848,6 @@ fn void? attach_cloths(Demo* demo) @local {
 fn void? reset_cloths(Demo* demo) @local {
     if (!demo.simulated) return;
     if (demo.flag) demo.scene.remove_cloth(demo.flag);
-    foreach (node : demo.copies) demo.scene.remove_cloth(node);
     foreach (node : demo.density_flags) if (node) demo.scene.remove_cloth(node);
     if (demo.character.cape) demo.scene.remove_cloth(demo.character.cape);
     if (demo.fold) demo.scene.remove_cloth(demo.fold);
@@ -1148,11 +1135,8 @@ fn void? create_demo(
     bool traced = false,
     uint crowd_count = 0,
     uint workers = 0,
-    ClothExecution execution = ClothExecution.CPU,
 ) @local {
     demo.scenario = scenario;
-    demo.execution = execution;
-    demo.copy_count = scenario == FLAG33 && field_count > 1 ? field_count - 1 : 0;
     demo.simulated = simulated;
     demo.traced = traced;
     demo.flag_columns = flag_columns;
@@ -1261,7 +1245,6 @@ fn void? create_demo(
 }
 
 fn void destroy_demo(Demo* demo) @local {
-    alloc::free(mem, demo.copies.ptr);
     alloc::free(mem, demo.field.ptr);
     alloc::free(mem, demo.field_revisions.ptr);
     if (demo.pooled) job::destroy_job_pool(&demo.jobs);
@@ -1443,7 +1426,6 @@ fn void? run_interactive(Options options) @local {
         field_count:  options.count,
         crowd_count:  options.scenario == CROWD ? options.count : 0,
         workers:      options.workers,
-        execution:    options.gpu ? ClothExecution.GPU : ClothExecution.CPU,
     )!;
     defer destroy_demo(&demo);
     demo.whole_publication = options.whole_publication;
@@ -1456,7 +1438,15 @@ fn void? run_interactive(Options options) @local {
         desc: { .validation = true, .gpu_timings = true },
     )!;
     defer render::destroy_renderer(&renderer);
-    if (options.gpu) cloth_gpu_hooks::attach(&demo.gpu, &demo.assets)!;
+    if (options.gpu) {
+        cloth_gpu_hooks::attach(
+            state:    &demo.gpu,
+            renderer: &renderer,
+            assets:   &demo.assets,
+            scene:    &demo.scene,
+            node:     demo.flag,
+        )!;
+    }
     defer cloth_gpu_hooks::detach(&demo.gpu, &renderer);
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -1499,7 +1489,7 @@ fn void? run_interactive(Options options) @local {
             }
             if (controls.tear || key_tear) tear_cloths(&demo);
             if (controls.hold != demo.field_held) set_field_held(&demo, controls.hold);
-            if (controls.reset) reset_cloths(&demo)!;
+            if (controls.reset && !options.gpu) reset_cloths(&demo)!;
             elapsed += window.clock.delta;
             step_demo(&demo, window.clock.delta, elapsed);
             guides.clear();
@@ -1510,7 +1500,12 @@ fn void? run_interactive(Options options) @local {
                 .reference_position = demo.camera.world_position(),
             })!;
             defer catch render::abort_frame(&renderer);
-            cloth_gpu_hooks::step(&demo.gpu, &renderer, &demo.assets, &demo.scene)!;
+            cloth_gpu_hooks::step(
+                state:        &demo.gpu,
+                renderer:     &renderer,
+                scene:        &demo.scene,
+                step_seconds: STEP_SECONDS,
+            )!;
             if (renderer.has_output) {
                 renderer.render_view(
                     scene:       &demo.scene,
@@ -1641,7 +1636,6 @@ fn void? run_cpu_benchmark(Options options) @local {
         field_count:  options.count,
         crowd_count:  options.scenario == CROWD ? options.count : 0,
         workers:      options.workers,
-        execution:    options.gpu ? ClothExecution.GPU : ClothExecution.CPU,
     )!;
     defer destroy_demo(&demo);
     demo.gusts = false;
@@ -1693,7 +1687,6 @@ fn void? run_benchmark(Options options) @local {
         traced:       options.traced,
         crowd_count:  options.scenario == CROWD ? options.count : 0,
         workers:      options.workers,
-        execution:    options.gpu ? ClothExecution.GPU : ClothExecution.CPU,
     )!;
     defer destroy_demo(&demo);
     demo.gusts = false;
@@ -1710,7 +1703,15 @@ fn void? run_benchmark(Options options) @local {
     }
     Renderer renderer = created;
     defer render::destroy_renderer(&renderer);
-    if (options.gpu) cloth_gpu_hooks::attach(&demo.gpu, &demo.assets)!;
+    if (options.gpu) {
+        cloth_gpu_hooks::attach(
+            state:    &demo.gpu,
+            renderer: &renderer,
+            assets:   &demo.assets,
+            scene:    &demo.scene,
+            node:     demo.flag,
+        )!;
+    }
     defer cloth_gpu_hooks::detach(&demo.gpu, &renderer);
     if (hardware && !renderer.caps.ray_queries.enabled) {
         io::eprintn("Hardware tracing needs ray queries; this adapter or driver does not provide them.");
@@ -1731,9 +1732,7 @@ fn void? run_benchmark(Options options) @local {
     double[MEASURED_FRAMES] commit_ms;
     double[MEASURED_FRAMES] gpu_ms;
     double[MEASURED_FRAMES] compute_ms;
-    double[MEASURED_FRAMES] uploads_ms;
     double[MEASURED_FRAMES] velocity_ms;
-    uint frame_dispatches;
     double record_ms;
     Series record_series;
     usz gpu_samples;
@@ -1762,7 +1761,12 @@ fn void? run_benchmark(Options options) @local {
         renderer.begin_frame({ .time = time, .delta = STEP_SECONDS })!;
         defer catch render::abort_frame(&renderer);
         time::Clock recording = clock::now();
-        cloth_gpu_hooks::step(&demo.gpu, &renderer, &demo.assets, &demo.scene)!;
+        cloth_gpu_hooks::step(
+            state:        &demo.gpu,
+            renderer:     &renderer,
+            scene:        &demo.scene,
+            step_seconds: STEP_SECONDS,
+        )!;
         record_ms = (double)(clock::now() - recording) / NANOSECONDS_PER_MILLISECOND;
         renderer.render_view(&demo.scene, demo.camera, view)!;
         renderer.finish_view(view)!;
@@ -1782,7 +1786,6 @@ fn void? run_benchmark(Options options) @local {
             resting_series.add(demo.physics.cloth_stats.resting);
             held_series.add(demo.physics.cloth_stats.held);
             record_series.add(record_ms);
-            frame_dispatches = renderer.stats.dispatches;
         }
         Stats* stats = &renderer.stats;
         if (stats.gpu_timing_state == GpuTimingState.READY && stats.gpu_frame_index != last_gpu_frame
@@ -1790,7 +1793,6 @@ fn void? run_benchmark(Options options) @local {
             double total;
             foreach (pass_ms : stats.gpu_pass_ms) total += pass_ms;
             compute_ms[gpu_samples] = stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE.ordinal];
-            uploads_ms[gpu_samples] = stats.gpu_pass_ms[Pass.UPLOADS.ordinal];
             velocity_ms[gpu_samples] = stats.gpu_pass_ms[Pass.VELOCITY.ordinal];
             gpu_ms[gpu_samples++] = total;
             float pose = stats.gpu_pass_ms[Pass.TRACE_POSE.ordinal];
@@ -1865,14 +1867,6 @@ fn void? run_benchmark(Options options) @local {
             "gpu_cloth,record_ms,mean,%.4f,max,%.4f",
             record_series.total / MEASURED_FRAMES,
             record_series.peak,
-        );
-        io::printfn("gpu_cloth,uploads_ms,samples,%d,median,%.4f,p95,%.4f", gpu_samples,
-            percentile(uploads_ms[:gpu_samples], 0.5), percentile(uploads_ms[:gpu_samples], PERCENTILE_95));
-        cloth_gpu_hooks::report(
-            state:      &demo.gpu,
-            particles:  (demo.flag_columns + 1) * (demo.flag_rows + 1),
-            cloths:     demo.copy_count + 1,
-            dispatches: frame_dispatches,
         );
     }
     if (options.traced) {
@@ -1959,7 +1953,6 @@ fn Options? parse_options(String[] args) @local {
         return c3d::INVALID_ARGUMENT~;
     }
     if (options.scenario == CROWD && !counted) options.count = CROWD_DEFAULT_COUNT;
-    if (options.scenario == FLAG33 && !counted) options.count = 1;
     if (options.hold && options.scenario != FIELD) return c3d::INVALID_ARGUMENT~;
     if ((options.scenario == FIELD || options.scenario == CROWD) && !options.count) return c3d::INVALID_ARGUMENT~;
     if (options.ragdoll && (!options.benchmark || (options.scenario != CAPE && options.scenario != BOTH))) {
@@ -1973,8 +1966,8 @@ fn int main(String[] args) {
     if (catch excuse = options) {
         io::eprintn("Use cloth [--scene flag|cape|both|contacts|fold|fast|field|crowd|densities|flag33]");
         io::eprintn("  [--still] [--frames count]");
-        io::eprintn("  [--gpu]    (flag33 only: ClothDesc.execution = GPU; python3 scripts/build.py --example cloth_gpu)");
-        io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters; flag33: count of flags)");
+        io::eprintn("  [--gpu]    (flag33 only: simulate on the device; python3 scripts/build.py --example cloth_gpu)");
+        io::eprintn("  [--count n] [--hold]    (field: count of flags, hold the far half; crowd: count of characters)");
         io::eprintn("  [--workers n]    (stage cloths on n job pool workers; 0 stages on the calling thread)");
         io::eprintn("  [--cells n]    (benchmark flag size in cells per side; default 32)");
         io::eprintn("  [--publish whole|streams]");

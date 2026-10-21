@@ -810,11 +810,10 @@ fn void seed_cloth_topology(
             @pool() {
                 uint[] used_colors = alloc::new_array(tmem, uint, (sz)particle_count);
                 uint[] destinations = alloc::new_array(tmem, uint, (sz)state.edge_storage.len);
-                state.edge_colors = order_constraints_by_color(
+                order_constraints_by_color(
                     constraints:  state.edge_storage,
                     used_colors:  used_colors,
                     destinations: destinations,
-                    starts:       &state.edge_color_starts,
                 );
                 order_constraints_by_color(
                     constraints:  state.bend_storage,
