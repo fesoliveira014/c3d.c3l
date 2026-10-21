@@ -60,4 +60,4 @@ python3 scripts/build.py --example particles
 
 - [Particles](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/particles.md) and its [reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/particles_reference.md)
 - [GPU particles](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/particles_gpu.md)
-- [Serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md#landscape-particle-and-audio-adapters)
+- [Serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#particles)

@@ -47,4 +47,4 @@ c3c test audio_test --path addons/c3d_audio.c3l
 ## Guides
 
 - [Audio](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/audio.md): setup, clips, emitters, buses, threading and limits.
-- [Serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md#landscape-particle-and-audio-adapters).
+- [Serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#audio).

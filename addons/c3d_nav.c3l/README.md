@@ -17,7 +17,7 @@ List `c3d_nav` next to `c3d` and core's dependencies in `project.json`; the [rel
 | Setting | Effect |
 | --- | --- |
 | `"fp-math": "strict"` | Required for bounded detail and sub-cell clearance (`--fp-math=strict` for `c3c`); the package's own project sets it |
-| `C3D_NAV_SERIAL` | Registers the authoring codecs with `nav::register_serial_codecs()`; also select `c3d_serial`. See [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md#navigation-adapter) |
+| `C3D_NAV_SERIAL` | Registers the authoring codecs with `nav::register_serial_codecs()`; also select `c3d_serial`. See [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#navigation-and-character) |
 
 ## Quick start
 

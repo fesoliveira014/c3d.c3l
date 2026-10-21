@@ -209,7 +209,7 @@ Rendering follows the [frame origin](large_world.md). After `Scene.shift_origin`
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. Older payloads read the defaults for fields they lack. The trail child is generated, so it is not written. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. [Serialization](serialization.md#landscape-particle-and-audio-adapters) states the format and versions.
+Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. Older payloads read the defaults for fields they lack. The trail child is generated, so it is not written. The collision callback is not serialized. A sub-emitter target is an entity reference and must lie inside the exported subtree. [Serialization](serialization_reference.md#particles) states the format and versions.
 
 ## Limits
 

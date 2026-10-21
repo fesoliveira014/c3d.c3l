@@ -189,7 +189,7 @@ and the specular-weight input. `reflections` forces the depth prepass on whateve
 The pass packs its own light list each frame, apart from the view's. It holds every light eligible for
 the camera's `layers`, so a finite light outside the camera frustum still lights a reflected surface.
 Lights keep the view's budget order and stop at `RendererDesc.max_lights`. The list lives in the frame's
-upload ring, together with its own [spatial lookup](many_lights.md#spatial-light-lookup).
+upload ring, together with its own [spatial lookup](lights.md#spatial-light-lookup).
 The lookup uses the hit position and preserves the list's original indices and complete
 finite/global membership.
 

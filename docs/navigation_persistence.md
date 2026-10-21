@@ -2,7 +2,7 @@
 
 `c3d::nav` saves an initialized `NavMesh` to portable bytes and replaces a mesh from those bytes. A snapshot holds the baked geometry, the current polygon flags and areas, the quantized query bounds of coarse tiles, the bounded surface and clearance metadata, and the original off-mesh connections. It needs no scene, renderer or serialization add-on.
 
-[Authored navigation serialization](serialization.md#navigation-adapter) saves `NavSource`, `NavVolume`, `NavLink`, `NavObstacle` and `NavAgent` setup. A baked snapshot is independent of that authoring. File I/O, asset versioning, streaming, builder and cache inputs, agents, crowd state and saved searches belong to the application.
+[Authored navigation serialization](serialization_reference.md#navigation-and-character) saves `NavSource`, `NavVolume`, `NavLink`, `NavObstacle` and `NavAgent` setup. A baked snapshot is independent of that authoring. File I/O, asset versioning, streaming, builder and cache inputs, agents, crowd state and saved searches belong to the application.
 
 ## Quick start
 
@@ -95,4 +95,4 @@ Both byte orders load, and saving either yields the same canonical little-endian
 
 - [Wire format](navigation_snapshot_format.md) for tool authors.
 - [Navigation](navigation.md) and [navigation grids](navigation_grids.md).
-- [Authored navigation serialization](serialization.md#navigation-adapter).
+- [Authored navigation serialization](serialization_reference.md#navigation-and-character).

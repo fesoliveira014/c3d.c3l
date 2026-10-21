@@ -79,7 +79,7 @@ After an origin rebase, call `AudioSystem.shift_origin(offset)` with `offset.y =
 
 ## Serialization
 
-Under `C3D_AUDIO_SERIAL`, `audio::register_serial_codecs()` makes `AudioEmitter` and `AudioListener` saveable with `c3d_serial`; `AudioVoiceLink` is never written. The emitter's clip saves by its asset key, so the reading store must register the clip kind and hold a clip under that key. The bus index is meaningful only against the reading system's `AudioDesc.buses`; an index past the table fails the voice start and counts in `AudioStats.start_failures`. Playback position is not saved: a loaded playing emitter starts from the beginning at the next `update`. See [serialization](serialization.md#landscape-particle-and-audio-adapters).
+Under `C3D_AUDIO_SERIAL`, `audio::register_serial_codecs()` makes `AudioEmitter` and `AudioListener` saveable with `c3d_serial`; `AudioVoiceLink` is never written. The emitter's clip saves by its asset key, so the reading store must register the clip kind and hold a clip under that key. The bus index is meaningful only against the reading system's `AudioDesc.buses`; an index past the table fails the voice start and counts in `AudioStats.start_failures`. Playback position is not saved: a loaded playing emitter starts from the beginning at the next `update`. See [serialization](serialization_reference.md#audio).
 
 ## Threads and allocation
 

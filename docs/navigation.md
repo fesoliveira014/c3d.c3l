@@ -2,7 +2,7 @@
 
 The `c3d_nav` add-on (`addons/c3d_nav.c3l`, module `c3d::nav`) builds navigation meshes from scene geometry, answers path and surface queries over them, and steers crowds of agents. It is a port of Recast, Detour and DetourCrowd; [the port page](navigation_recast_port.md) lists what is ported. The module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or `c3d::physics`. Core never imports it and has no navigation flag; the package's serialization adapter compiles only under `C3D_NAV_SERIAL`.
 
-The shape fields that a volume's or obstacle's `kind` selects, a link's endpoints and radius, and the seven numeric agent parameters (`radius`, `height`, `max_acceleration`, `max_speed`, `collision_query_range`, `path_optimization_range`, `separation_weight`) must be finite; inactive shape fields keep any IEEE value. `add_nav_*` and serialization share the validators; the domain table is in [serialization](serialization.md#authored-numeric-domains).
+The shape fields that a volume's or obstacle's `kind` selects, a link's endpoints and radius, and the seven numeric agent parameters (`radius`, `height`, `max_acceleration`, `max_speed`, `collision_query_range`, `path_optimization_range`, `separation_weight`) must be finite; inactive shape fields keep any IEEE value. `add_nav_*` and serialization share the validators; the domain table is in [serialization](serialization_reference.md#authored-numeric-domains).
 
 Tile maps, voxel grids and height fields build through [grid sources](navigation_grids.md). A baked mesh saves and loads through [snapshots](navigation_persistence.md).
 
@@ -192,7 +192,7 @@ Join tile builds on other threads before `NavBuilder.shift_origin`, and cache wo
 
 ## Serialization
 
-Select `c3d_serial`, enable `C3D_NAV_SERIAL` and call `nav::register_serial_codecs()` next to `register_nav`. The adapter saves the authored components and rebuilds the runtime mirrors on `nav_sync` and `crowd_update`. See [serialization](serialization.md#navigation-adapter).
+Select `c3d_serial`, enable `C3D_NAV_SERIAL` and call `nav::register_serial_codecs()` next to `register_nav`. The adapter saves the authored components and rebuilds the runtime mirrors on `nav_sync` and `crowd_update`. See [serialization](serialization_reference.md#navigation-and-character).
 
 ## Limits
 
@@ -209,5 +209,5 @@ Select `c3d_serial`, enable `C3D_NAV_SERIAL` and call `nav::register_serial_code
 - [Grid sources, cached grids, bounded detail and sub-cell clearance](navigation_grids.md).
 - [Baked snapshots](navigation_persistence.md) and the [wire format](navigation_snapshot_format.md).
 - [The Recast and Detour port](navigation_recast_port.md).
-- [Large worlds](large_world.md), [serialization](serialization.md#navigation-adapter), [terrain](terrain.md#navigation) for a height-map grid source.
+- [Large worlds](large_world.md), [serialization](serialization_reference.md#navigation-and-character), [terrain](terrain.md#navigation) for a height-map grid source.
 - The `navmesh`, `crowd` and `grid` examples (`python3 scripts/build.py --example navmesh`, `crowd` or `grid`).

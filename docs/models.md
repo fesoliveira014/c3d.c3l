@@ -67,7 +67,7 @@ the saved graph directly, preserving deleted template slots and application
 children; it does not recreate removed components from the template. The source
 model and referenced keyed assets must be live in the destination store. A
 structural mismatch returns `INCOMPATIBLE_TEMPLATE` with the model key and first
-differing template index. See [serialization](serialization.md) for animation
+differing template index. See [serialization](serialization_reference.md#models-rigs-and-animation) for animation
 restart, required skin references and owner preparation.
 
 ## Keys
@@ -457,7 +457,7 @@ if (status.phase == LoadPhase.PUBLISHED) {
 
 The publication/status fragment runs on the owner thread while this request is live. Handle a terminal result once,
 then stop querying its released id. Retain the preparation id and instantiate when it reaches `READY`
-([Views](views.md#budgeted-preparation)). `publish()` remains the unbounded alternative and returns the number of
+([Preparation](preparation.md#budgeted-preparation)). `publish()` remains the unbounded alternative and returns the number of
 requests that this call moved to `PUBLISHED` or commit `FAILED`; earlier worker failures are not in that count.
 
 ### Publication allowance and reports

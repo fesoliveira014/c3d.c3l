@@ -197,4 +197,4 @@ All are cumulative, start at zero, saturate instead of wrapping and restart when
 ## See also
 
 - [Particles](particles.md) and [GPU particles](particles_gpu.md).
-- [Serialization](serialization.md#landscape-particle-and-audio-adapters) for the saved descriptor.
+- [Serialization](serialization_reference.md#particles) for the saved descriptor.
