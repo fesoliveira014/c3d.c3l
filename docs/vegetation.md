@@ -1,52 +1,29 @@
 # Vegetation
 
-Foliage cells use core [camera-relative instance packing](large_world.md), with
-origin-compensated sway phase and camera-relative fade distances. Scattering,
-seeds and retained local placements keep their existing coordinates.
+The `c3d::landscape::foliage` module of the `c3d_landscape` add-on scatters one geometry and material per layer over a terrain node. A `Foliage` component on a node covers the ground terrain's extent with a fixed grid of cells; each non-empty cell is a child node with its own `InstancedMesh`. Placement is deterministic: a stateless hash of the seed, the cell and the candidate picks each position, yaw, scale and tint; a channel of an `RGBA8_UNORM` density map decides which candidates grow; a slope limit and an altitude band remove the rest. Drawing is core's: cells are ordinary instanced batches with the built-in sway and distance fade, so they take part in every view, shadow layer, depth prepass and velocity pass, with per-instance GPU culling. The module has no GLSL and no custom material.
 
-The `c3d_landscape` add-on's `c3d::landscape::foliage` module scatters one geometry and material per layer
-over a terrain node. A `Foliage` component on a node covers the ground terrain's extent with a fixed grid of
-cells; each non-empty cell is a child node with its own `InstancedMesh`. Placement is deterministic: a
-stateless hash of the seed, the cell and the candidate picks each position, yaw, scale and tint, a channel of
-an `RGBA8_UNORM` density map decides which candidates grow, and a slope limit and an altitude band remove the
-rest. Drawing is core's: cells are ordinary instanced batches with the built-in sway and distance fade, so
-they take part in every view, shadow layer, depth prepass and velocity pass, with per-instance GPU culling and
-the whole-batch fade skip. The module has no GLSL and no custom material.
+The module imports the standard library, core (`c3d`), `c3d::landscape::terrain` and the package root (for `STALE`). Core never imports it.
 
-The module imports the standard library, core (`c3d`), `c3d::landscape::terrain` and the package's root module
-(for `STALE`); core never imports it.
+Foliage cells use the shared [frame origin](large_world.md), with origin-compensated sway phase and camera-relative fade distances. Scattering, seeds and retained local placements keep their coordinates.
 
-```bash
-python3 scripts/build.py --example vegetation
-```
+## Quick start
 
-## Whole-object LOD
-
-Set `FoliageDesc.lod` to a borrowed `LodDesc*` to scatter [whole-object groups](lod.md).
-`attach_foliage` copies the descriptor into authored component storage; preparation
-creates a separate frozen runtime copy. `add_foliage` performs both operations.
-Each occupied cell
-owns one instanced group with shared placements, tint, sway and fade across every
-part. The descriptor supplies geometry/material assets; plain `geometry` and
-`material` fields are used only when `lod` is null.
-
-Seed, scatter rules and terrain produce the same placements as the single-mesh
-path. Effect changes preserve slot identity; rescattering replaces placements.
-Cell capacity growth stages replacement ownership before changing the cell.
-Removing the foliage node releases its children and copied descriptor. Null `lod`
-retains the existing single-mesh grass path and storage.
-
-## Select the package
-
-Select `c3d_landscape` as for [terrain](terrain.md#select-the-package); foliage needs nothing else.
-
-## Calling order
+Select `c3d_landscape` in `project.json` as [release.md](release.md) lists. Foliage needs a prepared [terrain](terrain.md) under it.
 
 ```c3
 terrain::register_terrain(&scene, &assets)!;
 foliage::register_foliage(&scene)!;
 // ... terrain::add_terrain on ground ...
-grass_node.local = ground.local;
+
+FoliageDesc grass = foliage::default_foliage_desc();
+grass.geometry = blade_geometry;
+grass.material = blade_material;
+grass.ground = ground.id;
+grass.rules.density_map = density_map;   // RGBA8_UNORM over the ground's extent
+grass.rules.spacing = 0.5f;
+grass.rules.seed = 1;
+
+grass_node.local = ground.local;         // the layer sits at the ground's pose
 grass_node.layers = FOLIAGE_LAYER;
 scene.update_world();
 foliage::add_foliage(
@@ -63,306 +40,147 @@ foliage::update(&scene, &assets, wind_velocity)!;
 renderer.render_view(&scene, camera, view)!;
 ```
 
-- `register_foliage` runs once per scene. It registers `Foliage` and `FoliageRuntime` and installs the
-  authoring and runtime removal hooks.
-- `add_foliage` attaches a layer to an existing node without `Foliage` whose world matrix is current and holds
-  a translation and a rotation about Y only (a `@require`). It checks the desc, scatters every cell and adds
-  the cell nodes, all or nothing: a fault leaves the node, the scene, the store and the allocator as they were.
-  It runs once, at load; its time is a load time.
-- `update` runs every frame after `terrain::update`. The terrain's refresh log is what tells foliage
-  which cells an edit touched, and `terrain::update` writes it; called before it, a layer re-places one frame
-  late. `update` visits every layer; a fault from one layer does not stop the others, and the first fault
-  returns after the loop.
+- `register_foliage` runs once per scene. It registers `Foliage` and `FoliageRuntime` and installs the authoring and runtime removal hooks.
+- `add_foliage` attaches a layer to a node without `Foliage`. The node's world matrix must be current and hold a translation and a rotation about Y only. It checks the desc, scatters every cell and adds the cell nodes, all or nothing: a fault leaves the node, scene, store and allocator as they were. It runs once, at load.
+- `update` runs every frame after `terrain::update`. The terrain's refresh log tells foliage which cells an edit touched, and `terrain::update` writes it, so a layer re-places one frame late if `update` runs first. A fault from one layer does not stop the others; the first fault returns after the loop. It invalidates `InstancedMesh` and `FoliageRuntime` pointers when cells or a `Foliage` were removed.
+- `attach_foliage`, `is_prepared`, `prepare` and `prepare_subtree(scene, assets, root = null)` split authoring and runtime. Prepare the ground terrain first; otherwise they return `terrain::NOT_PREPARED` and keep the foliage pending. Pending foliage draws nothing and `update` skips it. [Owner readiness](owner_readiness.md) states the shared rules; the [landscape package README](../addons/c3d_landscape.c3l/README.md) lists the landscape ownership rules.
 
-## FoliageDesc
+## Concepts
 
-`foliage::default_foliage_desc()` returns grass settings: 32 m cells, a 60 to 90 m fade, no shadow, no
-tracing, no slope or altitude limit, scale and tint 1, and a sway template of 0.15 m at 12 m/s. The ids, the
-ground, the spacing and the seed are the application's. `add_foliage` checks every value and faults
-`INVALID_ARGUMENT` rather than asserting, since descs also come from files.
+- **Grid.** The grid is square in the layer node's frame from its origin: `ceil(extent / cell_size)` cells per side, with `extent = (texels − 1) · terrain cell_size`. Cell `(column, row)` covers layer-local x in `[column · cell_size, (column + 1) · cell_size)` and z likewise. Place the layer node at the ground node's pose to cover the terrain exactly; cells past the extent are clipped by rejection.
+- **Candidates.** A cell has `strata = max(round(cell_size / spacing), 1)` strata per side and one candidate per stratum, jittered inside it. A candidate's key hashes the seed, the cell's column and row and the candidate index. Nothing carries state between candidates or cells, so a cell places the same instances in any order.
+- **Cells.** A cell is a child of the layer node at the identity transform, with the layer's `layers`, the desc's fade, shadow and trace flags and the layer's current sway. Cells are library-owned: do not edit, remove or reparent them. No cell sets a bounds override; core grows each batch bound and cull test by the sway reach.
+- **Captured desc.** `FoliageRuntime.desc` keeps the checked copy the cells follow, so editing `Foliage.desc` has no effect. To change a seed, rule, template, fade or shadow or trace flag, remove `Foliage`, call `update` and add the layer again.
+
+### Scatter stages
+
+Each candidate passes, in order:
+
+1. **Density.** Its terrain-local position must lie in the extent, and a hash channel must fall below the density map's selected channel, sampled bilinearly between texel centres with clamped edges. The terrain's control map follows the same rule at terrain UV, so a splat channel and its foliage line up. This stage sets the cell's capacity.
+2. **Height.** `terrain::sample_height` at its world x and z.
+3. **Altitude.** `min_altitude <= height <= max_altitude`, in world y.
+4. **Slope.** The selected normal's `y >= cos(max_slope)`. `FACE` (default) reads `terrain::sample_normal`, the face normal of the height field's triangle. `SMOOTH` reads `terrain::sample_smooth_normal`, the normal the terrain draws with, including the border ring at a tile edge.
+5. **Instance.** The candidate stands on the ground, turned about Y, uniformly scaled and tinted, all from hash channels.
+
+Stages 2 to 4 only remove, so a cell never holds more instances than its density-stage count.
+
+## Create a layer
+
+`foliage::default_foliage_desc()` returns grass settings: 32 m cells (`DEFAULT_CELL_SIZE`), a 60 to 90 m fade (`DEFAULT_FADE`), no shadow, no tracing, no slope or altitude limit, scale and tint 1 and a sway template of 0.15 m at 12 m/s. The ids, the ground, the spacing and the seed are the application's. `add_foliage` checks every value and faults `INVALID_ARGUMENT` rather than asserting.
 
 | Field | Rule |
 | --- | --- |
-| `geometry`, `material` | Live; one pair per layer |
+| `geometry`, `material` | Live; one pair per layer. Used only when `lod` is null |
+| `lod` | A borrowed `LodDesc*`; scatters [whole-object groups](#whole-object-lod) instead |
 | `ground` | A node carrying `Terrain`; the layer grows on its height field |
-| `cell_size` | Metres along a cell edge; positive; at most `MAX_CELLS_PER_SIDE` (1024) cells per side over the ground; a divisor of `tile_extent()` on a [tile](#tiled-worlds) |
+| `cell_size` | Metres along a cell edge; positive; at most `MAX_CELLS_PER_SIDE` (1024) cells per side over the ground; a divisor of `tile_extent()` on a [tile](#place-on-a-tile-set) |
 | `rules.density_map` | Linear `RGBA8_UNORM`, one mip, 2D, over the ground's extent in terrain UV [0, 1] |
 | `rules.density_channel` | 0 to 3: red, green, blue, alpha |
 | `rules.spacing` | Metres between candidate strata; positive; at most `MAX_STRATA_PER_SIDE` (1024) strata per cell edge |
 | `rules.seed` | Any value; two layers with one seed place the same candidates |
-| `rules.max_slope` | Radians between up and the normal `slope_normal` selects, in [0, π/2] |
-| `rules.slope_normal` | `FACE` (default): the height field's face normal. `SMOOTH`: the normal the terrain shades with |
+| `rules.max_slope` | Radians between up and the selected normal, in [0, π/2] |
+| `rules.slope_normal` | `FACE` (default) or `SMOOTH` |
 | `rules.min_altitude`, `rules.max_altitude` | World y after the terrain node's placement; `min <= max` |
 | `rules.min_scale`, `rules.max_scale` | Uniform scale; `0 < min <= max`, finite |
 | `rules.min_tint`, `rules.max_tint` | Instance colour, multiplying the material's base colour; finite |
-| `sway` | The wind template, below; amplitude, frequency, wavelength and variation non-negative and finite, `full_bend_speed` positive, `lean` in [0, 1] |
+| `sway` | The wind template; amplitude, frequency, wavelength and variation non-negative and finite, `full_bend_speed` positive, `lean` in [0, 1] |
 | `fade` | Core's `InstanceFade`; zero is off, else `0 <= start < end` |
 | `cast_shadow`, `receive_shadow`, `trace` | Copied onto every cell's `InstancedMesh` |
-| `trace_sway` | With `trace`: copied onto every cell's `InstancedMesh` or `LodGroup`, so traced views see each swaying instance at its swayed pose ([below](#tracing-swaying-layers)); inert without `trace` |
+| `trace_sway` | With `trace`: traced views see each swaying instance at its swayed pose ([below](#trace-swaying-layers)); inert without `trace` |
 
-The desc is captured during preparation: `FoliageRuntime.desc` keeps the checked copy the cells follow, so an edit
-of `Foliage.desc` has no effect. To change a seed, a rule, the template, the fade or the shadow and trace flags,
-remove `Foliage`, call `update` and add the layer again.
+**Recipes.** Grass: 32 m cells, a 60 to 90 m fade, no shadow, untraced, double-sided blades with `SwayWeight.HEIGHT` (the base stays planted). Trees: 64 m cells, a 250 to 400 m fade, casting and traced, one `STANDARD` `MASK` material whose atlas holds bark at alpha 1 and cut-out leaves, with `SwayWeight.VERTEX_ALPHA` (alpha 0 at the base rising up the canopy). Rocks: a template amplitude of zero, faded like grass.
 
-## Scatter
+## Place on a tile set
 
-**Grid.** The grid is square in the layer node's frame from its origin: `ceil(extent / cell_size)` cells per
-side, with `extent = (texels - 1) · terrain cell_size`. Cell `(column, row)` covers layer-local x in
-`[column · cell_size, (column + 1) · cell_size)` and z likewise. Placing the layer node at the ground node's
-pose covers the terrain exactly; cells past the ground's extent are clipped by rejection. A [tile](#tiled-worlds)
-has exactly `extent / cell_size` cells per side.
+A layer grows on one terrain node. A world built as a [tile set](terrain.md#tile-sets) takes one layer per tile: a child of the set node at its tile's local transform, with `ground` naming the tile node.
 
-**Candidates.** A cell has `strata = max(round(cell_size / spacing), 1)` strata per side and one candidate
-per stratum, jittered inside it. A candidate's key is `pcg(pcg(pcg(pcg(seed) ^ column) ^ row) ^ candidate)`
-(the permutation of `noise.glsl`'s `pcg_hash`), and each random value is its own channel of that key. Nothing
-carries state between candidates or cells, so a cell places the same instances in any order. `column` and `row`
-are layer-local cell indices, except on a [terrain tile](#tiled-worlds), where they index the tile set's grid.
+- **Keys.** When the ground carries `TerrainTile { x, z }`, a candidate's `column` and `row` are the cell's indices in the set's grid, `tile · cells_per_tile + local` on each axis, with `cells_per_tile = tile_extent() / cell_size`. One seed on every tile gives each tile its own candidates, and a tile places the same instances whatever order tiles are added, loaded or prepared in. Tile (0, 0) has the keys of a terrain outside a set; a negative coordinate indexes modulo 2^32.
+- **Divisibility.** `cell_size` must divide `tile_extent()` within 1e-4 relative to the ratio. Otherwise `add_foliage` and `prepare` fault `INVALID_ARGUMENT`. The grid then has exactly `cells_per_tile` cells per side and its cell edges fall on the tile's edges.
+- **Edge ownership.** Cells are half-open ranges of the set's grid, so no two tiles share a cell and exactly one tile places each candidate. A position on a shared edge belongs to the higher-index tile.
+- The layer must sit at its tile's pose. At another pose its cells do not line up and the candidates outside the tile are rejected.
+- Change a tile's coordinates only by removing its layer and adding it again.
+- A ground that carries `TerrainTile` without a `TerrainSet` parent faults `INVALID_ARGUMENT` at `prepare` and `update`; a prepared layer keeps its cells.
 
-**Stages.** Each candidate passes, in order:
+## Edit the ground and the density map
 
-1. **Density** (sets the cell's capacity): its terrain-local position must lie in the extent, and a hash
-   channel must fall below the density map's selected channel, sampled bilinearly between texel centres with
-   clamped edges. That is the rule the GPU uses for the terrain's control map at terrain UV, so a splat channel
-   and its foliage line up.
-2. **Height**: `terrain::sample_height` at its world x and z.
-3. **Altitude**: `min_altitude <= height <= max_altitude`, in world y.
-4. **Slope**: the selected normal's `y >= cos(max_slope)`. `FACE` reads `terrain::sample_normal`, the face normal
-   of the height field's triangle, so the limit follows the faceted surface. `SMOOTH` reads
-   `terrain::sample_smooth_normal`, the normal the terrain draws with, so the limit follows the shaded surface; on
-   a [tile](#tiled-worlds) it reads the border ring as the shader does. The default is `FACE`.
-5. **Instance**: on the ground, turned about Y, uniformly scaled, tinted, all from hash channels.
-
-Stages 2 to 4 only remove, so a cell never holds more instances than its density-stage count.
-
-## Tiled worlds
-
-A layer grows on one terrain node. A world built as a [tile set](terrain.md#tile-sets) takes one layer per
-tile: a child of the set node at its tile's local transform, with `ground` naming the tile node.
-
-**Keys.** When the ground carries `TerrainTile { x, z }`, a candidate's `column` and `row` are the cell's indices
-in the set's grid, `tile · cells_per_tile + local` on each axis, with `cells_per_tile = tile_extent() / cell_size`.
-One seed on every tile therefore gives each tile its own candidates, and a tile places the same instances
-whatever order the tiles are added, loaded or prepared in. Position, yaw, scale and tint stay functions of the
-key. Tile `(0, 0)` has the keys of a terrain outside a set, and a negative coordinate indexes modulo 2^32. A
-ground without `TerrainTile` keeps layer-local keys, bit for bit.
-
-**Divisibility.** `cell_size` must divide `tile_extent()`: the ratio `tile_extent() / cell_size` must lie within
-1e-4 of an integer, relative to the ratio. Otherwise `add_foliage` and `prepare` fault `INVALID_ARGUMENT`. The grid
-then has exactly `cells_per_tile` cells per side and its cell edges fall on the tile's edges, and
-`MAX_CELLS_PER_SIDE` bounds that rounded count. Inside the tolerance the grid drifts at most a tenth of a texel on a
-1025-texel tile, and a candidate past the extent is rejected like any other outside it.
-
-**Edge ownership.** Cells are half-open ranges of the set's grid: tile `t` owns the cells
-`[t · cells_per_tile, (t + 1) · cells_per_tile)` on each axis, and no two tiles share a cell. A candidate comes
-from one cell, so exactly one tile places it. A position on a shared edge belongs to the cell on its high side,
-the higher-index tile, as at any cell boundary; a candidate that float rounding moves onto the edge of the cell
-it came from stays with that cell's tile. The density stage accepts positions up to and including the tile's own
-extent, so it never drops a candidate for lying on its tile's edge.
-
-- The layer must sit at its tile's pose. At another pose its cells do not line up with the tile and the
-  candidates outside the tile are rejected.
-- Change a tile's coordinates only by removing its layer and adding it again: a layer takes them when it
-  scatters.
-- A ground that carries `TerrainTile` without a `TerrainSet` parent, as after removing the set, faults
-  `INVALID_ARGUMENT` at `prepare` and `update`; a prepared layer keeps its cells.
-
-## Cells and re-placement
-
-A cell is a child of the layer node at the identity transform, with the layer node's `layers`, the desc's
-fade, shadow and trace flags and the layer's current sway. Its arrays hold its density-stage count; no cell
-sets a bounds override, because core grows each batch bound and each instance cull test by the sway reach.
-Cells are library-owned: do not edit, remove or reparent them.
-
-`update` compares, per layer, both nodes' world matrices, the ground's height-map revision, the density map's
-revision and, for a `SMOOTH` layer, the ground's border ring with those the cells were placed against:
+`update` compares, per layer, both nodes' world matrices, the ground's height-map revision, the density map's revision and, for a `SMOOTH` layer, the ground's border ring with those the cells were placed against.
 
 | Observed | Work |
 | --- | --- |
 | Ground dead or without `TerrainRuntime`; density map dead | `INVALID_ID`; nothing changes |
-| A pose changed, or a density change that is not a set of region marks | Whole re-scatter: count, node budget, staged arrays, commit |
-| The density map changed by region marks since the cells were placed | Re-scatter the cells meeting the marked region, widened by two density texels |
+| A pose changed, or a density change that is not a set of region marks | Whole re-scatter |
+| The density map changed by region marks since placement | Re-scatter the cells meeting the marked region, widened by two density texels |
 | The ground refreshed in place after the placed revision | Re-place the cells meeting the union of those refreshes, widened by two texels |
 | The refresh log does not reach back to the placed revision | Re-place every cell |
-| A `SMOOTH` layer's ground ring changed: a neighbour's edit, or a link or unlink | Re-place the cells meeting the one-texel strip along each border linked when placed or now, widened by two texels |
+| A `SMOOTH` layer's ground ring changed (a neighbour's edit, a link or an unlink) | Re-place the cells meeting the one-texel strip along each affected border, widened by two texels |
 
-Edits stay local. A stroke that edits both maps, and a ring change, re-place the union of their cells once. Two
-ground edits between two `foliage::update` calls re-place the cells that meet the union of their rectangles,
-not the whole layer. A `FACE` layer never reads the ring, so a ring change re-places nothing for it.
+Edits stay local. A stroke that edits both maps, and a ring change, re-place the union of their cells once. A `FACE` layer never reads the ring.
 
-- **Ground edits.** `terrain::refreshed_since(placed revision)` names the texels refreshed since the cells were
-  placed. The terrain keeps its last four refreshes, merged when more arrive, and a whole-map refresh (a new
-  pixel array, a replacement, a revision with no `mark_dirty`) empties them, which re-places every cell.
-- **Density edits.** Mark the texels written with `assets.mark_texture_region_dirty(density_map, 0, region)`,
-  in density-map texels. A layer reads `regions_since(placed revision)` on the map. A region maps through the
-  map's span of the ground to a range of cells, which count, stage and commit again; the other cells keep their
-  nodes and arrays. `assets.mark_texture_dirty`, a replacement or a log that no longer reaches back re-scatter the
-  whole layer. A density map with generated mips filters every level on the CPU for its first region upload and
-  only the touched boxes after it; see the [terrain cost](terrain.md#region-uploads).
-
-A re-place writes arrays in place, never allocates, keeps every node and capacity and marks the batch. A
-re-scatter may change counts: cells that empty lose their node, cells that fill gain one, a cell whose count grew
-gets new arrays in its existing node, and capacity never shrinks while a cell is non-empty. It is all or nothing:
-the node budget is checked before any node is created, and every array and node is staged before any cell changes.
-`TerrainRuntime.refreshes` is described under [terrain edits](terrain.md#edits).
-
-A re-scatter that faults (`CAPACITY_EXCEEDED` past the node budget, a density map that turned unsupported)
-keeps the layer's cells as they were and remembers the attempt: later updates return the same fault without
-counting again until a pose, a revision or the scene's free node count changes. A layer whose ground was
-removed or rejected keeps drawing its last cells; the fault tells the application why.
-
-After an origin rebase, call `scene.shift_foliage()` once the shifted scene's world matrices are current
-(after `update_world`). It stores the current layer and ground node worlds as the poses the cells were scattered
-against, keeping the revisions, so the next `update` sees no pose change and does not re-scatter. Cells are layer
-children and keep their local records.
+- **Ground edits.** [`terrain::refreshed_since`](terrain.md#edit-the-height-map) names the texels refreshed since the cells were placed. The terrain keeps its last four refreshes; a whole-map refresh empties them and re-places every cell.
+- **Density edits.** Mark the texels written with `assets.mark_texture_region_dirty(density_map, 0, region)`, in density-map texels. A region maps through the map's span of the ground to a range of cells. `assets.mark_texture_dirty`, a replacement or a log that no longer reaches back re-scatter the whole layer.
+- A re-place writes arrays in place, never allocates and keeps every node. A re-scatter may change counts: cells that empty lose their node, cells that fill gain one, and capacity never shrinks while a cell is non-empty. It is all or nothing: the node budget is checked before any node is created and every array and node is staged before any cell changes.
+- A re-scatter that faults (`CAPACITY_EXCEEDED` past the node budget, a density map that turned unsupported) keeps the layer's cells and remembers the attempt: later updates return the same fault until a pose, a revision or the scene's free node count changes. A layer whose ground was removed or rejected keeps drawing its last cells.
+- **Rebasing.** After `scene.shift_origin`, call `scene.shift_foliage()` once the shifted scene's world matrices are current (after `update_world`). It stores the current layer and ground poses as the poses the cells were scattered against, so the next `update` does not re-scatter. Cells keep their local records.
 
 ## Wind
 
-The application owns one wind velocity, in world metres per second, and passes it to every consumer's update;
-nothing is stored in the scene. Each layer maps it onto its cells' `InstanceSway` through its `SwayTemplate`:
+The application owns one wind velocity, in world m/s, and passes it to every consumer's update; nothing is stored in the scene. Each layer maps it onto its cells' `InstanceSway` through its `SwayTemplate`:
 
-- `speed = |wind|`. At zero speed, or with a zero template amplitude, the sway is `{ .weight = template.weight }`:
-  a `VERTEX_ALPHA` layer keeps consuming its vertex alpha, so the alpha never starts cutting a masked material.
-- Otherwise the direction is the wind's, the amplitude is `template.amplitude · min(speed / full_bend_speed, 1)`,
-  and frequency, lean, wavelength, variation and weight come from the template. Frequency does not follow the
-  wind: a frequency edit moves the phase at once.
-- `update` rewrites every cell's sway only when the velocity changed (exact comparison). A gusting wind costs
-  one store per cell per frame and uploads nothing: sway edits need no mark. Crests run across cells as one
-  field, since every cell of a layer carries the same sway and the phase follows world position.
+- `speed = |wind|`. At zero speed, or with a zero template amplitude, the sway is `{ .weight = template.weight }`: a `VERTEX_ALPHA` layer keeps consuming its vertex alpha, so the alpha never starts cutting a masked material.
+- Otherwise the direction is the wind's, the amplitude is `template.amplitude · min(speed / full_bend_speed, 1)`, and frequency, lean, wavelength, variation and weight come from the template. Frequency does not follow the wind.
+- `update` rewrites every cell's sway only when the velocity changed. A gusting wind costs one store per cell per frame and uploads nothing: sway edits need no mark. Every cell of a layer carries the same sway, so crests run across cells as one field.
 
-## Tracing swaying layers
+## Trace swaying layers
 
-A traced layer shows its cells to traced views in their rest pose, so a ray-traced shadow of a swaying tree stays
-still while the drawn tree moves. `FoliageDesc.trace_sway` poses each instance of a swaying cell for the trace the
-way the vertex stage poses it for the draw ([custom trace poses](scene_trace_reference.md#custom-trace-poses)): ray-traced
-shadows, ambient occlusion, reflections, probe updates and path tracing follow the wind. The pose takes the layer's
-sway at the frame's time and applies no fade, so every instance of the layer traces, near the camera, off the screen
-or past the fade end.
+A traced layer shows its cells to traced views in their rest pose, so a ray-traced shadow of a swaying tree stays still while the drawn tree moves. `FoliageDesc.trace_sway` poses each instance of a swaying cell for the trace the way the vertex stage poses it for the draw ([custom trace poses](scene_trace_reference.md#custom-trace-poses)), so ray-traced shadows, ambient occlusion, reflections, probe updates and path tracing follow the wind. The pose takes the layer's sway at the frame's time and applies no fade, so every instance of the layer traces.
 
-- **Cost.** Each instance takes one posed slot of the renderer: its own posed vertex streams, 256 bytes of the
-  frame's upload ring, and a refit copy of the geometry's triangle tree on the software kind or a bottom level
-  on the hardware kind. A cell poses all its instances in one dispatch, with 80 bytes of ring more, and the
-  frame's trees refit in one dispatch. While wind blows, the sway moves with the frame time, so every slot
-  poses again every frame: the software kind refits every tree and the hardware kind updates every bottom
-  level in place. A calm layer, or a template amplitude of zero, poses nothing and traces at rest. A layer
-  of 1,536 trees takes 1,536 slots, one pose dispatch per cell and, on the hardware kind, as many updates
-  per frame.
-- **Capacity.** Slots are `RendererDesc.max_posed_trace_instances` (64 by default), shared with skinned and
-  morphed meshes and crowds, so size it for the instances that must follow the wind. Instances are admitted in
-  collection order, not by distance. Swayed rows claim after every other kind, so a character that appears later
-  still gets a slot. Memory is not the only bound: slots also draw on the device's 4,096-entry allocation and
-  acceleration structure tables, and `create_renderer` refuses a capacity they cannot hold
-  ([scene trace](scene_trace_reference.md#posed-instances)). Content shares the tables, so keep the capacity well below
-  that bound.
-- **At capacity.** An instance without a slot traces at rest, as without `trace_sway`, and each cell holding
-  such an instance counts once in `Stats.trace_sway_at_rest`. The error is bounded by the sway reach.
-  `Stats.trace_posed_instances` counts the posed instances.
-- **Alpha.** Coverage tests the material's cut-out with the instance's own texture coordinates: sway moves
-  positions only. A `VERTEX_ALPHA` layer takes its bend weight from vertex alpha, and coverage ignores that alpha
-  on every row of the layer, posed or at rest, as the draw does, so a `MASK` material is cut by its texture alone.
+- **Cost.** Each instance takes one posed slot of the renderer, with its own posed vertex streams, 256 bytes of the frame's upload ring and a refit copy of the geometry's triangle tree (software kind) or a bottom level (hardware kind). While wind blows, every slot poses again every frame. A calm layer, or a template amplitude of zero, poses nothing. A layer of 1,536 trees takes 1,536 slots.
+- **Capacity.** Slots are `RendererDesc.max_posed_trace_instances` (64 by default), shared with skinned and morphed meshes and crowds, so size it for the instances that must follow the wind. Instances are admitted in collection order, not by distance. The device's allocation and acceleration structure tables also bound it, and `create_renderer` refuses a capacity they cannot hold ([scene trace](scene_trace_reference.md#posed-instances)).
+- **At capacity.** An instance without a slot traces at rest, and each cell holding such an instance counts once in `Stats.trace_sway_at_rest`. `Stats.trace_posed_instances` counts the posed instances.
+- **Alpha.** Coverage tests the material's cut-out with the instance's own texture coordinates: sway moves positions only. A `VERTEX_ALPHA` layer ignores vertex alpha for coverage on every row, as the draw does.
 
-## Grass and trees
+## Whole-object LOD
 
-The example's two layers show the intended settings:
+Set `FoliageDesc.lod` to a borrowed `LodDesc*` to scatter [whole-object groups](lod.md). `attach_foliage` copies the descriptor into authored component storage; preparation creates a separate frozen runtime copy; `add_foliage` does both. Each occupied cell owns one instanced group with shared placements, tint, sway and fade across every part. The descriptor supplies the geometry and material assets; the plain `geometry` and `material` fields are used only when `lod` is null.
 
-- **Grass.** 32 m cells, a 60 to 90 m fade, no shadow, untraced; `STANDARD`, opaque, double-sided blades;
-  `SwayWeight.HEIGHT`, which weighs vertices by their squared height within the geometry bound, so the base
-  stays planted.
-- **Trees.** 64 m cells, a 250 to 400 m fade, casting, traced; one `STANDARD` `MASK` double-sided material
-  whose atlas holds bark at alpha 1 and cut-out leaves; `SwayWeight.VERTEX_ALPHA`, with vertex alpha 0 at the
-  base rising up the canopy.
-- **Rocks.** A layer with a zero template amplitude, faded like grass.
+Seed, scatter rules and terrain produce the same placements as the single-mesh path. Effect changes preserve slot identity; rescattering replaces placements. Removing the foliage node releases its children and the copied descriptor. The copied pointer and slices belong to the library: do not replace or free them. A layer without `lod` draws one level and relies on its fade.
 
-## Removal
+## Scatter on a job pool
 
-Remove `Foliage` from a live node, or remove the node. Removing the node removes its cells first, then the
-runtime, whose hook frees the cell table and runtime LOD copy. The `Foliage` hook frees its separate
-authoring LOD copy. Removing only `Foliage` leaves the runtime until the next `update`,
-which removes the layer's cell nodes and then the runtime before anything else. Removing `FoliageRuntime` or a
-cell node directly is not supported. The layer owns no assets; destroy the scene before the store.
-
-**Serialisation.** `Foliage` is authored, including its ground node reference; the cell nodes under a layer
-node and their `InstancedMesh` or `LodGroup` components are derived. `attach_foliage` validates and
-copies authoring without scattering cells. The ground must already carry `Terrain` authoring.
-`is_prepared` reports readiness; `prepare` and `prepare_subtree` require the ground terrain to be
-prepared first, otherwise returning `terrain::NOT_PREPARED`. Ordinary updates skip pending foliage, which
-produces no generated draws. See the [landscape preparation contract](../addons/c3d_landscape.c3l/README.md#pending-authoring-and-preparation).
-The copied authoring LOD pointer and its slices remain library-owned; do not replace or free them.
-
-## Detached scatter
-
-A layer's whole scatter can run as ranges on any scheduler: at load, for a layer attached but not prepared, or
-after a pose or density change, for a prepared layer. The owner thread takes a snapshot, any thread runs the
-ranges, and the owner thread publishes. `add_foliage`, `prepare` and `update` stay serial and unchanged; the
-library never imports `c3d_job`, and the [example](#the-example) drives the ranges with a `JobPool`.
+A layer's whole scatter can run as ranges on any scheduler: at load for a pending layer, or after a pose or density change for a prepared one. The owner thread takes a snapshot, any thread runs the ranges, and the owner thread publishes. `add_foliage`, `prepare` and `update` stay serial and unchanged; the library never imports `c3d_job`. The [job pool](jobs.md) drives the ranges.
 
 ```c3
-ScatterJob job = foliage::scatter_job(&scene, &assets, layer.id, scratch)!;
+ScatterJob job = foliage::scatter_job(
+    scene:   &scene,
+    assets:  &assets,
+    layer:   layer.id,
+    scratch: scratch,
+)!;
 // count_range over disjoint ranges of [0, job.cell_count()), on any threads, joined
 job.reserve_output(transforms, colors)!; // each of job.instance_count() slots
 // place_range over disjoint ranges of the same cells, on any threads, joined
 foliage::commit_scatter(&scene, &assets, &job)!;
 ```
 
-- **Snapshot.** `scatter_job` copies the rules, both poses, the grid and the strata, and flattens the cells to
-  scatter into a list in which each cell appears once, so overlapping changed regions never place a cell twice.
-  The height texels, the border ring and the density pixels are borrowed. A layer with nothing pending, or
-  only a ground or ring edit (`update` re-places those in place), faults `INVALID_ARGUMENT`. A ground that is
-  not prepared, or whose height map has a refresh pending, faults `terrain::NOT_PREPARED`: run
-  `terrain::update` first.
-- **Ranges.** `count_range` and `place_range` take positions in the job's cell list, in any order and on any
-  thread, as long as no two running ranges overlap. They write only their cells' entries. While a range runs,
-  nothing may edit, link, replace or remove the ground's height map, its border ring or the density map, nor
-  remove the ground or the layer; that is a programming error. The scene is never touched off the owner thread.
-- **Output.** `reserve_output` runs on the owner thread after every count range. It assigns each cell its slots
-  in two caller arrays of at least `instance_count()` entries, and faults `CAPACITY_EXCEEDED` for smaller ones.
-  Each cell holds its density-stage count, as the serial arrays do. The arrays must outlive `commit_scatter`.
-- **Scratch.** The job takes 16 bytes per listed cell from the `scratch` allocator (the cell, its count, its
-  offset and its placed count) and holds nothing else; it never frees them. Dropping the job cancels it. The
-  output arrays are the caller's: about 56 bytes per instance of `instance_count()`.
-- **Commit.** `commit_scatter` publishes on the owner thread exactly as a serial scatter does: the node
-  budget, then every array and node staged, then the cells; a fault leaves the scene as it was. The layer's
-  cells and instance count then match a serial scatter of the same inputs bit for bit, and
-  `FoliageRuntime.count_passes` advances by one. A layer attached but not prepared becomes prepared, as `prepare`
-  would leave it.
-- **Staleness.** `commit_scatter` faults `landscape::STALE` and publishes nothing if any of these changed since
-  `scatter_job`:
-  - the layer or its ground died or lost `Foliage` or `Terrain`, or the layer was prepared or torn down;
-  - the layer's rules, ground or cell size;
-  - the height map's revision, replacement or pixel array;
-  - the density map's revision;
-  - for a `SMOOTH` layer, the border ring's revision or its linked edges;
-  - either node's world matrix, unless both moved by the origin shift alone since the job was taken (the
-    translation by the shift within float rounding, the rotation and scale unchanged), which commits shifted as
-    `scene.shift_foliage()` would; a turn or a move during a rebase is stale;
-  - `FoliageRuntime.scatter_revision`, which advances whenever `update` or a commit scatters or re-places the
-    layer. Commit before `update`: an `update` that scatters the layer first makes the job stale.
-
-  The application drops a stale job and takes a new one.
+- **Snapshot.** `scatter_job` copies the rules, both poses, the grid and the strata, and flattens the cells to scatter into a list in which each cell appears once. The height texels, the border ring and the density pixels are borrowed. A layer with nothing pending, or only a ground or ring edit (which `update` re-places in place), faults `INVALID_ARGUMENT`. A ground that is not prepared, or whose height map has a refresh pending, faults `terrain::NOT_PREPARED`: run `terrain::update` first.
+- **Ranges.** `count_range(first, count)` and `place_range(first, count)` take positions in the job's cell list, in any order and on any thread, as long as no two running ranges overlap. While a range runs, nothing may edit, link, replace or remove the ground's height map, its border ring or the density map, nor remove the ground or the layer. The scene is never touched off the owner thread.
+- **Output.** `reserve_output(transforms, colors)` runs on the owner thread after every count range. It assigns each cell its slots in two caller arrays of at least `instance_count()` entries and faults `CAPACITY_EXCEEDED` for smaller ones. The arrays must outlive `commit_scatter`.
+- **Scratch.** The job takes 16 bytes per listed cell from the `scratch` allocator and never frees them. Dropping the job cancels it. The output arrays are the caller's, about 56 bytes per instance.
+- **Commit.** `commit_scatter` publishes on the owner thread exactly as a serial scatter does, and a fault leaves the scene as it was. The layer's cells and instance count match a serial scatter of the same inputs bit for bit. A layer attached but not prepared becomes prepared.
+- **Staleness.** `commit_scatter` faults `landscape::STALE` and publishes nothing if the layer or its ground died or lost `Foliage` or `Terrain`, was prepared or torn down; the layer's rules, ground or cell size changed; the height map's revision, replacement or pixel array changed; the density map's revision changed; a `SMOOTH` layer's border ring changed; either node's world matrix changed (unless both moved by the origin shift alone, which commits shifted as `scene.shift_foliage()` would); or `FoliageRuntime.scatter_revision` advanced. Commit before `update`: an `update` that scatters the layer first makes the job stale. Drop a stale job and take a new one.
 
 ## Budgets
 
-- **Nodes**, checked by `add_foliage` and every re-scatter against the scene's free nodes: each non-empty cell
-  is one node, so a layer needs up to `cells_per_side²`, with
-  `cells_per_side = ceil((texels - 1) · terrain cell_size / cell_size)`. Size `SceneDesc.max_nodes` for every
-  layer's cells plus the rest of the scene. At a 2049 map with 1 m texels: 4,096 cells at 32 m, 1,024 at
-  64 m; at 4097, 16,384 and 4,096.
-- **Renderer batch slots** (`RendererDesc.max_instance_batches`, 1,024 by default). A cell holds a slot while a
-  view or shadow layer drew it within the last `INSTANCE_ABSENCE_FRAMES + 1` frames; a cell wholly past its
-  fade band is skipped and releases its slot like a culled one. Per layer and view camera a faded layer holds
-  at most `(ceil(2R / cell_size) + 1)²` slots, with `R = fade.end + m + v`: `m` is how far an instance
-  reaches past its cell (the geometry's horizontal radius at `max_scale` plus the sway amplitude) and `v` the
-  camera travel over `INSTANCE_ABSENCE_FRAMES + 1` frames. Casting cells fall within the same `R`, since shadow
-  layers skip from the view camera too. A layer without fade can hold every cell. Past the limit
-  `render_view` faults `CAPACITY_EXCEEDED` (`InstanceTable.acquire` in `src/c3d/render/instances.c3`,
-  propagated from the view and the shadow pass); nothing is skipped. The safe setting is every cell of every
-  layer plus the scene's other batches, at 120 B of CPU per slot and no GPU memory until a slot is used; the
-  example uses it.
-- **Traced layers.** Every instance of a traced cell is an entry of the scene trace:
-  `RendererDesc.max_trace_instances` (4,096 by default) must hold them with the scene's other traced
-  instances, or traced views fault `CAPACITY_EXCEEDED`. With `trace_sway`, instances also take posed slots
-  (`RendererDesc.max_posed_trace_instances`, [above](#tracing-swaying-layers)).
-- **CPU memory**: 8 B per grid cell for the runtime's table, 56 B per instance of capacity for the arrays, and
-  a scene node per non-empty cell.
+- **Scene nodes.** Each non-empty cell is one node, so a layer needs up to `cells_per_side²` nodes, with `cells_per_side = ceil((texels − 1) · terrain cell_size / cell_size)`. `add_foliage` and every re-scatter check the scene's free nodes. Size `SceneDesc.max_nodes` for every layer's cells plus the rest of the scene. At a 2049 map with 1 m texels: 4,096 cells at 32 m and 1,024 at 64 m; at 4097, 16,384 and 4,096.
+- **Renderer batch slots** (`RendererDesc.max_instance_batches`, 1,024 by default). A cell holds a slot while a view or shadow layer drew it within the last `INSTANCE_ABSENCE_FRAMES + 1` frames; a cell wholly past its fade band is skipped and releases its slot. Per layer and view camera, a faded layer holds at most `(ceil(2R / cell_size) + 1)²` slots, with `R = fade.end + m + v`: `m` is how far an instance reaches past its cell (the geometry's horizontal radius at `max_scale` plus the sway amplitude) and `v` the camera travel over `INSTANCE_ABSENCE_FRAMES + 1` frames. Casting cells fall within the same `R`. A layer without fade can hold every cell. Past the limit `render_view` faults `CAPACITY_EXCEEDED`. The safe setting is every cell of every layer plus the scene's other batches, at about 270 bytes of CPU per slot (a 264-byte record and a lookup entry) and no GPU memory until a slot is used.
+- **Traced layers.** Every instance of a traced cell is an entry of the scene trace: `RendererDesc.max_trace_instances` (4,096 by default) must hold them with the scene's other traced instances, or traced views fault `CAPACITY_EXCEEDED`. With `trace_sway`, instances also take posed slots.
+- **CPU memory.** 8 bytes per grid cell for the runtime's table, about 56 bytes per instance of capacity, and a scene node per non-empty cell.
+
+## Remove
+
+Remove `Foliage` from a live node, or remove the node. Removing the node removes its cells first, then the runtime, whose hook frees the cell table and the runtime LOD copy; the `Foliage` hook frees the authoring LOD copy. Removing only `Foliage` leaves the runtime until the next `update`, which removes the layer's cell nodes and then the runtime. Removing `FoliageRuntime` or a cell node directly is unsupported. The layer owns no assets. Destroy the scene before the store.
+
+`Foliage` is the authored component, including its ground node reference. The cell nodes and their `InstancedMesh` or `LodGroup` components are derived. [Serialization](serialization_reference.md#landscape) saves the authoring and `prepare` regenerates the cells.
 
 ## Faults
 
@@ -370,199 +188,36 @@ foliage::commit_scatter(&scene, &assets, &job)!;
 | --- | --- | --- |
 | `register_foliage` | `c3d::CAPACITY_EXCEEDED` | No component type slot left |
 | `add_foliage` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included) or more than `MAX_CELLS_PER_SIDE` cells per side |
-| `add_foliage`, `prepare`, `update` | `c3d::INVALID_ARGUMENT` | A tile ground whose `cell_size` does not divide `tile_extent()`, or without a `TerrainSet` parent ([tiled worlds](#tiled-worlds)) |
+| `add_foliage`, `prepare`, `update` | `c3d::INVALID_ARGUMENT` | A tile ground whose `cell_size` does not divide `tile_extent()`, or without a `TerrainSet` parent |
 | `add_foliage` | `c3d::INVALID_ID` | Dead geometry or material |
 | `add_foliage`, `prepare`, `prepare_subtree` | `terrain::NOT_PREPARED` | Ground authoring exists but its runtime is pending; prepare terrain and retry |
 | `add_foliage`, `update` | `c3d::INVALID_ID` | Ground dead or without `Terrain`; density map dead; ground height map dead |
 | `add_foliage`, `update` | `c3d::UNSUPPORTED` | Density map not `RGBA8_UNORM`, not a `MIP_ZERO` source, or layered, 3D or cube; ground height map as `terrain::height_view` |
-| `add_foliage`, `update` | `c3d::INVALID_ARGUMENT` | Density pixel bytes not `width × height × 4` (a released CPU copy included); ground height map as `terrain::height_view` |
+| `add_foliage`, `update` | `c3d::INVALID_ARGUMENT` | Density pixel bytes not `width × height × 4`; ground height map as `terrain::height_view` |
 | `add_foliage`, `update` | `c3d::CAPACITY_EXCEEDED` | New cells past the scene's free nodes; an array allocation failed |
 | `scatter_job` | `c3d::INVALID_ARGUMENT` | Nothing pending: the layer is prepared and neither moved nor changed density |
 | `scatter_job` | `terrain::NOT_PREPARED` | The ground is not prepared, or its height map has a refresh pending |
 | `scatter_job` | `c3d::CAPACITY_EXCEEDED` | The scratch allocator failed |
 | `scatter_job`, `commit_scatter` | the faults of `add_foliage` | The checks `add_foliage` makes of a layer not yet prepared |
 | `reserve_output` | `c3d::CAPACITY_EXCEEDED` | An output array holds fewer than `instance_count()` entries |
-| `commit_scatter` | `landscape::STALE` | A source the job read changed ([above](#detached-scatter)) |
+| `commit_scatter` | `landscape::STALE` | A source the job read changed |
 | `commit_scatter` | `c3d::CAPACITY_EXCEEDED` | New cells past the scene's free nodes; an array allocation failed |
 
 ## Limits
 
-- One sway direction per batch: every cell of a layer bends one way.
-- The amplitude is in world units, the same for every instance whatever its scale.
-- Normals are not bent: a bent blade or canopy shades as its rest pose.
-- Traced views see a layer only with `trace` set, and then in its rest pose, counted in `Stats.trace_sway_at_rest`
-  ([scene trace](scene_trace.md#what-traces)), unless `trace_sway` is set: under a ray-traced sun a swaying
-  tree casts a still shadow while atlas shadows sway, and ray-traced ambient occlusion, reflections, probes and
-  path tracing see the rest pose too. A swaying `LodGroup` with `trace` set traces at rest the same way. With
-  `trace_sway` the layer follows the wind up to the posed capacity and costs a slot per instance
-  ([above](#tracing-swaying-layers)). Grass stays untraced by default, so it casts no traced shadow. A traced
-  layer's cells walk every instance each frame in a view that traces.
+- One sway direction per batch: every cell of a layer bends one way. The amplitude is in world units, the same for every instance whatever its scale. Normals are not bent.
+- Traced views see a layer only with `trace` set, and then in its rest pose unless `trace_sway` is set. A swaying `LodGroup` with `trace` set traces at rest the same way. Grass stays untraced by default, so it casts no traced shadow.
 - One material per layer: merge bark and leaves into one masked atlas with bark alpha at 1.
-- One terrain node per layer; a [tiled world](#tiled-worlds) takes one layer per tile. Candidates outside the
-  ground's extent are rejected.
+- One terrain node per layer; a [tiled world](#place-on-a-tile-set) takes one layer per tile. Candidates outside the ground's extent are rejected.
 - One density channel per layer, `RGBA8_UNORM` only.
 - `VERTEX_ALPHA` layers consume vertex alpha whether or not the wind blows.
-- Level of detail is whole-object ([above](#whole-object-lod)); a layer without `lod` draws one level and relies on
-  its fade.
-- The desc is fixed after `add_foliage`; so are the cells' layer bits, taken from the layer node at creation.
-  Change either by removing `Foliage` and adding the layer again.
-- A whole density mark, a layer move or a ground move re-scatters the whole layer; a moving layer node also
-  re-uploads every cell's records, which are world-space. Region marks on the density map re-scatter only
-  the cells they reach.
-- An edit that changes which candidates of a cell pass, at an equal count, gives that cell one rendering of
-  wrong motion vectors: previous matrices pair by record index.
-- Placement kernels may run in job ranges through the [job API](#detached-scatter); publication changes scene
-  structure and stays on the owner thread.
+- The desc and the cells' layer bits are fixed after `add_foliage`; change either by removing `Foliage` and adding the layer again.
+- A whole density mark, a layer move or a ground move re-scatters the whole layer, and a moving layer node re-uploads every cell's records, which are world-space. Region marks re-scatter only the cells they reach.
+- An edit that changes which candidates of a cell pass, at an equal count, gives that cell one frame of wrong motion vectors.
+- Publication changes scene structure and stays on the owner thread; only the placement kernels may run in job ranges.
 
-## The example
+## See also
 
-`python3 scripts/build.py --example vegetation` builds the [terrain](terrain.md#the-example) example's ground
-(`--size 1025|2049|4097`, 1 m cells, a 300 m height scale, four layers and their control map) and grows two
-layers on it, both from the control map's grass channel:
-
-- **Grass**: clumps of five tapered 0.5 m blades; 32 m cells; spacing set from the channel's mean so the layer
-  holds about 200,000 instances at every map size; a 45° slope limit; scale 0.7 to 1.3; tint 0.8 to 1; the
-  default fade and template.
-- **Trees**: a tapered trunk and four crossed canopy quads over a generated 256² bark-and-leaf atlas; 64 m
-  cells; spacing for about 5,000 candidates at the density stage; a 30° slope limit; below 55 % of the height
-  scale; scale 0.8 to 1.3; a 250 to 400 m fade (`--tree-fade-end` sets the end, the start at 0.625 of it);
-  casting and traced; a `VERTEX_ALPHA` template of 0.3 m at 15 m/s.
-
-`max_nodes` and `max_instance_batches` are set to every cell plus the fixed nodes and the terrain batch, and
-`max_trace_instances` to 16,384 under traced shadows. Right drag looks, WASD moves, F flies, and B raises the
-ground under the camera; the frame's `terrain::update` and `foliage::update` re-place the touched cells. The
-panel shows, per layer, cells with a node against the grid, instances and cells placed by the last update,
-then the renderer's faded and culled batches, tested and visible instances, upload bytes and record time, and
-the wind heading, speed (0 to 25 m/s) and gust toggle.
-
-`--benchmark [frames]` renders offscreen without a window and runs six segments of `frames` steps (default
-300) at 1/60 s after 60 warm-up frames, with a steady 6 m/s wind except in `gust`:
-
-| Segment | Camera |
-| --- | --- |
-| still | 1.7 m above the grassiest meadow of the map, fixed |
-| spin | the same place, one turn about Y |
-| gust | still; the wind speed changes every frame |
-| walk | 1.7 m, 8 m/s towards the middle of the map |
-| far | 60 m above a corner, looking across the terrain |
-| edit | 20 m above, a 49 × 49 brush stamp every 30 frames |
-
-It prints the load-time scatter per layer (`scatter_ms load`), one whole re-scatter of both layers after a
-density revision (`rescatter_ms`), the first frame's record time (`first_pack_ms`), the peak batch slots the
-cells held against the formula above (`batch_slots`), the re-place time and placed cells per stamp
-(`replace_ms`), and per segment the record time, faded batches, `update` time, upload bytes and frames,
-tested and visible instances, GPU pass times with `--gpu-timings`, and frame time. Two gates exit 1 when they
-fail:
-
-- `gate steady_wind_uploads`: the still segment uploads nothing and changes no cell revision after its first
-  frame, and the spin segment changes no cell revision after its first frame (cells turned away from and
-  back into view re-upload their records; the wind never does);
-- `gate faded_cells_exact`: on every frame of `far`, the view skipped faded batches, a CPU replay of the
-  view's extraction counts the same faded batches, and every cell with an instance whose fade anchor lies
-  within the fade end is among the view's candidates when its bound meets the frustum, and among the shadow
-  candidates when it casts. A run without a faded layer passes it vacuously.
-
-Switches: `--gpu-timings` (build with `python3 scripts/build.py --target vegetation --opt O3 --define
-C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading forward|deferred`,
-`--shadows atlas|traced`, `--trace-sway` (with `--shadows traced` and both layers: the tree layer sets
-`trace_sway` and the renderer holds 1,536 posed slots; a benchmark prints a `trace` line per segment with the
-medians of posed rows, pose dispatches, refits, bottom-level updates and batches traced at rest),
-`--trace-software` (with `--shadows traced`: the renderer asks for no ray queries, so traced shadows take the
-software kind; the benchmark header names the kind),
-`--capture FILE.png` (one frame at a fixed pose looking across a tree's shadow, in a wind of 25 m/s blowing across it,
-with the same options), `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,
-`--width W --height H` (2560 × 1440 by default in benchmark mode), `--workers N` (with `--benchmark`: scatter each layer
-again through the [job API](#detached-scatter-in-the-example)), `--validation` and `--sky` (an
-[atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the pass
-lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a
-[froxel volume](fog.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`). Interactive runs always validate; benchmark runs validate only with `--validation`. The tree layer's prepass and shadow-atlas cost is
-the `both` against `grass` difference; the grass layer's is `grass` against `none`.
-
-### Detached scatter in the example
-
-`--workers N` needs `--benchmark`. The `vegetation` target links `c3d_job`; the trampoline from the job ranges to a
-`JobPool` lives in `examples/landscape_scatter.c3`. After the load scatter, the example takes five fresh pending layers per mode, runs the job API on each, commits, compares
-the committed layer with the serial one cell by cell and bit by bit, and removes it:
-
-| `mode` | Ranges |
-| --- | --- |
-| `serial` | One range per phase on the owner thread, no pool |
-| `inline` | A pool without workers: the trampoline runs its ranges on the owner thread |
-| `workers` | A pool with `N` workers, for `N > 0` |
-
-It prints `scatter_job` (cells, instances and the serial load time), `scatter_job_timing` per mode (medians of
-`count_ms`, `reserve_ms` and `place_ms` for the phases, `commit_ms` for the owner thread, and `identical`) and, for
-`workers` in a build with `--define C3D_PROFILE_CPU --lib c3d_profile`, `scatter_job_ranges` per phase from the
-pool's worker range records: ranges and busy time per run and the workers that ran them. `gate scatter_job_identical` fails the run, as the two gates above do, when any scatter
-differs from the serial layer. The scene holds a second grass layer's cells while it runs.
-
-## Measured cost
-
-### RTX 4090, driver 610.88, 2560 × 1440
-
-Windows host, `--opt O3` with GPU timings, atlas shadows, three runs of each of eight cases (24 runs); medians,
-forward shading at `--size 2049` unless named. Both gates pass in every run, and every `batch_slots` peak is
-under its formula. A `--benchmark 60 --validation --shadows traced` run is validation-clean with both gates.
-
-Load and edit, per map size:
-
-| Line | 1025 | 2049 | 4097 |
-| --- | ---: | ---: | ---: |
-| Grass: instances, cells with a node | 198,207, 995 | 195,188, 3,895 | 173,585, 14,540 |
-| Trees: instances, cells with a node | 4,049, 249 | 3,351, 898 | 4,514, 2,814 |
-| `scatter_ms load`, grass / trees | 63.4 / 2.0 | 66.7 / 2.0 | 60.7 / 3.0 |
-| `rescatter_ms`, both layers | 61.0 | 65.0 | 58.9 |
-| `replace_ms` median / p99 per 49 × 49 stamp (cells placed) | 0.294 / 0.421 (10) | 0.095 / 0.099 (10) | 0.026 / 0.034 (10) |
-| `update_us`, steady / gusting wind | 0.2 / 2.2 | 0.3 / 8.4 | 0.4 / 49.9 |
-| `first_pack_ms` | 9.8 | 10.0 | 9.6 |
-| `batch_slots` max / formula | 177 / 245 | 171 / 245 | 142 / 245 |
-
-The still segment by layer set and tree fade end, ms:
-
-| Line | none | grass | both | both, deferred | trees fade at 250 m | trees fade at 600 m |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `cpu_record` | 0.074 | 0.218 | 0.414 | 0.394 | 0.316 | 0.502 |
-| `DEPTH_PREPASS` | 0.102 | 0.101 | 0.119 | 0.117 | 0.118 | 0.119 |
-| `SHADOW_ATLAS` | 0.460 | 0.460 | 0.462 | 0.463 | 0.462 | 0.465 |
-| `FORWARD_OPAQUE`, or `GBUFFER` deferred | 0.309 | 0.305 | 0.267 | 0.221 | 0.267 | 0.267 |
-| `VELOCITY` | 0.117 | 0.116 | 0.120 | 0.122 | 0.120 | 0.120 |
-| `INSTANCE_CULL` | 0.023 | 0.029 | 0.075 | 0.075 | 0.053 | 0.108 |
-| `batch_slots` max / formula | 0 / 0 | 19 / 49 | 171 / 245 | 171 / 245 | 87 / 130 | 338 / 449 |
-
-- **Grass** adds nothing measurable to the GPU passes at this density; its cost is `cpu_record` (+0.14 ms).
-- **Trees** add +0.018 ms of depth prepass and +0.002 ms of shadow atlas: masked bark is not a measurable cost.
-  Forward opaque falls as foliage covers terrain pixels, which cost more to shade. The tree layer's cost is per
-  batch, not per instance: `INSTANCE_CULL` +0.046 ms and `cpu_record` +0.20 ms at a 400 m fade, both growing with
-  the tree cells in range (cull 0.053, 0.075 and 0.108 ms at 250, 400 and 600 m).
-- **Segments** at 2049, both layers: the spin uploads on 22 frames, at most 50.7 KB, with `cpu_record` 0.374 ms,
-  below still; the far view skips 4,306 faded batches, with prepass 0.132, forward opaque 0.404 and shadow atlas
-  0.285 ms. The frame's wall time stays about 1.2 ms throughout.
-- **Loads and edits.** `scatter_ms load` is a load time. A whole re-scatter costs 59 to 65 ms, a one-off hitch
-  that nothing in the example triggers during play; a stamp re-places its cells in under 0.5 ms.
-
-### WSL, llvmpipe
-
-llvmpipe is a CPU Vulkan implementation: frame and pass times there are environment only, never GPU numbers.
-The CPU-side lines below are the layer's own work on an i9-14900K, from `--opt O3` smoke runs of 2 to 5 frames
-per segment at 640 × 360 (320 × 180 at 4097); the full 300-frame runs take far longer than the environment
-allows. Both gates pass in every run, `--foliage grass` and `none` and tree fade ends of 250 and 600 m
-included.
-
-| Line | 1025 | 2049 | 4097 |
-| --- | ---: | ---: | ---: |
-| Grass: instances, cells with a node, spacing | 198,207, 995, 0.98 m | 195,188, 3,895, 1.91 m | 173,585, 14,540, 3.90 m |
-| Trees: instances, cells with a node, spacing | 4,049, 249, 6.19 m | 3,351, 898, 12.08 m | 4,514, 2,814, 24.66 m |
-| `scatter_ms load`, grass / trees | 59.0 / 1.7 | 62.7 / 1.8 | 56.1 / 2.8 |
-| `rescatter_ms`, both layers | 57.4 to 60.3 | 58.2 to 61.7 | 54.7 |
-| `replace_ms` per 49 × 49 stamp (cells placed) | 0.28 (10) | 0.056 to 0.069 (4 to 8) | 0.019 (8) |
-| `update_us` median, steady / gusting wind | 0.72 / 2.99 | 1.17 / 10.6 | 1.25 / 58.3 |
-| `first_pack_ms` | 10.7 | 11.0 | 11.1 |
-| `batch_slots` max against the formula | 169 / 245 | 175 / 245 | 147 / 245 |
-
-`scatter_ms load` is a load time: `add_foliage` runs once. `rescatter_ms` is the hitch a density revision, a
-layer move or a ground move would cost at run time; the example has none of them during play. A stamp
-re-places only the cells it reaches, well under a millisecond. A gusting wind costs one sway store per cell,
-2 to 4 ns each. At 2049 the peak batch slots were 32 against 49 with grass alone, 85 against 130 with a
-250 m tree fade and 340 against 449 with 600 m.
-
-Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).
+- [Terrain](terrain.md#tile-sets) for tile sets and the refresh log; [water](water.md); [landscape package](../addons/c3d_landscape.c3l/README.md).
+- [Whole-object LOD](lod.md), [instancing](instancing.md), [scene tracing](scene_trace.md), [job pool](jobs.md), [large worlds](large_world.md), [owner readiness](owner_readiness.md).
+- The `vegetation` example (`python3 scripts/build.py --example vegetation`) grows grass and trees on the terrain example's ground.

@@ -730,7 +730,8 @@ fn float mean_submerged_fraction(Demo* demo) @local {
     return sum / (float)demo.crates.len;
 }
 
-// docs/water.md's mirror view: its own target and the body's clip plane, once after the first update_mirror.
+// docs/water.md, The mirror: the mirror view's own target and the body's clip plane, once after the first
+// update_mirror.
 fn Mirror? create_mirror(
     Renderer* renderer,
     Scene* scene,
@@ -792,8 +793,8 @@ fn void? follow_viewports(Demo* demo, Renderer* renderer, uint[<2>] output_size)
     }
 }
 
-// docs/water.md's per-frame lines, after update_mirror and before begin_frame: set_desc and a moved body move
-// the plane.
+// docs/water.md, The mirror: the per-frame clip plane lines, after update_mirror and before begin_frame; set_desc
+// and a moved body move the plane.
 fn void? follow_clip_plane(
     Renderer* renderer,
     Scene* scene,
@@ -808,7 +809,7 @@ fn void? follow_clip_plane(
     }
 }
 
-// docs/water.md's frame: the mirror before the view that shows the water, fitted to that view's camera.
+// docs/water.md, The mirror: the mirror before the view that shows the water, fitted to that view's camera.
 fn void? render_mirror(
     Renderer* renderer,
     Scene* scene,
@@ -1198,7 +1199,7 @@ fn void follow_ocean(Demo* demo) @local {
     sea.node.local.position.z = math::round(eye.z / step) * step;
 }
 
-// The frame order of docs/water.md, after the cameras moved and before begin_frame.
+// The frame order of docs/water.md, Frame order: after the cameras moved and before begin_frame.
 fn double? step_scene(
     Demo* demo,
     Renderer* renderer,
@@ -1247,7 +1248,7 @@ fn double? step_scene(
     return physics_us;
 }
 
-// docs/water.md's render order: each viewer's mirrors, the textures it is given, then the viewer itself. The
+// docs/water.md, The mirror: each viewer's mirrors, the textures it is given, then the viewer itself. The
 // capture renders last: a view with another shadow key between mirror and main would make main re-record.
 fn void? render_views(Demo* demo, Renderer* renderer) @local {
     time::Clock fields_started = clock::now();
