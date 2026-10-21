@@ -21,18 +21,20 @@ void main() {
     uint thread = gl_LocalInvocationID.x;
     uint stride = gl_WorkGroupSize.x;
 
+#ifndef CLOTH_LEAN
     if (step_stage_count(root) != 0u) {
         for (uint item = thread; item < step_stage_count(root); item += stride) step_stage(root, item);
         sync_workgroup();
     }
+#endif
     if ((root.phases & PASS_INITIALIZE) != 0u) {
         for (uint particle = thread; particle < root.particle_count; particle += stride) step_initialize(root, particle);
         sync_workgroup();
     }
 
     ClothWords starts = ClothWords(root.color_starts);
-    bool soft = (root.features & CLOTH_FEATURE_SOFT) != 0u;
-    bool shapes = (root.features & CLOTH_FEATURE_SHAPES) != 0u;
+    bool soft = (CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_SOFT) != 0u;
+    bool shapes = (CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_SHAPES) != 0u;
     for (uint substep = 0u; substep < root.substeps; substep++) {
         bool final_substep = substep + 1u == root.substeps;
         float progress = float(substep + 1u) / float(root.substeps);

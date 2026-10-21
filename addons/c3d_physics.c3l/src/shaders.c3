@@ -5,6 +5,8 @@ import c3d::asset;
 
 const char[*] CLOTH_FUSED_SPIRV @private = $embed("../shaders/spv/cloth_fused.spv");
 const char[*] CLOTH_SINGLE_SPIRV @private = $embed("../shaders/spv/cloth_single.spv");
+const char[*] CLOTH_FUSED_CLOTH_LEAN_SPIRV @private = $embed("../shaders/spv/cloth_fused_cloth_lean.spv");
+const char[*] CLOTH_SINGLE_CLOTH_LEAN_SPIRV @private = $embed("../shaders/spv/cloth_single_cloth_lean.spv");
 const char[*] INCLUDE_PHYSICS_CLOTH_ROOT_TEXT @private = $embed("../shaders/include/physics/cloth_root.glsl");
 const char[*] INCLUDE_PHYSICS_CLOTH_STEP_TEXT @private = $embed("../shaders/include/physics/cloth_step.glsl");
 

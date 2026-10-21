@@ -28,13 +28,11 @@ const usz PLACED_OFFSET @private = 3072; // bytes from a slot's staged shapes to
 const usz PLACED_BYTES @private = 32; // two vec4s a shape
 const float NO_GROUND @private = -1e30f; // below every particle; disables the ground contact
 
-// Mirrors ClothRoot in cloth_root.glsl.
+// Mirrors ClothRoot in cloth_root.glsl. The fields before lambdas are all a plain cloth's passes read, in one run.
 struct ClothRoot @private {
     ulong     positions;
     ulong     predicted;
     ulong     velocities;
-    ulong     lambdas;
-    ulong     reference;
     ulong     constraints;
     ulong     initial;
     ulong     rest;
@@ -44,54 +42,69 @@ struct ClothRoot @private {
     ulong     triangles;
     ulong     geometry_positions;
     ulong     geometry_normals;
-    ulong     soft;
-    ulong     transport;
-    ulong     shapes;
-    ulong     push;
-    ulong     limits;
-    uint      particle_count;
-    uint      shape_count;
     float[16] anchor_frame;
     float[16] target_frame;
     float[16] inverse_world;
     float[4]  gravity_step;
-    float[4]  wind;
-    float[4]  aero;
-    float     stretch_stiffness;
-    float     bend_stiffness;
+    uint      particle_count;
+    float     stiffness;
     float     damping;
     float     ground;
     uint      substeps;
     uint      iterations;
     uint      color_count;
-    uint      edge_colors;
-    uint      features;
     uint      first;
     uint      count;
     uint      phases;
     uint      member_bit;
     float     progress;
-    float     previous_progress;
-    float     stiffness;
-    uint      payload_offset;
+    ulong     lambdas;
+    ulong     reference;
+    ulong     soft;
+    ulong     transport;
+    ulong     shapes;
+    ulong     push;
+    ulong     limits;
+    uint      shape_count;
     float     contact_tolerance;
+    float[4]  wind;
+    float[4]  aero;
+    uint      edge_colors;
+    uint      features;
+    float     previous_progress;
+    uint      payload_offset;
+    float     bend_stiffness;
+    float     stretch_stiffness;
     uint[2]   padding;
 }
 
 $assert ClothRoot::size == 480;
 $assert ClothRoot::size % render::STREAM_ALIGNMENT == 0; // the roots of a batch sit at this stride and are read as 16-byte aligned
-$assert $reflect(ClothRoot.shapes).offset == 128;
-$assert $reflect(ClothRoot.particle_count).offset == 152;
-$assert $reflect(ClothRoot.anchor_frame).offset == 160;
-$assert $reflect(ClothRoot.target_frame).offset == 224;
-$assert $reflect(ClothRoot.inverse_world).offset == 288;
-$assert $reflect(ClothRoot.gravity_step).offset == 352;
-$assert $reflect(ClothRoot.wind).offset == 368;
-$assert $reflect(ClothRoot.aero).offset == 384;
-$assert $reflect(ClothRoot.stretch_stiffness).offset == 400;
-$assert $reflect(ClothRoot.features).offset == 432;
-$assert $reflect(ClothRoot.stiffness).offset == 460;
-$assert $reflect(ClothRoot.payload_offset).offset == 464;
+$assert $reflect(ClothRoot.anchor_frame).offset == 96;
+$assert $reflect(ClothRoot.target_frame).offset == 160;
+$assert $reflect(ClothRoot.inverse_world).offset == 224;
+$assert $reflect(ClothRoot.gravity_step).offset == 288;
+$assert $reflect(ClothRoot.particle_count).offset == 304;
+$assert $reflect(ClothRoot.progress).offset == 348;
+$assert $reflect(ClothRoot.lambdas).offset == 352;
+$assert $reflect(ClothRoot.shapes).offset == 384;
+$assert $reflect(ClothRoot.wind).offset == 416;
+$assert $reflect(ClothRoot.aero).offset == 432;
+$assert $reflect(ClothRoot.features).offset == 452;
+$assert $reflect(ClothRoot.payload_offset).offset == 460;
+
+const usz LEAN_ROOT_BYTES @private = $reflect(ClothRoot.progress).offset + float::size; // the lean stages read no root field past this
+
+$assert $reflect(ClothRoot.lambdas).offset == LEAN_ROOT_BYTES; // the feature fields start where the lean copy ends
+$assert $reflect(ClothRoot.edge_colors).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.features).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.previous_progress).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.payload_offset).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.bend_stiffness).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.stretch_stiffness).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.shapes).offset >= LEAN_ROOT_BYTES; // the shape fields follow the lean copy
+$assert $reflect(ClothRoot.shape_count).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.contact_tolerance).offset >= LEAN_ROOT_BYTES;
 
 // Mirrors the shape records of cloth_step.glsl: six vectors a shape, staged once per step.
 struct ShapeGpu @private {
@@ -110,10 +123,11 @@ $assert cloth::MAX_DEVICE_SHAPES * ShapeGpu::size == PLACED_OFFSET;
 struct StepRecorder @private {
     Renderer*       renderer;
     ClothRoot       root;
+    bool            lean;          // the stage is a lean one, so only the first LEAN_ROOT_BYTES of the root travel
     ComputeShaderId stage;
     BufferId[2]     state_writes;
     GeometryWrite[] output;
-    char[]          staging;       // the root, then the reference pairs that follow it
+    char[]          staging;       // the root, then the reference pairs and shapes that follow it
     usz             payload_bytes; // zero when the cloth stages neither reference pairs nor shapes
 }
 
@@ -124,10 +138,12 @@ struct StepBatch @private {
     GeometryWrite[] outputs; // geometry workgroup i writes
     ClothSlot*[]    members; // cloth workgroup i steps
     usz             count;
+    uint            features; // the union of the roots' feature bits
 }
 
 fn void StepBatch.add(&self, ClothSlot* slot, ClothRoot root) {
     root.phases = slot.started ? 0 : PASS_INITIALIZE;
+    self.features |= root.features;
     self.roots[self.count] = root;
     self.outputs[self.count] = output_of(slot);
     self.members[self.count] = slot;
@@ -135,6 +151,8 @@ fn void StepBatch.add(&self, ClothSlot* slot, ClothRoot root) {
 }
 
 fn char[] StepRecorder.root_bytes(&self, bool with_payload) {
+    if (self.lean) return material::@as_bytes(self.root)[:LEAN_ROOT_BYTES];
+
     if (!with_payload || !self.payload_bytes) return material::@as_bytes(self.root);
 
     self.staging[:ClothRoot::size] = material::@as_bytes(self.root)[..];
@@ -305,7 +323,8 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
     GeometryWrite[1] output = { output_of(slot) };
     StepRecorder recorder = {
         .renderer      = renderer,
-        .stage         = cloths.stages.fused,
+        .lean          = root.features == 0,
+        .stage         = root.features == 0 ? cloths.stages.fused_lean : cloths.stages.fused,
         .state_writes  = { cloths.positions, cloths.work },
         .output        = output[..],
         .staging       = cloths.batch.staging,
@@ -320,7 +339,9 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
 fn void? record_batch(GpuCloths* cloths, Renderer* renderer, Scene* scene) @private {
     StepBatch* batch = &cloths.batch;
     usz count = batch.count;
+    uint features = batch.features;
     batch.count = 0;
+    batch.features = 0;
     if (!count || !renderer.frame_open) return; // an earlier fault closed the frame and took the batch with it
 
     usz parameter_bytes = count * ClothRoot::size;
@@ -335,8 +356,9 @@ fn void? record_batch(GpuCloths* cloths, Renderer* renderer, Scene* scene) @priv
     }
 
     BufferId[2] state_writes = { cloths.positions, cloths.work };
+    ComputeShaderId stage = features == 0 ? cloths.stages.single_lean : cloths.stages.single;
     renderer.dispatch({
-        .shader   = cloths.stages.single,
+        .shader   = stage,
         .root     = batch.staging[:parameter_bytes],
         .groups   = { (uint)count, 1, 1 },
         .writes   = state_writes[..],
@@ -392,7 +414,6 @@ fn ClothRoot? step_root(
         .shapes             = shapes,
         .push               = work + (PUSH_SECTION * capacity + slot.first_particle) * vector,
         .limits             = tables + slot.tables.limits,
-        .particle_count     = slot.particle_count,
         .shape_count        = device.shape_count,
         .anchor_frame       = bitcast(device.anchor, float[16]),
         .target_frame       = bitcast(device.target, float[16]),
@@ -405,6 +426,7 @@ fn ClothRoot? step_root(
             0,
             0,
         },
+        .particle_count     = slot.particle_count,
         .stretch_stiffness  = pass_stiffness(desc.stretch_stiffness, desc.iterations),
         .bend_stiffness     = pass_stiffness(desc.bend_stiffness, desc.iterations),
         .damping            = math::max(0.0f, 1 - desc.damping * substep_seconds),

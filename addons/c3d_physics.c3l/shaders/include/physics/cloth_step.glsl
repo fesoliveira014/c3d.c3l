@@ -48,7 +48,6 @@ struct StepConstraint {
     uint  first;
     uint  second;
     float rest_length;
-    vec3  rest_direction;
 };
 
 void step_initialize(ClothRoot root, uint index) {
@@ -59,7 +58,7 @@ void step_initialize(ClothRoot root, uint index) {
 }
 
 uint step_pair_vectors(ClothRoot root) {
-    return (root.features & CLOTH_FEATURE_REFERENCE) != 0u ? 2u * root.particle_count : 0u;
+    return (CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_REFERENCE) != 0u ? 2u * root.particle_count : 0u;
 }
 
 // Vectors the root stages: the reference pairs, then the shapes.
@@ -83,13 +82,13 @@ vec3 step_transform_point(mat4 frame, vec3 point) {
 }
 
 vec3 step_reference_solved(ClothRoot root, uint index) {
-    if ((root.features & CLOTH_FEATURE_REFERENCE) != 0u) return StepVectors(root.reference).values[2u * index].xyz;
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_REFERENCE) != 0u) return StepVectors(root.reference).values[2u * index].xyz;
 
     return step_transform_point(root.anchor_frame, ClothVectors(root.rest).values[index].xyz);
 }
 
 vec3 step_reference_current(ClothRoot root, uint index) {
-    if ((root.features & CLOTH_FEATURE_REFERENCE) != 0u) return StepVectors(root.reference).values[2u * index + 1u].xyz;
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_REFERENCE) != 0u) return StepVectors(root.reference).values[2u * index + 1u].xyz;
 
     return step_transform_point(root.target_frame, ClothVectors(root.rest).values[index].xyz);
 }
@@ -104,7 +103,7 @@ vec3 step_reference_at_end(ClothRoot root, uint index, StepPass step) {
 }
 
 vec3 step_transport(ClothRoot root, uint index, StepPass step) {
-    if ((root.features & CLOTH_FEATURE_TRANSPORT) == 0u) return vec3(0.0);
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_TRANSPORT) == 0u) return vec3(0.0);
 
     float weight = uintBitsToFloat(ClothWords(root.transport).values[index]);
     if (weight == 0.0) return vec3(0.0);
@@ -118,7 +117,7 @@ vec3 step_transport(ClothRoot root, uint index, StepPass step) {
 
 // Each particle sums the force shares of its own triangles in triangle order, as the host does, so no atomics are needed.
 vec3 step_wind_acceleration(ClothRoot root, uint index) {
-    if ((root.features & CLOTH_FEATURE_WIND) == 0u) return vec3(0.0);
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_WIND) == 0u) return vec3(0.0);
 
     ClothWords adjacency = ClothWords(root.adjacency);
     ClothWords triangles = ClothWords(root.triangles);
@@ -161,7 +160,7 @@ vec3 step_wind_acceleration(ClothRoot root, uint index) {
 }
 
 float step_soft_compliance(ClothRoot root, uint index) {
-    if ((root.features & CLOTH_FEATURE_SOFT) == 0u) return 0.0;
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_SOFT) == 0u) return 0.0;
 
     return uintBitsToFloat(ClothWords(root.soft).values[index]);
 }
@@ -202,18 +201,18 @@ void step_soft(ClothRoot root, uint index, StepPass step) {
 }
 
 StepConstraint step_constraint(ClothRoot root, uint index) {
-    ClothConstraints constraints = ClothConstraints(root.constraints);
-    uvec4 head = constraints.values[2u * index];
-    uvec4 tail = constraints.values[2u * index + 1u];
-    return StepConstraint(
-        head.x,
-        head.y,
-        uintBitsToFloat(head.z),
-        vec3(uintBitsToFloat(tail.x), uintBitsToFloat(tail.y), uintBitsToFloat(tail.z))
-    );
+    uvec4 head = ClothConstraints(root.constraints).values[index];
+    return StepConstraint(head.x, head.y, uintBitsToFloat(head.z));
 }
 
-void step_project(ClothRoot root, StepConstraint constraint, StepPass step) {
+// Read only for a pair that collapsed onto one point, so a projection touches 16 B of each constraint.
+vec3 step_rest_direction(ClothRoot root, uint index) {
+    uint total = ClothWords(root.color_starts).values[root.color_count];
+    uvec4 stored = ClothConstraints(root.constraints).values[total + index];
+    return vec3(uintBitsToFloat(stored.x), uintBitsToFloat(stored.y), uintBitsToFloat(stored.z));
+}
+
+void step_project(ClothRoot root, uint index, StepConstraint constraint, StepPass step) {
     StepVectors predicted = StepVectors(root.predicted);
     vec4 first = predicted.values[constraint.first];
     vec4 second = predicted.values[constraint.second];
@@ -222,7 +221,12 @@ void step_project(ClothRoot root, StepConstraint constraint, StepPass step) {
 
     vec3 delta = second.xyz - first.xyz;
     float length_now = length(delta);
-    vec3 direction = length_now > MIN_EDGE_LENGTH ? delta / length_now : constraint.rest_direction;
+    vec3 direction;
+    if (length_now > MIN_EDGE_LENGTH) {
+        direction = delta / length_now;
+    } else {
+        direction = step_rest_direction(root, index);
+    }
     vec3 correction = direction * ((length_now - constraint.rest_length) * step.stiffness / total_weight);
     predicted.values[constraint.first].xyz = first.xyz + correction * first.w;
     predicted.values[constraint.second].xyz = second.xyz - correction * second.w;
@@ -393,7 +397,9 @@ void step_collide(ClothRoot root, uint index, StepPass step) {
 
     vec3 position = particle.xyz;
     position.y = max(position.y, root.ground);
+#ifndef CLOTH_LEAN
     if ((step.phases & PASS_SHAPES) != 0u) position = step_collide_shapes(root, index, position, step);
+#endif
     predicted.values[index].xyz = position;
 }
 
@@ -433,7 +439,7 @@ void step_item(ClothRoot root, uint item, StepPass step) {
         StepConstraint constraint = step_constraint(root, step.first + item);
         step_enter(root, constraint.first, step);
         step_enter(root, constraint.second, step);
-        step_project(root, constraint, step);
+        step_project(root, step.first + item, constraint, step);
         step_leave(root, constraint.first, step);
         step_leave(root, constraint.second, step);
         return;
@@ -441,7 +447,9 @@ void step_item(ClothRoot root, uint item, StepPass step) {
 
     uint particle = item - step.count;
     if (particle >= root.particle_count) {
+#ifndef CLOTH_LEAN
         if ((step.phases & PASS_PLACE) != 0u) step_place_item(root, particle - root.particle_count, step);
+#endif
         return;
     }
     if (((ClothWords(root.marks).values[particle] >> step.member_bit) & 1u) != 0u) return;
@@ -452,8 +460,12 @@ void step_item(ClothRoot root, uint item, StepPass step) {
 
 uint step_item_count(ClothRoot root, StepPass step) {
     bool owns_particles = (step.phases & (PASS_PREDICT | PASS_COLLIDE)) != 0u;
+#ifdef CLOTH_LEAN
+    return step.count + (owns_particles ? root.particle_count : 0u);
+#else
     uint placed = (step.phases & PASS_PLACE) != 0u ? root.shape_count : 0u;
     return step.count + (owns_particles ? root.particle_count : 0u) + placed;
+#endif
 }
 
 vec3 step_local_position(ClothRoot root, uint particle) {
