@@ -156,7 +156,7 @@ vec3 standard_ambient_fill(FrameRoot frame, vec3 base_color, float metallic, flo
 | `offset_normal` | Geometric normal for the shadow offset. Both normals are flipped for double-sided back faces, as `sample_standard_material` does |
 | `view_direction` | `standard_view_direction(frame, world_position)` |
 
-`world_position` selects the probes and the lights, sets the light direction and starts the traced shadow ray. A forward stage passes [`v_shading_pos`](#shading-position-varying), not `v_world_pos`, so that on a view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the ray starts inside the triangle.
+`world_position` selects the probes and the lights, sets the light direction and starts the traced shadow ray. A forward stage passes [`v_shading_pos`](#shading-position-varying), not `v_world_pos`, so that on a view with [`msaa`](msaa.md) above `ONE` the ray starts inside the triangle.
 
 `specular_weight` is 1 for Standard and 0 for a diffuse-only surface, the value a G-buffer stage passes to `write_gbuffer`. `pixel` is `ivec2(gl_FragCoord.xy)`: ambient occlusion and [screen-space GI](screen_space_gi.md) follow the draw flags the renderer sets for the opaque list, custom draws included, and read 1 and no indirect term on views without them, for transparent draws and for [scene readers](#scene-reads). The field list of `StandardMaterialSample` is frozen: a new surface property arrives as a new parameter or a new struct, never a new field, so a stage that initializes the sample field by field stays complete. A G-buffer stage fills the same sample and calls `write_gbuffer`; the resolve runs the same functions.
 
@@ -317,11 +317,11 @@ float morph = quadtree_morph(
 );
 ```
 
-`DepthArray` is a `uint` array reference the stage declares. The batch's `QuadtreeGpu` is never zero for a quadtree batch, so a stage that reads it under `DRAW_QUADTREE` needs no further check. The include states the two conditions the ranges keep: no pop at a merge, and at most one depth between neighbours. An orthographic selecting view has no distance term and takes the size rule, so a stage skips `quadtree_morph` when `quadtree_selection_orthographic(frame)` holds; the morph is 0. That function reads `FRAME_SELECTION_ORTHOGRAPHIC` in `FrameRoot.flags`, not `frame.proj`: a shadow layer's `proj` is the light's, orthographic for every directional cascade whatever the view is. Draws in shadow layers and the depth prepass read the owning view's camera from `FrameRoot.selection_camera` and its projection kind from the flag, so their surface matches the shaded one ([selection camera](views.md#selection-camera)).
+`DepthArray` is a `uint` array reference the stage declares. The batch's `QuadtreeGpu` is never zero for a quadtree batch, so a stage that reads it under `DRAW_QUADTREE` needs no further check. The include states the two conditions the ranges keep: no pop at a merge, and at most one depth between neighbours. An orthographic selecting view has no distance term and takes the size rule, so a stage skips `quadtree_morph` when `quadtree_selection_orthographic(frame)` holds; the morph is 0. That function reads `FRAME_SELECTION_ORTHOGRAPHIC` in `FrameRoot.flags`, not `frame.proj`: a shadow layer's `proj` is the light's, orthographic for every directional cascade whatever the view is. Draws in shadow layers and the depth prepass read the owning view's camera from `FrameRoot.selection_camera` and its projection kind from the flag, so their surface matches the shaded one ([selection camera](views_reference.md#selection-camera)).
 
 ### Traced shadows
 
-A custom forward stage receives ray-traced shadows through `ShaderDesc.traced_fragment`. `hardware` is the forward source compiled with `RT_SHADOWS`, drawn on renderers with ray queries; `software` is the same source compiled with `RT_SHADOWS` and `SCENE_TRACE_BVH`, drawn on renderers without them (see [ray-traced shadows](shadows.md#ray-traced-shadows) and [scene tracing](scene_trace.md)). `shadows.glsl` defines `SCENE_TRACE_RAY_QUERY` under `RT_SHADOWS` unless `SCENE_TRACE_BVH` is set, so one source serves all three forms. In a fragment stage `shadow_visibility`, `shadow_transmittance` and `ray_shadow_visibility` cast the view's [soft shadow](shadows.md#soft-shadows) rays at a light with a source extent; they keep their signatures. A traced form under forward MSAA should pass them [`v_shading_pos`](#shading-position-varying) as the receiver position.
+A custom forward stage receives ray-traced shadows through `ShaderDesc.traced_fragment`. `hardware` is the forward source compiled with `RT_SHADOWS`, drawn on renderers with ray queries; `software` is the same source compiled with `RT_SHADOWS` and `SCENE_TRACE_BVH`, drawn on renderers without them (see [ray-traced shadows](ray_traced_shadows.md) and [scene tracing](scene_trace.md)). `shadows.glsl` defines `SCENE_TRACE_RAY_QUERY` under `RT_SHADOWS` unless `SCENE_TRACE_BVH` is set, so one source serves all three forms. In a fragment stage `shadow_visibility`, `shadow_transmittance` and `ray_shadow_visibility` cast the view's [soft shadow](ray_traced_shadows.md#soft-shadows) rays at a light with a source extent; they keep their signatures. A traced form under forward MSAA should pass them [`v_shading_pos`](#shading-position-varying) as the receiver position.
 
 A traced form includes the soft-shadow code by default and draws on every view that traces shadows, whether or not a light has an extent. An application whose lights have no source extent can drop that code by defining `RT_SHADOWS_HARD` in the form, as a compile define next to `RT_SHADOWS` or with `#define` before `shadows.glsl`. `ray_shadow_visibility` is then one ray toward the light's centre, as for a light without an extent, and the form ignores `source_radius` and `source_angle`. `ShaderDesc` has no field for this: the built-in stages keep a hard-only form of their own, and a custom form chooses by its source.
 
@@ -345,7 +345,7 @@ The selector includes globals once and falls back to the complete list outside c
 or on cell overflow; do not append globals yourself. Use `flat_lights(frame)` when one
 loop evaluates lighting away from the supplied position, as Physical transmission does
 for its exit point. The same helpers are available to custom vertex consumers, using the
-position/depth appropriate to that stage. See [view light selection](views.md#light-selection)
+position/depth appropriate to that stage. See [view light selection](lights.md#select-lights-with-clusters)
 for grid coverage and ownership.
 
 ## G-buffer stage
@@ -372,7 +372,7 @@ bits for the lighting resolve and the traced effects. A material whose traced st
 height before shading, as the forward, the G-buffer and the prepass stage of terrain do; see
 [trace proxies](scene_trace.md#trace-proxies). It stays zero otherwise.
 
-On a `DEFERRED` view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the stage writes the multisample
+On a `DEFERRED` view with [`msaa`](msaa.md) above `ONE` the stage writes the multisample
 G-buffer: the sample count is pipeline state, the stage source does not change, and it still shades once per pixel
 and primitive. The resolve lights an edge pixel per sample from its own channels and any other pixel once.
 
@@ -500,7 +500,7 @@ center, in a pass that keeps `MaterialCommon.depth_write`, so water writes depth
 blended reader stays in the transparent list, sorted with every other blend, and never writes
 depth.
 
-On a view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE`, the snapshots and the scene-read list are
+On a view with [`msaa`](msaa.md) above `ONE`, the snapshots and the scene-read list are
 recorded after the resolve: a reader samples single-sample color and depth and draws single-sample. A custom stage in
 the opaque list, including its velocity and depth forms, runs in the multisample pass with the view's sample count
 as pipeline state; the stage source does not change, and it still shades once per pixel.
@@ -617,7 +617,7 @@ A custom vertex stage that writes its outputs itself instead of calling `write_m
 
 `mesh_vertex.glsl` declares `layout(location = 9) centroid out vec3 v_shading_pos`, and `write_mesh_outputs` writes the world position that feeds `v_world_pos` to it. The depth and velocity forms leave it out, as they leave out `v_world_pos`. The built-in billboard, ribbon, terrain and water stages write it as well.
 
-Under [multisample anti-aliasing](views.md#multisample-anti-aliasing) a forward fragment runs once per pixel when any sample is covered and interpolates `v_world_pos` at the pixel centre, which can lie outside the triangle. A traced shadow ray started there can begin below the neighbouring surface and hit it, which draws as speckle on finely tessellated terrain. `centroid` interpolates inside the covered samples, and on a view without MSAA it is the pixel centre, so `v_shading_pos` equals `v_world_pos` there.
+Under [multisample anti-aliasing](msaa.md) a forward fragment runs once per pixel when any sample is covered and interpolates `v_world_pos` at the pixel centre, which can lie outside the triangle. A traced shadow ray started there can begin below the neighbouring surface and hit it, which draws as speckle on finely tessellated terrain. `centroid` interpolates inside the covered samples, and on a view without MSAA it is the pixel centre, so `v_shading_pos` equals `v_world_pos` there.
 
 A fragment stage reads it with `layout(location = 9) centroid in vec3 v_shading_pos;` and passes it as the position of `shade_standard_surface`, `evaluate_standard_lights`, `shadow_visibility`, `shadow_transmittance`, `ray_shadow_visibility` and the light direction. The two Standard functions take one position for probe and light selection, light direction and shadow ray, so they take it whole; a stage that selects lights and probes through its own calls, as Physical and Toon do, keeps `v_world_pos` for the selection. Derivatives, `view_depth`, decals, material and terrain sampling, fog and `write_blend_output` keep `v_world_pos` in every stage. The built-in Standard, Physical, Toon, terrain and water fragments read it. A custom fragment stage under MSAA should pass it to its traced lighting; one that does not compiles unchanged and keeps the pixel-centre position. Deferred stages do not read it: the lighting resolve reconstructs the position from depth.
 
