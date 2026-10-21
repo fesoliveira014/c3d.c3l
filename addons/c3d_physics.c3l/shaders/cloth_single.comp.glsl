@@ -3,16 +3,14 @@
 #define CLOTH_COHERENT coherent
 #include "physics/cloth_step.glsl"
 
-// Every thread of a workgroup reaches each of these in step; the loops around them have uniform bounds.
+// Every thread of the one workgroup reaches each of these in step; the loops around them have uniform bounds.
 void sync_workgroup() {
     groupMemoryBarrier();
     barrier();
 }
 
-// Workgroup i steps the i-th root; workgroups share no data and never wait for each other.
 void main() {
-    uint64_t roots = DispatchRoot(pc.root_gpu).parameters;
-    ClothRoot root = ClothRoot(roots + uint64_t(gl_WorkGroupID.x) * CLOTH_ROOT_BYTES);
+    ClothRoot root = ClothRoot(DispatchRoot(pc.root_gpu).parameters);
     uint thread = gl_LocalInvocationID.x;
     uint stride = gl_WorkGroupSize.x;
 

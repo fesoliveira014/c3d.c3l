@@ -13,14 +13,12 @@ import c3d::scene;
 import gpu;
 import std::io;
 import std::math;
-import std::math::quaternion;
 
 const uint SMALL_CELLS @private = 32; // a 33x33-vertex flag, one workgroup per step
 const uint LARGE_CELLS @private = 40; // a 41x41-vertex flag, above DEVICE_SINGLE_PASS_PARTICLES
 const float FLAG_WIDTH @private = 1.8f;
 const float FLAG_DEPTH @private = 1.2f;
 const float POLE_HEIGHT @private = 3;
-const Vec3 FLAG_ORIGIN @private = { 0, POLE_HEIGHT, 0 };
 const Vec3 GRAVITY @private = { 0, -9.81f, 0 };
 const float DAMPING @private = 3; // per second; settles the swing within the run
 const uint SETTLE_FRAMES @private = 270;
@@ -136,22 +134,16 @@ fn Node*? add_flag(
     uint cells,
     ClothExecution execution,
     Entity[] colliders = {},
-    uint[] pins = {},
-    Vec3 position = FLAG_ORIGIN,
-    float yaw = 0,
 ) @private {
     MaterialCommon two_sided = material::MATERIAL_COMMON_DEFAULT;
     two_sided.double_sided = true;
     MaterialId material = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }, two_sided))!;
     Node* flag = fixture.scene.add_mesh(geometry, material, name: "flag")!;
-    flag.local.position = position;
-    flag.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, yaw);
+    flag.local.position = { 0, POLE_HEIGHT, 0 };
     fixture.scene.update_world();
 
-    if (!pins.len) {
-        pins = alloc::new_array(tmem, uint, (sz)(cells + 1));
-        foreach (index, &pin : pins) *pin = (uint)index;
-    }
+    uint[] pins = alloc::new_array(tmem, uint, (sz)(cells + 1));
+    foreach (index, &pin : pins) *pin = (uint)index;
     ClothDesc desc = cloth::default_cloth_desc();
     desc.pins = pins;
     desc.colliders = colliders;
@@ -253,8 +245,18 @@ struct TwinResult @private {
     uint  touching; // particles resting on the ground plane
 }
 
-fn TwinResult compare_twins(Fixture* fixture, Node* host, Node* device, Vec3[] initial) @private {
+fn TwinResult twin_run(Fixture* fixture, uint cells, ClothStepShape shape) @private {
+    GeometryId geometry = add_flag_geometry(fixture, cells)!!;
+    Node* host = add_flag(fixture, geometry, cells, ClothExecution.CPU)!!;
+    Node* device = add_flag(fixture, geometry, cells, ClothExecution.GPU)!!;
     ClothState* host_state = fixture.scene.get(host, Cloth).state;
+    assert(cloth_gpu::step_shape((uint)host_state.positions.len) == shape);
+    Vec3[] initial = alloc::new_array(tmem, Vec3, host_state.positions.len);
+    initial[..] = host_state.positions[..];
+
+    for (uint step = 0; step < TWIN_STEPS; step++) run_frame(fixture, true)!!;
+    for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(fixture, false)!!;
+
     TwinResult result;
     Vec4[] device_positions = alloc::new_array(tmem, Vec4, host_state.positions.len);
     Observation observation = { .cloth = device.id, .positions = device_positions };
@@ -268,20 +270,6 @@ fn TwinResult compare_twins(Fixture* fixture, Node* host, Node* device, Vec3[] i
         if (host_position.y - ground < CONTACT_TOLERANCE) result.touching++;
     }
     return result;
-}
-
-fn TwinResult twin_run(Fixture* fixture, uint cells, ClothStepShape shape) @private {
-    GeometryId geometry = add_flag_geometry(fixture, cells)!!;
-    Node* host = add_flag(fixture, geometry, cells, ClothExecution.CPU)!!;
-    Node* device = add_flag(fixture, geometry, cells, ClothExecution.GPU)!!;
-    ClothState* host_state = fixture.scene.get(host, Cloth).state;
-    assert(cloth_gpu::step_shape((uint)host_state.positions.len) == shape);
-    Vec3[] initial = alloc::new_array(tmem, Vec3, host_state.positions.len);
-    initial[..] = host_state.positions[..];
-
-    for (uint step = 0; step < TWIN_STEPS; step++) run_frame(fixture, true)!!;
-    for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(fixture, false)!!;
-    return compare_twins(fixture, host, device, initial);
 }
 
 fn void test_small_flag_matches_its_cpu_twin_in_one_dispatch_per_step() @test {
@@ -307,72 +295,6 @@ fn void test_large_flag_matches_its_cpu_twin_in_fused_passes() @test {
         io::printfn("v1 fused worst %.3e m, travel %.3f m, touching %d", result.worst, result.travel, result.touching);
         assert(result.travel > MIN_TRAVEL && result.touching > 0);
         assert(result.worst <= TWIN_TOLERANCE);
-    };
-}
-
-// Each differs from the others in size, pins or the pose of its owner, so a workgroup that reads another's parameters fails.
-struct FlagSpec @private {
-    uint   cells;
-    uint[] pins; // empty pins the first row
-    Vec3   position;
-    float  yaw;
-}
-
-fn Node*? add_spec_flag(Fixture* fixture, GeometryId geometry, FlagSpec* spec, ClothExecution execution) @private {
-    return add_flag(
-        fixture:   fixture,
-        geometry:  geometry,
-        cells:     spec.cells,
-        execution: execution,
-        pins:      spec.pins,
-        position:  spec.position,
-        yaw:       spec.yaw,
-    );
-}
-
-fn void test_small_flags_of_different_owners_and_pins_step_in_one_dispatch() @test {
-    Fixture fixture;
-    create_fixture(&fixture)!!;
-    defer destroy_fixture(&fixture);
-
-    @pool() {
-        uint[2] corner_pins = { 0, 24 };
-        FlagSpec[3] specs = {
-            { .cells = 32, .position = FLAG_ORIGIN },
-            { .cells = 24, .pins = corner_pins[..], .position = { 3, POLE_HEIGHT, 1 }, .yaw = 0.6f },
-            { .cells = 16, .position = { -3, POLE_HEIGHT, -1 }, .yaw = -0.9f },
-        };
-        Node*[3] hosts;
-        Node*[3] devices;
-        Vec3[][3] initials;
-        foreach (index, &spec : specs) {
-            assert(cloth_gpu::step_shape((spec.cells + 1) * (spec.cells + 1)) == ClothStepShape.SINGLE);
-            GeometryId geometry = add_flag_geometry(&fixture, spec.cells)!!;
-            hosts[index] = add_spec_flag(&fixture, geometry, spec, ClothExecution.CPU)!!;
-            devices[index] = add_spec_flag(&fixture, geometry, spec, ClothExecution.GPU)!!;
-            ClothState* state = fixture.scene.get(hosts[index], Cloth).state;
-            initials[index] = alloc::new_array(tmem, Vec3, state.positions.len);
-            initials[index][..] = state.positions[..];
-        }
-
-        for (uint step = 0; step < TWIN_STEPS; step++) {
-            run_frame(&fixture, true)!!;
-            assert(fixture.renderer.stats.dispatches == 1);
-        }
-        for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(&fixture, false)!!;
-
-        foreach (index, host : hosts) {
-            TwinResult result = compare_twins(&fixture, host, devices[index], initials[index]);
-            io::printfn(
-                "v1 batch cloth %d worst %.3e m, travel %.3f m, touching %d",
-                index,
-                result.worst,
-                result.travel,
-                result.touching,
-            );
-            assert(result.travel > MIN_TRAVEL && result.touching > 0);
-            assert(result.worst <= TWIN_TOLERANCE);
-        }
     };
 }
 
