@@ -34,7 +34,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Cl
     uint64_t geometry_normals;   // packed three-float normals of the output geometry
     uint64_t soft;               // float per particle: effective compliance of a soft attachment, zero elsewhere
     uint64_t transport;          // float per particle: share of the owner's motion the particle follows
-    uint64_t shapes;             // six vec4 per shape: owner pose at the request's start and end, the segment's owner-local end points
+    uint64_t shapes;             // six vec4 per shape: owner pose at the request's start and end, the segment's owner-local end points; the placed segments follow
     uint64_t push;               // vec4 per particle: contact displacement of this substep, and 1 once it reached its limit
     uint64_t limits;             // float per particle: metres contact may push it within one substep
     uint     particle_count;
