@@ -286,30 +286,9 @@ box3d world only: it recreates no scene components and reports no events.
 
 ## Update on a worker pool
 
-`PhysicsWorld.set_parallel(ParallelFor)` lets the world run [cloth staging](cloth.md#update-on-a-job-pool),
-breakable graph building and debug collider generation on the application's workers. `ParallelFor` is the neutral
-fork-join hook declared by core; a zero value runs on the calling thread. The physics package imports no job library,
-so a [`c3d_job`](jobs.md) pool needs a short adapter:
-
-```c3
-fn void run_on_pool(
-    void* context,
-    ParallelRangeFn range,
-    void* data,
-    uint count,
-    uint batch,
-) {
-    JobPool* pool = context;
-    pool.wait(pool.run(
-        range: range,
-        data:  data,
-        count: count,
-        batch: batch,
-    ));
-}
-
-world.set_parallel({ .run = &run_on_pool, .context = &pool });
-```
+`PhysicsWorld.set_parallel(ParallelFor)` lets the world run [cloth staging](cloth.md#update-on-a-job-pool), breakable
+graph building and debug collider generation on the application's workers. The hook, its rules and the adapter for a
+[`c3d_job`](jobs.md) pool are in [the job pool](jobs.md#parallelfor-hook); the physics package imports no job library.
 
 Results are bit-identical to the serial path for any worker count. While a parallel call runs, the application must
 not mutate the scene or the world, or step it. The box3d step has its own threads (`PhysicsDesc.worker_count`).

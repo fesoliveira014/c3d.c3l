@@ -101,7 +101,7 @@ is accepted. In the example wall, 0.5 m cubes sit on a 0.508 m pitch: face gaps 
 diagonal gaps are above it. Deriving the graph tests every piece pair, so its cost grows with the square of the piece count. It reserves 24 bytes of
 temporary memory per pair (n(n-1)/2 pairs) for the candidate list, on the serial path too, and faults
 `c3d::CAPACITY_EXCEEDED` when the reservation cannot be made or the pair count exceeds `uint::max`.
-`PhysicsWorld.set_parallel` spreads the tests over the application's workers with the same result for any worker count.
+`PhysicsWorld.set_parallel` ([`ParallelFor`](jobs.md#parallelfor-hook)) spreads the tests over the application's workers with the same result for any worker count.
 Explicit recipes carry their own welds and derive none.
 
 ## Explicit recipes

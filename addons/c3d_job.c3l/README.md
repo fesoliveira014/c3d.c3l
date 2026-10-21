@@ -36,7 +36,7 @@ JobId id = pool.run(
 pool.wait(id);
 ```
 
-The ranges of one run must write disjoint data. Add-ons that take a `ParallelFor` hook (core declares it) run on a pool through a short function the application writes.
+The ranges of one run must write disjoint data. Add-ons that take a `ParallelFor` hook (core declares it) run on a pool through a short function the application writes; see [the hook](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/jobs.md#parallelfor-hook).
 
 ## Targets and examples
 

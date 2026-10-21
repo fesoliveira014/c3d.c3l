@@ -22,20 +22,20 @@ These rules apply to every set below and are not repeated in the set READMEs.
 
 | Path | Holds | License |
 | --- | --- | --- |
-| `animation_authoring_legacy/` | Animator v2 and AnimatedCrowd v3 streams | project-authored |
-| `animation_legacy/` | Animator v1 and AnimatedCrowd v2 streams | project-authored |
-| `crowd_v1/` | AnimatedCrowd v1 streams | project-authored |
-| `instances_v1/`, `instances_v2/`, `instances_v3/` | InstancedMesh v1, v2 and v3 streams | project-authored |
-| `billboards_v1/` | BillboardBatch v1 streams | project-authored |
-| `mesh_v2/` | Mesh v2 streams | project-authored |
-| `lod_v1/` | LodGroup v1 streams | project-authored |
-| `trace_fields_legacy/` | Mesh v1, InstancedMesh v1 and LodGroup v2 streams | project-authored |
-| `animation_contact/` | FBX with a translation stack and a scale stack, for profiled import | project-authored |
+| [`animation_authoring_legacy/`](animation_authoring_legacy/README.md) | Animator v2 and AnimatedCrowd v3 streams | project-authored |
+| [`animation_legacy/`](animation_legacy/README.md) | Animator v1 and AnimatedCrowd v2 streams | project-authored |
+| [`crowd_v1/`](crowd_v1/README.md) | AnimatedCrowd v1 streams | project-authored |
+| [`instances_v1/`](instances_v1/README.md), [`instances_v2/`](instances_v2/README.md), [`instances_v3/`](instances_v3/README.md) | InstancedMesh v1, v2 and v3 streams | project-authored |
+| [`billboards_v1/`](billboards_v1/README.md) | BillboardBatch v1 streams | project-authored |
+| [`mesh_v2/`](mesh_v2/README.md) | Mesh v2 streams | project-authored |
+| [`lod_v1/`](lod_v1/README.md) | LodGroup v1 streams | project-authored |
+| [`trace_fields_legacy/`](trace_fields_legacy/README.md) | Mesh v1, InstancedMesh v1 and LodGroup v2 streams | project-authored |
+| [`animation_contact/`](animation_contact/README.md) | FBX with a translation stack and a scale stack, for profiled import | project-authored |
 | `animation_events/` | glTF and FBX specimens with authored animation events | glTF CC0 1.0, FBX project-authored |
-| `import_fidelity/` | glTF and FBX tangent specimens | CC0 1.0 (`LICENSE.txt`) |
+| [`import_fidelity/`](import_fidelity/README.md) | glTF and FBX tangent specimens | CC0 1.0 (`LICENSE.txt`) |
 | `tangent_space/` | Tangent generation input and expected payloads | CC0 1.0, and a pinned MikkTSpace corpus |
 | `fbx/` | Real-tool FBX files copied from ufbx | MIT or Unlicense |
-| `fonts/` | Noto Sans and Noto Sans CJK subsets | SIL OFL 1.1 (`OFL.txt`) |
+| [`fonts/`](fonts/README.md) | Noto Sans and Noto Sans CJK subsets | SIL OFL 1.1 (`OFL.txt`) |
 | `gltf/` | Small glTF documents written by `generate.py`, plus `lod.gltf` and `lod_animated.gltf` | project-authored |
 | `texture/` | DDS, KTX and KTX2 containers | mixed; [LICENSES.md](LICENSES.md) |
 | `texture_fidelity/` | `leaf_rgba8.bin`, a raw 32 x 32 RGBA8 image with varying alpha, for mip coverage tests | origin not recorded |
