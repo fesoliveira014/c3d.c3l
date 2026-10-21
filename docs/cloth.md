@@ -407,11 +407,14 @@ the old local geometry may render elsewhere. Restoring a supported transform let
 updates retry. World-surface preservation is not guaranteed under an unrepresentable
 transform.
 
-With `C3D_PHYSICS_SERIAL`, Cloth authoring version 7 and CrowdCloth authoring version 2 store
+With `C3D_PHYSICS_SERIAL`, Cloth authoring version 9 and CrowdCloth authoring version 4 store
 collision settings, requested pins, typed seam pairs, collider references, `render_particles`,
 `tangent_frame`, `tangent_uv_set`, `attachments`, `bend_mode`, `bend_compliance`, `rest_angles`,
-`transport`, `cuts` (`ClothCutPath`) and `tears` (`ClothTearLimits`). Older JSONC payloads default
-`tears` to `default_cloth_tear_limits()` (`opening_iterations = 32`, `max_requests = 0`) and other newer fields to empty/false/`DISTANCE`/`0`.
+`transport`, `cuts` (`ClothCutPath`), `tears` (`ClothTearLimits`), `sleep_speed`, `sleep_steps`,
+`density`, `drag_coefficient` and `lift_coefficient`. Older JSONC payloads default
+`tears` to `default_cloth_tear_limits()` (`opening_iterations = 32`, `max_requests = 0`), `density` to 0.2,
+`drag_coefficient` to 1.2, `lift_coefficient` to 0.6, `sleep_speed` to 0 and `sleep_steps` to 30, and other newer
+fields to empty/false/`DISTANCE`/`0`.
 Version-1/2/3 JSONC defaults `continuous` to
 false and `max_ccd_iterations` to 64. Version-1/2 also defaults self-contact to false and
 seams to empty; version-1 receives the discrete collision defaults. Incompatible older

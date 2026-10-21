@@ -180,8 +180,8 @@ move their rendered `Mesh` to an owned `ClothOutput` child on preparation (`clot
 crowd part batches with per-slot `ClothOutput` children while supporting per-particle reference
 `transport`. Use `scene.remove_cloth` and `scene.remove_crowd_cloth` (not `scene.remove_component`)
 to remove cloth components so the source `Mesh` or crowd batch is restored and generated
-`ClothOutput` children are deleted. Serialization stores `Cloth` in authoring version 8 (including `cuts`, `tears`, `sleep_speed` and
-`sleep_steps`) and `CrowdCloth` in authoring version 3, projecting the retained source `Mesh` of prepared skinned
+`ClothOutput` children are deleted. Serialization stores `Cloth` in authoring version 9 (including `cuts`, `tears`, `sleep_speed` and
+`sleep_steps`) and `CrowdCloth` in authoring version 4, projecting the retained source `Mesh` of prepared skinned
 cloths and omitting generated `ClothOutput` children; runtime buffers, cut state, contact results and
 histories are excluded. Older JSONC payloads default `sleep_speed` to 0 and `sleep_steps` to 30, `cuts` to empty and `tears` to `default_cloth_tear_limits()` (`opening_iterations = 32`, `max_requests = 0`); Version-1..5 JSONC defaults `transport` to empty; Version-1..4 JSONC
 defaults the version-5 material, attachment and dihedral fields to empty/false/`DISTANCE`/`0`.
