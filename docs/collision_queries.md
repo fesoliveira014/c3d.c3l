@@ -90,11 +90,14 @@ All operations are methods of `CollisionShapeView`, take the poses of both shape
   result returns zero, even with an empty output slice.
 - Insufficient output returns `c3d::CAPACITY_EXCEEDED`, never a truncated prefix, and the output is unspecified.
 - Casts, sweeps and rays return `b3::NO_HIT` on a miss. `distance` returns zero for overlapping shapes.
-- A cast or sweep that starts inside the closing band (a few millimetres) reports time zero and a zero normal; geometric
-  touching alone does not promise time zero. A ray that starts inside a convex shape reports fraction zero and a zero
-  normal.
-- Invalid values return `c3d::INVALID_ARGUMENT`. Finite shapes whose required bounds cannot be represented in native
-  arithmetic return `c3d::UNSUPPORTED`; a large common world origin alone does not impose a cutoff.
+- A cast that starts inside the closing band (a few millimetres) reports time zero and a zero normal, as does a sweep of
+  a surface pair. A convex `time_of_impact` keeps the native normal for a hit, including a time-zero hit; only its
+  overlapped path returns a zero normal. Geometric touching alone does not promise time zero. A ray that starts inside a
+  convex shape reports fraction zero and a zero normal.
+- At zero distance the `distance` witnesses need not coincide.
+- A nonfinite pose, or a rotation that is not unit length, returns `c3d::INVALID_ARGUMENT`. A pose scale outside
+  `collide::UNIT_SCALE_TOLERANCE` of one returns `c3d::UNSUPPORTED`, as do finite shapes whose required bounds cannot be
+  represented in native arithmetic; a large common world origin alone does not impose a cutoff.
 - A mesh or height field pairs with convex shapes and with rays. Two surfaces are `c3d::UNSUPPORTED` except for rays.
   The rules for contacts, casts and rays against surfaces are in the
   [reference](collision_queries_reference.md#surface-queries).
@@ -118,18 +121,20 @@ Shape rock_shape = collide::hull_shape(&hull);
 `create_hull` takes no allocator: box3d owns the allocation until `destroy_hull`. It faults `b3::DEGENERATE_GEOMETRY` for
 fewer than four points, an empty slice included, or points that span no volume. A shape from `hull_shape` copies the
 hull's pointer, so it stays valid wherever the `Hull` value lives until `destroy_hull`. Poses are unit-scale
-`maths::Transform` values; bake scale into the shape or prepare a scaled `CollisionShape`.
+`maths::Transform` values, a precondition here (the prepared views fault instead); bake scale into the shape or prepare
+a scaled `CollisionShape`.
 
 | Function | Result |
 | --- | --- |
-| `manifold(a, pose_a, b, pose_b)` | Up to `MAX_MANIFOLD_POINTS` (4) touching points with separation (negative while penetrating) and a normal from `a` to `b`. `count` 0 means no contact within the speculative margin. |
+| `manifold(a, pose_a, b, pose_b)` | Up to `MAX_MANIFOLD_POINTS` (4) touching points with separation (negative while penetrating) and a normal from `a` to `b`. `count` 0 means no contact within the speculative margin; a point inside the margin can carry a small positive separation. |
 | `distance(a, pose_a, b, pose_b)` | Closest points and the normal from `a` to `b`; distance 0 when the shapes overlap. |
-| `cast(a, pose_a, b, pose_b, translation)` | First contact when `b` moves by `translation` against a resting `a`. `time` is the fraction of the translation. Faults `b3::NO_HIT`. |
-| `time_of_impact(a, sweep_a, b, sweep_b)` | First contact of two shapes moving from start to end pose. Faults `b3::NO_HIT`. |
-| `ray_cast(shape, pose, origin, direction, max_distance)` | Nearest entry of a unit-length ray; `fraction` is of `max_distance`. Faults `b3::NO_HIT`. |
+| `cast(a, pose_a, b, pose_b, translation)` | First contact when `b` moves by `translation` against a resting `a`. `time` is the fraction of the translation. An overlapped start reports time 0 and a zero normal. Faults `b3::NO_HIT`. |
+| `time_of_impact(a, sweep_a, b, sweep_b)` | First contact of two shapes moving from start to end pose. A native overlap reports time 0 and a zero normal; an initial hit may keep its normal. Faults `b3::NO_HIT`. |
+| `ray_cast(shape, pose, origin, direction, max_distance)` | Nearest entry of a unit-length ray; `fraction` is of `max_distance`. A ray starting inside reports fraction 0 and a zero normal. Faults `b3::NO_HIT`. |
 | `hull_points(shape)` | The cooked points of a `HULL` shape, borrowed until `destroy_hull`, for drawing. |
 
-The argument order sets the normal's direction and never the points. Casts and sweeps aim at box3d's linear slop (5 mm)
+For `manifold`, the argument order sets the normal's direction and never the points. For `cast`, `translation` moves `b`,
+so swapping the shapes changes which one moves. Casts and sweeps aim at box3d's linear slop (5 mm)
 of overlap rather than the exact touch. When the two shapes' radii sum to less than one slop the stop falls short of
 the touch, at one slop it lands on it, and above that it lies past it. A pose built from `time` can therefore overlap
 by up to one slop. The slop rule also applies to prepared convex casts and sweeps.
@@ -145,12 +150,12 @@ An external cache supplies the capacity and wireframe policy, so that world's `P
 `cache_wireframes` do not override it. `default_collision_cache_desc()` provides 256 slots with wireframes enabled; a
 zero-slot cache still supports prepared primitives.
 
-Worlds and prepared hulls, meshes and height fields reuse matching cooks. Native bodies still clone their own hull
-shape data. A source edit creates a new immutable entry on the next acquisition and held older entries stay valid. A
+Worlds and prepared hulls, meshes and height fields reuse matching cooks. Native bodies clone their own hull shape
+data. A source edit creates a new immutable entry on the next acquisition and held older entries stay valid. A
 live body adopts a source edit only after `PhysicsBody.mark_changed()`. Released CPU data does not invalidate a
 matching retained cook; a missing required cook returns `physics::SOURCE_UNAVAILABLE`. Unheld stale entries may be
 reclaimed. The occupancy a borrowing world reports counts the shared table; native body counts stay world-local.
-`ColliderDesc` and serialization do not change: prepared pointers and native identities are never serialized.
+`ColliderDesc` holds no cache reference, and prepared pointers and native identities are never serialized.
 
 ## Example
 

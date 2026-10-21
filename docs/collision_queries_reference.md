@@ -27,9 +27,10 @@ converted to a mesh.
 
 A scaled hull is cooked once from the unit hull with the scale baked into its points; queries never scale at query time.
 The scaled cook is a separate cache entry keyed by the geometry revision and the exact scale components: matching
-requests share it and any different component creates another. A scaled hull that is not cached yet can occupy two
-slots, its unit cook and its scaled cook. A rejected preparation releases what it held. Matching retained cooks stay
-usable after the source's CPU data is released.
+requests share it and any different component creates another. A scaled hull occupies two slots, its unit cook and its
+scaled cook; both stay cached until a source edit makes them stale, and only unheld stale entries are reclaimed, when the
+table is full. A rejected preparation releases what it held. Matching retained cooks stay usable after the source's CPU
+data is released.
 
 Preparation keeps the native cooked hull, with at most 128 vertices. Query owners also admit at most 32 vertices per
 face, so native contact clipping stays within its fixed scratch; exceeding it returns `c3d::CAPACITY_EXCEEDED`. This
@@ -105,8 +106,9 @@ overlapped path returns a zero normal. Time zero alone does not determine the no
 A `HEIGHT_FIELD` description supplies `height_field` and optional `material_indices`.
 
 - A `HEIGHTS` source holds row-major samples with x fastest, `count_x` columns and `count_z` rows, copied when cooked.
-- A `TEXTURE` source reads the red channel of mip zero of a live texture in the cache's store (8-bit values divide by
-  255, `R16_UINT` by 65535, `RGBA32_FLOAT` is read as is). The counts come from the texture.
+- A `TEXTURE` source reads the red channel of mip zero of a live texture in the cache's store (`RGBA8_UNORM` values
+  divide by 255, `R16_UINT` by 65535, `RGBA32_FLOAT` is read as is). Other formats are `c3d::UNSUPPORTED`. The counts
+  come from the texture.
 - `material_indices` holds one byte per cell, `(count_x - 1) * (count_z - 1)` in all, and the byte `HEIGHT_FIELD_HOLE`
   marks a hole.
 
@@ -141,7 +143,7 @@ never re-quantizes another window.
 
 A `TEXTURE` field may carry a `window`, `{ x, z, count_x, count_z }` in cells, that prepares only `count_x + 1` by
 `count_z + 1` samples of the map; all zero covers the whole map. A window reads one sample past each side that has map
-beyond it. It needs 8-bit or `R16_UINT` samples, because only those convert into a fixed range:
+beyond it. It needs `RGBA8_UNORM` or `R16_UINT` samples, because only those convert into a fixed range:
 
 | Condition | Fault |
 | --- | --- |
@@ -164,7 +166,7 @@ never read.
 | --- | --- |
 | A neighbour of another format or shared-edge length | `c3d::INVALID_ARGUMENT` |
 | A neighbour on a `HEIGHTS` source | `c3d::INVALID_ARGUMENT` |
-| `material_indices` that are not one per neighbour cell | `c3d::INVALID_ARGUMENT` |
+| `material_indices` that are not one per neighbour cell, or `material_indices` on a side with no texture | `c3d::INVALID_ARGUMENT` |
 | An `RGBA32_FLOAT` map with a neighbour | `c3d::UNSUPPORTED` |
 
 Neighbour `material_indices` are optional and copied with the body, so the caller's array need not outlive the call.
@@ -222,8 +224,8 @@ world.update(dt);
 | Call | Effect |
 | --- | --- |
 | `add_height_field_windows(scene, assets, node, collider, window_cells)` | Creates one child node per window under `node`, at the window origin `(x * scale.x, 0, z * scale.z)`, each with a static `PhysicsBody` holding one windowed collider copied from the template, and a `HeightFieldWindows` component on `node` that owns them. Edge windows take the remaining cells. The node's world matrix must be current. The bodies build on the next update. |
-| `mark_height_field_windows_changed(scene, node, rect)` | Marks every window whose sample range `[x - 1, x + count + 1]` meets the `SampleRect`, given in samples of the map (its texels). Returns how many it marked. |
-| `remove_height_field_windows(scene, node)` | Removes the window nodes and bodies. Does nothing without windows. |
+| `mark_height_field_windows_changed(scene, node, rect)` | Marks every window whose sample range `[x - 1, x + count + 1]` meets the `SampleRect`, given in samples of the map (its texels). Returns how many it marked, and faults `c3d::INVALID_ID` for a dead node or one without windows. |
+| `remove_height_field_windows(scene, node)` | Removes the window nodes and bodies. Does nothing without windows, and invalidates component pointers of every store the window nodes used. |
 
 - The template is a `HEIGHT_FIELD` collider over a `TEXTURE` source whose `window` is ignored. Per-cell
   `material_indices` cover the whole map and are cut per window; `add_height_field_windows` copies the template's
@@ -238,7 +240,8 @@ world.update(dt);
   `mark_changed`. `PhysicsCounters.pending_bodies` counts the bodies marked and not yet built.
 - To change `window_cells`, remove the windows and add them again. Removing the node removes its window nodes with it.
 - Each window takes one snapshot slot (the key adds the window to the texture, revision, scale and material indices).
-  Size `PhysicsDesc.snapshot_capacity` for the windows plus the application's other shapes. A window that finds no free
+  Size `PhysicsDesc.snapshot_capacity` (`CollisionCacheDesc.snapshot_capacity` for a world that borrows a cache) for the
+  windows plus the application's other shapes. A window that finds no free
   slot fails to build with `c3d::CAPACITY_EXCEEDED`, reported in `build_failures` at the update;
   `add_height_field_windows` does not check. A re-cooked window leaves its previous entry unheld, and a full table
   reclaims it.
