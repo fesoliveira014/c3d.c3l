@@ -45,10 +45,14 @@ const usz WORK_SECTIONS @private = 5; // vec4 per particle for predicted positio
 
 const String FUSED_KEY @private = "c3d_physics/cloth_fused";
 const String SINGLE_KEY @private = "c3d_physics/cloth_single";
+const String FUSED_LEAN_KEY @private = "c3d_physics/cloth_fused_lean";
+const String SINGLE_LEAN_KEY @private = "c3d_physics/cloth_single_lean";
 
 struct ClothStages @private {
     ComputeShaderId fused;
     ComputeShaderId single;
+    ComputeShaderId fused_lean;  // the same steps without soft attachments, transport, wind or skinned references
+    ComputeShaderId single_lean;
 }
 
 <*
@@ -92,6 +96,8 @@ fn GpuCloths? create_gpu_cloths(
     ClothStages stages = {
         .fused = stage(assets, FUSED_KEY, physics::CLOTH_FUSED_SPIRV[..])!,
         .single = stage(assets, SINGLE_KEY, physics::CLOTH_SINGLE_SPIRV[..])!,
+        .fused_lean = stage(assets, FUSED_LEAN_KEY, physics::CLOTH_FUSED_CLOTH_LEAN_SPIRV[..])!,
+        .single_lean = stage(assets, SINGLE_LEAN_KEY, physics::CLOTH_SINGLE_CLOTH_LEAN_SPIRV[..])!,
     };
     return {
         .allocator = allocator,

@@ -4,10 +4,12 @@
 void main() {
     ClothRoot root = ClothRoot(DispatchRoot(pc.root_gpu).parameters);
     uint item = gl_GlobalInvocationID.x;
+#ifndef CLOTH_LEAN
     if ((root.phases & PASS_STAGE) != 0u) {
         if (item < 2u * root.particle_count) step_stage(root, item);
         return;
     }
+#endif
     if ((root.phases & PASS_OUTPUT) != 0u) {
         if (item < root.particle_count) step_output(root, item);
         return;

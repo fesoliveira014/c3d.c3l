@@ -56,13 +56,13 @@ vec3 step_transform_point(mat4 frame, vec3 point) {
 }
 
 vec3 step_reference_solved(ClothRoot root, uint index) {
-    if ((root.features & CLOTH_FEATURE_REFERENCE) != 0u) return StepVectors(root.reference).values[2u * index].xyz;
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_REFERENCE) != 0u) return StepVectors(root.reference).values[2u * index].xyz;
 
     return step_transform_point(root.anchor_frame, ClothVectors(root.rest).values[index].xyz);
 }
 
 vec3 step_reference_current(ClothRoot root, uint index) {
-    if ((root.features & CLOTH_FEATURE_REFERENCE) != 0u) return StepVectors(root.reference).values[2u * index + 1u].xyz;
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_REFERENCE) != 0u) return StepVectors(root.reference).values[2u * index + 1u].xyz;
 
     return step_transform_point(root.target_frame, ClothVectors(root.rest).values[index].xyz);
 }
@@ -77,7 +77,7 @@ vec3 step_reference_at_end(ClothRoot root, uint index, StepPass step) {
 }
 
 vec3 step_transport(ClothRoot root, uint index, StepPass step) {
-    if ((root.features & CLOTH_FEATURE_TRANSPORT) == 0u) return vec3(0.0);
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_TRANSPORT) == 0u) return vec3(0.0);
 
     float weight = uintBitsToFloat(ClothWords(root.transport).values[index]);
     if (weight == 0.0) return vec3(0.0);
@@ -91,7 +91,7 @@ vec3 step_transport(ClothRoot root, uint index, StepPass step) {
 
 // Each particle sums the force shares of its own triangles in triangle order, as the host does, so no atomics are needed.
 vec3 step_wind_acceleration(ClothRoot root, uint index) {
-    if ((root.features & CLOTH_FEATURE_WIND) == 0u) return vec3(0.0);
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_WIND) == 0u) return vec3(0.0);
 
     ClothWords adjacency = ClothWords(root.adjacency);
     ClothWords triangles = ClothWords(root.triangles);
@@ -134,7 +134,7 @@ vec3 step_wind_acceleration(ClothRoot root, uint index) {
 }
 
 float step_soft_compliance(ClothRoot root, uint index) {
-    if ((root.features & CLOTH_FEATURE_SOFT) == 0u) return 0.0;
+    if ((CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_SOFT) == 0u) return 0.0;
 
     return uintBitsToFloat(ClothWords(root.soft).values[index]);
 }

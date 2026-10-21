@@ -98,10 +98,12 @@ struct StepBatch @private {
     GeometryWrite[] outputs; // geometry workgroup i writes
     ClothSlot*[]    members; // cloth workgroup i steps
     usz             count;
+    uint            features; // the union of the roots' feature bits
 }
 
 fn void StepBatch.add(&self, ClothSlot* slot, ClothRoot root) {
     root.phases = slot.started ? 0 : PASS_INITIALIZE;
+    self.features |= root.features;
     self.roots[self.count] = root;
     self.outputs[self.count] = output_of(slot);
     self.members[self.count] = slot;
@@ -254,7 +256,7 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
     GeometryWrite[1] output = { output_of(slot) };
     StepRecorder recorder = {
         .renderer      = renderer,
-        .stage         = cloths.stages.fused,
+        .stage         = root.features == 0 ? cloths.stages.fused_lean : cloths.stages.fused,
         .state_writes  = { cloths.positions, cloths.work },
         .output        = output[..],
         .staging       = cloths.batch.staging,
@@ -269,7 +271,9 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
 fn void? record_batch(GpuCloths* cloths, Renderer* renderer, Scene* scene) @private {
     StepBatch* batch = &cloths.batch;
     usz count = batch.count;
+    uint features = batch.features;
     batch.count = 0;
+    batch.features = 0;
     if (!count || !renderer.frame_open) return; // an earlier fault closed the frame and took the batch with it
 
     usz parameter_bytes = count * ClothRoot::size;
@@ -283,8 +287,9 @@ fn void? record_batch(GpuCloths* cloths, Renderer* renderer, Scene* scene) @priv
     }
 
     BufferId[2] state_writes = { cloths.positions, cloths.work };
+    ComputeShaderId stage = features == 0 ? cloths.stages.single_lean : cloths.stages.single;
     renderer.dispatch({
-        .shader   = cloths.stages.single,
+        .shader   = stage,
         .root     = batch.staging[:parameter_bytes],
         .groups   = { (uint)count, 1, 1 },
         .writes   = state_writes[..],

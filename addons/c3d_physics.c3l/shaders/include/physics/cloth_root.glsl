@@ -61,6 +61,13 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Cl
     uint     payload_offset;     // bytes from the dispatch's parameters to the reference pairs this root stages
 };
 
+// A lean stage runs only cloths whose features are zero, so the feature code compiles out of it.
+#ifdef CLOTH_LEAN
+#define CLOTH_ROOT_FEATURES(root) 0u
+#else
+#define CLOTH_ROOT_FEATURES(root) (root).features
+#endif
+
 const uint CLOTH_FEATURE_SOFT = 1u;      // mirrored as FEATURE_SOFT in gpu/cloth_pack.c3
 const uint CLOTH_FEATURE_TRANSPORT = 2u; // mirrored as FEATURE_TRANSPORT in gpu/cloth_pack.c3
 const uint CLOTH_FEATURE_REFERENCE = 4u; // mirrored as FEATURE_REFERENCE in gpu/cloth_pack.c3
