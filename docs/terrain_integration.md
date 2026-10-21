@@ -33,7 +33,7 @@ physics::add_height_field_windows(
 )!;
 ```
 
-Each window is a static body on a child node of the terrain, cooked from its own `window_cells`-square part of the height map. Windows quantize over the full height range, so they meet exactly at their seams, and tiles of one set with equal `height_scale` meet exactly at the tile seam. [Collision queries](collision_queries.md#prepared-height-fields) and the [physics README](../addons/c3d_physics.c3l/README.md#height-field-windows) state the window and neighbour contracts.
+Each window is a static body on a child node of the terrain, cooked from its own `window_cells`-square part of the height map. Windows quantize over the full height range, so they meet exactly at their seams, and tiles of one set with equal `height_scale` meet exactly at the tile seam. The [collision queries reference](collision_queries_reference.md#height-field-windows) states the window and neighbour contracts.
 
 A live physics body is not re-cooked on a texture revision. `PhysicsBody.mark_changed()` rebuilds the whole field at the next `PhysicsWorld.update`; `physics::mark_height_field_windows_changed(scene, node, SampleRect)` rebuilds only the windows whose samples meet the rectangle. Mark once when a stroke ends: collision is stale during the stroke and correct after it.
 

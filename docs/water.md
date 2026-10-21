@@ -202,7 +202,7 @@ The reflection source follows the first row that applies:
 
 ## Ocean
 
-`WaterDesc.mode = OCEAN` draws a sea that reaches the horizon as an `InstancedMesh` quadtree under [box ranges](instancing.md#box-ranges), like the [terrain](terrain.md). Each node is an instance of one shared chunk of `OCEAN_CHUNK_CELLS` (64) cells per side, and each view selects the nodes it draws. The node's local XZ plane is the rest plane; mirrors, the clip plane, `surface_view`, the queries and `fluid_sample` work on it as for a body.
+`WaterDesc.mode = OCEAN` draws a sea that reaches the horizon as an `InstancedMesh` quadtree under [box ranges](instancing_quadtree.md#box-ranges), like the [terrain](terrain.md). Each node is an instance of one shared chunk of `OCEAN_CHUNK_CELLS` (64) cells per side, and each view selects the nodes it draws. The node's local XZ plane is the rest plane; mirrors, the clip plane, `surface_view`, the queries and `fluid_sample` work on it as for a body.
 
 ```c3
 WaterDesc desc = water::default_water_desc();
@@ -225,7 +225,7 @@ scene.update_world();
 ```
 
 - **Extent.** A chunk is `cell_size * OCEAN_CHUNK_CELLS` metres wide at the finest level and doubles at each level above. The tree has the next power of two of chunks per side at or above `extent / chunk`, at most `MAX_OCEAN_CHUNKS` (256), so it covers up to twice the requested extent, centred on the node. `WaterRuntime.rest_min` and `rest_max` hold what it covers; queries outside answer `NOT_FOUND`. At the default 1.25 m cell, 256 chunks cover 20 km and need 87,381 nodes.
-- **Levels.** Each view selects its own levels with the terrain's defaults (split at 512 px, hysteresis 0.25, morph band 0.25). Tune the split threshold in place on the node's `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing.md#quadtree-selection)); `set_desc` keeps it. Vertices morph toward the coarser level, so level changes show no crack or pop.
+- **Levels.** Each view selects its own levels with the terrain's defaults (split at 512 px, hysteresis 0.25, morph band 0.25). Tune the split threshold in place on the node's `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing_quadtree.md#create-and-tune-a-tree)); `set_desc` keeps it. Vertices morph toward the coarser level, so level changes show no crack or pop.
 - **Filtering.** Far levels draw a surface filtered of waves shorter than their lattice shows; CPU queries return the unfiltered surface. Where every wave is at least four cells of a level long, drawn and queried surfaces agree within 1 cm. Validation asks for four cells of the finest level, so the finest level draws every wave whole.
 - **Anchoring.** An ocean's waves are anchored to the world: crests stay in place when the node moves, and queries read the same offsets. Move the node by multiples of `ocean_snap_step(&desc)`, so each level's vertices keep their world positions and the surface does not swim. `Scene.shift_origin` moves the node and `world_shift` together and uploads nothing ([origin rebasing](origin_rebasing.md)).
 - **Far-field regularity.** A four-wave sea shows a regular pattern in the far levels where its crests cross, faint at 6 m/s and visible from 12 m/s. A `SPECTRAL` ocean shows none; use it for an ocean seen at high wind.
