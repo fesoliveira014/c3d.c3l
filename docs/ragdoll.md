@@ -179,7 +179,7 @@ and zero bone velocities. See [serialization](serialization.md#ragdoll-adapter).
 - The skin node needs unit scale.
 - A bone drive has no torque cap.
 - For an `ANIMATED` bone, `weight` blends the live animation toward the pose captured when the ragdoll was built or
-  when the last recovery began; 1 shows the captured pose. Recovery uses this to fade a simulated pose into the animation.
+  when the last recovery began; 1 shows the captured pose.
 - Recovery gains and caps do not guarantee convergence for every rig or time step.
 
 ## See also
