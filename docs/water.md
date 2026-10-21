@@ -330,7 +330,9 @@ example's does, by design) with a linear encoding of `0.5 + 0.5 · n`, in `RGBA1
 - `RGBA8_UNORM` cannot carry the length. Rounding the third component moves it by up to `2 / 255`, which reads as a
   shortening of 0.8% in random texels at every mip, a variance of up to 0.016 per layer and a roughness of up to 0.35,
   and the real shortening of gentle ripples is smaller than that: the example's map shortens by about 0.3% where it
-  is fully minified.
+  is fully minified. `NORMAL_RGB` semantics renormalize its mips, so minification shortens nothing, but the stored
+  vectors are still rounded to 8 bits and that rounding remains: the format does not suit a ripple map under either
+  semantics.
 - A shortening under `RIPPLE_LENGTH_TOLERANCE` in `water.frag.glsl`, 0.0005 or one half-float step of the decoded
   vector, reads as none, so the rounding of a half-float map adds nothing at the finest mips.
 

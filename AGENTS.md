@@ -258,7 +258,7 @@ c3d.c3l/
 ├── manifest.json
 ├── addons/c3d_profile.c3l/ CPU/GPU capture package, standalone data tests and CPU example
 ├── addons/c3d_profile_gui.c3l/ ImGui presentation package and standalone data tests
-├── addons/c3d_physics.c3l/ box3d rigid bodies, colliders, events; owns its tests and example
+├── addons/c3d_physics.c3l/ box3d rigid bodies, colliders, events, cloth; owns its tests and examples
 ├── addons/c3d_nav.c3l/     Recast/Detour port: tiled navmesh build, tile cache, store, path queries and crowds; owns its tests and examples
 ├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives, crowd binding under C3D_CHARACTER_NAV; owns its tests and examples
 ├── addons/c3d_physics_gui.c3l/ physics inspector panel and component inspectors, characters under C3D_PHYSICS_GUI_CHARACTER; owns its tests and examples
