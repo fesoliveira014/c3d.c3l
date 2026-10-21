@@ -188,7 +188,7 @@ grid_cache.shift_origin(offset);   // see navigation_grids.md
 scene.shift_navigation(offset);    // runtime mirrors and POSITION targets
 ```
 
-Join tile builds on other threads before `NavBuilder.shift_origin`, and cache workers before `GridCache.shift_origin`. A sliced search in progress on a query the application holds moves with `NavQuery.shift_origin`; the crowd moves its own queries. Pass multiples of 256 m, the step of the large-world rebase, so origins stay exactly representable; other offsets work within float rounding. [Large worlds](large_world.md#navigation-grid-caches) states the order across all owners.
+Join tile builds on other threads before `NavBuilder.shift_origin`, and cache workers before `GridCache.shift_origin`. A sliced search in progress on a query the application holds moves with `NavQuery.shift_origin`; the crowd moves its own queries. Pass multiples of 256 m, the step of the large-world rebase, so origins stay exactly representable; other offsets work within float rounding. [Origin rebasing](origin_rebasing.md#navigation-grid-caches) states the order across all owners.
 
 ## Serialization
 

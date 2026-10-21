@@ -148,7 +148,7 @@ Billboard modes write world-space `BillboardRecord` values into a `RECORDS` [bat
 | `UNLIT` | Nothing: the input radiance |
 | `AMBIENT` | Scene ambient and core diffuse indirect (environment or selected probe volume) |
 | `DIRECT` | Every punctual and directional light that shares a layer with the system, on top of `AMBIENT` |
-| `DIRECT_SHADOWED` | `DIRECT` with each light times its shadow-map and cloud-shadow visibility, and for the sun in a view with a [medium](sky.md#medium-volumes) the mean of the medium's sun column |
+| `DIRECT_SHADOWED` | `DIRECT` with each light times its shadow-map and cloud-shadow visibility, and for the sun in a view with a [medium](fog.md#medium-volumes) the mean of the medium's sun column |
 
 `normal` selects what a lit particle presents: `CAMERA` is the facing axis; `SPHERICAL` bulges toward the camera across the quad as on an inscribed sphere; `VOLUME` has no surface and scatters each light through the Henyey-Greenstein phase function with `anisotropy` in (−1, 1), so a positive value brightens the particle when the camera looks toward the light. The volume response integrates to one over the sphere, a quarter of Lambert's response at normal incidence when `anisotropy` is 0, so a light meant for smoke needs more intensity. The normal and the anisotropy can change at runtime with the other parameters. `add_particle_material` is the only check of the anisotropy; `@set_custom_params` bypasses it, so keep its magnitude below one.
 
@@ -205,7 +205,7 @@ Collision raises events in visit order, so a callback or a sub-emitter keeps col
 
 ## Large worlds
 
-Rendering follows the [frame origin](large_world.md). After `Scene.shift_origin`, call `scene.shift_particles(offset)` ([Frame order](#frame-order)). Turbulence reduces the world shift and its scroll to one tile in double precision, so the field stays fixed to world points.
+Rendering follows the [frame origin](large_world.md). After `Scene.shift_origin` ([origin rebasing](origin_rebasing.md)), call `scene.shift_particles(offset)` ([Frame order](#frame-order)). Turbulence reduces the world shift and its scroll to one tile in double precision, so the field stays fixed to world points.
 
 ## Serialization
 

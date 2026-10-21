@@ -47,7 +47,7 @@ scene.update_world();          // world matrices of the moved nodes
 `physics.shift_origin(&scene, offset)`, which moves the kinematic push bodies, and
 before the next `physics.update`. Grounding and velocity are kept. Under
 `C3D_CHARACTER_NAV` it also shifts the points of each `NavDriven.traversal`; the crowd
-and navmesh are shifted by their own functions. See `docs/large_world.md` for the order.
+and navmesh are shifted by their own functions. See `docs/origin_rebasing.md` for the order.
 
 ## Animation-driven motion
 
