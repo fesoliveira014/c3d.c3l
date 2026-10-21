@@ -1,9 +1,21 @@
-# Fixture licenses
+# Texture fixture licenses
 
-The files under `test/fixtures/texture/` subdirectories come from the sources below and are committed unmodified.
-URLs, commits, writers and the files of each source are listed in
-[csrc/README.md](../../csrc/README.md#texture-container-fixtures). Files directly under `test/fixtures/texture/` and
-under `texture/imagemagick/` are project-authored.
+This file covers the third-party files under the subdirectories of `test/fixtures/texture/`. They come from the sources
+below and are committed unmodified. URLs, commits, writers and the files of each source are listed in
+[README.md](README.md#texture-container-fixtures). Files directly under `test/fixtures/texture/` and under
+`texture/imagemagick/` are project-authored.
+
+The other fixture sets carry their own notices:
+
+| Set | License | Notice |
+| --- | --- | --- |
+| `fonts/` | SIL Open Font License 1.1 | `fonts/OFL.txt` |
+| `fbx/` | MIT or Unlicense | the ufbx `LICENSE`, as [fbx/README.md](fbx/README.md) names |
+| `import_fidelity/` | CC0 1.0 | `import_fidelity/LICENSE.txt` |
+| `tangent_space/` | CC0 1.0 for the authored meshes, and a pinned MikkTSpace corpus | [tangent_space/README.md](tangent_space/README.md) |
+| `animation_events/` | glTF specimen CC0 1.0; FBX specimen project-authored | [animation_events/README.md](animation_events/README.md) |
+| `animation_contact/`, the compatibility sets, `gltf/`, `cube/`, the decoder inputs and the C3 recipes (`animated_crowd_fixtures.c3`, `animated_lod_fixtures.c3`, `loading_fixtures.c3`) | project-authored, under the repository license | none |
+| `texture_fidelity/` | origin not recorded | none |
 
 ## CC0 1.0
 

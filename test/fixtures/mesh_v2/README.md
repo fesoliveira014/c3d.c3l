@@ -1,20 +1,15 @@
-# Mesh v2 compatibility inputs
+# Mesh v2 inputs
 
-These immutable inputs were emitted by the Mesh v2 codec at
-`613e1f77db017d03ce27e51983716ba55116fa8f`, before `trace_facing` joined the
-component. Compiler: C3 0.8.3, default safe options. The binary and JSONC
-outputs were captured from the unmodified tree before the codec changed; two runs
-wrote identical files. `SHA256SUMS` records the exact file bytes.
+Immutable streams from the Mesh v2 codec, written before `trace_facing` joined the component. The serialization tests
+read them (`addons/c3d_serial.c3l/test_described/trace_fields_test.c3`). `SHA256SUMS` records the file bytes. The shared
+rules for compatibility sets are in [the fixtures README](../README.md#rules).
 
-| Input | Bytes |
+| File | Bytes |
 | --- | ---: |
-| mesh-v2.bin | 306 |
-| mesh-v2.jsonc | 1142 |
+| `mesh-v2.bin` | 306 |
+| `mesh-v2.jsonc` | 1142 |
 
-The owner is the root node `mesh` at `(1,2,3)` with layers 5. Its mesh has shadow
-casting off, shadow receiving, trace and `trace_only` on, one morph weight `0.25`,
-a bounds override from `(-1,-2,-3)` to `(3,2,1)` and `vertex_motion`.
+The owner is the root node `mesh` at `(1, 2, 3)` on layers 5. Its mesh has shadow casting off, shadow receiving, trace
+and `trace_only` on, one morph weight `0.25`, a bounds override from `(-1, -2, -3)` to `(3, 2, 1)` and `vertex_motion`.
 
-Both use geometry key `mesh_v2/box` and material key `mesh_v2/material`.
-The read tests preload those assets and embed the old files directly. They never
-regenerate the inputs during a test.
+The geometry key is `mesh_v2/box` and the material key is `mesh_v2/material`.

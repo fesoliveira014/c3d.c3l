@@ -1,20 +1,20 @@
 # Job pool
 
-The `c3d_job` add-on (`addons/c3d_job.c3l`, module `c3d::job`) runs a function over index ranges on a fixed
-pool of worker threads. It is fork-join: `run` splits `[0, count)` into ranges and queues them, `wait`
-returns once every range of that run has finished, and `is_finished` reports it without blocking. A run is
-either frame work or background work; frame ranges are taken first, and a cap bounds how many workers run
-background ranges at once. With zero workers every frame range runs on the calling thread. The package imports
-only the standard library and `c3d`, and `c3d::profile` under `C3D_PROFILE_CPU`; core never imports it and has
-no job feature flag.
+The `c3d_job` add-on (`addons/c3d_job.c3l`, module `c3d::job`) runs a function over index ranges on a fixed pool of
+worker threads. It is fork-join: `run` splits `[0, count)` into ranges and queues them, `wait` returns once every range
+of that run has finished, and `is_finished` reports it without blocking. A run is frame work or background work. Frame
+ranges are taken first, and a cap bounds how many workers run background ranges at once. With zero workers every frame
+range runs on the calling thread. The package binds workers to processors on Linux and Windows and imports only the
+standard library and `c3d`, plus `c3d::profile` under `C3D_PROFILE_CPU`. Core never imports it and has no job feature
+flag.
 
-```bash
-python3 scripts/build.py --example job_bench
-```
+This page also owns the [`ParallelFor` hook](#parallelfor-hook) that the physics world (cloth and crowd-slot staging,
+breakable graphs, debug lines) and the particle package accept, so an application can drive them from a job pool without
+those packages importing it.
 
-## Select the package
+## Quick start
 
-List `c3d_job` before `c3d` in the application's `project.json`, with c3d's own dependencies:
+Add `c3d_job` to the dependencies of `project.json` beside c3d's own ([release.md](release.md) lists the names):
 
 ```json
 {
@@ -23,63 +23,12 @@ List `c3d_job` before `c3d` in the application's `project.json`, with c3d's own 
 }
 ```
 
-## Create and destroy
+Create a pool, run a function over a range of items, and wait:
 
 ```c3
-JobPool pool = job::create_job_pool(mem, job::default_job_pool_desc())!;
-defer job::destroy_job_pool(&pool);
-```
+import c3d::job;
+import std::math;
 
-`create_job_pool` allocates the pool state, the worker array and the run table once, then starts the workers
-and returns once each has bound itself to its processors. It faults `c3d::CAPACITY_EXCEEDED` when an allocation
-fails, `c3d::INVALID_ARGUMENT` or `c3d::UNSUPPORTED` for a processor set it cannot apply
-([Processors](#processors)), and passes on `thread::INIT_FAILED` when the system refuses the mutex, a condition
-variable or a thread; either way everything created so far is released. The allocator is called from the
-worker threads, so it must be thread-safe and must not be `tmem`.
-
-`destroy_job_pool` waits for every outstanding run, stops and joins the workers, frees everything and zeroes
-the handle. A `defer` on an error path is safe while runs are in flight. `JobPool` is a value handle over
-heap state: moving the handle keeps the pool running, and copies share one pool, which is destroyed once.
-
-| `JobPoolDesc` field | Default | Meaning |
-| --- | --- | --- |
-| `worker_count` | available processors within the quota, minus one, at least 1 | Shared worker threads; 0 runs every frame range on the calling thread. |
-| `worker_temp_bytes` | 256 KiB | Initial temp allocator of each worker. |
-| `run_capacity` | 64 | Frame runs with unfinished ranges at once. |
-| `background_run_capacity` | 64 | Background runs with unfinished ranges at once; 0 refuses every background run. |
-| `background_workers` | `default_background_workers(worker_count)` | Shared workers that may run background ranges at once. |
-| `background_only_workers` | 0 | Further workers that take only background ranges, outside the cap. |
-| `worker_cpus` | empty | Processors of the shared workers; empty leaves the system's choice. |
-| `background_cpus` | empty | Processors of the background-only workers; empty leaves the system's choice. |
-| `power_throttling_opt_out` | false | Windows: each worker, and the caller in `bind_caller`, asks the scheduler not to throttle it; ignored elsewhere ([Calling thread](#calling-thread)). |
-
-`default_job_pool_desc()` fills these. A cap at or above `worker_count` does not limit, so a descriptor that
-lowers `worker_count` also sets `background_workers`, usually to `job::default_background_workers(count)`:
-a quarter of the workers, at least one, and none without workers. That is 1 at 4 workers, 2 at 8, 4 at 16 and 7
-at 31. A quarter keeps three quarters of the workers on frame work while background ranges run.
-
-The default `worker_count` is one less than the processors the pool may use, and at least one:
-`max(min(available, quota) - 1, 1)`, where `available` counts `job::available_cpus()` and `quota` is
-`job::cpu_quota()` when it returns one.
-
-| Host | `available` | `quota` | Default workers |
-| --- | ---: | ---: | ---: |
-| 32 logical processors, unrestricted | 32 | none | 31 |
-| the same under `taskset -c 0-3` | 4 | none | 3 |
-| the same in a container with a 2.5-processor quota (`cpu.max` `250000 100000`) | 32 | 3 | 2 |
-
-The count has four caveats:
-
-1. On Windows `available_cpus()` covers the calling thread's processor group only, and `cpu_quota()` never
-   returns a quota: job-object rate limits are not read.
-2. box3d's workers run only inside `PhysicsWorld.step`. The two pools oversubscribe the machine only when an
-   application runs jobs during a physics step; such an application lowers `worker_count`.
-3. Processors numbered 1024 and up are not represented.
-4. There is no upper limit; none has been measured to be needed.
-
-## Run and wait
-
-```c3
 struct Particles {
     Vec3[] positions;
     Vec3[] velocities;
@@ -93,43 +42,113 @@ fn void integrate_range(void* data, uint first, uint count) {
     }
 }
 
-JobId id = pool.run(
-    range: &integrate_range,
-    data:  &particles,
-    count: (uint)particles.positions.len,
-    batch: 256,
-);
-// other work on this thread
-pool.wait(id);
+fn void? integrate_all(Particles* particles) {
+    JobPool pool = job::create_job_pool(mem, job::default_job_pool_desc())!;
+    defer job::destroy_job_pool(&pool);
+
+    JobId id = pool.run(
+        range: &integrate_range,
+        data:  particles,
+        count: (uint)particles.positions.len,
+        batch: 256,
+    );
+    // other work on this thread
+    pool.wait(id);
+}
 ```
 
-- **Split.** A run of `count` items at `batch = b` has `ceil(count / b)` ranges, `[i * b, min((i + 1) * b,
-  count))`; only the last one is short. `batch = 0` lets the pool choose about four ranges per shared worker,
-  the caller included; background-only workers do not count. `count = 0` runs nothing.
-- **`run`** queues the ranges as a frame run and returns at once with a `JobId`. `data` is handed to every
-  range and must outlive the run; it may be null.
-- **`wait(id)`** returns once every range of the run has finished. Meanwhile the waiting thread runs that run's
-  unclaimed ranges itself, whatever its class. Everything the ranges wrote is visible to the caller after
-  `wait` returns.
-- **`is_finished(id)`** reports whether every range of the run has finished, without blocking. Once it returns
-  true, everything the ranges wrote is visible to the caller. A run's slot is released when its last range
-  finishes, whether or not anyone waits on it or asks. Polling alone never finishes a background run on a pool
-  with no worker that takes background ranges; see [Background runs](#background-runs).
-- **Zero and stale ids.** `run` returns the zero id when every range ran inside the call. An id goes stale when
-  its run finishes; its slot is reused only after that. `wait` on a zero or stale id returns at once and never
-  waits on a later run in the same slot, and `is_finished` reports both as finished. A slot's generation wraps
-  after 2^32 - 1 runs, so an id that old may name a later run.
-- **`wait_all`** returns once no run of either class is unfinished, running any unclaimed range meanwhile.
-- **Inline mode.** With `worker_count = 0`, `run` runs every range on the calling thread, in ascending order,
-  and returns the zero id. Results equal the pooled results when ranges follow the rules below.
-- **Nesting.** A range may call `run` on its own pool. The nested run executes inline on the range's thread,
-  so nesting never deadlocks, and returns the zero id; `wait` on it returns at once. This holds for ranges on
-  a worker and for ranges the caller runs while it waits. A nested `try_run` queues instead; the range never
-  waits on that run.
+`python3 scripts/build.py --example job_bench` builds and runs the package's benchmark example.
 
-Workers claim ranges in this order: the oldest frame run first, then the oldest background run while the cap
-allows, and within a run in ascending index order. Completion order between ranges and between runs is not a
-guarantee.
+## Concepts
+
+- **Run and range.** A run of `count` items at `batch = b` has `ceil(count / b)` ranges,
+  `[i * b, min((i + 1) * b, count))`; only the last is short. Each range is one call of the function.
+- **Class.** A run is `FRAME` or `BACKGROUND`. Workers take frame ranges first. Background work runs in frame idle time,
+  so a pool that is never idle of frame work starves it, by design.
+- **Inline mode.** With `worker_count = 0`, `run` runs every range on the calling thread in ascending order and returns
+  the zero id. Results equal the pooled results when the ranges follow [the rules](#rules-for-ranges).
+- **Ids.** `JobId` names a run until its last range finishes. After that the id is stale.
+- **Value handle.** `JobPool` is a value handle over heap state. Moving it keeps the pool running, and copies share one
+  pool, which is destroyed once.
+
+## Create and destroy
+
+`create_job_pool(allocator, desc)` allocates the pool state, the worker array and the run table once, then starts the
+workers and returns when each has bound itself to its processors. It faults `c3d::CAPACITY_EXCEEDED` when an allocation
+fails, `c3d::INVALID_ARGUMENT` or `c3d::UNSUPPORTED` for a processor set it cannot apply ([Processors](#processors)),
+and passes on `thread::INIT_FAILED` when the system refuses a mutex, condition variable or thread. On any fault
+everything created so far is released. The allocator is called from the worker threads, so it must be thread-safe and
+must not be `tmem`.
+
+`destroy_job_pool` waits for every outstanding run, stops and joins the workers, frees everything and zeroes the handle.
+A `defer` on an error path is safe while runs are in flight.
+
+| `JobPoolDesc` field | Default | Meaning |
+| --- | --- | --- |
+| `worker_count` | available processors within the quota, minus one, at least 1 | Shared worker threads. 0 runs every frame range on the calling thread. |
+| `worker_temp_bytes` | 256 KiB | Initial temp allocator of each worker. |
+| `run_capacity` | 64 | Frame runs with unfinished ranges at once. Must be above 0. |
+| `background_run_capacity` | 64 | Background runs with unfinished ranges at once. 0 refuses every background run. |
+| `background_workers` | `default_background_workers(worker_count)` | Shared workers that may run background ranges at once. |
+| `background_only_workers` | 0 | Further workers that take only background ranges, outside the cap. |
+| `worker_cpus` | empty | Processors of the shared workers. Empty leaves the system's choice. |
+| `background_cpus` | empty | Processors of the background-only workers. Empty leaves the system's choice. |
+| `power_throttling_opt_out` | false | Windows: each worker, and the caller in `bind_caller`, asks the scheduler not to throttle it. Ignored elsewhere. |
+| `record_capacity` | 4096 | Worker range records held between drains (`C3D_PROFILE_CPU` only). |
+
+`default_job_pool_desc()` fills these. A cap at or above `worker_count` does not limit, so a descriptor that lowers
+`worker_count` also sets `background_workers`, usually to `job::default_background_workers(count)`: a quarter of the
+workers, at least one, and none without workers (1 at 4 workers, 2 at 8, 4 at 16, 7 at 31). A quarter keeps three
+quarters of the workers on frame work while background ranges run.
+
+The default `worker_count` is `max(min(available, quota) - 1, 1)`. `available` is the size of `job::available_cpus()`,
+and `quota` is `job::cpu_quota()` when it returns one:
+
+| Host | `available` | `quota` | Default workers |
+| --- | ---: | ---: | ---: |
+| 32 logical processors, unrestricted | 32 | none | 31 |
+| the same under `taskset -c 0-3` | 4 | none | 3 |
+| the same in a container with a 2.5-processor quota (`cpu.max` `250000 100000`) | 32 | 3 | 2 |
+
+On Windows `available_cpus()` covers the calling thread's processor group only, and `cpu_quota()` never returns a quota
+(job-object rate limits are not read). Processors numbered 1024 and up are not represented. The count has no upper
+limit. box3d steps on its own worker threads only when `PhysicsDesc.worker_count` is above 1; the default, 1, steps on
+the calling thread. Those threads run only inside `PhysicsWorld.step`, so an application that runs jobs during a step
+and uses several box3d workers lowers the job pool's `worker_count` to avoid oversubscription.
+
+## Run and wait
+
+- **`run(range, data, count, batch, name)`** queues the ranges as a frame run and returns a `JobId` at once. `data` goes
+  to every range, must outlive the run and may be null. `batch = 0` lets the pool choose about four ranges per shared
+  worker, the caller included; background-only workers do not count. `count = 0` runs nothing.
+- **`wait(id)`** returns once every range of the run has finished. Meanwhile the waiting thread runs that run's
+  unclaimed ranges itself, whatever the class. Everything the ranges wrote is visible to the caller after `wait`
+  returns.
+- **`is_finished(id)`** reports whether every range has finished, without blocking. Once it returns true, everything the
+  ranges wrote is visible to the caller. A run's slot is released when its last range finishes, whether or not anyone
+  waits or asks.
+- **`wait_all()`** returns once no run of either class is unfinished, running any unclaimed range meanwhile.
+- **Zero and stale ids.** `run` returns the zero id when every range ran inside the call. `wait` on a zero or stale id
+  returns at once and never waits on a later run in the same slot. `is_finished` reports both as finished. A slot's
+  generation wraps after 2^32 - 1 runs, so an id that old may name a later run.
+- **Nesting.** A range may call `run` on its own pool. The nested run executes inline on the range's thread, so nesting
+  never deadlocks, and returns the zero id; `wait` on it returns at once. This holds for ranges on a worker and for
+  ranges the caller runs while it waits. A nested `try_run` queues instead, and the range never waits on that run.
+
+Workers claim ranges in this order: the oldest frame run first, then the oldest background run while the cap allows, and
+within a run in ascending index order. Completion order between ranges and between runs is not guaranteed.
+
+## Capacity
+
+Each run with unfinished ranges holds one slot of its class, whatever its range count, so the number of ranges queued at
+once has no limit of its own. Frame and background runs fill separate partitions of one table: background runs that span
+frames never push frame runs inline, and a full frame partition never refuses a background run.
+
+`run` never faults and never waits for a slot. A frame run that finds no free frame slot runs entirely inline on the
+caller before `run` returns, and returns the zero id; no run is split between the pool and the caller.
+`JobPool.inline_ranges()` counts those ranges since the pool was created. A count that grows means `run_capacity` is too
+small. Nested runs and inline mode are inline by design and are not counted. `try_run` refuses instead of running
+inline.
 
 ## Background runs
 
@@ -146,77 +165,55 @@ JobId streaming = pool.try_run(
 if (pool.is_finished(streaming)) publish(&decode);
 ```
 
-- **`try_run(job_class, ...)`** queues a run of either class, or faults `c3d::CAPACITY_EXCEEDED` when that
-  class's partition of the run table is full. A refused run queues nothing and runs nothing, and
-  `inline_ranges` does not move. It never runs a range inside the call, with one exception: on a pool without
-  shared workers, frame work runs on the caller as `run` does. Background runs are submitted only through
-  `try_run`.
-- **Cap.** At most `background_workers` shared workers run background ranges at once; the others take only
-  frame ranges, and a worker takes a frame range before a background one. Background work therefore runs in
-  frame idle time: a pool that is never idle of frame work starves it, by design. A range that has started is
-  never interrupted, so a long background range delays frame work only by holding its own worker.
-- **`pump(max_ranges)`** runs background ranges on the calling thread, in submission order, up to
-  `max_ranges`, and returns how many ran. It runs only ranges queued before the call: a background run that a
-  pumped range submits waits for the next `pump`. It ignores the cap, which limits workers and not the calling
-  thread, and it never takes frame ranges.
-- **Background-only workers.** `background_only_workers` adds workers that take only background ranges, in the
-  same order, and do not count against the cap. They never take frame ranges, so a pool with zero shared
-  workers and some background-only workers runs frame work inline and background work on its workers.
-- **Without background workers.** With no background-only worker and either zero workers or
-  `background_workers = 0`, a background run progresses only through `pump`, `wait` on that run, `wait_all` or
-  `destroy_job_pool`. A consumer that polls `is_finished` alone on such a pool never sees the run finish.
-- **Capacity.** `background_run_capacity` slots hold background runs and `run_capacity` slots hold frame runs,
-  in one table. Each class fills only its own slots, so background runs that span frames never push frame runs
-  inline, and a full frame partition never refuses a background run. A background slot holds its run until
-  the last range finishes, across frames.
-
-## Run capacity
-
-Each run with unfinished ranges holds one slot of its class, whatever its range count; a slot keeps the
-request and the index of the next unclaimed range, so the number of ranges queued at once has no limit of its
-own.
-
-`run` never faults and never blocks. A frame run that finds no free frame slot runs inline entirely on the
-caller before `run` returns, and `run` returns the zero id; no run is split between the pool and the caller.
-`JobPool.inline_ranges()` counts those ranges since the pool was created. A count that grows is the sign that
-`run_capacity` is too small. Nested runs and inline mode are inline by design and are not counted. `try_run`
-refuses instead of running inline.
-
-### Changes from v0.1.0
-
-`JobPoolDesc.ring_capacity` and `DEFAULT_RING_CAPACITY` are gone: the pool queues runs, not ranges. Remove both
-from descriptors.
+- **`try_run(job_class, ...)`** queues a run of either class, or faults `c3d::CAPACITY_EXCEEDED` when that class's
+  partition is full. A refused run queues and runs nothing, and `inline_ranges` does not move. It never runs a range
+  inside the call, except that on a pool without shared workers frame work runs on the caller as `run` does. Background
+  runs are submitted only through `try_run`. A background slot holds its run until the last range finishes, across
+  frames.
+- **Cap.** At most `background_workers` shared workers run background ranges at once. The others take only frame ranges,
+  and a worker takes a frame range before a background one. A range that has started is never interrupted, so a long
+  background range delays frame work only by holding its own worker.
+- **`pump(max_ranges)`** runs up to `max_ranges` background ranges on the calling thread, in submission order, and
+  returns how many ran. `max_ranges` defaults to `uint::max`, which runs every range queued before the call. It runs
+  only ranges queued before the call, so a background run that a pumped range submits waits for the next `pump`. It
+  ignores the cap and never takes frame ranges.
+- **Background-only workers.** `background_only_workers` adds workers that take only background ranges, in the same
+  order, outside the cap. They never take frame ranges, so a pool with zero shared workers and some background-only
+  workers runs frame work inline and background work on its workers.
+- **Without background workers.** With no background-only worker and either zero workers or `background_workers = 0`, a
+  background run progresses only through `pump`, `wait` on that run, `wait_all` or `destroy_job_pool`. A consumer that
+  polls `is_finished` alone on such a pool never sees the run finish.
 
 ## Processors
 
-`job::CpuSet` is the standard library's `BitSet{1024}`, indexed by logical processor. On Windows the index
-numbers processor groups consecutively: group 1 starts after the active processors of group 0.
+`job::CpuSet` is the standard library's `BitSet{1024}`, indexed by logical processor. On Windows the index numbers
+processor groups consecutively: group 1 starts after the active processors of group 0.
 
-- **`available_cpus()`** returns the processors the calling thread may run on: on Linux its affinity mask,
-  which `taskset` and cgroup cpusets narrow; on Windows its affinity within its processor group. Linux has no
-  process-wide mask, so `default_job_pool_desc` and `create_job_pool` read it on the creating thread: create
-  the pool before binding that thread.
-- **`cpu_quota()`** returns the Linux cgroup CPU quota in whole processors, rounded up: cgroup v2 `cpu.max`
-  under `/sys/fs/cgroup`, cgroup v1 `cpu.cfs_quota_us` and `cpu.cfs_period_us` under `/sys/fs/cgroup/cpu`,
-  for the process's cgroup and every ancestor, the tightest one winning. An unlimited, missing or malformed
-  quota returns `NOT_FOUND`, as Windows always does. Other mount points are not searched.
-- **`core_types()`** splits `available_cpus()` into the fastest core type (`performance`) and the rest
-  (`efficiency`): Windows ranks cores by `EfficiencyClass`; Linux reads `/sys/devices/cpu_core/cpus` on Intel
-  hybrid processors, otherwise each processor's `cpu_capacity`. Where neither exists, or every core ranks the
-  same, `performance` holds every available processor and `efficiency` is empty.
+- **`available_cpus()`** returns the processors the calling thread may run on: on Linux its affinity mask, which
+  `taskset` and cgroup cpusets narrow; on Windows its affinity within its processor group. Linux has no process-wide
+  mask, so `default_job_pool_desc` and `create_job_pool` read it on the creating thread. Create the pool before binding
+  that thread.
+- **`cpu_quota()`** returns the Linux cgroup CPU quota in whole processors, rounded up: cgroup v2 `cpu.max` under
+  `/sys/fs/cgroup`, or cgroup v1 `cpu.cfs_quota_us` and `cpu.cfs_period_us` under `/sys/fs/cgroup/cpu`, for the
+  process's cgroup and every ancestor, the tightest winning. An unlimited, missing or malformed quota faults
+  `NOT_FOUND`, as Windows always does. Other mount points are not searched.
+- **`core_types()`** splits `available_cpus()` into the fastest core type (`performance`) and the rest (`efficiency`).
+  Windows ranks cores by their efficiency class. Linux reads `/sys/devices/cpu_core/cpus` on Intel hybrid processors,
+  otherwise each processor's `cpu_capacity`. Where neither exists, or every core ranks the same, `performance` holds
+  every available processor and `efficiency` is empty.
 
-`worker_cpus` binds the shared workers and `background_cpus` the background-only workers. A requested set is
-first intersected with the creating thread's `available_cpus()`, so a worker never widens its own mask; a
-worker binds itself when it starts, reads its mask back, and `create_job_pool` returns once every worker has
-reported. `JobPool.worker_cpus(worker)` returns what each one read back, shared workers first.
+`worker_cpus` binds the shared workers and `background_cpus` the background-only workers. A requested set is first
+intersected with the creating thread's `available_cpus()`, so a worker never widens its own mask. Each worker binds
+itself when it starts and reads its mask back, and `create_job_pool` returns once every worker has reported.
+`JobPool.worker_cpus(worker)` returns what each one read back, shared workers first.
 
 | Request | Result |
 | --- | --- |
-| empty | the worker keeps the system's choice: on Linux the creating thread's mask, on Windows the process's affinity |
-| partly outside `available_cpus()` | bound to the intersection |
-| entirely outside `available_cpus()` | `c3d::INVALID_ARGUMENT` |
-| spanning two Windows processor groups | `c3d::UNSUPPORTED` |
-| refused by the system, or read back as another set | `c3d::UNSUPPORTED` |
+| empty | The worker keeps the system's choice: on Linux the creating thread's mask, on Windows the process's affinity. |
+| partly outside `available_cpus()` | Bound to the intersection. |
+| entirely outside `available_cpus()` | `c3d::INVALID_ARGUMENT`. |
+| spanning two Windows processor groups | `c3d::UNSUPPORTED`. |
+| refused by the system, or read back as another set | `c3d::UNSUPPORTED`. |
 
 On a hybrid processor, keep frame work on the performance cores and background work on the efficiency cores:
 
@@ -231,17 +228,15 @@ desc.background_cpus = types.efficiency;
 JobPool pool = job::create_job_pool(mem, desc)!;
 ```
 
-On an i9-14900K under Windows, `performance` is processors 0-15 (eight cores with two threads each) and
-`efficiency` 16-31. Binding the frame workers to the performance cores buys isolation from background work, not
-throughput: in the pinned row of [Measured cost](#measured-cost) the pinned pool is slower. Size the frame
-worker count from the physical performance cores. Fifteen workers on 16 logical processors share eight
-hyperthreaded cores, and unbound they also use the efficiency cores.
+Binding the frame workers to the performance cores isolates them from background work. It does not add throughput. Size
+the frame worker count from the physical performance cores, because logical processors that share a core add little, and
+unbound workers also use the efficiency cores.
 
 ### Calling thread
 
-The pool does not bind the calling thread by itself. That thread runs ranges in `wait` and `wait_all`, and on a
-hybrid processor the system can schedule it onto an efficiency core while it waits on workers.
-`JobPool.bind_caller(cpus)` binds it the way a worker is bound:
+The pool does not bind the calling thread. That thread runs ranges in `wait` and `wait_all`, and on a hybrid processor
+the system can schedule it onto an efficiency core while it waits. `JobPool.bind_caller(cpus)` binds it the way a worker
+is bound:
 
 ```c3
 CoreTypes types = job::core_types();
@@ -250,61 +245,98 @@ defer job::destroy_job_pool(&pool);
 pool.bind_caller(types.performance)!;
 ```
 
-- It pins the calling thread to the set it is given. On a hybrid processor that set should be the performance
-  cores, `core_types().performance`.
-- An empty argument selects the pool's `worker_cpus`. When that is empty too, the pool's set means every
-  processor the thread may use: nothing is bound, and on a hybrid processor the thread can still run on an
-  efficiency core.
-- It returns `c3d::UNSUPPORTED` when the system refuses the set or reads back another one, and for a set that
-  spans two Windows processor groups, as for a worker. It does not intersect the set with `available_cpus()`.
-- It binds only the calling thread. Call it once from the owner thread after `create_job_pool`; bound first,
-  that thread would narrow every worker's set to its own.
+- It pins the calling thread to the given set; on a hybrid processor that set should be `core_types().performance`.
+- An empty argument selects the pool's `worker_cpus`. When that is empty too, nothing is bound.
+- It faults `c3d::UNSUPPORTED` when the system refuses the set or reads back another one, and for a set that spans two
+  Windows processor groups. It does not intersect the set with `available_cpus()`.
+- Call it once from the owner thread after `create_job_pool`. Bound first, that thread would narrow every worker's set.
 
-With `power_throttling_opt_out`, on Windows each worker asks the scheduler not to throttle it when it starts,
-and `bind_caller` does the same for the calling thread before it binds. The request switches the thread's
-execution-speed power throttling off (`SetThreadInformation` with `ThreadPowerThrottling`), so the system does
-not run the thread as EcoQoS. A Windows release without the setting (it arrived in Windows 10 version 1709)
+With `power_throttling_opt_out`, on Windows each worker asks the scheduler not to throttle it when it starts, and
+`bind_caller` does the same for the calling thread before it binds. The request switches the thread's execution-speed
+power throttling off (`SetThreadInformation` with `ThreadPowerThrottling`). A Windows release without the setting
 refuses it, and the thread keeps the system's policy without a fault. Other platforms ignore the field.
 
 ## Temp memory
 
-Every range runs inside its own `@pool()` on the thread that runs it, so `tmem` inside a range is that
-thread's and is reset after the range. Each worker creates its temp allocator once, `worker_temp_bytes` from
-the pool's allocator. A range whose scratch exceeds `worker_temp_bytes` allocates and frees a page each time it
-runs; size it to the largest range's scratch. Each range's `@pool()` also needs about 17 KiB of it (the
-standard library's 16 KiB minimum plus a 1 KiB reserve), so at 16 KiB or less every range allocates, empty
-or not.
+Every range runs inside its own `@pool()` on the thread that runs it, so `tmem` inside a range is that thread's and
+resets after the range. Each worker creates its temp allocator once, `worker_temp_bytes` from the pool's allocator. A
+range whose scratch exceeds `worker_temp_bytes` allocates and frees a page each time it runs, so size it to the largest
+range's scratch. Each range's `@pool()` also needs about 17 KiB of it (the standard library's 16 KiB minimum plus a 1
+KiB reserve). At 16 KiB or less every range allocates, empty or not.
 
-`job_bench`'s kernel holds 64 bytes of scratch per item: 4 KiB per range at batch 64, 64 KiB at 1024, and up
-to 2 MiB at its coarsest batch (32 768 items), which exceeds the default and allocates a page per range.
+## Rules for ranges
 
-## Thread-affinity and memory rules
-
-The pool does not check these; a range that breaks them races.
+The pool does not check these. A range that breaks them races.
 
 - A range runs on a worker or on the thread that called `run`, `try_run`, `wait`, `wait_all`, `pump` or
-  `destroy_job_pool`. It never calls the renderer, gpu.c3l submission or command recording, SDL or ImGui;
-  never changes scene or ECS structure (adding or removing nodes or components, registering component types);
-  never writes a store another range reads.
-- Outputs are disjoint per item. Any reduction is gathered in index order after the wait. A consumer's result
-  must not depend on how the work is split.
-- A range allocates scratch only through `tmem`, which is its own thread's and reset after the range; it must
-  not keep `tmem` memory beyond the range, and must not use an allocator passed in from the caller, such as a
-  caller's `tmem` stored in `data`. Inline ranges on the caller follow the same rule under their own
-  `@pool()`.
-- A thread other than the main thread that calls `run`, `try_run`, `wait`, `wait_all`, `pump` or
-  `destroy_job_pool` has its own temp allocator (`@pool_init`), because ranges it runs open `@pool()`.
-- A range may call `run` on its own pool (it runs inline) and `wait` on the zero id it gets. It may call
-  `try_run` (the run queues) and `is_finished`. A range never calls `wait_all`, `pump` or `destroy_job_pool`
-  on its own pool, and never waits on any other run of its own pool (its own run, an outer run, a run it
-  queued with `try_run`, or a run that waits on it): these are contracts, so the deadlock fires as a contract
-  failure instead of hanging. Waiting on another pool's run is not detected.
+  `destroy_job_pool`. It never calls the renderer, gpu.c3l submission or command recording, SDL or ImGui. It never
+  changes scene or ECS structure (adding or removing nodes or components, registering component types), and never writes
+  a store another range reads.
+- Outputs are disjoint per item. Gather any reduction in index order after the wait. A result must not depend on how the
+  work is split.
+- A range allocates scratch only through `tmem`, which is its own thread's and resets after the range. It must not keep
+  `tmem` memory beyond the range, and must not use an allocator passed in from the caller, such as the caller's `tmem`
+  stored in `data`. Inline ranges on the caller follow the same rule under their own `@pool()`.
+- A thread other than the main thread that calls `run`, `try_run`, `wait`, `wait_all`, `pump` or `destroy_job_pool`
+  needs its own temp allocator (`@pool_init`), because the ranges it runs open `@pool()`.
+- A range may call `run` on its own pool (it runs inline) and `wait` on the zero id it gets. It may call `try_run` (the
+  run queues) and `is_finished`. It never calls `wait_all`, `pump` or `destroy_job_pool` on its own pool, and never
+  waits on another run of its own pool (its own run, an outer run, a run it queued with `try_run`, or a run that waits
+  on it). These are contracts, so the deadlock fires as a contract failure instead of hanging. Waiting on another pool's
+  run is not detected.
+
+## ParallelFor hook
+
+Core declares `c3d::ParallelFor` (`src/c3d/parallel.c3`), a caller-supplied fork-join over index ranges. Packages that
+parallelize their own work take a `ParallelFor`: `PhysicsWorld.set_parallel` runs cloth and crowd-slot staging
+([cloth](cloth.md#update-on-a-job-pool)), breakable graph derivation ([breakables](breakables.md)) and debug collider
+lines ([physics](physics.md#update-on-a-worker-pool)), and `particle::update` and `particle::step` take a trailing
+parameter ([particles](particles.md#parallel-update)). Those packages import no job library; the hook is their only
+coupling.
+
+| Item | Meaning |
+| --- | --- |
+| `ParallelFor.run` | `fn void(void* context, ParallelRangeFn range, void* data, uint count, uint batch)`. Calls `range(data, first, count)` over `[0, count)` in batches of `batch` items and returns only after every range finished. |
+| `ParallelFor.context` | Passed to `run` unchanged. |
+| `ParallelRangeFn` | `fn void(void* data, uint first, uint count)`, the signature of `c3d::job::RangeFn`. |
+| `ParallelFor.for_ranges(range, data, count, batch)` | Runs through `run`, or as one call `range(data, 0, count)` that ignores `batch` when `run` is null. |
+
+A zero `ParallelFor` calls `range` once over `[0, count)` on the calling thread and ignores `batch`, so a range must
+accept any count. The ranges of a pooled `run` may execute in any order and concurrently, and `data` stays valid until
+the call returns. A consumer therefore keeps the ranges free of data races (typically disjoint outputs per range, or
+atomic claims followed by a serial merge) and follows [the rules for ranges](#rules-for-ranges). The function type is
+`c3d::ParallelForFn`.
+
+A `JobPool` adapter is a few lines:
+
+```c3
+fn void run_on_pool(
+    void* context,
+    ParallelRangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) {
+    JobPool* pool = context;
+    pool.wait(pool.run(
+        range: range,
+        data:  data,
+        count: count,
+        batch: batch,
+    ));
+}
+
+ParallelFor parallel = { .run = &run_on_pool, .context = &pool };
+physics.set_parallel(parallel);
+```
+
+Pass the same value to `particle::update`. Keep the pool alive for as long as any package holds the hook.
 
 ## Profiling
 
-Ranges that run on workers appear in a `c3d_profile` capture under the name given at submission. The support
-is compiled only under `C3D_PROFILE_CPU`; a consumer that enables the feature also selects `c3d_profile`
-([Profiling](profiling.md#worker-ranges)).
+Ranges that run on workers appear in a `c3d_profile` capture under the name given at submission. The support is compiled
+only under `C3D_PROFILE_CPU`; a consumer that enables the feature also selects `c3d_profile`
+([profiling](profiling.md#worker-ranges)).
 
 ```c3
 pool.set_recording(true);
@@ -320,214 +352,65 @@ profile::@capture(&recorder, frame_id) {
 };
 ```
 
-- **Names.** `run` and `try_run` take a `name`. The pool keeps the `String` until its records are drained, so it
-  must outlive the drain; string literals and static strings do.
-- **Recording.** `set_recording(true)` makes each worker time every range it claims from then on: two
-  `clock::now()` reads around the range and one record written under the lock it already takes at completion.
-  Ranges the calling thread runs (inline, in `wait`, `wait_all` or `pump`) are not recorded; wrap those calls
-  in application scopes.
-- **Ring.** Records wait in a ring of `record_capacity` entries (default 4096, 160 KiB at 40 bytes). A full
-  ring drops new records and counts them; the next drain reports the count.
-- **Drain.** `take_records(records)` moves the oldest records out, on any thread, with the drop count since the
-  previous drain. `forward_records(&recorder)` drains the records held at the call into the recorder's open
-  capture through `Recorder.add_worker_interval` and forwards the drop count; records that workers add while
-  it runs wait for the next call, and records drained outside a recording capture are discarded. Both clocks
-  are the same `clock::now`. A record is in the ring before its run reports finished, so forwarding after
-  `wait` or a true `is_finished` includes the whole run.
-- **Frame attribution.** A record belongs to the capture open when it is drained. A range that began before
-  that capture's origin keeps a negative start offset: a range still running when the capture opened and
-  forwarded into it appears left of the axis origin. Forward after the run, as above; records forwarded at the
-  start of a capture can fill its label storage, see [Worker ranges](profiling.md#worker-ranges).
-- **Cost.** Without `C3D_PROFILE_CPU` the pool compiles no clock read, no ring and no branch. With the feature
-  and recording off, each claim tests one flag under the lock. With recording on, see
-  [Measured cost](#measured-cost).
-- **Tests.** `python3 scripts/build.py --test` also runs `job_profile_test`, the package's tests built with
-  `C3D_PROFILE_CPU` and `c3d_profile`; alone, `c3c test job_profile_test --path addons/c3d_job.c3l`.
+- **Names.** `run` and `try_run` take a `name`. The pool keeps the `String` until its records are drained, so it must
+  outlive the drain; string literals and static strings do.
+- **Recording.** `set_recording(true)` makes each worker time every range it claims from then on: two `clock::now()`
+  reads around the range and one record written under the lock the worker already takes at completion. Ranges the
+  calling thread runs (inline, in `wait`, `wait_all` or `pump`) are not recorded; wrap those calls in application
+  scopes.
+- **Ring.** Records wait in a ring of `record_capacity` entries of 40 bytes each (4096 by default, 160 KiB). A full ring
+  drops new records and counts them; the next drain reports the count.
+- **Drain.** `take_records(records)` moves the oldest records out, on any thread, with the drop count since the previous
+  drain. `forward_records(&recorder)` drains the records held at the call into the recorder's open capture through
+  `Recorder.add_worker_interval` and forwards the drop count. Records that workers add while it runs wait for the next
+  call, and records drained outside a recording capture are discarded. A record is in the ring before its run reports
+  finished, so forwarding after `wait` or a true `is_finished` includes the whole run.
+- **Frame attribution.** A record belongs to the capture open when it is drained. A range that began before that
+  capture's origin keeps a negative start offset and appears left of the axis origin. Forward after the run. Records
+  forwarded at the start of a capture can fill its label storage; see [Worker ranges](profiling.md#worker-ranges).
+- **Cost.** Without `C3D_PROFILE_CPU` the pool compiles no clock read, ring or branch. With the feature and recording
+  off, each claim tests one flag under the lock.
 
-## Measured cost
+## Benchmark
 
-`job_bench` (built with `python3 scripts/build.py --target job_bench --opt O3`) prints one CSV line per
-configuration. Overhead lines time one run of 1024 empty ranges at batch 1; the time per range is the median
-of eleven passes divided by 1024. Kernel lines run 16 `Mat4` multiplies per item against a shared chain;
-serial is the same run on a zero-worker pool (the same split, on the caller), and the overhead share is
-`ranges * us_per_range / serial_us` with the overhead line of the same worker count. Every pooled output
-equals its serial output bit for bit. The tables hold the median of three process runs per line.
+`job_bench` (`python3 scripts/build.py --target job_bench --opt O3`) prints one CSV block per measurement, each with a
+header line that starts with `# <name>,`:
 
-`job_bench --crowd COUNT` times an animated crowd instead of the kernels. It loads the Quaternius character,
-creates a crowd of COUNT instances with six looping clips at random phases and speeds, and per frame runs
-`advance` on the caller, `sample_range` over the pool in ranges of `ceil(COUNT / (4 * (workers + 1)))` instances
-with one scratch per range, then `publish_crowd_pose` on the caller. The ranges follow the pool, so the scratches
-(and their pose caches) number at most four for each thread that samples. One line per path prints the median
-stage times over fifteen frames; the `update` line is the serial `CrowdPlaybackState.update`. `cpu_ms` sums the
-time of the sampled ranges. Every line's per-frame digest of poses, morph weights, root motion and events must
-equal the `update` line's, and the exit status is 1 when one does not. `--shared-phases` also runs the crowd with
-instances in twelve groups that share a clip and a time, interleaved by instance index, and adds the hit rate and
-the sample and CPU time saved against the unshared line of the same worker count. With `--compress` the clips are
-quantized first (see [Compressed clips](animation.md#compressed-clips)) and the header line prints their bytes before
-and after and the largest error per path.
+- `overhead`: the time per range of one run of 1024 empty ranges at batch 1, per worker count, with `inline_ranges`.
+- `kernel`: 16 `Mat4` multiplies per item against a shared chain, for several worker counts, item counts and batches. It
+  prints the serial time (the same split on a zero-worker pool, on the caller), the pooled time, the speedup, the
+  overhead share (`ranges * us_per_range / serial_us`), the peak scratch bytes and whether the pooled output equals the
+  serial output bit for bit. The exit status is 1 when any pooled output differs.
+- `background`: one background run of 1024 empty ranges at batch 1, from `try_run` until its last range has run, on the
+  capped workers alone.
+- `loaded`: the same kernel idle and while a long background run keeps the default cap of workers busy.
+- `pinned`: the kernel with the frame workers bound to the performance cores against unbound, on a hybrid processor.
+- `recording`: the overhead workload with `set_recording(true)`, when built with
+  `--define C3D_PROFILE_CPU --lib c3d_profile`.
 
-Background lines time one background run of 1024 empty ranges at batch 1, from `try_run` until its last range
-has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch
-1024 once idle and once while a background run of 16 384 ranges of about 15 µs keeps the default cap of
-workers busy; the ratio is the median loaded time over the median idle time, and every run's background
-work outlasted the timing. Built with `--define C3D_PROFILE_CPU --lib c3d_profile`, `job_bench` adds
-recording lines: the overhead workload with `set_recording(true)`, its records drained after each pass, outside
-the timing. Ranges the caller runs in `wait` are not recorded.
+`job_bench --crowd COUNT [--shared-phases] [--compress]` times an animated crowd instead. It loads the Quaternius
+character, creates COUNT instances with six looping clips at random phases and speeds, and per frame runs `advance` on
+the caller, `sample_range` over the pool, then `publish_crowd_pose` on the caller. One line per path prints the median
+stage times; the `update` line is the serial `CrowdPlaybackState.update`. Every line's per-frame digest of poses, morph
+weights, root motion and events must equal the `update` line's, or the exit status is 1. `--shared-phases` also runs the
+crowd with instances in twelve groups that share a clip and a time, and adds the hit rate and the sample and CPU time
+saved. `--compress` quantizes the clips first and prints their bytes and the largest error per path. See
+[benchmarking](benchmarking.md) for how to read and compare timings.
 
-### WSL, 32 logical processors (default 31 workers)
+## Limits
 
-| Workers | µs per empty range | Inline ranges |
-| ---: | ---: | ---: |
-| 0 | 0.0078 | 0 |
-| 1 | 0.0488 | 0 |
-| 3 | 0.0581 | 0 |
-| 31 | 0.1907 | 0 |
+- Linux and Windows only; the package asserts the platform at compile time.
+- Processors numbered 1024 and up are not represented.
+- On Windows, `available_cpus()` covers one processor group, and a worker set cannot span two groups.
+- `cpu_quota()` reads Linux cgroups only.
+- A pool that never idles of frame work starves background runs.
+- The pool uses one lock. Each range costs one claim and one completion under it, so very small batches on many workers
+  spend a visible share of the time in the lock. With many workers, use batches of about 512 items or more.
 
-| Workers | Items | Batch | Ranges | Serial µs | Pooled µs | Speedup | Overhead share | Peak scratch |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 16384 | 64 | 256 | 971.3 | 514.1 | 1.88 | 0.0130 | 4 KiB |
-| 1 | 16384 | 1024 | 16 | 974.9 | 493.1 | 1.97 | 0.0008 | 64 KiB |
-| 1 | 16384 | 2048 | 8 | 941.4 | 465.7 | 2.00 | 0.0004 | 128 KiB |
-| 1 | 65536 | 64 | 1024 | 3980.9 | 1988.8 | 2.01 | 0.0114 | 4 KiB |
-| 1 | 65536 | 1024 | 64 | 3792.7 | 1900.4 | 2.00 | 0.0008 | 64 KiB |
-| 1 | 65536 | 8192 | 8 | 3858.7 | 1857.8 | 2.06 | 0.0001 | 512 KiB |
-| 1 | 262144 | 64 | 4096 | 15619.3 | 8053.7 | 1.91 | 0.0129 | 4 KiB |
-| 1 | 262144 | 1024 | 256 | 15701.6 | 8753.3 | 1.81 | 0.0008 | 64 KiB |
-| 1 | 262144 | 32768 | 8 | 15790.5 | 8146.9 | 1.96 | 0.0000 | 2 MiB |
-| 3 | 16384 | 64 | 256 | 920.9 | 299.6 | 3.07 | 0.0167 | 4 KiB |
-| 3 | 16384 | 1024 | 16 | 929.8 | 264.4 | 3.58 | 0.0010 | 64 KiB |
-| 3 | 65536 | 64 | 1024 | 3807.2 | 1149.3 | 3.35 | 0.0159 | 4 KiB |
-| 3 | 65536 | 1024 | 64 | 3785.8 | 985.8 | 3.84 | 0.0010 | 64 KiB |
-| 3 | 65536 | 4096 | 16 | 3763.5 | 978.7 | 3.82 | 0.0003 | 256 KiB |
-| 3 | 262144 | 64 | 4096 | 15717.7 | 4738.2 | 3.32 | 0.0154 | 4 KiB |
-| 3 | 262144 | 1024 | 256 | 17799.9 | 5498.3 | 3.32 | 0.0009 | 64 KiB |
-| 3 | 262144 | 16384 | 16 | 18407.0 | 4610.4 | 3.59 | 0.0001 | 1 MiB |
-| 31 | 16384 | 64 | 256 | 934.3 | 327.3 | 2.85 | 0.0523 | 4 KiB |
-| 31 | 16384 | 1024 | 16 | 934.7 | 338.4 | 2.79 | 0.0032 | 64 KiB |
-| 31 | 16384 | 128 | 128 | 931.2 | 305.2 | 3.05 | 0.0264 | 8 KiB |
-| 31 | 65536 | 64 | 1024 | 4198.5 | 728.7 | 5.54 | 0.0465 | 4 KiB |
-| 31 | 65536 | 1024 | 64 | 3853.0 | 574.5 | 6.71 | 0.0032 | 64 KiB |
-| 31 | 65536 | 512 | 128 | 3811.7 | 541.6 | 7.04 | 0.0064 | 32 KiB |
-| 31 | 262144 | 64 | 4096 | 16076.0 | 2216.5 | 7.25 | 0.0486 | 4 KiB |
-| 31 | 262144 | 1024 | 256 | 15685.0 | 1626.1 | 9.69 | 0.0031 | 64 KiB |
-| 31 | 262144 | 2048 | 128 | 15628.1 | 1502.5 | 10.46 | 0.0015 | 128 KiB |
+## See also
 
-With one worker the caller doubles the throughput by running ranges while it waits. The time per empty range
-grows with the worker count, since every range is one claim and one completion under the pool lock. At 31
-workers, batch 64 costs 5 % of the serial time; batches of 128 items or more stay under 3 %.
-
-Background runs, capped workers only:
-
-| Workers | Background cap | µs per empty background range |
-| ---: | ---: | ---: |
-| 1 | 1 | 0.0325 |
-| 3 | 1 | 0.0337 |
-| 31 | 7 | 0.1911 |
-
-Kernel time with and without a background run holding the cap (medians of three runs; the ratio is the
-ratio of the two medians):
-
-| Workers | Background cap | Idle µs | Loaded µs | Ratio |
-| ---: | ---: | ---: | ---: | ---: |
-| 1 | 1 | 1982.6 | 1930.2 | 0.97 |
-| 3 | 1 | 968.1 | 943.0 | 0.97 |
-| 31 | 7 | 587.6 | 645.0 | 1.10 |
-
-With one and three workers the loaded kernel stays within 3 % of idle. At 31 workers the loaded median is 10 %
-above idle; the per-run ratios are 0.95, 0.99 and 1.22, so a background run holding the cap of 7 workers can slow
-the frame kernel there.
-
-Recording against the overhead lines of the same build, in µs per empty range, with the minimum and maximum of
-the three runs for 31 workers:
-
-| Workers | Off median | Off min | Off max | On median | On min | On max |
-| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0 | 0.0078 | | | 0.0081 | | |
-| 1 | 0.0514 | | | 0.0660 | | |
-| 3 | 0.0613 | | | 0.1055 | | |
-| 31 | 0.1831 | 0.1810 | 0.1895 | 0.2021 | 0.1999 | 0.2049 |
-
-Without the feature the overhead lines equal the build before worker recording within noise.
-
-### Windows host, 32 logical processors (default 31 workers)
-
-Nine interleaved runs of `job_bench` at O3, against main 95206f3; each value is the median, with [min–max]
-where the runs gave a range.
-
-| Workers | µs per empty range, main | µs per empty range, this change |
-| ---: | ---: | ---: |
-| 0 | 0.0061 [0.0055–0.0097] | 0.0062 [0.0053–0.0097] |
-| 1 | 0.0305 [0.0210–0.0410] | 0.0247 |
-| 3 | 0.0569 [0.0446–0.0741] | 0.0442 |
-| 31 | 0.2839 [0.1985–0.3215] | 0.2354 [0.1959–0.2853] |
-
-Every median of this change lies inside main's range, and is lower at 1, 3 and 31 workers.
-
-| Workers | Background cap | µs per empty background range |
-| ---: | ---: | ---: |
-| 1 | 1 | 0.031 |
-| 3 | 1 | 0.034 |
-| 31 | 7 | 0.157 |
-
-Kernel overhead share at batch 64, main and this change:
-
-| Workers | Items | Main | This change |
-| ---: | ---: | ---: | ---: |
-| 1 | 16384 | 0.011 | 0.009 |
-| 3 | 16384 | 0.021 | 0.017 |
-| 31 | 16384 | 0.105 | 0.092 |
-| 31 | 65536 | 0.101 | 0.085 |
-| 31 | 262144 | 0.095 | 0.081 |
-
-Kernel time with and without a background run holding the cap (the ratio is the ratio of the two medians):
-
-| Workers | Background cap | Idle µs | Loaded µs | Ratio |
-| ---: | ---: | ---: | ---: | ---: |
-| 1 | 1 | 1373.9 | 1424.2 | 1.04 |
-| 3 | 1 | 705.6 | 752.9 | 1.07 |
-| 31 | 7 | 331.5 | 309.4 | 0.93 |
-
-The loaded kernel stays within 7 % of idle at 1 and 3 workers on both hosts (WSL 0.97 and 0.97, Windows 1.04
-and 1.07). At 31 workers it is 1.10 on WSL and 0.93 on Windows; the two hosts differ in direction and the runs
-are noisy (the 31-worker idle runs on Windows span 256–415 µs), so no consistent slowdown from a background run
-is established.
-
-Binding on this host, from `job_bench`: `performance_cpus=0-15`, `efficiency_cpus=16-31` and
-`pinned_worker_cpus=0-15`; `job_test` passes 29 of 29 tests, including
-`test_workers_report_the_requested_cpu_set` on the real binding. The pinned row, 15 workers, 262 144 items,
-batch 1024:
-
-| Unpinned µs | Pinned µs | Ratio |
-| ---: | ---: | ---: |
-| 1070.4 [993–1153] | 1355.5 [1208–1388] | 1.27 |
-
-Pinned is slower: the 15 workers share the eight hyperthreaded performance cores, while unbound they also use
-the efficiency cores.
-
-Recording on Windows, same build, off and on, in µs per empty range:
-
-| Workers | Off | On | Change |
-| ---: | ---: | ---: | ---: |
-| 0 | 0.0061 | 0.0066 | +8 % |
-| 1 | 0.0243 | 0.0383 | +58 % |
-| 3 | 0.0509 | 0.0998 | +96 % |
-| 31 | 0.2391 [0.1896–0.2598] | 0.3812 [0.3324–0.4113] | +59 % |
-
-The cost is heavier than on WSL. At one worker the two clock reads and the record write add about 0.014 µs per
-range. With the feature compiled in and recording off, the overhead is within noise of the plain build.
-`job_profile_test` passes 32 of 32 tests. In the `profile_gui_cpu` and `profile_gui` examples, with validation
-clean, the CPU axis shows one row per worker lane (28 to 31 across frames); the 16 `example.wave` ranges lie
-inside `application.jobs`, before `application.render`, live and paused; the tooltip shows the label, worker,
-duration and offset ("Worker 9, 0.106200 ms, offset 182500 ns").
-
-### Revisit threshold
-
-The single lock is kept while no median exceeds 2 µs per empty range. Each range is one claim and one
-completion under the pool lock; `wait` claims its own run's ranges directly. The kernel median overhead share at
-31 workers and batch 64 was already over 0.05 on both hosts before this change (Windows main 0.105). With this
-change it is 0.0523, 0.0465 and 0.0486 on WSL and 0.092, 0.085 and 0.081 on Windows, for 16 384, 65 536 and
-262 144 items. The lock-free design is carried forward with these measurements as its trigger: it is taken up
-when the share at 31 workers and batch 64 rises above this change's recorded values, 0.0523 on WSL and 0.092 on
-Windows (16 384 items). The design is a per-run atomic claim cursor and completion count, with the lock kept
-for queue membership and sleep. With many workers, use batches of about 512 items or more: at 1024 the share
-is 0.003 on WSL.
+- [Profiling](profiling.md): the recorder that receives worker ranges.
+- [Physics](physics.md#update-on-a-worker-pool), [cloth](cloth.md#update-on-a-job-pool), [breakables](breakables.md) and
+  [particles](particles.md#parallel-update): consumers of the `ParallelFor` hook.
+- [Benchmarking](benchmarking.md): the runner and the profiling configurations.
+- [Development](development.md#test-targets): the `job_test` and `job_profile_test` targets.
