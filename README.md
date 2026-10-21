@@ -198,7 +198,7 @@ depth of field to [auto focus](docs/post.md#auto-focus) on the point under the c
 python3 scripts/build.py --example effects
 ```
 
-`taa` shows [temporal anti-aliasing](docs/post.md#temporal-anti-aliasing) on fine checker
+`taa` shows [temporal anti-aliasing](docs/anti_aliasing.md#temporal-anti-aliasing) on fine checker
 texture, a thin diagonal fence, a spinning cube, the skinned Fox, a morphing cube and a ring of
 individually orbiting instances, through a full-window view and a smaller inset of the same camera.
 Its panel freezes motion, sweeps the camera, cuts the main view and resizes the inset, each view

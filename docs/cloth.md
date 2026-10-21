@@ -9,7 +9,7 @@ and opt-in deformed tangent frames (`tangent_frame`, `tangent_uv_set`),
 an optional ground plane and one-way particle contacts with every collider kind of listed
 rigid bodies, plus opt-in self-contact between cloth vertices, faces and edges. It imports
 the standard library, core and `c3d::physics`; it never creates GPU resources. Core supplies only editable geometry and
-[vertex motion history](post.md#edited-vertices).
+[vertex motion history](geometry_edits.md#edited-vertices).
 
 ## Attaching
 
@@ -624,7 +624,7 @@ failed cloth count, observed candidate/contact counts, CCD iterations, impacts a
 residual.
 
 A revision uploads only the changed vertex range of each changed stream (counted in `Stats.upload_bytes`;
-see [Publishing geometry edits](post.md#publishing-geometry-edits)). When every vertex changes that is
+see [Publishing geometry edits](geometry_edits.md#publishing-geometry-edits)). When every vertex changes that is
 24 bytes per vertex (40 bytes per vertex when `tangent_frame` is enabled): 26,136 bytes for the
 33×33 benchmark flag. A whole-block upload of the same flag is 47,264 bytes
 (positions, normals, UV and 16-bit indices). Each temporal view additionally
