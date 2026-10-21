@@ -16,31 +16,48 @@ void main() {
     uint thread = gl_LocalInvocationID.x;
     uint stride = gl_WorkGroupSize.x;
 
+#ifndef CLOTH_LEAN
+    if ((root.features & CLOTH_FEATURE_REFERENCE) != 0u) {
+        for (uint item = thread; item < 2u * root.particle_count; item += stride) step_stage(root, item);
+        sync_workgroup();
+    }
+#endif
     if ((root.phases & PASS_INITIALIZE) != 0u) {
         for (uint particle = thread; particle < root.particle_count; particle += stride) step_initialize(root, particle);
         sync_workgroup();
     }
 
     ClothWords starts = ClothWords(root.color_starts);
+    bool soft = (CLOTH_ROOT_FEATURES(root) & CLOTH_FEATURE_SOFT) != 0u;
     for (uint substep = 0u; substep < root.substeps; substep++) {
         bool final_substep = substep + 1u == root.substeps;
         float progress = float(substep + 1u) / float(root.substeps);
+        float previous_progress = float(substep) / float(root.substeps);
         for (uint iteration = 0u; iteration < root.iterations; iteration++) {
-            for (uint color = 0u; color < root.color_count; color++) {
+            for (uint pass = 0u; pass < root.color_count; pass++) {
                 uint phases = final_substep ? PASS_FINAL_SUBSTEP : 0u;
-                if (iteration == 0u && color == 0u) phases |= PASS_PREDICT;
-                if (color + 1u == root.color_count) {
+                if (iteration == 0u && pass == 0u) {
+                    phases |= PASS_PREDICT;
+                    if (soft) phases |= PASS_SOFT_BEFORE;
+                }
+                if (pass + 1u == root.color_count) {
                     phases |= PASS_COLLIDE;
-                    if (iteration + 1u == root.iterations) phases |= PASS_INTEGRATE;
+                    if (iteration + 1u == root.iterations) {
+                        phases |= PASS_INTEGRATE;
+                    } else if (soft) {
+                        phases |= PASS_SOFT_AFTER;
+                    }
                 }
 
-                uint first_edge = starts.values[color];
+                uint first_constraint = starts.values[pass];
                 StepPass step = StepPass(
-                    first_edge,
-                    starts.values[color + 1u] - first_edge,
+                    first_constraint,
+                    starts.values[pass + 1u] - first_constraint,
                     phases,
-                    color == 0u ? 0u : 1u,
-                    progress
+                    pass == 0u ? 0u : 1u,
+                    progress,
+                    previous_progress,
+                    pass < root.edge_colors ? root.stretch_stiffness : root.bend_stiffness
                 );
                 uint items = step_item_count(root, step);
                 for (uint item = thread; item < items; item += stride) step_item(root, item, step);

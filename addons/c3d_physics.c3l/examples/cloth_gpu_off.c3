@@ -11,7 +11,7 @@ struct State {
     bool attached;
 }
 
-fn void? attach(State* state, AssetStore* assets) {
+fn void? attach(State* state, AssetStore* assets, uint cloths, uint particles_each) {
     return c3d::UNSUPPORTED~;
 }
 
