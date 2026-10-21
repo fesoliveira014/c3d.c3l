@@ -11,7 +11,7 @@ Each step is a function; failures raise BuildError and stop the run.
   scripts/build.py --example cube   build and run one example
   scripts/build.py --example physics
                                     add-on examples (capture, physics, physics_instanced) resolve to their package project
-  scripts/build.py --init-deps      initialize submodules and build native dependencies
+  scripts/build.py --init-deps      initialize submodules and download native dependencies
   scripts/build.py --clean          remove c3c build directories
   scripts/build.py --target many_lights --define C3D_PROFILE_CPU --lib c3d_profile
                                     build one target with extra c3c feature defines and libraries
@@ -428,7 +428,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--opt", metavar="LEVEL", help="c3c optimization flag without the dash, for example O3")
     parser.add_argument("--define", metavar="NAME", action="append", default=[], help="c3c feature define for the --target build; repeatable")
     parser.add_argument("--lib", metavar="NAME", action="append", default=[], help="extra c3c library for the --target build; repeatable")
-    parser.add_argument("--init-deps", action="store_true", help="initialize submodules and run native dependency builds")
+    parser.add_argument("--init-deps", action="store_true", help="initialize submodules and download native dependencies")
     parser.add_argument("--clean", action="store_true", help="remove c3c build directories and exit")
     parser.add_argument("--skip-abi", action="store_true")
     parser.add_argument("--skip-shaders", action="store_true")

@@ -9,9 +9,9 @@ visibility and explicit transform updates.
 Core [type descriptions](docs/type_descriptions.md) share reflected or handwritten
 field walks with the Scene inspector and application consumers.
 Core [whole-object LOD](docs/lod.md) selects rigid multipart alternatives per view,
-with GPU selection for instanced placements, optional static impostors and a
-5,000-tree example. Impostors reduce triangles but can increase GPU time; see
-the [measured acceptance](docs/impostor_acceptance.md).
+with GPU selection for instanced placements, optional [static impostors](docs/impostors.md)
+and a 5,000-tree example. An impostor cuts triangle work and can cost more GPU time than a
+very coarse mesh.
 Core [billboard batches](docs/billboards.md) provide camera-facing and directional
 quads through the transparent material pipeline, and [ribbon batches](docs/ribbons.md)
 camera-facing strips through lists of points.
@@ -153,8 +153,8 @@ python3 scripts/build.py --example pbr
 ```
 
 Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
-See [Materials and lighting](docs/materials.md) for factors, layer masks,
-light capacity and current rendering limits.
+See [Materials](docs/materials.md) for the material families, factors, maps, and alpha
+and depth state.
 
 `many_lights` compares flat and clustered Forward+ on a fixed procedural hall with
 64, 256, 1024 or 4096 point lights. The targets panel switches selection modes and
@@ -259,7 +259,7 @@ broken edit is rejected by the backend while the previous shader keeps drawing:
 python3 scripts/build.py --example custom_shader
 ```
 
-`custom_compute` runs a particle simulation on the GPU through [compute dispatch](docs/custom_shaders.md#compute-dispatch):
+`custom_compute` runs a particle simulation on the GPU through [compute dispatch](docs/compute.md):
 a compute stage advances a renderer-owned buffer every frame and a custom material draws it from the
 same buffer, with the emitter fed through an upload buffer. All three GLSL files reload on change or
 R, Space reseeds, and a broken compute push block is rejected while the previous revision keeps running:
@@ -398,7 +398,7 @@ mesh-only switch and forced-base switch compare the representations. Run
 `python scripts/build.py --example lod`, or use
 `examples/build/lod.exe --benchmark` for deterministic completed-frame counters
 and per-pass timings. `--frames 30` bounds a windowed smoke run. See
-[LOD usage](docs/lod.md) and [impostor acceptance](docs/impostor_acceptance.md).
+[whole-object LOD](docs/lod.md) and [static impostors](docs/impostors.md).
 
 ## Using c3d from your own project
 

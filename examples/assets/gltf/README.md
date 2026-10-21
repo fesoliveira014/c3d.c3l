@@ -1,8 +1,7 @@
 # glTF sample models
 
-The `gltf_viewer` and `animation` examples bundle these unmodified binary glTF files from the
-Khronos [glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets)
-repository. They are loaded locally; running the example requires no download.
+Unmodified binary glTF files from the Khronos [glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets)
+repository, for the examples and tests. They are loaded locally; running an example requires no download.
 
 Licenses follow each model's `metadata.json` in the source repository:
 [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) unless noted.

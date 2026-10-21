@@ -31,7 +31,7 @@ struct UiTransition @private {
     UiTrack[UiAnimated::len] tracks;
 }
 
-$assert UiTransition::size == 452; // the cost stated at UI_DEFAULT_TRANSITIONS and in the README
+$assert UiTransition::size == 452; // the cost stated at UI_DEFAULT_TRANSITIONS and in docs/ui_reference.md, Capacities
 
 struct UiTransitionStep @private {
     UiTransition* entry;    // null: the element snaps

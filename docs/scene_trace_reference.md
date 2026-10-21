@@ -76,9 +76,9 @@ the pose with no shader change.
   per node of refit copy, plus a bottom level on the hardware kind. A geometry that can deform adds a depth table to its
   rest trace allocation: 4 bytes per node plus 132 bytes. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
 - **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
-- **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a slot whose mesh or crowd part has a
+- **Compute skinning.** With [compute skinning](animation_deformation.md#compute-skinning) on, a slot whose mesh or crowd part has a
   posed binding this frame takes that pose instead of running its own pose pass; its streams stay allocated, unwritten.
-  The rule and its exceptions are on the animation page.
+  The rule and its exceptions are on the animation deformation page.
 
 ## Vertex-motion slots
 
@@ -90,7 +90,7 @@ software tree is refit and the hardware bottom level is updated in place. No pos
 bottom level of the shared geometry are not rebuilt. Index values are not part of the key: a revision that rewrites the
 triangle indices must also change a count to rebuild the slot.
 
-- **Device writes.** A [geometry write](custom_shaders.md#geometry-writes) is a revision of the streams the slot copies. It
+- **Device writes.** A [geometry write](compute.md#geometry-writes) is a revision of the streams the slot copies. It
   refills and refits the slot in the same frame, so the dispatch precedes `prepare_scene_trace`.
 - **Topology change.** A different geometry, vertex count, index count or stream layout rebuilds the slot, its tree and
   its bottom level.
@@ -106,7 +106,7 @@ triangle indices must also change a count to rebuild the slot.
 ## Custom trace poses
 
 A shader's `trace_pose` forms pose the trace geometry of a custom material that has a vertex stage
-([custom shaders](custom_shaders.md#trace-pose)). `single` poses a mesh and `instanced` poses one instance of an
+([custom shaders](custom_shaders_reference.md#trace-pose)). `single` poses a mesh and `instanced` poses one instance of an
 `InstancedMesh`; a form needs the vertex form of the same kind. The built-in sway is posed the same way for a batch or
 LOD group with `trace_sway`. Both take posed slots and follow the rules of [posed instances](#posed-instances): the
 compute pass writes the positions, normals and tangents into a renderer-owned slot, the software kind refits a copy of
@@ -179,4 +179,4 @@ and refits a tree copy per distinct pose and builds no bottom level.
 
 - [Scene tracing](scene_trace.md)
 - [Custom shaders](custom_shaders.md) for `trace_pose` and geometry writes
-- [Animation](animation.md#compute-skinning), [instancing](instancing.md), [LOD](lod.md)
+- [Animation deformation](animation_deformation.md#compute-skinning), [instancing](instancing.md), [LOD](lod.md)

@@ -1,59 +1,115 @@
 # Benchmarking
 
-Build with the pinned dependencies and C3 0.8.3. `-O3` enables C3's unsafe release
-mode; comparisons must use the same optimization and safety settings.
+`scripts/benchmark.py` runs the benchmark mode of the example programs, repeats each job in independent processes and
+summarizes the per-frame CSV. Four suites exist: `cpu` (library operations, no GPU device), `render` (headless
+many-light rendering), `scene` (a glTF scene) and `instancing`. Some examples also print their own benchmark output.
+This page covers the runner, the CSV the examples write, each benchmark's options and the profiling configurations.
+Profiler contracts are in [profiling](profiling.md).
+
+## Quick start
+
+Build with the pinned dependencies, C3 0.8.3 and `-O3`, which enables C3's unsafe release mode. Compare runs only when
+they use the same optimization and safety settings.
+
+```bash
+python3 scripts/benchmark.py cpu --output results/cpu --repeats 3 --build
+python3 scripts/benchmark.py render --output results/render --repeats 3 --build
+```
+
+Each `--output` directory must be new. Run suites one at a time on an otherwise idle machine. Without `--build`, the
+runner uses the last build of the target in `examples/build/`; record the build flags with the results.
+
+A single example runs by hand:
 
 ```bash
 python3 scripts/build.py --target cpu_bench --opt O3
-python3 scripts/build.py --target many_lights --opt O3
-python3 scripts/build.py --test
+./examples/build/cpu_bench meshes 4096 100 30
 ```
 
-Run suites serially on an otherwise idle machine. The runner preserves raw CSV,
-commands, stderr, process-level summaries, source/dependency revisions, compiler,
-binary hash and environment metadata. Each output directory must be new. Repeats
-launch independent processes and reverse the workload order on alternate sweeps.
-`--build` builds the selected target with `-O3`; otherwise record the build flags
-alongside the output. `--binary` selects an alternative build for experiments.
+## Concepts
+
+- **Job.** One command line of an example binary, for example one case at one node count, or one lighting mode at one
+  light count.
+- **Repeat.** One sweep over all jobs. Each job of a sweep is a separate process, and alternate sweeps run the jobs in
+  reverse order, so a drifting machine does not correlate with job order.
+- **Summary.** Per job, repeat and timing column, `summary.csv` holds samples, median, mean, p95, minimum and maximum.
+  Columns that end in `_ms`, and `us_per_iteration`, are summarized. A column that reads `-1` (unavailable) is skipped.
+- **Environment record.** `environment.json` holds the revision, uncommitted-change summary, dependency revisions,
+  platform, CPU, compiler, build flags, binary hash, all runner options, the Vulkan driver variables and, for GPU
+  suites, the `vulkaninfo --summary` text. Keep it beside `summary.csv`.
+
+The output directory also holds, per job and repeat, `<job>-r<N>.command.json` (the command), `.csv` (raw samples) and
+`.log` (standard error).
+
+## Runner options
+
+| Option | Meaning | Default |
+| --- | --- | --- |
+| `suite` | `cpu`, `render`, `scene` or `instancing`. | required |
+| `--output DIR` | New directory for the results. | required |
+| `--build` | Build the suite's target with `-O3` and the selected profiling configuration. | off |
+| `--binary PATH` | Run this binary instead of the default build output. Excludes `--build`. | none |
+| `--repeats N` | Independent sweeps per job. | 3 |
+| `--timeout SECONDS` | Limit per job process. | 180 |
+| `--cpu N` | Linux: pin the runner and its children to logical CPU `N`. Do not pin a software Vulkan driver when comparing with unpinned runs. | none |
+| `--dry-run` | Print the build command and every job command as JSON lines; run nothing. | off |
+| `--features NAME` | Profiling configuration compiled into the binary, see [Profiling configurations and overhead](#profiling-configurations-and-overhead); not for the `cpu` suite. | `off` |
+| `--capture`, `--window`, `--panel` | Pass through to every job; not for the `cpu` suite. `--panel` implies `--window`. | off |
+
+Suite options:
+
+| Suites | Options |
+| --- | --- |
+| `cpu` | `--nodes N...` (1024 4096 16384), `--cases NAME...` (the nine cases below), `--iterations` (100), `--samples` (30). |
+| `render`, `scene` | `--lights N...` (`render`: 64 256 1024 4096; `scene`: 16 64 256), `--modes flat clustered`, `--shadings forward deferred path-traced` (forward), `--msaa 1 2 4 8...` (1), `--capacity` (64), `--range` (`render`: 6 units; `scene`: 0.08 of the model extent). |
+| `render`, `scene`, `instancing` | `--frames` (300), `--warmup` (60), `--width` (1440), `--height` (900), `--anti-aliasing none\|fxaa\|taa` (fxaa), `--ambient-occlusion none\|half\|full\|ray-traced` (none), `--depth-prepass on\|off` (on), `--auto-exposure on\|off` (off), `--gpu-timings`, `--validation`. `--reflections on\|off` (off) applies to `render` and `scene`. |
+| `scene` | `--model PATH` (Sponza), `--shadows on\|off` (on). |
+| `instancing` | `--fade-fields off on` selects the `fade-field-off` and `fade-field-on` jobs. |
+
+Job names carry the shading path, mode, light count and, for `scene`, the shadow setting; a multisample count above 1
+ends the name in `-msaa<N>`.
 
 ## CPU extraction and transforms
 
 ```bash
 python3 scripts/benchmark.py cpu --output results/cpu --repeats 3
-./examples/build/cpu_bench meshes 4096 100 30
+./examples/build/cpu_bench CASE [nodes=4096] [iterations=100] [samples=30]
 ```
 
-On Linux, optionally add `--cpu 2` to pin the runner and its children to an available
-logical CPU. Do not pin a software Vulkan driver when comparing it with unpinned
-results. The default sweep uses 1,024, 4,096 and 16,384 nodes; `--nodes` and `--cases`
-select a smaller sweep.
+`cpu_bench` creates no GPU device. The runner sweeps these cases; `nodes` is the node count:
 
 | Case | Work inside each timed iteration |
 | --- | --- |
-| `world` | Update every node's world matrix |
-| `hidden_world` | The same update with all mesh nodes hidden |
-| `meshes` | Extract visible mesh candidates, including transformed bounds and frustum tests |
-| `culled_meshes` | The same extraction with every mesh outside the frustum |
-| `hidden_meshes` | The same extraction with every mesh hidden |
-| `shadows` | Extract shadow candidates without camera-frustum filtering |
-| `lights` | Extract and pack visible unshadowed point lights |
-| `hidden_lights` | The same light extraction with every light hidden |
-| `sort` | Extract candidates and sort them with the transparent comparator |
+| `world` | Update every node's world matrix. |
+| `hidden_world` | The same update with all mesh nodes hidden. |
+| `meshes` | Extract visible mesh candidates, including transformed bounds and frustum tests. |
+| `culled_meshes` | The same extraction with every mesh outside the frustum. |
+| `hidden_meshes` | The same extraction with every mesh hidden. |
+| `shadows` | Extract shadow candidates without camera-frustum filtering. |
+| `lights` | Extract and pack visible unshadowed point lights. |
+| `hidden_lights` | The same light extraction with every light hidden. |
+| `sort` | Extract candidates and sort them with the transparent comparator. |
 
-Nodes are flat children of the root with deterministic positions. Meshes share a
-box geometry and material. The orthographic camera encloses the ordinary mesh
-workload. These cases measure individual library operations without creating a GPU
-device. They do not simulate animation, deep hierarchies, asset streaming or an
-entire renderer frame. `sort` is a candidate-sort stress case; the actual renderer
-sorts a different, private draw-item structure.
+Run by hand, `cpu_bench` also takes these cases:
 
-Allocation and temporary-pool cleanup are inside the timed extraction call. Scene
-and asset setup are outside it. Five warmup batches precede measured batches;
-defaults are 30 batches of 100 iterations. A consumed checksum prevents removal of
-the measured work. CSV is written after measurement. `us_per_iteration` is the
-batch average; its p95 describes batch averages, not individual-frame latency.
+| Case | `nodes` is | Work inside each timed iteration |
+| --- | --- | --- |
+| `bvh_triangles` | plane segments per side (128; at most 1024) | Bottom-level BVH build over a plane. |
+| `bvh_top` | box count | Top-level BVH build over scattered boxes. |
+| `texture_plan` | synthetic texture records | Texture residency planning. |
+| `texture_mips EXTENT rgba8\|srgb [iterations=3] [samples=5]` | not used | CPU mip-chain generation for one image; prints `ms_per_call`. |
 
-For instruction attribution with Valgrind installed:
+Nodes are flat children of the root at deterministic positions. Meshes share a box geometry and material. An
+orthographic camera encloses the ordinary mesh workload. The cases measure single library operations. They do not
+simulate animation, deep hierarchies, asset streaming or a whole renderer frame. `sort` is a candidate-sort stress case;
+the renderer sorts a different, private draw-item structure.
+
+Allocation and temporary-pool cleanup are inside the timed call. Scene and asset setup are outside it. Five warmup
+batches precede the measured batches, and a consumed checksum keeps the compiler from removing the work.
+`us_per_iteration` is the average of one batch; its p95 describes batch averages, not single-frame latency. The CSV
+columns are `case,nodes,batch,iterations,us_per_iteration,checksum`.
+
+For instruction attribution with Valgrind:
 
 ```bash
 valgrind --tool=callgrind --collect-atstart=no \
@@ -62,57 +118,30 @@ valgrind --tool=callgrind --collect-atstart=no \
 callgrind_annotate --inclusive=no callgrind.meshes
 ```
 
-The collection filter excludes scene setup and CSV output but includes warmup
-iterations. Check that the instruction total is nonzero. Instruction shares and
-Valgrind elapsed times are not native CPU-time shares or speedup measurements;
-confirm a candidate change with independent native runs and matching output.
+The collection filter excludes scene setup and CSV output but includes warmup iterations. Check that the instruction
+total is nonzero. Instruction shares and Valgrind elapsed times are not native CPU-time shares; confirm a change with
+independent native runs and matching output.
 
 ### Scene index and triangle trees
 
 ```bash
 ./examples/build/cpu_bench index_refresh_crowd 1 10 300
-./examples/build/cpu_bench index_refresh_batch 1 10 300
-./examples/build/cpu_bench index_build_crowd 1 10 30
-./examples/build/cpu_bench index_build_batch 1 10 30
 ./examples/build/cpu_bench index_pick_crowd 1 10 30
-./examples/build/cpu_bench scan_pick_crowd 1 10 30
-./examples/build/cpu_bench index_pick_triangles 1 10 30
-./examples/build/cpu_bench scan_pick_triangles 1 10 30
 ./examples/build/cpu_bench triangle_warmup 128 2 30
-./examples/build/cpu_bench triangle_warmup 362 1 10
 ```
-
-Build with `--opt O3` for readings. The crowd scene holds 2,000 unit-box mesh nodes on a
-grid and one 4,096-instance batch (6,096 index entries); the batch scene holds one
-65,536-instance batch. The scene cases ignore the `nodes` argument and print the entry
-count in its column.
 
 | Case | Work inside each timed iteration |
 | --- | --- |
-| `index_refresh_crowd`, `index_refresh_batch` | `SceneIndex.refresh` with nothing changed |
-| `index_build_crowd`, `index_build_batch` | The tree build of the first pick after the entries changed, plus that one ray |
-| `index_pick_crowd`, `scan_pick_crowd` | 64 fixed-seed rays at bounds precision through the index or `spatial::pick` |
-| `index_pick_triangles`, `scan_pick_triangles` | The same rays at triangle precision, triangle trees built beforehand |
-| `triangle_warmup` | `prepare_triangle_picks` on one plane mesh after `mark_geometry_dirty`; `nodes` is the plane segment count per side |
+| `index_refresh_crowd`, `index_refresh_batch` | `SceneIndex.refresh` with nothing changed. |
+| `index_build_crowd`, `index_build_batch` | The tree build of the first pick after the entries changed, plus that one ray. |
+| `index_pick_crowd`, `scan_pick_crowd` | 64 fixed-seed rays at bounds precision through the index, or through `spatial::pick`. |
+| `index_pick_triangles`, `scan_pick_triangles` | The same rays at triangle precision, triangle trees built beforehand. |
+| `triangle_warmup` | `prepare_triangle_picks` on one plane mesh after `mark_geometry_dirty`; `nodes` is the plane segment count per side. |
 
-The pick cases checksum each ray's hit count and nearest node and instance, so an index
-case and its scan case print equal checksums. `triangle_warmup` prints the tree's bytes
-(`# triangle tree bytes`) after the CSV.
-
-Readings on an Intel Core i9-14900K at O3 (medians; Windows host, WSL in parentheses):
-
-| Case | Microseconds per iteration |
-| --- | --- |
-| `index_refresh_crowd` | 14.2 (15.3) |
-| `index_refresh_batch` | 0.01 (0.011); a batch whose key changed recomputes and compares every instance, 1,244 (WSL) measured before the per-batch skip |
-| `index_build_crowd` | 524 (505) |
-| `index_build_batch` | 6,959 (6,354) |
-| `index_pick_crowd` | 265 (260) |
-| `scan_pick_crowd` | 11,429 (8,049) |
-| `index_pick_triangles` | 283 (298) |
-| `scan_pick_triangles` | 11,253 (8,061) |
-| `triangle_warmup` 128 (32,768 triangles, 655,328 bytes) | 3,231 (3,210) |
-| `triangle_warmup` 362 (262,088 triangles, 5,601,280 bytes) | 31,818 (32,278) |
+The crowd scene holds 2,000 unit-box mesh nodes on a grid and one 4,096-instance batch. The batch scene holds one
+65,536-instance batch. The scene cases ignore `nodes` and print the entry count in its column. Each pick case checksums
+its rays' hit counts and nearest node and instance, so an index case and its scan case print equal checksums.
+`triangle_warmup` prints `# triangle tree bytes` after the CSV.
 
 ### ECS queries
 
@@ -121,52 +150,248 @@ Readings on an Intel Core i9-14900K at O3 (medians; Windows host, WSL in parenth
 ./examples/build/cpu_bench ecs_each2_shuffled 2097152 1 30
 ```
 
-Build with `--opt O3` for readings. Each case builds a standalone `World` with two
-four-byte component types and no scene; `nodes` is the entity count, at most 2,097,152.
-Every second entity carries the walked type, added once. Before each batch, outside the
-timed region, the queried type is removed and placed again:
+Each case builds a standalone `World` with two four-byte component types and no scene. `nodes` is the entity count, at
+most 2,097,152. Every second entity carries the walked type, added once. Before each batch, outside the timed region,
+the queried type is removed and placed again:
 
 | Case | Queried type on | Work inside each timed iteration |
 | --- | --- | --- |
-| `ecs_each` | no entity | `@each` over the walked type |
-| `ecs_each2` | a fresh seeded random half of all entities (half the candidates hit) | `@each2` over both types |
-| `ecs_each2_dense` | every candidate | `@each2` over both types |
-| `ecs_get` | as `ecs_each2` | `@each` over the walked type and `get` of the queried type per candidate |
-| `ecs_get_absent` | every entity without the walked type (no candidate hits) | as `ecs_get` |
-| `ecs_has` | as `ecs_each2` | `@each` over the walked type and `has` of the queried type per candidate |
+| `ecs_each` | no entity | `@each` over the walked type. |
+| `ecs_each2` | a fresh seeded random half of all entities | `@each2` over both types. |
+| `ecs_each2_dense` | every candidate | `@each2` over both types. |
+| `ecs_get` | as `ecs_each2` | `@each` over the walked type and `get` of the queried type per candidate. |
+| `ecs_get_absent` | every entity without the walked type | as `ecs_get`. |
+| `ecs_has` | as `ecs_each2` | `@each` over the walked type and `has` of the queried type per candidate. |
 
-Without a suffix both types are added in entity order. The `_shuffled` suffix adds them in
-a seeded random order, so the walk reads the other arrays at random positions. The seed is
-fixed and printed before the CSV header; re-runs reproduce every layout. A fixed random half
-repeated pass after pass trains the branch predictor on small worlds, so each batch draws a new
-half and times one pass (`iterations` 1). The checksum sums the visited values; a change that
-keeps the visit set keeps it.
+Without a suffix, both types are added in entity order. The `_shuffled` suffix adds them in a seeded random order, so
+the walk reads the other arrays at random positions. The seed is fixed and printed as `# seed:` before the CSV header.
+Each batch draws a new random half and times one pass (`iterations` 1), so the branch predictor cannot learn a repeated
+half. The checksum sums the visited values. Use a small entity count (arrays that fit one core's cache) and a large one
+(arrays beyond the last-level cache) to separate compute from memory cost.
 
-Readings use 16,384 entities, whose arrays (about 1 MiB with the re-placement) stay in the
-2 MiB L2 of one i9-14900K P-core, and 2,097,152 entities, whose arrays exceed its 36 MB L3.
+## Headless many-light rendering
 
-Readings on an Intel Core i9-14900K, Windows 11, c3c 0.8.3 with MSVC 19.44, `--opt O3`, process
-pinned to a P-core. Each cell is the median of three runs' medians, in µs per pass. Before is the
-64-type mask test; after is presence read from the stores with a 128-type mask.
+```bash
+python3 scripts/benchmark.py render --output results/render --repeats 3
+./examples/build/many_lights --benchmark --mode clustered --lights 256 \
+  --frames 300 --warmup 60 --capacity 64 --range 6 --width 1440 --height 900
+```
 
-| Case | 16,384 before | 16,384 after | 2,097,152 before | 2,097,152 after |
-| --- | ---: | ---: | ---: | ---: |
-| `ecs_each` | 0.6 | 0.6 | 186.1 | 199.6 |
-| `ecs_each_shuffled` | 0.6 | 0.6 | 191.4 | 200.4 |
-| `ecs_each2` | 23.3 | 23.0 | 4,032 | 3,510 |
-| `ecs_each2_shuffled` | 24.8 | 24.1 | 9,316 | 5,559 |
-| `ecs_each2_dense` | 4.9 | 3.7 | 1,377 | 758.0 |
-| `ecs_each2_dense_shuffled` | 5.8 | 4.1 | 8,503 | 3,490 |
-| `ecs_get` | 27.6 | 28.2 | 4,403 | 4,232 |
-| `ecs_get_shuffled` | 29.2 | 30.7 | 10,064 | 6,196 |
-| `ecs_get_absent` | 2.8 | 3.0 | 993.2 | 658.9 |
-| `ecs_get_absent_shuffled` | 3.1 | 3.0 | 3,845 | 2,659 |
-| `ecs_has` | 26.0 | 27.8 | 4,234 | 4,329 |
-| `ecs_has_shuffled` | 27.3 | 29.1 | 7,094 | 5,895 |
+`many_lights --benchmark` reuses the interactive example's hall, deterministic light placement and reset camera. It
+renders a display-LDR texture without a window, GUI or presentation. All 4,096 light nodes exist in every workload and
+inactive lights are hidden. World matrices update every frame, as in the interactive loop. The cluster grid stays 16 x 9
+x 24 with a far distance of 100. Warmup excludes pipeline creation and first-use uploads from the samples; raise it if a
+driver has not reached steady state.
 
-A seven-run repeat put `ecs_each` at 2,097,152 within noise: 181.2 before, 182.9 after.
+Benchmark mode of `many_lights`, `gltf_viewer` and `instancing` disables validation and timestamps by default. Run a
+correctness smoke with `--validation`, then collect timing without it. Add `--gpu-timings` for a separate diagnostic
+run, because timestamp instrumentation can change performance. `effects`, `rt_shadows` and `rt_effects` always run with
+validation on, so their timings include its cost.
 
-### Traced effects in software and on ray queries
+### Options of every benchmark example
+
+These options are parsed the same way by `many_lights`, `gltf_viewer` and `instancing`. An option that needs a compiled
+feature is rejected at parse time with the build recipe when the binary lacks it, so an excluded mode never reports zero
+timings silently.
+
+The loop rejects, as `c3d::INVALID_ARGUMENT`: a frame count of 0 or above 100,000, a warmup above 100,000, a width or
+height of 0 or above 8,192, `--ssgi-steps` outside 4 to 64 with screen-space GI on, `--panel` without `--window` and
+`--capture`, `--trace software` with path tracing, and a multisample count above 1 with TAA or path tracing.
+`gltf_viewer` also rejects more than 4,096 lights, a capacity outside 1 to 256 and a range outside 0 to 2.
+
+| Option | Needs | Effect |
+| --- | --- | --- |
+| `--benchmark` | | Selects benchmark mode. |
+| `--frames N`, `--warmup N`, `--width N`, `--height N` | | Frames measured (300), frames before measuring (60), and the extent (1440 x 900). |
+| `--gpu-timings` | `C3D_PROFILE_GPU` | Enables per-pass timestamps. |
+| `--validation` | | Enables Vulkan validation. |
+| `--capture` | `C3D_PROFILE_CPU` or `C3D_PROFILE_GPU` | Opens a `profile::@capture` with one `application.frame` scope around every frame, so library scopes and GPU capture run. Nothing is exported. |
+| `--window` | | Presents to a window with immediate present mode instead of an offscreen target, using the renderer's default view. Events are polled and ignored. Closing the window ends the run with the rows collected so far. |
+| `--panel` | `--window`, `--capture`, `C3D_PROFILE_GUI` | Draws the profiler panel every frame through the overlay and reports its cost as `gui_ms`. |
+| `--print-features` | | Prints `cpu=<0\|1> gpu=<0\|1> internal=<0\|1> gui=<0\|1>` and exits. |
+| `--anti-aliasing none\|fxaa\|taa` | | Anti-aliasing filter of the measured view; FXAA by default. |
+| `--msaa 1\|2\|4\|8` | | `many_lights` and `gltf_viewer` only; `instancing` parses it and ignores it. Samples per pixel of the measured view; 1 by default. A count above 1 with `--anti-aliasing taa` or `--shading path-traced` is rejected. A deferred count above 1 reports its classification pass as `gpu_msaa_edges_ms`. |
+| `--depth-prepass on\|off` | | Depth prepass of a forward view; on by default. Deferred views always run it. |
+| `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter, unless `--trace software` | Screen-space AO at half or full resolution, or ray traced at half resolution with 4 rays; none by default. Reported as `gpu_ambient_occlusion_ms`. |
+| `--auto-exposure on\|off` | | Automatic exposure; off by default. Reported as `gpu_exposure_ms`. |
+| `--reflections on\|off` | a ray-query adapter, unless `--trace software`; deferred or forward shading | Ray-traced reflections; off by default. A path-traced view faults `UNSUPPORTED`. Reported as `gpu_rt_reflections_ms`. |
+| `--screen-space-gi on\|off` | | [Screen-space GI](screen_space_gi.md); off by default. Reported as `gpu_screen_space_gi_ms` and `gpu_ssgi_copy_ms`. |
+| `--ssgi-trace linear\|hierarchical` | `--screen-space-gi on` | Ray search; `linear` by default. Orthographic views use `linear`. A hierarchical perspective view also reports `gpu_depth_pyramid_ms`; add it to `gpu_screen_space_gi_ms` when comparing modes. |
+| `--ssgi-steps N` | `--screen-space-gi on` | Steps per ray, 4 to 64; default 24. Keep it equal across compared trace modes. |
+| `--trace software\|hardware` | `hardware`: a ray-query adapter | Creates the renderer with or without ray queries; every trace consumer of the run, probe updates included, follows. The default is `hardware` exactly when `--reflections on` or `--ambient-occlusion ray-traced` is given. `software` with `--shading path-traced` is rejected. |
+| `--shading forward\|deferred\|path-traced` | `path-traced`: a ray-tracing-pipeline adapter | `many_lights` and `gltf_viewer`: shading path of the measured view; path tracing uses the default settings and forces the flat light mode. Reported as `gpu_path_trace_ms`. |
+
+`many_lights` also takes `--mode flat|clustered`, `--lights N`, `--capacity N`, `--range R` and `--depth-pruning on|off`
+(off by default) ([depth pruning](lights.md#depth-pruning)). Keep extent, camera, range, capacity and material fixed
+when comparing flat and clustered modes or the shading paths. Report overflow counts: an overflow falls back to the
+complete flat light list instead of dropping contributions. `many_lights` rejects fewer than 1 or more than 4,096
+lights, a capacity outside 1 to 256 and a range outside 1 to 32. A correctness stress:
+
+```bash
+./examples/build/many_lights --benchmark --mode clustered --lights 256 \
+  --capacity 1 --range 32 --frames 10 --warmup 10 --validation --gpu-timings
+```
+
+### CSV fields
+
+Every benchmark loop writes one row per measured frame, led by a `frame` column:
+
+| Field | Interval or result |
+| --- | --- |
+| `wall_ms` | Scene update through submission, including frame-slot waiting. |
+| `update_ms` | The benchmark's own per-frame scene edits plus `Scene.update_world`. |
+| `begin_ms` | `begin_frame`, including prior-slot completion, readbacks and cache sweeps. |
+| `render_ms` | `render_view`, including CPU extraction and command recording. |
+| `finish_ms` | `finish_view`. |
+| `end_ms` | `end_frame` submission, including presentation in windowed runs. |
+| `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel`. |
+| `cpu_record_ms` | `Stats.cpu_record_ms`; excludes the waiting, readback and sweep work of `begin_frame`. |
+| `draws`, `lights`, `dropped` | Current-frame renderer counters. |
+| `overflows` | Completed cluster overflow count, attributed to its submitted frame. |
+| `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal. |
+| `pipeline_lookups` | Draw pipeline cache lookups in the frame; one per prepared draw item and shadow draw. |
+| `batches_faded` | `Stats.batches_faded`: view batches inside the frustum and wholly past their fade band. |
+| `upload_bytes` | `Stats.upload_bytes`: bytes staged for upload this frame. |
+| `gpu_<pass>_ms` | Completed per-pass timestamp, see below. |
+
+The GPU columns are `gpu_shadow_ms`, `gpu_cull_ms`, `gpu_prepass_ms`, `gpu_gbuffer_ms`, `gpu_depth_pyramid_ms`,
+`gpu_ambient_occlusion_ms`, `gpu_rt_reflections_ms`, `gpu_path_trace_ms`, `gpu_lighting_ms`, `gpu_opaque_ms`,
+`gpu_post_ms`, `gpu_composite_ms`, `gpu_velocity_ms`, `gpu_taa_ms`, `gpu_probe_update_ms`, `gpu_acceleration_build_ms`,
+`gpu_screen_space_gi_ms`, `gpu_ssgi_copy_ms`, `gpu_instance_cull_ms`, `gpu_environment_ms`, `gpu_exposure_ms` and
+`gpu_msaa_edges_ms`. Three more are stages of `gpu_post_ms` (`gpu_bloom_ms`, `gpu_dof_ms`, `gpu_motion_blur_ms`) and
+eight are stages of `gpu_environment_ms`: `gpu_environment_source_ms`, `gpu_environment_irradiance_ms`,
+`gpu_environment_prefilter_ms`, `gpu_environment_sheen_ms`, `gpu_environment_luts_ms`,
+`gpu_environment_sky_transmittance_ms`, `gpu_environment_sky_multi_scattering_ms` and `gpu_environment_sky_ms`. Stage
+columns are parts of their parent column; do not add them to it. A GPU column reads `-1` when timestamps are off and
+zero for an omitted pass.
+
+GPU results are read when the frame slot is reused and attached to the row of the submitting frame. Two extra frames
+drain the last measured slots. Sample storage is allocated before the loop and the CSV is written after it. `wall_ms`
+measures steady-state submission throughput with frames in flight, not isolated GPU latency. Pass timestamps are partial
+intervals; do not present them as total frame time.
+
+A windowed run presents the same view settings to the window, and window-system pacing applies. Compare windowed rows
+only with other windowed rows.
+
+When the run traces rays, the loop prints `first frame: trace preparation ... ms CPU, acceleration build ... ms GPU` to
+standard error once the first frame's GPU time arrives.
+
+## Scene benchmark
+
+```bash
+python3 scripts/fetch_benchmark_assets.py
+python3 scripts/build.py --target gltf_viewer --opt O3
+python3 scripts/benchmark.py scene --output results/scene --repeats 3
+./examples/build/gltf_viewer --benchmark --lights 64 --mode clustered --shadows on
+```
+
+The scene suite renders Crytek Sponza from `KhronosGroup/glTF-Sample-Assets`. `scripts/fetch_benchmark_assets.py`
+downloads it at a pinned commit into `examples/assets/benchmark/sponza/`, which is gitignored: the model files are under
+the Cryengine Limited License Agreement and are not redistributed here. The fetch skips files that already exist with
+the right size; `--force` downloads everything again. `benchmark.py scene` refuses to run without the model and prints
+the fetch command. Any glTF file replaces Sponza through the positional path of `gltf_viewer` or
+`benchmark.py scene --model`; light and camera placement derive from the model bounds.
+
+`gltf_viewer --benchmark` reuses the viewer's loading and environment: one instance at the origin, the studio HDR as
+environment and background, a sun, and `--lights N` point lights on a deterministic grid inside the model bounds at 0.35
+of the vertical extent. The camera sits inside the model at 0.3 of the height, 0.35 of the long axis behind the center,
+looking along the long axis. Shadow casting dominates the draw count. The options of the previous section apply, with
+these additions:
+
+| Option | Effect |
+| --- | --- |
+| `--mode flat\|clustered`, `--lights N`, `--capacity N` | As in `many_lights`. |
+| `--range R` | Light range as a fraction of the largest horizontal extent; default 0.08. |
+| `--shadows on\|off\|traced` | Sun shadows from the atlas (default), none, or traced ([shadows](shadows.md)). `traced` makes an `AUTO` run create the renderer with ray queries. |
+| `--texture-budget MiB` | Texture residency budget of the renderer. |
+| `--probe-volumes 0\|1\|8` | No probe volume, one over the model bounds, or one per octant ([probe volumes](probe_volumes.md)). |
+| `--probe-counts X,Y,Z` | Probes per volume; default 16,8,8. |
+| `--probe-fill environment\|scene` | Fill from the environment (default) or trace the scene every frame; the trace kind follows `--trace`. |
+| `--probe-window N` | Probes per update; 0 updates all. |
+| `--probe-rays N` | Rays per probe, 32 to 256; default 128. Reported with `gpu_probe_update_ms`. |
+| `--point-shadows on\|off` | Shadows on the point lights. |
+| `--reflection-probes 0\|1\|2\|16` | Reflection probes with distinct solid-colour environments: none, one box over the model bounds, two overlapping boxes, or a 4 x 2 x 2 grid. See [reflection probes](reflection_probes.md). The asset store is created with 32 environments when probes are on. The probe-sampling cost shows in `gpu_opaque_ms` (forward) or `gpu_lighting_ms` (deferred). |
+| `--reflection-probe-placement inside\|outside` | `outside` moves every box below the model, so each pixel tests every packed box and lies in none. |
+| `--environment-refresh on\|off` | Marks the studio source texture dirty before every frame, so each frame regenerates the environment: conversion, filtering and SH projection. Reported as `gpu_environment_ms` and its stage columns. The LUTs record only in the first prepared frame, and sheen only for a model with sheen. The upload's CPU mip generation lands in `cpu_record_ms`. See [environments](environments.md#preparation-and-edits). |
+
+The banner printed to standard error repeats the effective settings.
+
+## Instancing benchmark
+
+```bash
+python3 scripts/benchmark.py instancing --output results/instancing --build --features gpu --gpu-timings \
+  --width 1280 --height 720 --repeats 3
+./examples/build/instancing --benchmark --fade-field --frames 300 --warmup 60 --width 1280 --height 720
+```
+
+`instancing --benchmark` renders the interactive example's scene headless from its starting camera, with instance
+culling and motion blur on and four sun cascades. The scene is still: only the sway moves, on the loop's fixed frame
+time. The options of the many-light section apply, and the CSV columns are the same.
+
+| Option | Effect |
+| --- | --- |
+| `--fade-field` | Adds a grid of 4,096 cell batches with a fade band, the shape of one foliage layer, most of whose cells lie wholly past the band. `RendererDesc.max_instance_batches` is raised to hold every cell. `batches_faded` counts the skipped cells. |
+| `--instance-edit range\|whole` | Bobs one row of the big batch every frame and animates the trio. `range` publishes the row with `Scene.mark_instances_range_dirty`; `whole` publishes with `Scene.mark_instances_dirty`. The images are identical; `upload_bytes` shows the difference. |
+| `--move-node` | Moves a batch node every frame. |
+
+`benchmark.py instancing` runs the `fade-field-off` and `fade-field-on` jobs.
+
+## Sky benchmark
+
+```bash
+python3 scripts/build.py --target sky --opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile
+./examples/build/sky --benchmark --gpu-timings
+```
+
+`sky --benchmark [frames]` renders the [sky example](sky.md#example) offscreen at 2560 x 1440 after 60 warmup frames.
+`frames` is the length of each segment (300 by default; at least 2). The segments run in order: `noon`, `twilight`,
+`valley` (camera low, looking into the fog), `pan` (the camera yaw sweeps), `orbit` (the camera far above the
+atmosphere), `ascent` (the camera rises through the top of the atmosphere) and `time-lapse` (the sun rises over four
+segments' frames). The output lines are:
+
+```
+# sky shading=forward shadows=atlas ... extent=2560x1440 frames=300
+sun_extract_us median=<>
+gpu_ms view=<main|mirror> segment=<s> pass=<pass> median=<> p99=<>
+frame_ms segment=<s> median=<> p99=<>
+refresh_ms segment=time-lapse stage=<environment.sky|environment.prefilter|environment.irradiance|total> median=<> max=<> count=<n>
+refreshes_per_minute segment=time-lapse value=<>
+gate time_lapse_regenerations expected=<n> found=<n> <pass|fail>
+gate steady_sky <pass|fail>
+gate ascent_regenerations <pass|fail>
+```
+
+`refresh_ms` reads the frames that regenerated the sky environment; `total` is the whole `ENVIRONMENT` pass. The gates
+check the regeneration policy: the time-lapse expects `floor(sweep / period)` regenerations after its first frame, where
+`sweep` is the sun's total elevation change and `period = (floor(0.5° / step) + 1) · step` for a per-frame change
+`step`, and none without an atmosphere; `steady_sky` expects none after the first frame of `noon`;
+`ascent_regenerations` expects none after the first frame of `ascent`. A failed gate exits 1.
+
+| Option | Effect |
+| --- | --- |
+| `--gpu-timings`, `--validation`, `--width N`, `--height N` | As in the many-light section. |
+| `--shading forward\|deferred`, `--shadows atlas\|traced`, `--ssgi`, `--path-traced`, `--reflections on\|off`, `--taa`, `--auto-exposure`, `--pre-exposure V\|off` | Renderer configuration of the measured views. `--reflections on` needs `--shading deferred`. |
+| `--fog on\|off`, `--atmosphere off\|on\|dense\|empty` | Fog and atmosphere; `--fog off --atmosphere off` is the baseline. See [the sky example](sky.md#example). |
+| `--volumetric-fog`, `--fog-quality low\|medium\|high`, `--fog-temporal` | A froxel fog volume on the main and mirror views, its grid, and its [temporal accumulation](fog.md#temporal-accumulation). The `FOG_SCATTERING` and `FOG_INTEGRATION` lines report it. |
+| `--local-lights N`, `--lamp-range METRES`, `--lamps-in-fog on\|off` | Lamps that `FOG_SCATTERING` scatters. |
+| `--clouds`, `--cloud-temporal` | A [cloud layer](clouds.md) and its [temporal accumulation](clouds.md#cloud-temporal-accumulation). The `CLOUDS` and `CLOUD_SHADOWS` lines report it. |
+
+## Post-processing benchmark
+
+```bash
+python3 scripts/build.py --target effects --opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL \
+  --lib c3d_profile
+./examples/build/effects --gpu-timings --benchmark 300 [--auto-focus] [--focus-point X Y]
+```
+
+`effects --benchmark FRAMES` renders the interactive example's scene offscreen through the shared benchmark loop, at
+1920 x 1080 after 30 warmup frames. Bloom, depth of field, motion blur and FXAA are on, and the cube spins at the loop's
+fixed frame time. It needs `--gpu-timings`, prints no CSV, and prints the mean over the frames of each [post
+stage](post.md) and of the whole post chain. The stages are parts of the post chain, so their sum is at most its
+mean. The other benchmark examples report the same stages as the `gpu_bloom_ms`, `gpu_dof_ms` and `gpu_motion_blur_ms`
+columns when their view enables the effects.
+
+## Traced effects in software and on ray queries
 
 ```bash
 ./examples/build/rt_shadows --gpu-timings --benchmark 300 --atlas-shadows
@@ -178,262 +403,29 @@ A seven-run repeat put `ecs_each` at 2,097,152 within noise: 181.2 before, 182.9
     --shadows on|traced --trace software|hardware --width 3840 --height 2160
 ```
 
-Build the three targets with `--opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib
-c3d_profile`. `rt_shadows` and `rt_effects` benchmark at 1920x1080 and print pass means and the GPU frame
-(the sum of the pass timestamps); `rt_shadows` reports the forward pass, where traced shadows cost, and
-`--atlas-shadows` gives the base to subtract; `--twin-ground` draws the ground with the custom twin of its
-Standard material, which shades through `standard_shading.glsl` and its traced forms, and the line names the
-ground. `rt_effects` runs deferred with traced reflections unless `--forward` or `--no-reflections` say otherwise,
-configures the view before `prepare_scene` and prints `first frame:` with the pipelines the first frame created and its
-recording time. `gltf_viewer` prints `first frame:` with the trace
-preparation's CPU time and the acceleration builds' GPU time; `--shadows traced` traces the sun's shadow
-(an `AUTO` run then creates the renderer with ray queries), and `--shadows on` keeps the atlas as its base.
+Build the three targets with `--opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`.
+`rt_shadows` and `rt_effects` benchmark at 1920 x 1080 and print pass means and the GPU frame (the sum of the pass
+timestamps).
 
-Readings on an RTX 4090 (medians of 300 frames; GPU frame in parentheses):
+- `rt_shadows` reports the forward pass, where traced shadows cost. `--atlas-shadows` gives the atlas base to subtract.
+  `--twin-ground` draws the ground with the custom twin of its Standard material, which shades through
+  `standard_shading.glsl` and its traced forms.
+- `rt_effects` runs deferred with traced reflections unless `--forward` or `--no-reflections` say otherwise. It
+  configures the view before `prepare_scene` and prints `first frame:` with the pipelines the first frame created and
+  its recording time.
+- `gltf_viewer --shadows traced` traces the sun's shadow; `--shadows on` keeps the atlas as its base. A run of either
+  with `--trace software` uses the software walk and with `--trace hardware` ray queries.
 
-| Run | Ray queries | Software walk |
-| --- | --- | --- |
-| `rt_shadows`, forward pass, atlas base | 0.051 (0.121) | 0.051 (0.120) |
-| `rt_shadows`, forward pass, traced | 0.077 (0.159) | 0.213 (0.270) |
-| `rt_effects` AO / reflections | 0.138 / 0.095 (0.509) | 0.414 / 0.603 (1.607) |
-| Sponza 1080p AO / reflections | 0.270 / 0.160 (0.820) | 2.978 / 1.822 (5.184) |
-| Sponza 2160p AO / reflections | 0.852 / 0.453 (2.364) | 9.181 / 5.400 (15.656) |
-| Sponza first frame | 49.9 GPU acceleration builds, 0.6 CPU | 31.0 CPU (triangle trees and upload) |
-| Sponza 2160p lighting pass, atlas sun shadow (base) | 0.464 (1.070) | 0.450 (1.038) |
-| Sponza 2160p lighting pass, traced sun shadow | 0.789 (1.280) | 6.261 (6.768) |
-
-Ratios are quoted only where both frames exceed 1 ms: at 2160p the software walk costs 10.8 times the ray
-queries for AO, 11.9 times for reflections, and 17.9 times for the sun's traced shadow (5.81 against 0.325 ms of
-lighting pass over the atlas base). The `rt_shadows` and `rt_effects` frames stay below 1 ms, so their figures carry
-no ratio.
-
-## Headless many-light rendering
-
-```bash
-python3 scripts/benchmark.py render --output results/render --repeats 3
-./examples/build/many_lights --benchmark --mode clustered --lights 256 \
-  --frames 300 --warmup 60 --capacity 64 --range 6 --width 1440 --height 900
-```
-
-This reuses the interactive example's hall, deterministic light placement and reset
-camera. It renders a display-LDR texture without a window, GUI or presentation.
-All 4,096 light nodes exist in every workload; inactive lights are hidden. Scene
-world matrices are updated every frame, matching the interactive loop's policy.
-The grid remains 16 × 9 × 24 with far distance 100. Warmup excludes initial pipeline
-creation and first-use uploads from the reported samples; increase it if a target
-driver has not reached steady state.
-
-Benchmark mode disables validation and timestamps by default. Run a separate
-correctness smoke with `--validation`, then collect ordinary timing without it.
-The interactive example continues to enable validation. Add `--gpu-timings` for a
-separate diagnostic run; timestamp instrumentation can change performance.
-
-Further options select profiler work inside the same loop. Each one that needs a
-compiled feature is rejected at parse time with the build recipe when the binary
-lacks it, so an excluded mode never silently reports zero timings.
-
-| Option | Needs | Effect |
-| --- | --- | --- |
-| `--capture` | `C3D_PROFILE_CPU` or `C3D_PROFILE_GPU` | Opens a `profile::@capture` with one `application.frame` scope around every frame, so library scopes and GPU capture run. Nothing is exported. |
-| `--window` | nothing | Presents to a window with immediate present mode instead of an offscreen target, using the renderer's default view. Events are polled and ignored; closing the window ends the run with the rows collected so far. |
-| `--panel` | `--window`, `--capture`, `C3D_PROFILE_GUI` | Draws the profiler panel every frame through the overlay and reports its cost as `gui_ms`. |
-| `--print-features` | nothing | Prints `cpu=<0|1> gpu=<0|1> internal=<0|1> gui=<0|1>` and exits. |
-| `--anti-aliasing none\|fxaa\|taa` | nothing | Selects the measured view's anti-aliasing filter (`benchmark.py --anti-aliasing`); FXAA by default. |
-| `--msaa 1\|2\|4\|8` | nothing | Selects the measured view's samples per pixel (`benchmark.py --msaa`, one job per value, the label of a count above 1 ending in `-msaa<N>`); 1 by default. `--anti-aliasing taa` or `--shading path-traced` with a count above 1 is rejected as an invalid argument. The banner prints `msaa=<N>`. A deferred count above 1 reports its classification pass as `gpu_msaa_edges_ms`, the last CSV column, beside `gpu_lighting_ms`. |
-| `--depth-prepass on\|off` | nothing | Selects the forward measured view's depth prepass (`benchmark.py --depth-prepass`); on by default, as in the view constructors. Deferred views always run it. |
-| `--depth-pruning on\|off` | nothing | `many_lights` only: sets `ClusterDesc.depth_pruning` on the measured clustered view ([depth pruning](lights.md#depth-pruning)); off by default. A forward run without a depth prepass, or with traced reflections, ignores it. A second banner line prints `depth_pruning=on\|off`. |
-| `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Selects the measured view's AO: screen space at half or full resolution, or ray traced at half resolution with 4 rays (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
-| `--auto-exposure on\|off` | nothing | Turns automatic exposure on for the measured view (`benchmark.py --auto-exposure`); off by default. The CSV reports it as `gpu_exposure_ms`. |
-| `--reflections on\|off` | a ray-query adapter and a deferred or forward `--shading` | Ray-traced reflections on the measured view (`benchmark.py --reflections`); off by default. A path-traced view faults `UNSUPPORTED`. The CSV reports it as `gpu_rt_reflections_ms`. |
-| `--screen-space-gi on\|off` | nothing | [Screen-space GI](screen_space_gi.md) on the measured view; off by default. The CSV reports it as `gpu_screen_space_gi_ms` and the colour copy as `gpu_ssgi_copy_ms`; a view with it records velocity every frame. |
-| `--ssgi-trace linear\|hierarchical` | `--screen-space-gi on` | Selects the ray search; `linear` by default. Hierarchical perspective views also report `gpu_depth_pyramid_ms`; add that to `gpu_screen_space_gi_ms` when comparing modes. Orthographic views use LINEAR. |
-| `--ssgi-steps N` | `--screen-space-gi on` | Steps per ray, 4 to 64; default 24. Keep this and the ray settings equal when comparing trace modes. |
-| `--trace software\|hardware` | `hardware`: a ray-query adapter | Creates the renderer with (`hardware`) or without (`software`) ray queries; every trace consumer of the run, probe updates included, follows. The default is `hardware` exactly when `--reflections on` or `--ambient-occlusion ray-traced` is given; `software` runs those effects on the software walk. `software` with `--shading path-traced` (whose ray-tracing pipelines imply ray queries) is rejected as an invalid argument. The banner prints `trace=none\|software\|hardware` (`none`: the run traces nothing). With a traced effect on the command line the probe update of a `--probe-fill scene` row now runs on ray queries; earlier rows ran it in software beside a hardware view. |
-| `--shading path-traced` | a ray-tracing-pipeline adapter | Path traces the measured view with the default settings (6 bounces, one sample per frame, no cap); the light mode is forced to flat. The CSV reports the trace as `gpu_path_trace_ms`; samples per second is width x height / `gpu_path_trace_ms` x 1000. |
-
-The windowed run is a different workload from the headless one: the default view
-carries the interactive example's settings and window-system pacing applies. Compare
-windowed rows only with other windowed rows.
-
-| CSV field | Interval or result |
-| --- | --- |
-| `wall_ms` | Scene update through submission, including frame-slot waiting |
-| `update_ms` | `Scene.update_world`, after the benchmark's own per-frame scene edits |
-| `begin_ms` | `begin_frame`, including prior-slot completion, readbacks and cache sweeps |
-| `render_ms` | `render_view`, including CPU extraction and command recording |
-| `finish_ms` | `finish_view` |
-| `end_ms` | `end_frame` submission, including presentation in windowed runs |
-| `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
-| `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain and its stages (`gpu_bloom_ms`, `gpu_dof_ms`, `gpu_motion_blur_ms`; parts of `gpu_post_ms`, not added to it), composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy, instance culling (`gpu_instance_cull_ms`), environment preparation (`gpu_environment_ms`) and its stages (`gpu_environment_source_ms`, `gpu_environment_irradiance_ms`, `gpu_environment_prefilter_ms`, `gpu_environment_sheen_ms`, `gpu_environment_luts_ms`, and an atmosphere's `gpu_environment_sky_transmittance_ms`, `gpu_environment_sky_multi_scattering_ms`, `gpu_environment_sky_ms`, last; parts of `gpu_environment_ms`, not added to it); `-1` when unavailable, zero for an omitted pass |
-| `draws`, `lights`, `dropped` | Current-frame renderer counters |
-| `batches_faded` | Current-frame `Stats.batches_faded`: view batches inside the frustum wholly past their fade band |
-| `upload_bytes` | Current-frame `Stats.upload_bytes`: bytes staged for upload this frame |
-| `overflows` | Completed cluster overflow count attributed to its submitted frame |
-| `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |
-| `pipeline_lookups` | Draw pipeline cache lookups in the frame; one per prepared draw item and shadow draw |
-
-GPU results are read when the frame slot is reused and attached to the originating
-row. Two additional frames drain the final measured slots. Sample storage is
-allocated before the loop; CSV output follows completion. `wall_ms` measures
-steady-state submission throughput with frames in flight, not isolated GPU latency.
-The pass timestamps are partial intervals and should not be presented as total
-frame time.
-
-`--shading forward|deferred|path-traced` selects the view's shading path (`benchmark.py --shadings`);
-job names carry the path first. Keep extent, camera, range, capacity and material fixed when
-comparing flat and clustered modes or the two shading paths. Report overflow counts: overflow falls back to the complete flat
-light list rather than dropping contributions. A useful correctness stress is:
-
-```bash
-./examples/build/many_lights --benchmark --mode clustered --lights 256 \
-  --capacity 1 --range 32 --frames 10 --warmup 10 --validation --gpu-timings
-```
-
-On a machine without a physical GPU, software Vulkan can verify the path, but it
-cannot establish hardware GPU speedups or a useful light-count crossover. Record
-any driver-specific workarounds. Headless results also omit window-system pacing;
-measure the interactive example separately when that is the question.
-
-## Scene benchmark
-
-```bash
-python3 scripts/fetch_benchmark_assets.py
-python3 scripts/build.py --target gltf_viewer --opt O3
-python3 scripts/benchmark.py scene --output results/scene --repeats 3
-./examples/build/gltf_viewer --benchmark --lights 64 --mode clustered --shadows on
-```
-
-The scene suite renders Crytek Sponza from `KhronosGroup/glTF-Sample-Assets`,
-pinned to one commit by the fetch script and stored under
-`examples/assets/benchmark/sponza/`, which is gitignored: the model files are
-under the Cryengine Limited License Agreement and are not redistributed here.
-The fetch skips files that already exist with the right size; `--force`
-downloads everything again. `benchmark.py scene` refuses to run without the
-model and prints the fetch command.
-
-`gltf_viewer --benchmark` reuses the viewer's loading and environment: one
-instance at the origin, the studio HDR as environment and background, a sun
-that casts shadows unless `--shadows off` (`--shadows traced` traces them), and `--lights N` point lights on a
-deterministic grid inside the model bounds at 0.35 of the vertical extent, with
-`--range R` as a fraction of the largest horizontal extent (default 0.08). The
-camera sits inside the atrium at 0.3 of the height, 0.35 of the long axis behind
-the center, looking along the long axis. `--mode`, `--capacity` and every common
-option (`--frames`, `--warmup`, `--width`, `--height`, `--gpu-timings`,
-`--validation`, `--capture`, `--window`, `--panel`, `--print-features`) behave as
-in `many_lights --benchmark`, and the CSV columns are the same. Shadow casting
-dominates the draw count: about 470 draws with the sun shadowed against about 85
-without.
-
-`--probe-volumes 0|1|8` adds probe volumes (one over the model bounds, or one per octant) with
-`--probe-counts X,Y,Z` probes each (default 16,8,8), filled from the environment or, with
-`--probe-fill scene`, traced every frame (`--probe-window N` probes per update, 0 for all);
-`--point-shadows on` enables shadows on the point lights; `--probe-rays N` sets rays per probe (32 to
-256, default 128). The banner prints them and the CSV has `gpu_probe_update_ms`. The kind of the probe
-trace follows `--trace`. See [probe volumes](probe_volumes.md).
-
-`--reflection-probes 0|1|2|16` adds reflection probes, each with a distinct solid-colour environment: one over
-the model bounds with a hard edge, two over the bounds (the second 1.01 times larger, blend equal to the smallest
-half extent, so every pixel reads both probes and the global environment), or a 4 x 2 x 2 grid tiling the bounds.
-`--reflection-probe-placement inside|outside` (default `inside`); `outside` moves every box below the model by twice the
-model's height, so each pixel tests every packed box and lies in none. The asset store is created with 32 environments
-when probes are on, and the banner prints `reflection_probes=N reflection_probe_placement=inside|outside`. The
-probe-sampling cost is `gpu_opaque_ms` forward and `gpu_lighting_ms` deferred. See
-[reflection probes](reflection_probes.md).
-
-`--environment-refresh on` marks the studio source texture dirty before every frame, so every frame
-uploads it again and regenerates the environment in place at the default processing sizes: conversion,
-GGX filtering and SH projection. The CSV reports that work as `gpu_environment_ms` and splits it into the
-stage columns; the LUTs record only in the first prepared frame, and sheen only for a model with sheen.
-The upload's CPU mip generation and staging land in `cpu_record_ms`, and its copy is not timed. See
-[environments](environments.md#preparation-and-edits).
-
-Any glTF file can replace Sponza through the positional path or
-`benchmark.py scene --model`; the light and camera placement derive from the
-model bounds.
-
-## Sky benchmark
-
-```bash
-python3 scripts/build.py --target sky --opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile
-./examples/build/sky --benchmark --gpu-timings
-```
-
-`sky --benchmark [frames]` renders the [sky example](sky.md#example) offscreen at 2560 × 1440 after 60
-warm-up frames: noon, twilight (the sun at −4°), valley (the camera 300 m up, looking 30° down into the fog),
-pan (the sun 15° up, the camera's yaw sweeping 8° a second from −20°), orbit (the camera 400 km up, the sun 12° up), ascent (the camera rising 4 km a second from 90 km to 110 km, the sun 9° below the horizontal) and a time-lapse four segments long (the sun rising 0.0045° a frame from 10°). Lines:
-
-```
-# sky shading=forward shadows=atlas ssgi=off path_traced=off reflections=off fog=on atmosphere=on volumetric_fog=off fog_quality=medium fog_temporal=off clouds=off cloud_temporal=off local_lights=0 lamp_range=14 lamps_in_fog=on taa=off extent=2560x1440 frames=300
-sun_extract_us median=<>
-gpu_ms view=<main|mirror> segment=<s> pass=<pass> median=<> p99=<>
-frame_ms segment=<s> median=<> p99=<>
-refresh_ms segment=time-lapse stage=<environment.sky|environment.prefilter|environment.irradiance|total> median=<> max=<> count=<n>
-refreshes_per_minute segment=time-lapse value=<>
-gate time_lapse_regenerations expected=<n> found=<n> <pass|fail>
-gate steady_sky <pass|fail>
-gate ascent_regenerations <pass|fail>
-```
-
-`refresh_ms` reads the frames that regenerated the sky; `total` is the whole `ENVIRONMENT` pass. The
-time-lapse gate expects `floor(sweep / period)` regenerations after its first frame, with
-`period = (floor(0.5° / step) + 1) · step`, and none without an atmosphere; `steady_sky` expects none after
-the noon segment's first frame and `ascent_regenerations` none after the ascent segment's first; at the default 300 frames the ascent crosses the top of
-the atmosphere, so the crossing regenerates nothing. `--volumetric-fog` adds a froxel volume to the main and mirror views and the
-`FOG_SCATTERING` and `FOG_INTEGRATION` pass lines report it (0 without the switch), with `--fog-quality low|medium|high`
-choosing its grid and `--fog-temporal` adding its [temporal accumulation](fog.md#temporal-accumulation); `--local-lights N`, `--lamp-range METRES` and `--lamps-in-fog on|off` place and configure
-[lamps](sky.md#example) that `FOG_SCATTERING` scatters; `--taa` turns on TAA, so
-`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl; `--clouds` adds a [cloud layer](clouds.md) and the
-`CLOUDS` and `CLOUD_SHADOWS` pass lines report it (0 without the switch), with `--cloud-temporal` adding its
-[temporal accumulation](clouds.md#cloud-temporal-accumulation). A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
-dense and the non-scattering atmospheres of [the sky example](sky.md#example); the header prints the value.
-
-## Instancing benchmark
-
-```bash
-python3 scripts/benchmark.py instancing --output results/instancing --build --features gpu --gpu-timings \
-  --width 1280 --height 720 --repeats 3
-./examples/build/instancing --benchmark --fade-field --frames 300 --warmup 60 --width 1280 --height 720
-```
-
-`instancing --benchmark` renders the interactive example's scene headless from its starting camera: the
-99,856-prop batch, the trio, the pulse spheres and the glass cloud, with instance culling and motion blur on
-and the sun's four cascades. The scene is still: nothing animates but the sway, which follows the loop's fixed
-frame time. `--fade-field` adds a 64 × 64 grid of 32 m cell batches, 64 swaying props each (4,096 batches,
-262,144 props), with a 60 to 90 m fade band: the shape of one foliage layer, most of whose cells lie wholly past
-the band. `RendererDesc.max_instance_batches` is raised to hold every cell. The common options behave as in
-`many_lights --benchmark`, and the CSV columns are the same; `batches_faded` counts the skipped cells.
-`--instance-edit range|whole` bobs one 316-prop row of the big batch every frame, on the loop's fixed frame
-time, and animates the trio; `range` publishes the row with `Scene.mark_instances_range_dirty` and `whole` with
-`Scene.mark_instances_dirty`. The pictures are identical, and `upload_bytes` shows 40,832 and 12,781,952 bytes per
-frame. Without the flag the scene is still, as above.
-`benchmark.py instancing` runs `fade-field-off` and `fade-field-on` jobs (`--fade-fields` selects them).
-
-## Post-processing benchmark
-
-```bash
-python3 scripts/build.py --target effects --opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL \
-  --lib c3d_profile
-./examples/build/effects --gpu-timings --benchmark 300 [--auto-focus] [--focus-point X Y]
-```
-
-`effects --benchmark FRAMES` renders the interactive example's scene offscreen through the shared benchmark loop,
-without a window, at 1920x1080 after 30 warmup frames. Bloom, depth of field and motion blur are on, with FXAA,
-and the cube spins at the loop's fixed frame time. It needs `--gpu-timings`, prints no CSV, and prints the mean
-over the frames of each [post stage](post_reference.md#timings) and of the whole post chain, for example `Bloom: ... ms,
-depth of field: ... ms, motion blur: ... ms, post chain: ... ms, mean over N frames at 1920x1080`. The stages are
-parts of the post chain, so their sum is at most its mean. The other benchmark examples report the same stages as
-the `gpu_bloom_ms`, `gpu_dof_ms` and `gpu_motion_blur_ms` columns when their view enables the effects.
+Quote a ratio between the two traces only where both frames exceed 1 ms; shorter frames carry timer noise.
 
 ## Profiling configurations and overhead
 
-`benchmark.py render --features NAME` (and `scene` and `instancing`) selects the profiling features compiled into
-the workload binary. With `--build` the runner builds the suite's target with the matching
-`--define` and `--lib` flags through `scripts/build.py`, copies the binary to
-`examples/build/bench/<target>-NAME` so configurations coexist, and checks the
-binary's `--print-features` line against the request before any job runs. Without
-`--build`, a non-off configuration needs `--binary`. `environment.json` records
-`features`, `defines`, `libraries` and `features_reported`.
+`benchmark.py render --features NAME` (and `scene` and `instancing`) selects the profiling features compiled into the
+workload binary. With `--build`, the runner builds the suite's target with the matching `--define` and `--lib` flags
+through `scripts/build.py`, copies the binary to `examples/build/bench/<target>-NAME` so configurations coexist, and
+checks the binary's `--print-features` line against the request before any job runs. Without `--build`, a configuration
+other than `off` needs `--binary`. `environment.json` records `features`, `defines`, `libraries` and
+`features_reported`.
 
 | Configuration | Defines | Libraries |
 | --- | --- | --- |
@@ -444,33 +436,37 @@ binary's `--print-features` line against the request before any job runs. Withou
 | `gui` | `C3D_PROFILE_GUI C3D_PROFILE_CPU C3D_PROFILE_INTERNAL` | `c3d_profile_gui c3d_profile` |
 | `full` | `C3D_PROFILE_GUI C3D_PROFILE_CPU C3D_PROFILE_GPU C3D_PROFILE_INTERNAL` | `c3d_profile_gui c3d_profile` |
 
-`--capture`, `--window` and `--panel` pass through to every job; `--panel` implies
-`--window`. `--dry-run` prints the resolved build command and every job command as
-JSON lines and runs nothing.
+`--capture` needs a configuration other than `off`. `--panel` needs `--features gui` or `full` and `--capture`.
+`--dry-run` prints the resolved build command and every job command without running anything.
 
-Overhead protocol, per suite (`render` and `scene`), on an idle machine with the same
-`--lights`, `--mode`, extent, `--frames` and `--warmup` throughout, three repeats per
-configuration:
+Measure the overhead of a configuration on an idle machine, per suite (`render` and `scene`), with the same `--lights`,
+`--mode`, extent, `--frames` and `--warmup` throughout and three repeats per configuration:
 
-1. Headless capture cost: `off`; `cpu --capture`; `internal --capture`;
-   `gpu --capture --gpu-timings`; `full --capture --gpu-timings`. Compare medians
-   of `wall_ms` and the phase columns against `off`. Run `gpu` and `full` once more
-   without `--gpu-timings` to separate query cost from capture cost.
-2. Presentation cost: `gui --capture --window` and `gui --capture --panel`. Compare
-   `wall_ms` and read `gui_ms` directly. Do not compare these with headless rows.
-3. Correctness: `draws`, `lights`, `dropped` and `overflows` must match across every
-   configuration of the same workload; a `--validation` run of the `full`
-   configuration must finish clean.
+1. Headless capture cost: `off`; `cpu --capture`; `internal --capture`; `gpu --capture --gpu-timings`;
+   `full --capture --gpu-timings`. Compare medians of `wall_ms` and the phase columns against `off`. Run `gpu` and
+   `full` once more without `--gpu-timings` to separate query cost from capture cost.
+2. Presentation cost: `gui --capture --window` and `gui --capture --panel`. Compare `wall_ms` and read `gui_ms`. Do not
+   compare these rows with headless rows.
+3. Correctness: `draws`, `lights`, `dropped` and `overflows` must match across every configuration of the same workload.
+   A `--validation` run of `full` must finish clean.
 
-Report each configuration's `environment.json` beside its `summary.csv`. Measured
-results are recorded on the M41 milestone page in Notion, not in this repository;
-they age with hardware and drivers.
+## Limits
 
-On Windows, run the same commands with `python`; `vulkaninfo` is `vulkaninfoSDK.exe`
-in the Vulkan SDK, and `environment.json` records whichever is on `PATH`.
+- Software Vulkan (lavapipe) verifies a path. It cannot establish hardware GPU speedups or a light-count crossover.
+  Record any driver workaround with the results.
+- Headless runs omit window-system pacing. Measure the interactive example, or a `--window` run, when pacing is the
+  question.
+- `scene` needs the fetched model, which has its own licence and is never committed.
+- `--cpu` pins with `os.sched_setaffinity`, so it works on Linux only.
+- On Windows, run the commands with `python`. `vulkaninfo` is `vulkaninfoSDK.exe` in the Vulkan SDK; `environment.json`
+  records whichever is on `PATH`.
+- Results age with hardware and drivers. Keep them with their `environment.json`, not in this repository.
 
-Deviations from the milestone sketch: there is no dedicated shader-workload target
-and no output checksum. The flat and clustered modes already exercise distinct raster
-and compute shader paths with per-pass timestamps, and no CPU readback API exists
-for a checksum, so the counters above are the correctness proxy. A scene-level
-benchmark with a fetched glTF asset is planned separately.
+## See also
+
+- [Profiling](profiling.md): capture lifetimes, scopes and the GPU capture these options enable.
+- [Jobs](jobs.md): `job_bench`, the job pool benchmark.
+- [Development](development.md): building, and running on software Vulkan.
+- Example options that select a benchmark live with their feature: [lights](lights.md), [sky](sky.md), [fog](fog.md),
+  [clouds](clouds.md), [instancing](instancing.md), [post](post.md), [environments](environments.md), [reflection
+  probes](reflection_probes.md) and [shadows](shadows.md).

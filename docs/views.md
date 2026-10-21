@@ -122,7 +122,7 @@ renderer.end_frame()!;
   after transparency. `shadow_camera` is the camera the view's [shadow set](shadows.md#shadow-sets) is fitted to; null
   uses `camera_node`. A `shadow_camera` without a `Camera` faults `c3d::INVALID_ARGUMENT` and aborts the frame.
 - Between `render_view` and `finish_view`, a compute dispatch may read the view's depth and read or write its scene
-  image ([custom shaders](custom_shaders.md#views)).
+  image ([custom shaders](compute.md#dispatch-around-views)).
 - `end_frame` faults `c3d::INVALID_ARGUMENT` when a rendered view was not finished. It records pending uploads and
   environment preparations, submits when the frame recorded a clear, draw, dispatch, upload or preparation, presents
   only when a window image was acquired, and discards a frame that recorded nothing. Neither `begin_frame` nor
@@ -135,8 +135,8 @@ renderer.end_frame()!;
   leaves the window views as they are, so their images stay allocated while the window is minimized.
 - `Renderer.render(scene, camera)` is the default-view convenience for one frame.
 - `set_view_overlay(view, list)` gives a view an overlay list of items anchored in the world for one frame;
-  `finish_view` draws it over the view's output after post, tested against the view's depth ([world-space
-  items](overlay.md#world-space-items)).
+  `finish_view` draws it over the view's output after post, tested against the view's depth ([world-space overlay
+  items](overlay_world.md)).
 
 ### Frame queries
 
@@ -252,7 +252,7 @@ ViewId mirror_view = render::create_view(&renderer, desc)!;
 
 - Every mesh vertex stage writes `gl_ClipDistance[0]` from the world position that feeds `gl_Position`, so the depth
   prepass, the G-buffer, `EQUAL` shading and velocity agree along the cut. Custom vertex stages clip through
-  `write_mesh_outputs` or `view_clip.glsl` ([custom shaders](custom_shaders.md#vertex-contract)).
+  `write_mesh_outputs` or `view_clip.glsl` ([custom shaders](custom_shaders_reference.md#vertex-contract)).
 - `FrameRoot.clip_plane` holds `(normal, d)` when `FRAME_CLIP_PLANE` is set in `FrameRoot.flags`, and zero otherwise;
   any stage may read it.
 - A `PATH_TRACED` view rejects a non-zero plane with `c3d::INVALID_ARGUMENT`, like the other raster-only settings.
@@ -308,7 +308,7 @@ renderer.render_view(&scene, camera_node, main_view)!;
   composited reflection as part of its image. The target holds physical radiance: the surface's stage multiplies the
   sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
 - World-space overlay items draw in a mirror view when their layers match its camera, reflected as the view shows them
-  ([world-space items](overlay.md#world-space-items)).
+  ([world-space overlay items](overlay_world.md)).
 - Under [fog or an atmosphere](fog.md#where-fog-applies) a mirror view fogs only the path behind its plane, from the
   plane to the reflected surface. The view that shows the surface fogs the path to it, so the reflection carries the
   reflected path's fog once. Its [medium volumes](fog.md#medium-volumes) follow the same cut. The mirror view owns its

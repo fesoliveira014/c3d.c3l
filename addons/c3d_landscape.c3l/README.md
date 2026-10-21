@@ -1,71 +1,81 @@
 # Landscape add-on
 
-Select `c3d_landscape` to use [terrain](../../docs/terrain.md),
-[foliage](../../docs/vegetation.md) and [water](../../docs/water.md).
-Core never imports this package. Scene modules import the standard library and
-core; terrain/water shader sources are built through the package shader manifest.
+`c3d_landscape` adds height-mapped terrain, instanced vegetation and water to c3d. It extends the scene layer: terrain and foliage draw through core's instanced path, and water through a custom material the package owns. Core never imports the package and carries no flag for it; selecting the library is the gate.
 
-Foliage supports one geometry/material pair or a copied `FoliageDesc.lod`
-description. LOD cells own one core instanced group; all parts share scatter,
-tint, sway and fade. The null descriptor keeps the single-mesh path.
-See [whole-object LOD](../../docs/lod.md) for ownership and selection contracts.
+| Module | Provides |
+| --- | --- |
+| `c3d::landscape::terrain` | `Terrain`: an `R16_UINT` height map drawn as a per-view quadtree of chunks, tile sets, CPU height queries on the physics height-field convention |
+| `c3d::landscape::foliage` | `Foliage`: deterministic scatter of one geometry and material over a terrain, with wind sway, fade and whole-object LOD |
+| `c3d::landscape::water` | `Water`: lakes and oceans with Gerstner, simulated or spectral waves, refraction, reflection, underwater fog, CPU surface queries and a buoyancy sampler |
+| `c3d::landscape::water_gpu` | Records the spectral water passes; present only under `C3D_LANDSCAPE_GPU` |
+| `c3d::landscape` | Generated constants of the package's shader package, the shared `STALE` fault and hash helpers |
 
-The terrain's material and grid, its [trace grid](../../docs/terrain.md#scene-traces) node, a tile's border ring, and the water material and medium, are owned by their components. Do not
-replace or edit them. The height map and control map belong to the application: replacing the height map with the
-same side length refreshes the whole map; another side length hides the batch until a conforming revision.
+## Boundaries
 
-```powershell
-c3c test landscape_test --path addons/c3d_landscape.c3l
-python scripts/build.py --example vegetation
+The scene modules import the standard library and core (`c3d`). `foliage` and `water` also import `terrain`, and `water_gpu` imports `c3d::render` under `C3D_LANDSCAPE_GPU`. The package never imports `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::physics` or another add-on. The serialization adapter imports `c3d::serial` only under `C3D_LANDSCAPE_SERIAL`. The binding rules are in [AGENTS.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/AGENTS.md) and [architecture](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/architecture.md).
+
+## Select the package
+
+List `c3d_landscape` next to `c3d` and core's dependencies in `project.json`; the [release guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/release.md) lists the names. Applications that give terrain a collider or connect water to physics also select `c3d_physics` and `b3`; a terrain navigation grid selects `c3d_nav`. The package imports neither.
+
+| Feature | Effect | Also select |
+| --- | --- | --- |
+| `C3D_LANDSCAPE_GPU` | Enables `water_gpu` and the `SPECTRAL` water model; without it, preparing a spectral body faults `UNSUPPORTED` | core's GPU dependencies |
+| `C3D_LANDSCAPE_SERIAL` | Registers terrain, foliage and water authoring codecs | `c3d_serial` |
+
+## Quick start
+
+```c3
+terrain::register_terrain(&scene, &assets)!;
+foliage::register_foliage(&scene)!;
+water::register_water(&scene, &assets)!;
+
+terrain::add_terrain(scene: &scene, assets: &assets, node: ground, desc: terrain_desc)!;
+foliage::add_foliage(scene: &scene, assets: &assets, node: grass, desc: grass_desc)!;
+water::add_water(scene: &scene, assets: &assets, node: lake, desc: water::default_water_desc())!;
+
+// every frame
+scene.update_world();
+terrain::update(&scene, &assets)!;
+foliage::update(&scene, &assets, wind_velocity)!;
+water::update(scene: &scene, assets: &assets, wind_velocity: wind_velocity, time: now);
+renderer.render_view(&scene, camera, view)!;
 ```
 
-Manual terrain/water Vulkan acceptance lives in `test/gpu`; the data tests do
-not create a device.
+Each component's descriptor is the application's. The guides give the descriptors, the frame order and the rules of each module.
 
-## Pending authoring and preparation
+## Ownership
 
-`terrain::attach_terrain`, `foliage::attach_foliage` and `water::attach_water`
-validate and attach authored components to existing nodes. They create no
-runtime component, generated node, draw batch or asset. Foliage copies its
-optional LOD descriptor, levels and parts into scene-owned authoring storage.
-Attach ground `Terrain` authoring before dependent `Foliage` authoring.
-
-Each namespace provides `is_prepared(scene, node)`, `prepare(scene, assets, node)`
-and `prepare_subtree(scene, assets, root = null)`. A null root selects the whole
-scene; a supplied root is included. Prepare terrain before dependent foliage.
-Preparing foliage while its ground terrain is pending returns `terrain::NOT_PREPARED` and
-retains the foliage authoring. Water has no landscape preparation dependency.
-Publish node world matrices before preparing foliage or water.
-Pending foliage can instead scatter as ranges on any scheduler with `foliage::scatter_job` and
-`foliage::commit_scatter` ([detached scatter](../../docs/vegetation.md#detached-scatter)).
-Pending terrain can likewise build its bounds as ranges with `terrain::bounds_job` and
-`terrain::commit_bounds` ([detached bounds](../../docs/terrain.md#detached-bounds-build)).
-
-A prepared owner is a no-op for preparation, except a terrain [tile](../../docs/terrain.md#tile-sets), which
-re-validates and relinks. Each pending owner either receives
-complete runtime or remains pending with its authoring intact. A subtree pass
-attempts all matching owners and returns its first fault; successful owners are
-retained. Failed terrain/water preparation removes only cache assets that the
-attempt created, preserving shared assets used by prior owners.
-
-Ordinary updates skip pending owners. A pending terrain has no generated
-`InstancedMesh` or trace grid, pending foliage has no generated cells, and pending water has
-no generated `Mesh` (`InstancedMesh` for an ocean), medium node or mirror camera. They produce no generated draws. Existing
-`add_terrain`, `add_foliage` and `add_water` combine attachment and preparation,
-retaining their immediate-ready behavior and rollback on failure.
-
-The copied foliage LOD data belongs to the component; do not replace or free its
-pointer or slices. Prepared foliage also owns a separate frozen runtime copy.
-Removing authored foliage frees its authoring copy immediately. Existing runtime
-and cells remain valid until the next foliage update removes the orphans.
-
-## Spectral water
-
-A water body with the `SPECTRAL` wave model needs the `C3D_LANDSCAPE_GPU` feature and the application's call of
-`water_gpu::update(renderer, scene, assets)` each frame. Without the feature, preparing such a body faults
-`UNSUPPORTED`, so a consumer that never enables it keeps water in the scene layer. See [the water
-contract](../../docs/water.md#spectral-surface).
+- The application owns the height map, the control map, the density map and every material and geometry a descriptor names.
+- The library owns the terrain's material, shared grid and trace-grid node, a tile's border ring, the foliage cells and their runtime, and the water material, medium node and mirror cameras. Do not edit, remove or reparent them.
+- Replacing a height map with one of the same side length refreshes the whole terrain. Another side length hides the terrain until a conforming revision.
+- Foliage copies its optional LOD descriptor, levels and parts into scene-owned storage. Do not replace or free its pointer or slices.
+- `attach_terrain`, `attach_foliage` and `attach_water` validate and attach authoring without creating runtime. `is_prepared`, `prepare` and `prepare_subtree(scene, assets, root = null)` complete it, and `add_*` does both with rollback on failure. Prepare terrain before dependent foliage, and publish node world matrices before preparing foliage or water. Failed preparation of terrain or water removes only the cache assets the attempt created and keeps shared assets of earlier owners. The shared readiness rules are in [owner readiness](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/owner_readiness.md).
+- Foliage can scatter as ranges on any scheduler with `foliage::scatter_job` and `foliage::commit_scatter`, and terrain can build its bounds the same way with `terrain::bounds_job` and `terrain::commit_bounds`. The package does not import `c3d_job`.
+- Destroy physics worlds first, then the scene, then the store.
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_LANDSCAPE_SERIAL` to register terrain, foliage and water authoring codecs. Reads restore pending owners without generated assets or nodes. See [the serialization contract](src/serial/README.md) for ownership, preparation order and the feature-on test targets.
+Select `c3d_serial` and enable `C3D_LANDSCAPE_SERIAL` to register the codecs. Reads restore pending owners without generated assets or nodes; call `prepare` afterwards. See [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#landscape).
+
+## Tests and examples
+
+| Target | Kind |
+| --- | --- |
+| `landscape_test`, `landscape_gpu_test` | CPU tests; the second needs `C3D_LANDSCAPE_GPU`. The first selects `c3d_physics` and `c3d_nav` for its checks |
+| `landscape_serial_test`, `landscape_serial_policy_test` | Serialization adapter tests under `C3D_LANDSCAPE_SERIAL` |
+| `terrain_acceptance`, `water_acceptance`, `water_gpu_acceptance` | Manual Vulkan acceptance in `test/gpu`; not part of CI |
+| `terrain`, `vegetation`, `water`, `water_gpu` | Examples; `python3 scripts/build.py --example <name>` builds and runs one |
+
+```bash
+c3c test landscape_test --path addons/c3d_landscape.c3l
+python3 scripts/build.py --example vegetation
+```
+
+The [development guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/development.md) covers the build and the acceptance projects.
+
+## Guides
+
+- [Terrain](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain.md), its [reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain_reference.md) and [terrain with physics and navigation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain_integration.md)
+- [Vegetation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/vegetation.md) and [whole-object LOD](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/lod.md)
+- [Water](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/water.md), its [wave models](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/water_wave_models.md) and [reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/water_reference.md)

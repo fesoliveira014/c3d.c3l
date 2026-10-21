@@ -66,7 +66,7 @@ struct SceneIndex {
 
 <*
  Index sized for the entry count; refresh faults past it.
- @param capacity : "Meshes plus batch instances the scene may hold at once."
+ @param capacity : "Meshes, instances, billboards, ribbons and LOD parts the scene may hold at once."
  @require capacity > 0
 *>
 fn SceneIndex create_scene_index(Allocator allocator, uint capacity) {

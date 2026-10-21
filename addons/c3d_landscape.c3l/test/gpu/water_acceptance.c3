@@ -1063,7 +1063,7 @@ fn void test_mirror_view_reflects_what_is_above_the_water() @test {
     );
     ViewId main_view = add_view(&fixture, MIRROR_SIZE);
 
-    // The application's half of the mirror, as in docs/water.md.
+    // The application's half of the mirror, as in docs/water.md, The mirror.
     fixture.scene.update_world();
     water::update_mirror(&fixture.scene, water_node.id, 0, camera_node.id)!!;
     WaterRuntime* runtime = fixture.scene.get(water_node, WaterRuntime);
@@ -1172,7 +1172,8 @@ fn Mirrored add_mirrored(
     };
 }
 
-// docs/water.md's frame for every viewer in turn: its mirrors, the textures it is given, then the viewer itself.
+// docs/water.md, The mirror: the frame for every viewer in turn: its mirrors, the textures it is given, then the
+// viewer itself.
 fn Vec4[]? render_viewers(
     Fixture* fixture,
     Viewer[] viewers,
