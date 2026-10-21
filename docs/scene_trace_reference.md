@@ -90,7 +90,7 @@ software tree is refit and the hardware bottom level is updated in place. No pos
 bottom level of the shared geometry are not rebuilt. Index values are not part of the key: a revision that rewrites the
 triangle indices must also change a count to rebuild the slot.
 
-- **Device writes.** A [geometry write](custom_shaders.md#geometry-writes) is a revision of the streams the slot copies. It
+- **Device writes.** A [geometry write](compute.md#geometry-writes) is a revision of the streams the slot copies. It
   refills and refits the slot in the same frame, so the dispatch precedes `prepare_scene_trace`.
 - **Topology change.** A different geometry, vertex count, index count or stream layout rebuilds the slot, its tree and
   its bottom level.
@@ -106,7 +106,7 @@ triangle indices must also change a count to rebuild the slot.
 ## Custom trace poses
 
 A shader's `trace_pose` forms pose the trace geometry of a custom material that has a vertex stage
-([custom shaders](custom_shaders.md#trace-pose)). `single` poses a mesh and `instanced` poses one instance of an
+([custom shaders](custom_shaders_reference.md#trace-pose)). `single` poses a mesh and `instanced` poses one instance of an
 `InstancedMesh`; a form needs the vertex form of the same kind. The built-in sway is posed the same way for a batch or
 LOD group with `trace_sway`. Both take posed slots and follow the rules of [posed instances](#posed-instances): the
 compute pass writes the positions, normals and tangents into a renderer-owned slot, the software kind refits a copy of

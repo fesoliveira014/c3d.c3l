@@ -126,7 +126,7 @@ head.
 
 The vertex stage writes UV0 and UV1 as `(u, v)`, `v_billboard` (location 8) as `(u, v, 0)`, the normal facing the eye,
 the tangent along the strip and the point color, interpolated. Materials that sample UV0 or UV1 need no ribbon-specific
-setup; custom fragments read the varyings as described in [custom shaders](custom_shaders.md#billboard-varying).
+setup; custom fragments read the varyings as described in [custom shaders](custom_shaders_reference.md#billboard-varying).
 
 ## Materials and supported paths
 
@@ -134,7 +134,7 @@ Ribbons follow the billboard rules: `AlphaMode.BLEND` with Basic, Standard, Toon
 materials, where a custom material has a fragment stage and no vertex stage. Unsupported or dead material references are
 skipped and counted as dangling draws. `BlendMode`, depth testing, fog and per-view clip planes follow the material and
 the view. In a view with `transparency = WEIGHTED`, a source-over batch with a built-in material, or a custom fragment
-with a [weighted form](custom_shaders.md#weighted-transparency), records in the weighted pass.
+with a [weighted form](custom_shaders_reference.md#weighted-form), records in the weighted pass.
 
 ## Bounds, queries and lifetime
 
@@ -170,6 +170,6 @@ reference](serialization_reference.md#core-values-and-batches).
 
 - [Explicit instancing](instancing.md#device-batches) for the shared device-batch contract.
 - [Billboards](billboards.md) for quads, sprite sheets and the texture convention.
-- [Custom shaders](custom_shaders.md#billboard-varying) for the varyings a custom fragment reads.
+- [Custom shaders](custom_shaders_reference.md#billboard-varying) for the varyings a custom fragment reads.
 - [Particles](particles.md#trails) for a system that publishes ribbon batches.
 - [Picking](picking.md#scene-index) for the index capacity rule.

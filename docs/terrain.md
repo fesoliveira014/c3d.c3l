@@ -211,7 +211,7 @@ Traced shadows, reflections, ambient occlusion, probe updates and path tracing r
 
 ## Decals
 
-Terrain receives material decals ([decals](materials.md#decals)) on the forward and deferred paths. Every decal whose `receiver_layers` include the terrain node's `layers` blends into the terrain's layer sample before lighting or G-buffer output, with the core ordering, angle fade and clustered-overflow rules. Traced terrain applies no decals.
+Terrain receives material decals ([decals](decals.md)) on the forward and deferred paths. Every decal whose `receiver_layers` include the terrain node's `layers` blends into the terrain's layer sample before lighting or G-buffer output, with the core ordering, angle fade and clustered-overflow rules. Traced terrain applies no decals.
 
 ## Picking and shadows
 

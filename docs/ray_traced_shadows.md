@@ -38,7 +38,7 @@ example's panels set the light's source extent and the shadow samples, and swap 
 - **Ray origin.** The ray starts `TRACE_SURFACE_OFFSET` (0.02 world units, shared with every traced effect) along the
   receiver's normal. The offset hides self-intersection at the cost of a small gap where a caster meets its receiver.
   On a forward view with `msaa` above `ONE`, the built-in forward stages take the receiver's position at the pixel's
-  centroid (`v_shading_pos`, [custom shaders](custom_shaders.md#shading-position-varying)), because the pixel centre
+  centroid (`v_shading_pos`, [custom shaders](custom_shaders_reference.md#shading-position-varying)), because the pixel centre
   can lie outside the triangle and a ray started there can begin below a neighbouring surface. A fragment stage may
   raise the `trace_proxy_skip_height` global ([custom shaders](custom_shaders.md)) so that hits on a
   [trace proxy](scene_trace.md#trace-proxies) near the surface are ignored; terrain does.
@@ -102,7 +102,7 @@ desc.ray_tracing.shadow_samples = 8;
 
 - Custom forward stages receive traced shadows through `ShaderDesc.traced_fragment`: a form compiled with `RT_SHADOWS`
   for renderers with ray queries, and one with `RT_SHADOWS` and `SCENE_TRACE_BVH` for the software walk
-  ([custom shaders](custom_shaders.md#traced-shadows)). Without the form the view draws the plain stage, which a
+  ([custom shaders](custom_shaders_reference.md#traced-shadows)). Without the form the view draws the plain stage, which a
   traced light reaches with `shadow_count == 0`: lit, without that shadow.
 - Custom G-buffer stages are shadowed by the lighting resolve.
 - A custom stage that calls `shadow_visibility`, `shadow_transmittance` or `ray_shadow_visibility` inherits the soft
@@ -136,4 +136,4 @@ desc.ray_tracing.shadow_samples = 8;
 - [Shadows](shadows.md) for atlas shadows, shadow sets and colored shadows.
 - [Scene tracing](scene_trace.md) for what traces and the software walk.
 - [Lights](lights.md) for light selection and receiver masks.
-- [Custom shaders](custom_shaders.md#traced-shadows) for `traced_fragment`.
+- [Custom shaders](custom_shaders_reference.md#traced-shadows) for `traced_fragment`.
