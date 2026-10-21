@@ -70,14 +70,16 @@ A ray hit is shaded from its material. Custom shader code cannot run at a hit.
 - A ray passes the back of a single-sided surface, as raster culls it, and reflects what lies behind. Double-sided materials
   shade both sides ([facing](scene_trace.md#facing)).
 - A ray that leaves the scene reads the lighting environment at its sharpest level (`scene.environment`, not the
-  background), or the ambient color without an environment. A miss never reads a reflection probe.
+  background), or the ambient color without an environment. A miss never reads a reflection probe. Rays are
+  `RT_REFLECTION_FAR` (1e4) world units long. Indoors, misses happen only through openings or excluded geometry, and a ray
+  through excluded geometry reads the global environment.
 
 ### Lighting
 
 The lighting resolve uses the traced radiance in place of the prefiltered environment reflection, which includes the
 specular of [reflection probes](reflection_probes.md), and weights it with the same split-sum term, so a surface's
 reflection is counted once. On a forward view the Standard and Physical fragment stages do the same. Near the threshold the
-two blend over the top fifth of `max_reflection_roughness`, which hides the seam between traced and environment
+two blend over the top fifth of `max_reflection_roughness` (`RT_REFLECTION_FADE`), which hides the seam between traced and environment
 reflections.
 
 - The traced term carries its own occlusion, so it skips the ambient occlusion specular term the environment reflection

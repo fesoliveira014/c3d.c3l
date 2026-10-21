@@ -135,7 +135,7 @@ With GPU timings, `Pass.POST_CHAIN` times the effects that run before the displa
 is timed under `COMPOSITE`.
 
 With internal scopes, `POST_CHAIN` also has one stage scope per effect: `post.bloom`, `post.depth_of_field` and
-`post.motion_blur`. `Stats.gpu_post_stage_ms`, indexed by `PostStage`, holds their completed times. They are parts of the
+`post.motion_blur`. `Stats.gpu_post_stage_ms`, indexed by `PostStage` (`BLOOM`, `DEPTH_OF_FIELD`, `MOTION_BLUR`), holds their completed times. They are parts of the
 `POST_CHAIN` bucket and are not added to it. The grade, FXAA and identity-composite dispatches belong to the pass alone.
 The depth-of-field stage covers its auto-focus metering and tile reduction, and the motion-blur stage its tile reduction.
 See [benchmarking](benchmarking.md) and [profiling](profiling.md) for capture and the `effects --gpu-timings --benchmark`
@@ -150,6 +150,18 @@ Dispatch counts per effect:
 | Motion blur | 3 |
 | Auto exposure | 2 |
 | Grade with FXAA | 1 on the direct route, 2 on the fallback route |
+
+## Helper functions
+
+| Function | Result |
+| --- | --- |
+| `post_stack_valid(&stack)` | Whether every enabled effect's parameters are in range; the check `configure_view` applies |
+| `bloom_level_extent(extent, level)` | Size of one bloom level, halving from the working resolution |
+| `dof_aperture_scale(&params, half_height)` | Half-resolution pixels of circle-of-confusion radius per unit of `(depth - focus) / depth` |
+| `dof_coc(&params, aperture_scale, view_depth)` | Signed circle-of-confusion radius, negative in front of the focus distance |
+| `lut_scale(size)`, `lut_offset(size)` | Texel-center scale and offset of a LUT lookup coordinate, for `size` above 1 |
+| `white_balance_coefficients(temperature, tint)` | LMS channel multipliers of the white balance; neutral inputs give one |
+| `tile_count(extent)` | Tiles of 16 pixels covering an extent |
 
 ## Constants
 

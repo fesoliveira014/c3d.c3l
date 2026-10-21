@@ -33,15 +33,16 @@ Upload earlier with [`renderer.upload(texture)`](#upload-edit-and-release-cpu-so
 - **Asset and device copy.** A `TextureAsset` owns the CPU source: mip-zero pixels (`MIP_ZERO`), a supplied chain
   (`SUPPLIED_MIPS`) or nothing for an empty storage texture (`EMPTY`). Each renderer keeps its own GPU image, uploaded
   from the source. The source can be released after upload.
-- **Rows and color space.** Decoded images and cube faces keep the top row first; no loader flips rows. `srgb: true` stores
-  `RGBA8_SRGB` and `false` stores `RGBA8_UNORM` without rewriting the decoded bytes. Mips filter sRGB color in linear light
-  and alpha linearly.
-- **Mips.** `texture_2d_desc` requests a full generated chain. Disable `desc.generate_mips` for mip zero alone, or supply
-  every level ([supplied mips](textures_reference.md#supply-mip-levels)).
+- **Rows and color space.** Decoded images and cube faces keep the top row first; no loader flips rows or changes global
+  decoder settings. `srgb: true` stores `RGBA8_SRGB` and `false` stores `RGBA8_UNORM` without rewriting the decoded bytes,
+  and sRGB decoding comes from the texture format. Mips filter sRGB color in linear light and alpha linearly.
+- **Mips.** `texture_2d_desc` requests a full generated chain; odd edges contribute, floating-point channels filter without
+  clamping, and each cube face filters independently. Disable `desc.generate_mips` for mip zero alone, or supply every level
+  ([supplied mips](textures_reference.md#supply-mip-levels)); supplied levels are never regenerated.
 - **Samplers.** The material slot selects the sampler, so materials can share a texture with different filtering. Builtin
   ids: `asset::SAMPLER_NEAREST`, `SAMPLER_LINEAR_REPEAT`, `SAMPLER_LINEAR_CLAMP` and `SAMPLER_ANISOTROPIC` (clamped to the
   device limit). A comparison sampler in a material slot faults `c3d::INVALID_ARGUMENT`. Builtin texture and sampler ids live
-  for the store lifetime and cannot be replaced or removed.
+  for the store lifetime and cannot be replaced or removed; their CPU pixels can still be released after preparation.
 
 ### Pixel formats
 
@@ -106,7 +107,7 @@ fallback, see [tangent frames](materials_reference.md#tangent-frames).
 TextureId environment_pixels = image::load_hdr(&assets, "studio.hdr")!;
 ```
 
-`load_hdr` accepts Radiance HDR and stores `RGBA32_FLOAT`, keeping values above one. It rejects PNG and JPEG with
+`load_hdr` accepts Radiance HDR and stores tightly packed four-channel floats (`RGBA32_FLOAT`), keeping values above one. It rejects PNG and JPEG with
 `c3d::ASSET_FORMAT_ERROR`. Loading does not tone map. Register the texture with `light::texture_environment` and
 `assets.add_environment` for [image-based lighting or a sky](environments.md).
 
@@ -131,6 +132,7 @@ renderer.upload(cube)!;
 - Every path is nonempty. Every face is square, the same size and the same decoded format. PNG and JPEG faces can mix.
   Six HDR files produce `RGBA32_FLOAT` whatever `srgb` says; mixing HDR and byte faces faults
   `c3d::ASSET_FORMAT_ERROR`.
+- A failed load or insertion releases every partial face allocation.
 - Faces stay top row first. No rotation, flip or filename convention applies, so supply the native cube orientation.
   With `s = 2u - 1` and `t = 2v - 1`, image coordinates increasing right and down, a face samples this direction:
 
@@ -142,7 +144,8 @@ renderer.upload(cube)!;
 
 `texture_cube_desc(size, format)` describes six square layers with generated mips; mip zero holds complete faces in the
 order above. A cube is a sampled cube view for environments and previews. Register it as an
-[environment source](environments.md) to light a scene or draw a sky. Basic and Standard material slots stay 2D.
+[environment source](environments.md) to light a scene or draw a sky; environment processing borrows the native cube and
+skips equirectangular conversion. Basic and Standard material slots stay 2D.
 
 ## Sixteen-bit single-channel data
 
@@ -200,7 +203,8 @@ store's file source; a null source reads the file system ([file sources](assets.
 `image::write_png(path, width, height, pixels)` encodes tightly packed RGBA8 rows, top row first, and writes the bytes
 unchanged with no color-space chunk. Pass sRGB-encoded bytes for color, such as a `read_render_target` copy of an
 `RGBA8_SRGB` target ([read a target back](views.md#read-a-target-back)). A zero extent or a buffer that is not
-`width * height * 4` bytes faults `c3d::INVALID_ARGUMENT`; an unwritable file faults `c3d::ASSET_IO_ERROR`.
+`width * height * 4` bytes faults `c3d::INVALID_ARGUMENT`; an unwritable file faults `c3d::ASSET_IO_ERROR`. The encoder is C3
+and needs no native source.
 
 ## Load compressed containers
 
@@ -284,9 +288,10 @@ assets.release_texture_cpu(texture);
   upload into another renderer. `restore_texture_cpu(texture, pixels)` gives a released `MIP_ZERO` texture its pixels again
   and takes ownership of them.
 - **Edit** mip zero while the pixels remain, then advance the revision. The renderer regenerates generated mips on upload.
-  A texture edit needs no material edit, for every Standard slot and shared image. A removed texture whose index is reused
-  leaves old ids absent.
-- **Supplied data** is edited in the retained bytes, then marked dirty. Compressed edits keep complete valid blocks.
+  A texture edit needs no material edit, for every Standard slot and shared image; sampler revisions and replacement
+  images refresh the resolved bindings the same way. A removed texture whose index is reused leaves old ids absent.
+- **Supplied data** is edited in the retained bytes (`TextureAsset.supplied_mips[level].bytes`), then marked dirty. Compressed
+  edits keep complete valid blocks.
 
 ```c3
 TextureAsset* source = assets.texture(texture);
@@ -331,5 +336,5 @@ GPU upload faults propagate unchanged. Container, region and replacement faults 
 - [Materials](materials.md) and [materials reference](materials_reference.md) for slots and tangent frames.
 - [Environments](environments.md) for HDR and cube sources.
 - [Preparation](preparation.md) for budgeted initial uploads.
-- Examples: `textured` (UV and sampler controls), `texture_cube`, `texture_bc` and `streaming`; run with
+- Examples: `textured` (UV and sampler controls), `pbr` (Standard maps), `texture_cube`, `texture_bc` and `streaming`; run with
   `python3 scripts/build.py --example <name>`.

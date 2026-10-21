@@ -118,7 +118,7 @@ while (renderer.view_stats(view)!.accumulated_samples < samples) {
     renderer.finish_view(view)!;
     renderer.end_frame()!;
 }
-char[] pixels = mem::new_array(char, width * height * 4);
+char[] pixels = mem::new_array(char, (usz)width * height * 4);
 defer free(pixels);
 renderer.read_render_target(still, pixels)!;
 image::write_png(

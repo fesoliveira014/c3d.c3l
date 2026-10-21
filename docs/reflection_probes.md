@@ -24,7 +24,8 @@ renderer.prepare_scene(&scene)!;
 
 1. Place the node at the box center and size `half_extents` to the interior. The node's rotation orients the box; its scale
    is ignored.
-2. Capture outside a frame, assign the returned id and prepare. The renderer writes no component or node data.
+2. Capture outside a frame, assign the returned id and prepare. The renderer writes no component or node data; recording
+   updates only batch aggregates.
 3. Move the node or change the room, then call `recapture_reflection_probe(&scene, probe_node)`. It keeps both the
    environment and the texture ids.
 

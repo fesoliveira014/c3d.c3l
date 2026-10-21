@@ -119,9 +119,11 @@ single-sided surface. Misses stay in the denominator; alpha-rejected intersectio
 burial. A probe behind a single-sided wall can be excluded even when the wall is not a closed solid.
 
 - An excluded probe gets exactly zero weight at sampling. If all eight surrounding probes are excluded, the result is the
-  diffuse fallback outside all volumes: the environment SH when available, otherwise zero probe irradiance.
+  diffuse fallback outside all volumes: the environment SH when available, otherwise zero probe irradiance. Ordinary ambient
+  stays separate, and no other overlapping volume is searched.
 - Excluded probes still trace on every scheduled visit, so a geometry change shows by the next visit. Reactivation replaces
-  irradiance and visibility with fresh estimates regardless of hysteresis.
+  irradiance and visibility with fresh estimates regardless of hysteresis. Neither a trace revision nor a frame-origin
+  rebase restarts classification.
 - Probes are provisionally eligible after a fill, restart or recreation until a `SCENE` visit measures them.
 - An enclosure smaller than the grid spacing can have all eight probes buried and show global diffuse. Use a finer grid or
   different placement. A seam can appear between an all-excluded cell and an eligible neighbor.

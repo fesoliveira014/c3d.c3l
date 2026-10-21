@@ -38,7 +38,7 @@ runs the prepass. AO adds no geometry pass on either path.
 
 `Pass.AMBIENT_OCCLUSION` runs between the depth producer and lighting:
 
-1. The estimate: GTAO (Jimenez et al. 2016) for `SSAO`, written at half or full resolution into `ao_raw`. Deferred views
+1. The estimate: GTAO (Jimenez et al. 2016) for `SSAO`, written at half or full resolution into `ao_raw` (`R8_UNORM`). Deferred views
    read the G-buffer normal; forward views rebuild it from depth by the rule of the deferred
    [normal offset](shadows.md#normal-offset).
 2. With `temporal`, the accumulation between the estimate and the blur.
@@ -89,7 +89,7 @@ bent normal. The diffuse environment term reads its irradiance along that direct
 a crease takes its light from the open side. It applies to `SSAO` and `RAY_TRACED`, with or without `temporal`.
 
 - `ao_raw` and `ao` become `RGBA8_UNORM`, four times the memory. Red holds the visibility, so readers of `.r` see what they
-  did before. Green and blue hold the bent normal as an octahedral pair. With `temporal` the history images are
+  did before. Green and blue hold the bent normal as an octahedral pair (`encode_octahedral`, remapped to 0 to 1). With `temporal` the history images are
   `RGBA16_FLOAT`. Changing `bent_normals` drops the AO images, which the next rendering allocates again.
 - The stored direction is the surface normal turned toward the estimate by `min(intensity, 1)`, so `intensity` 0 stores the
   normal itself. A `RAY_TRACED` texel whose rays are all occluded keeps the surface normal.

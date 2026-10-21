@@ -165,7 +165,8 @@ the center, `focus_radius` to 16 and `focus_time` to 0.25.
 - **No target.** A region with nothing counted holds the previous focus, and with none, on the first rendering and after a
   cut, the focus is `focus_distance`. The first rendering that meters anything snaps to its target.
 - **History.** Per view. `reset_view_history`, a scene change and turning `AUTO` on restart it. Parameter edits and resizes
-  keep it, so `focus_point` can move every frame and the focus follows over `focus_time`.
+  keep it, so `focus_point` can move every frame and the focus follows over `focus_time`. An aborted frame changes
+  nothing, and a skipped view folds the elapsed time into its next step.
 - **Cost.** `AUTO` allocates a small GPU buffer and readback per view and records two extra dispatches. `MANUAL` records
   nothing extra.
 - **Readback.** `Renderer.view_stats(view).focus_distance` is the focus in meters: under `AUTO` the adapted value,
@@ -203,11 +204,13 @@ runs after TAA and before depth of field.
   `compensation_ev` biases one view in stops.
 - **Adaptation.** Exponential in stops from the view's own clock. A brighter scene lowers exposure over `brightening_time`;
   a darker one raises it over `darkening_time` (95 % after three time constants). The result is the same at any frame rate and
-  never passes the target; zero times land on it. A frame with nothing metered holds the exposure. Pass a finite
+  never passes the target; zero times land on it. Every step clamps into the current bounds, so narrowing them takes effect
+  at the next rendering. A frame with nothing metered holds the exposure. Pass a finite
   `FrameInfo.time`; with the default 0 every rendering snaps to its own target.
 - **History.** Per view; it survives parameter edits and resizes. `reset_view_history`, a scene change, turning auto
-  exposure on and switching a view from `LINEAR_HDR` to `DISPLAY_LDR` restart it, and the first rendering that meters
-  anything snaps to its target.
+  exposure on, switching a view from `LINEAR_HDR` to `DISPLAY_LDR` and hiding a TAA debug image restart it, and the first
+  rendering that meters anything snaps to its target. An aborted frame changes nothing, and a skipped or dormant view folds
+  the elapsed time into its next step.
 - **Cost.** A small GPU buffer and readback per view and two dispatches. Manual mode records nothing.
 - **Readback.** `Renderer.view_stats(view).exposure` reports the applied multiplier, `FRAMES_IN_FLIGHT` frames old and zero
   until the first readback. The readback also sets the view's [pre-exposure](#pre-exposure) from the next rendering on.
@@ -216,7 +219,9 @@ runs after TAA and before depth of field.
 
 `gui::post_panel(&view_desc, lut, &stats)` edits every setting, auto exposure and auto focus included, and, given the view's
 `ViewStats`, shows its exposure in stops and its focus distance. It returns whether something changed; call
-`configure_view` before the next frame when it did. `gui::anti_aliasing_combo` selects one view's filter on its own.
+`configure_view` before the next frame when it did. The panel's ray-tracing controls are enabled on every renderer, since
+traced effects run without ray queries too; reflections stay disabled on a `PATH_TRACED` view.
+`gui::anti_aliasing_combo` selects one view's filter on its own.
 `gui::stats_panel` reports post dispatches and the completed velocity and post-chain timings.
 
 Run `python3 scripts/build.py --example post` for the panel with a LUT and exposure controls, and `effects` for auto focus

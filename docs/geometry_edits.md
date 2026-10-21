@@ -62,7 +62,8 @@ the frame.
 - Vertex indices keep naming the same vertices. A new correspondence needs a new `GeometryId`, or a call to
   `Mesh.reset_vertex_history()` that makes views reject their prior vertex history. A changed vertex count starts over.
 - Each temporal view copies the base positions of the flagged meshes it drew into its pose history: 12 bytes per vertex,
-  allocated on first use or a count change and freed with the history.
+  allocated on first use or a count change and freed with the history. Every pose slot of a temporal view also carries the
+  tracking fields, so the history grows with the node capacity whether or not a mesh uses `vertex_motion`.
 - When the geometry revision differs from the copy, the velocity pass uploads the copy through the frame ring and composes
   it with the previous morph, skin and model, so a stationary node shows its deformation. An unchanged revision keeps the
   ordinary rule. `Stats.vertex_history_bytes` counts the bytes uploaded per frame.
