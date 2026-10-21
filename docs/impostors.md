@@ -47,9 +47,9 @@ world transforms.
 - **Submission.** The bake submits and waits for each direction. Frame indices and renderer statistics advance.
 - **Stale atlases.** Source asset edits do not update an existing atlas. Rebake after changing the captured geometry or
   material.
-- **Multisampling.** An installed impostor draws at the view's [multisample count](msaa.md)
-  in the multisample pass, but its alpha cut is evaluated once per pixel, so the cut edge is not antialiased. The bake
-  renders through an internal single-sample view.
+- **Multisampling.** An installed impostor draws at the view's [multisample count](msaa.md) in the multisample pass, but
+  its alpha cut is evaluated once per pixel, so the cut edge is not antialiased. The bake renders through an internal
+  single-sample view.
 
 ### Supported sources
 
@@ -61,11 +61,12 @@ world transforms.
 
 | Fault | When |
 | --- | --- |
-| `UNSUPPORTED` | Blending, wireframe, disabled depth writes or tests, a `Basic`, `Physical` or custom material, a render-target texture reference, skinning or morph targets. |
+| `UNSUPPORTED` | Blending, wireframe, disabled depth writes or tests, a `Basic`, `Physical` or custom material, a nonzero metallic factor, emission, an active occlusion map, a render-target texture reference, skinning or morph targets. |
 | `ASSET_DATA_UNAVAILABLE` | The CPU positions were released. |
 | `INVALID_ID` | A reference is dead. |
-| `INVALID_ARGUMENT` | The dimensions are invalid, the subject is empty, or the asset `key` is a duplicate. |
+| `INVALID_ARGUMENT` | The dimensions are invalid, the subject is empty, the subject or a part has a singular or non-finite transform, the capture sphere is degenerate, or the asset `key` is a duplicate. |
 | `CAPACITY_EXCEEDED` | The asset, view or target slots are exhausted. |
+| `RESOURCE_IN_USE`, `SHADER_NOT_FOUND` | Propagate from the capture view, target and pipeline creation. |
 | `gpu::` faults | Device allocation, format and submission faults propagate. |
 
 Validation precedes the capture, and the atlas enters the store only after every direction succeeds. A failure releases
@@ -73,9 +74,10 @@ the temporary ownership.
 
 ### Atlas cost
 
-`ImpostorDesc` sets `frames_per_side` and `cell_size`. The default, `IMPOSTOR_DESC_DEFAULT`, is 8 sides of 128 texels.
-The texture is `frames_per_side * cell_size` texels wide and twice as tall, RGBA8_UNORM, so the default takes 8 MiB.
-`Renderer.last_impostor_bake` (`ImpostorBakeStats`) reports the explicit allocations of the last bake:
+`ImpostorDesc` sets `frames_per_side` and `cell_size`. The default, `IMPOSTOR_DESC_DEFAULT`, is an 8 by 8 direction grid
+of 128-texel cells. The texture is `frames_per_side * cell_size` texels wide and twice as tall, RGBA8_UNORM, so the
+default takes 8 MiB. The store keeps the CPU texels; once prepared, the atlas also occupies a renderer GPU image of the
+same size. `Renderer.last_impostor_bake` (`ImpostorBakeStats`) reports the explicit allocations of the last bake:
 
 | Field | Meaning |
 | --- | --- |
@@ -117,8 +119,8 @@ drawing](lod.md#gpu-drawing)). A change to the terminal metadata invalidates tem
 
 An application that supplies its own atlas builds it to this layout.
 
-- **Grid.** `frames_per_side` directions per side: 2, 4, 8, 16 or 32. A cell holds at least four texels. Device limits
-  still apply.
+- **Grid.** `frames_per_side` directions per side: 2, 4, 8, 16 or 32. `cell_size` is a side length of at least 4 texels.
+  Device limits still apply.
 - **Cell.** The default cell is 128 by 128 texels, with a one-texel duplicated gutter on each side, so the usable
   capture is 126 by 126.
 - **Texture.** RGBA8_UNORM, one mip, no mip generation, linear clamped sampling, no sRGB conversion. Width is

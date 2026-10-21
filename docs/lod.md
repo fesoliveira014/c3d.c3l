@@ -65,14 +65,14 @@ combine LOD with a model or crowd owner.
 | Descriptor rule | Value |
 | --- | --- |
 | Levels | 1 to `MAX_LOD_LEVELS` (5). |
-| Parts | Each level's range starts where the previous one ended. Ranges leave no gap and no overlap. |
+| Parts | Each level has at least one part. A level's range starts where the previous one ended. Ranges leave no gap and no overlap. |
 | Thresholds | Non-final `min_screen_size` values are positive, finite and strictly decreasing. The final value is zero. |
 | Part matrices | Finite, nonsingular and affine. |
 | Bounds override | Optional `has_bounds_override` with `local_bounds` covering every level and any custom displacement. |
 
 | Fault | When |
 | --- | --- |
-| `INVALID_ARGUMENT` | The descriptor is malformed. |
+| `INVALID_ARGUMENT` | The descriptor is malformed, or a placement is: a non-finite, singular or non-affine transform, or more colors than transforms. |
 | `INVALID_ID` | A referenced asset is dead. |
 | `UNSUPPORTED` | A geometry has skin or morph targets, or a custom material has a vertex stage but the descriptor lacks a bounds override (or, for an instanced group, the material lacks the instanced pair). |
 | `CAPACITY_EXCEEDED` | Storage is exhausted, or the placements exceed `capacity`. |
@@ -95,10 +95,10 @@ scene.mark_lod_instances_dirty(forest);
 | `resize_lod_instances(node, count)` | Keeps survivors. New slots, including regrown ones, get the identity transform, white and fresh history. Faults `CAPACITY_EXCEEDED` above capacity. |
 | `publish_lod_instances(node, count)` | Publishes arrays an in-place producer filled. The caller supplies valid data within capacity. Resets placement identities and invalidates placement bounds and GPU records without validating or copying the arrays again. |
 
-The capacity never grows. These setters apply to rigid instanced groups only. An animated group rejects
-`set_lod_instances` and `resize_lod_instances` with `INVALID_ARGUMENT`, and `publish_lod_instances` requires a
-non-animated group. An ordinary animated group follows its source owner's transform, and an attached crowd borrows its
-placements and colors from `AnimatedCrowd` ([animated LOD](lod_animated.md)).
+The capacity never grows. These setters apply to rigid instanced groups only. Calling `set_lod_instances`,
+`resize_lod_instances` or `publish_lod_instances` on an animated group is a programming error. An ordinary animated
+group follows its source owner's transform, and an attached crowd borrows its placements and colors from `AnimatedCrowd`
+([animated LOD](lod_animated.md)).
 
 ## Effects
 
@@ -171,9 +171,10 @@ visibility tests, and its shadows reuse those selections, including offscreen ca
   0. Velocity xy and previous depth z keep their meaning. TAA, screen-space GI, temporal ambient occlusion and the
 reflection history reject the flagged pixels without discarding view history. Custom stages that use
 `write_mesh_outputs` inherit the part and velocity contracts.
-- **Fallback.** A group whose lists do not fit the cull arena uses level zero in every pass. The fallback may draw
-  unculled and unsorted, drops temporal correspondence and selects fresh once classification resumes. Other groups may
-  still fit. GPU allocation failures remain faults.
+- **Fallback.** A group whose lists do not fit the cull arena, or whose blended level holds more than
+  `MAX_SORTED_INSTANCES` placements in one parity, uses level zero in every pass. The fallback may draw unculled and
+  unsorted, drops temporal correspondence and selects fresh once classification resumes. Other groups may still fit. GPU
+  allocation failures remain faults.
 
 ### Costs
 
@@ -183,7 +184,11 @@ reflection history reject the flagged pixels without discarding view history. Cu
 - The cull arena reserves, for the main view and `max_shadow_layers` passes, 32 bytes per part and parity command plus
   an aligned 4-byte index per placement and level, and sort keys for a main bin with blended parts. The reservation is
   conservative and can exceed the actual use. The previous matrices are written by the classification pass, with no
-  per-view upload. The CPU history array is indexed by entity slot, so it scales with the scene's node capacity.
+  per-view upload.
+- Per-frame selection and history work visit only the active groups. The persistent CPU history array is indexed by
+  entity slot, so it scales with the scene's node capacity.
+- An instanced group records one indirect draw per part of every level, and one for an installed impostor, for each
+  occupied parity in each pass, whatever the selection.
 
 ## Animated models and crowds
 
@@ -227,8 +232,8 @@ An `Impostor` adds a baked atlas as the terminal choice after the mesh levels. S
 Views add to the same frame totals. Fallback visible counts describe submitted unculled placements. `Stats.triangles`
 excludes listed indirect ranges. Multiply the completed visible counts by the authored per-level triangle counts for the
 main-view LOD geometry work. The per-level arrays hold `MAX_LOD_CHOICES` (`MAX_LOD_LEVELS + 1`) entries: the mesh levels
-plus the terminal impostor. `Pass.INSTANCE_CULL` includes selection, visibility and argument finalization; sorting is
-separate.
+plus the terminal impostor, which counts at the index equal to the group's level count. `Pass.INSTANCE_CULL` includes
+selection, visibility and argument finalization; sorting is separate.
 
 ## Limits
 
@@ -248,10 +253,10 @@ python3 scripts/build.py --example lod
 The `lod` example draws 5,000 placements with three mesh levels and a terminal impostor. Buttons select the near, middle
 and far waypoints. The bias and forced-base controls compare detail. `--frames 30` bounds a windowed smoke run. The
 example selects the profiler add-on explicitly. `--benchmark` joins CPU, GPU and LOD counters by submission frame with
-native validation on.
+native validation on. It also runs a separate single-level high-detail group and saves `lod-far-impostor.png`,
+`lod-far-mesh.png`, `lod-far-base.png`, `lod-high-detail-impostor.png` and `lod-high-detail-base.png`.
 
-The manual GPU acceptance cases live in `test/gpu/render`:
-`c3c test acceptance --path test/gpu/render --test-filter test_lod_`.
+Manual GPU acceptance cases live in [test/gpu/render](../test/gpu/render/README.md).
 
 ## See also
 

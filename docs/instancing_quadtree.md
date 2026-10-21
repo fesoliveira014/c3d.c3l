@@ -13,7 +13,7 @@ scene.get(node, InstancedMesh).trace = false;
 scene.set_instance_quadtree(node, parents[..], 96, 0.25f)!;
 ```
 
-Instance 0 is the root. Instances 1 to 4 are its children. The arguments after `parents` are `split_pixels` (96) and
+Instance 0 is the root. Instances 1 to 4 are its children. The call takes the node, `parents`, `split_pixels` (96) and
 `hysteresis` (0.25).
 
 ## Concepts
@@ -30,7 +30,8 @@ Instance 0 is the root. Instances 1 to 4 are its children. The arguments after `
 ## Create and tune a tree
 
 `Scene.set_instance_quadtree(node, parents, split_pixels, hysteresis)` copies `parents` into arrays the component owns,
-builds the leaf mask and counts the tree's levels in `InstanceQuadtree.depth_count`. It advances
+allocated at `capacity` from the scene allocator on the first call, kept when the mode is disabled and freed with the
+component. It builds the leaf mask and counts the tree's levels in `InstanceQuadtree.depth_count`. It advances
 `InstanceQuadtree.revision`, which record edits never advance. It returns the batch to the sphere rule and drops any
 level bounds, because they describe one topology. Empty `parents` disable the mode.
 
@@ -65,14 +66,16 @@ selection with their own frustum, so a shadow layer casts what its view draws. A
 `instance_culling` off or `has_bounds_override` set, with open planes.
 
 The batch reserves its lists for the view, the depth prepass and every shadow layer from the [culling
-arena](instancing.md#instance-culling). When the arena has no room, the batch draws its leaves, unculled, in every pass
-of that rendering, and its history is dropped. `Stats.quadtree_fallbacks` counts it.
+arena](instancing.md#instance-culling). When the arena has no room, or a blended batch holds more than
+`MAX_SORTED_INSTANCES` instances, the batch draws its leaves, unculled, in every pass of that rendering, and its history
+is dropped. `Stats.quadtree_fallbacks` counts it.
 
-Each view keeps the split flags of the batch's previous and current rendering. The history stays valid while the owner
-entity and generation, `quadtree.revision` and the live count are unchanged. Record edits, an ordinary `configure_view`
-and an origin shift keep it. `reset_view_history` invalidates it, and a view resize or destroy frees it. A batch the
-view did not select for more than `INSTANCE_ABSENCE_FRAMES` frames releases the view's history of it. A submitted frame
-publishes the history and an aborted one discards it. A view without a valid history selects without hysteresis.
+Each view keeps the split flags of the batch's previous and current rendering. The history stays valid while the scene,
+the owner entity and generation, `quadtree.revision` and the live count are unchanged. Record edits, an ordinary
+`configure_view` and an origin shift keep it. `reset_view_history` invalidates it, and a view resize or destroy frees
+it. A batch the view did not select for more than `INSTANCE_ABSENCE_FRAMES` frames releases the view's history of it. A
+submitted frame publishes the history and an aborted one discards it. A view without a valid history selects without
+hysteresis.
 
 The renderer keeps 16 bytes per instance of capacity for the batch, shared by every view, and one 104-byte `QuadtreeGpu`
 block. Each view adds 8 bytes per instance of capacity. A selection invocation reads the records of its node and of at
@@ -96,8 +99,8 @@ scene.set_quadtree_ranges(node, levels[..], 0.25f)!;
 `Scene.set_quadtree_ranges(node, levels, morph_band)` takes one `QuadtreeLevel` per depth of the tree, indexed by depth
 with the roots at depth 0: the horizontal `extent` of a node and an upper bound of the box `diagonal` of any node of
 that depth. It advances `InstanceQuadtree.parameter_revision`, never the topology revision, so every view keeps its
-history and the renderer uploads the block again. Empty `levels` return the batch to `SPHERE_PIXELS`. The [serial
-add-on](serialization.md) carries the metric, band and levels.
+history and the renderer uploads the block again. Empty `levels` return the batch to `SPHERE_PIXELS`. The [serialization
+reference](serialization_reference.md#core-values-and-batches) covers the metric, band and levels.
 
 | Fault | When |
 | --- | --- |
@@ -105,9 +108,9 @@ add-on](serialization.md) carries the metric, band and levels.
 
 ### Ranges
 
-Notation: `s` is the view's pixel scale (see [selection camera](views_reference.md#selection-camera)), `T` is `split_pixels`, `h`
-the hysteresis, `b` the morph band, and `D` the finest depth. `e` and `g` are the extent and diagonal of a depth scaled
-by the largest axis scale of the node's world matrix. The range of a depth is
+Notation: `s` is the view's pixel scale (see [selection camera](views_reference.md#selection-camera)), `T` is
+`split_pixels`, `h` the hysteresis, `b` the morph band, and `D` the finest depth. `e` and `g` are the extent and
+diagonal of a depth scaled by the largest axis scale of the node's world matrix. The range of a depth is
 
 ```
 R_D = e_D s / T

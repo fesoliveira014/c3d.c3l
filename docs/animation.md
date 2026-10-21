@@ -681,7 +681,7 @@ generalized extraction and the inertia opt-in through `c3d_serial`. Earlier
 versions retain their authored groups, masks and scale mode, default to planar
 extraction and disabled inertia, and preserve the original 1D/boolean/DIFFERENCE
 defaults where those features were absent. Playback clocks, fades and transitions
-follow the authored restart rules ([Serialization](serialization.md)).
+follow the authored restart rules ([Serialization](serialization_reference.md#models-rigs-and-animation)).
 
 ## Layered example and CPU measurements
 
@@ -926,7 +926,7 @@ Creation, lifetime, bind/channel admission and replacement rules are in
 Generic skinned `InstancedMesh` bindings are not part of this.
 Animated crowds provide the supported shared-pose instanced path
 ([crowds](crowds.md#rendering)). Traced effects see the raster
-pose of a skinned or morphed mesh through a posing pass ([scene trace](scene_trace.md#posed-instances)); the
+pose of a skinned or morphed mesh through a posing pass ([scene trace](scene_trace_reference.md#posed-instances)); the
 velocity pass reads the view's previous palettes, and a crowd's previous resident buffers. A view that skipped a
 submitted frame has none: a crowd part binds the current buffers and gets no deformation motion for that frame,
 while node and instance motion are unchanged, and an animated LOD part rejects the history instead.
@@ -1263,7 +1263,7 @@ target; the anchor is retained without stretching or automatic release.
 Standalone `FootContact` uses the same lifecycle with an explicit incoming
 `Transform`. During rebasing, call `Scene.shift_foot_contacts` after the scene
 world refresh, or `FootContact.shift_origin` for standalone states. Each state
-has one shift owner. See [large_world.md](large_world.md) for the full order.
+has one shift owner. See [origin rebasing](origin_rebasing.md) for the full order.
 
 ### Limits
 

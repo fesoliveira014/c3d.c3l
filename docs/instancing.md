@@ -71,9 +71,9 @@ scene.mark_instances_range_dirty(props, first, count);
 ```
 
 The call declares the instances `[first, first + count)` edited and advances the revision like `mark_instances_dirty`.
-It requires `count > 0` and `first + count <= batch.count`. The renderer then packs and copies only the span into the
-batch's records, and each view rewrites only the span of its motion history. The edit must stay inside the span: nothing
-reads an instance outside it again.
+It requires `count > 0` and `first + count <= batch.count`, the live count. The renderer then packs and copies only the
+span into the batch's records, and each view rewrites only the span of its motion history. The edit must stay inside the
+span: nothing reads an instance outside it again.
 
 A range mark only grows the batch bound, so an instance that moved inward leaves it loose. Culling stays correct. A
 whole mark, or range marks that have covered as many instances as the batch holds, compute the bound tight again.
@@ -81,7 +81,7 @@ whole mark, or range marks that have covered as many instances as the batch hold
 The batch keeps its last `INSTANCE_RANGE_MARKS` (4) range marks. A renderer slot or view history uploads the whole batch
 for that frame instead of the span when:
 
-- more than `INSTANCE_RANGE_MARKS` marks have accumulated since its last upload;
+- `INSTANCE_RANGE_MARKS` or more marks have accumulated since its last upload;
 - an upload slot holds a mirrored record or the span contains a mirrored instance, because mirrored records pack after
   the others and a parity change moves every record after it (a view's motion history falls back when any instance of
   the batch mirrors);
@@ -150,8 +150,8 @@ scene.set_instance_device(
 | Record | `InstanceGpu`, `INSTANCE_RECORD_BYTES` (128) bytes. | `BillboardGpu`, 64 bytes. | `RibbonPointGpu`, `RIBBON_RECORD_BYTES` (48) bytes; `capacity + 1` records. |
 | Record space | Node-local. The node's world applies. | Relative to `Renderer.frame_origin`. The node's world is ignored, so the node must keep an identity world. | As billboards. |
 | Count word | Live instances. A count past `capacity` draws every slot. | Live records. | Live points; see [ribbons](ribbons.md#device-batches). |
-| Per-record culling | Per-instance box test, with sway and fade. | Per-record sphere test; survivors sort by depth. | None; the batch culls as a whole. |
-| Cull dispatch | Always runs, with an open frustum when `instance_culling` is off, because slots past the count hold stale records. | As instances. | None. |
+| Per-record culling | Per-instance box test, with sway and fade. | Per-record sphere test; survivors sort by depth, except in a weighted view. | None; the batch culls as a whole. |
+| Cull dispatch | Always runs, with an open frustum when `instance_culling` is off, because slots past the count hold stale records. | As instances. | One single-thread dispatch per view culling pass copies the segment count into the draw arguments, also with `instance_culling` off. It counts in `Stats.cull_dispatches`. |
 | Attach | `set_instance_device`, `InstanceDevice` | `set_billboard_device`, `BillboardDevice` | `set_ribbon_device`, `RibbonDevice` |
 
 Records of an instance batch are packed by `pack_instance_record` from the public `instance_record.glsl` ([public
@@ -257,12 +257,13 @@ rewrites the visible list far to near. Equal depths keep storage order, which ho
   the view's sorted ranges step together with one barrier per step round. The step count grows with the square of the
   logarithm of the count. A sorted range of `n` instances takes `32 + align8(4n) + 8 * pow2(n)` bytes of the cull arena
   per view and frame slot, where `pow2` rounds up to a power of two.
-- **Overflow.** A range above `MAX_SORTED_INSTANCES`, or whose list and keys do not fit the arena, draws unsorted and
-  unculled from CPU arguments and counts in `Stats.sort_overflows`.
+- **Overflow.** A range above `MAX_SORTED_INSTANCES` (2,097,152), or whose list and keys do not fit the arena, draws
+  unsorted and unculled from CPU arguments and counts in `Stats.sort_overflows`.
 - **Weighted views.** In a view with `transparency = WEIGHTED`, a batch whose material joins the [weighted
   pass](materials.md#weighted-transparency) does not sort. Its ranges list and cull like an opaque batch's and have no
   instance limit. A batch with an `ADDITIVE` material keeps the sort in every view. The sorted order applies again when
   the view switches back to `SORTED`.
+
 ## Sway and distance fade
 
 ```c3
@@ -281,8 +282,8 @@ grass.fade = { .start = 30, .end = 60 };
 
 `InstancedMesh.sway` bends a batch's vertices along one world direction. `InstancedMesh.fade` collapses its instances
 over a band of camera distance. Both are values read by every `render_view`, like `cast_shadow`: an edit needs no mark,
-uploads no record and leaves the bound alone. Zero values, the `add_instanced_mesh` default, are off. A scene-wide wind
-is the application's value, copied into its batches. Extraction checks the contract of the fields
+uploads no record and leaves the kept node-local bound alone. Zero values, the `add_instanced_mesh` default, are off. A
+scene-wide wind is the application's value, copied into its batches. Extraction checks the contract of the fields
 (`InstancedMesh.validate_effects`).
 
 | Field | Meaning and constraint |
@@ -319,8 +320,8 @@ is the application's value, copied into its batches. Extraction checks the contr
   uses the sway the view last drew the batch with, so a batch whose parameters change every frame keeps exact motion.
   The collapse carries no motion vector.
 - **Trace.** `InstancedMesh.trace_sway` traces each instance at its swayed pose, off-camera instances included, through
-  the posed slots of the [scene trace](scene_trace.md#custom-trace-poses). The pose applies no fade. Rows past the posed
-  capacity trace at rest, and `Stats.trace_sway_at_rest` counts their batch. The default is off.
+  the posed slots of the [scene trace](scene_trace_reference.md#custom-trace-poses). The pose applies no fade. Rows past
+  the posed capacity trace at rest, and `Stats.trace_sway_at_rest` counts their batch. The default is off.
 - **Cost.** Sway and fade add no per-instance CPU work, and off they cost nothing. Each batch and view takes one
   128-byte block in the frame upload ring.
 
@@ -393,7 +394,8 @@ range reports through the culling counters and not through `instances` or `trian
 99,856 props in a single batch, eight pulsing spheres through a custom vertex stage and a blended glass cloud. A left
 click reports the picked batch and instance index. `--fade-field` adds 4,096 fading cell batches, `--instance-edit` and
 `--move-node` exercise the upload paths, and `--benchmark` runs the headless
-[benchmark](benchmarking.md#instancing-benchmark).
+[benchmark](benchmarking.md#instancing-benchmark). While it runs, `B` bobs one row of props, `U` switches that row
+between range and whole marking, and `N` toggles the node motion.
 
 ## See also
 

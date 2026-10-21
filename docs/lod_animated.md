@@ -55,10 +55,10 @@ The same descriptor attaches to an ordinary model instance or to an animated cro
 
 - **Owner.** The owner carries exactly one of `ModelInstance` or `AnimatedCrowd` and no `LodGroup`. The source model has
   no imported LOD groups.
-- **Copies and borrows.** The group copies the levels, parts, the template joint list, the logical channel mappings,
-  names and defaults into scene-owned storage. It reads inverse binds from the template skin's skeleton, like a
-  `SkinBinding`. Caller arrays may be released after attachment. The referenced model, geometry, material and skeleton
-  assets stay borrowed.
+- **Copies and borrows.** The group copies the levels, parts, the template joint list, the resolved channel mappings and
+  the defaults into scene-owned storage. It reads inverse binds from the template skin's skeleton, like a `SkinBinding`.
+  Caller arrays may be released after attachment. The referenced model, geometry, material and skeleton assets stay
+  borrowed.
 - **Logical meshes.** `AnimatedLodPart.mesh_index` identifies a logical mesh in `ModelTemplate.meshes`. Each level draws
   a representation of some of them.
 - **Playback owns the pose.** Animation and crowd updates write the source state on the scene side. Renderers and
@@ -73,7 +73,7 @@ The same descriptor attaches to an ordinary model instance or to an animated cro
 | Local transform | Base parts and every skinned part use an identity `draw.local`. Other rigid or morph-only alternatives may have a finite, nonsingular affine local. |
 | Skin | A part is skinned exactly when its geometry is skinned. A skinned logical mesh stays skinned at every representation. A rigid logical mesh cannot acquire a skin through an alternative. |
 | Source skins | All source skins share identical ordered model-local joint-node lists and bitwise-identical inverse binds. Vertex and index counts and the stored joint-index width may differ. Joint subsets, remapping and per-level palettes are unsupported. |
-| Morph channels | Level zero defines the logical morph weights and defaults. A named channel in an alternative must match a base name exactly and have the same default bits. Each geometry keeps its own target and in-between metadata, so weights map by name, not by target position. Unnamed weights keep their indexed identity and complete width. |
+| Morph channels | Level zero defines the logical morph weights and defaults. An alternative may omit named channels, and its weight count follows its own geometry. A named channel it keeps must match a base name exactly and have the same default bits. Each geometry keeps its own target and in-between metadata, so weights map by name, not by target position. Unnamed weights keep their indexed identity and complete width. |
 | Bounds override | An ordinary owner may set `has_bounds_override` with `local_bounds` covering all alternatives. A crowd descriptor must leave it false. |
 
 The source `Mesh` or `InstancedMesh` geometry and material IDs must remain the template's base IDs. Source nodes, skin
@@ -103,7 +103,7 @@ Validation precedes publication, so a fault leaves the owner without a group.
   nonuniform placements.
 - **Placements.** An ordinary animated group uses its source owner's transform. An attached crowd borrows its placement
   and color arrays and its live count from `AnimatedCrowd`. Use the crowd's placement publication and `model::set_crowd`
-  to change them; the generic placement setters of a rigid group fault.
+  to change them. The generic placement setters of a rigid group must not be called on an animated group.
 - **Identity.** Pose and placement edits keep the group identity and the selection hysteresis. A crowd replacement or
   regrowth changes the source generations. Attaching a new descriptor changes the group incarnation.
 - **Effects.** The group's `LodEffects` start with shadows enabled and `trace` off. A crowd group copies
@@ -139,8 +139,6 @@ placements and colors.
 ### Costs
 
 - Animated binding metadata adds copied part records, channel maps and defaults, and one ordered joint list per group.
-
-
 - An ordinary group retains `joints * 64` bytes of palette and 4 bytes per logical morph weight for history.
 - Temporal views additionally retain `capacity * rigid_meshes * 64` bytes of rigid affines per owner, independent of the
   level count.
@@ -155,7 +153,7 @@ placements and colors.
 - **Tracing.** A traced group uses level-zero geometry and distinct scene, owner, incarnation, logical-part and
   source-slot keys. Traced skinned or morphed sources consume posed slots. Rigid-only parts use the rest-geometry path
   at their sampled affine. Capacity, overflow, same-frame sharing, still-pose reuse and the software and hardware
-  behavior follow [posed instances](scene_trace.md#posed-instances). Untraced groups do no posed trace work.
+  behavior follow [posed instances](scene_trace_reference.md#posed-instances). Untraced groups do no posed trace work.
 - **glTF.** The loader does not import deformable LOD; required deformable `MSFT_lod` returns `UNSUPPORTED` and optional
   deformable LOD keeps its highest-detail fallback. Author animated alternatives explicitly.
 - **Impostors.** Installing an impostor on an animated group returns `UNSUPPORTED`.

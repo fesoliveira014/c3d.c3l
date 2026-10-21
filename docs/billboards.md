@@ -42,7 +42,7 @@ scene.mark_billboards_dirty(node);
 
 | Call | Effect | Faults |
 | --- | --- | --- |
-| `add_billboards(material, capacity, billboards, facing, parent, name, atlas, source)` | Adds a node with a batch. `billboards` sets the live count. | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` |
+| `add_billboards(material, capacity, billboards, facing, parent, name, atlas, source)` | Adds a node with a batch. `billboards` sets the live count. Requires `capacity > 0`. | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` |
 | `set_billboards(node, billboards)` | Copies a replacement prefix. | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` |
 | `resize_billboards(node, count)` | Changes the length. New entries are unit white quads (`BILLBOARD_DEFAULT`). | `CAPACITY_EXCEEDED` |
 | `set_billboard_atlas(node, atlas)` | Replaces the sprite-sheet layout and advances the batch revision. | `INVALID_ARGUMENT` |

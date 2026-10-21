@@ -11,7 +11,7 @@ masks, blend spaces, root motion semantics and event delivery.
 ## Quick start
 
 ```c3
-Node* crowd = model::add_crowd(
+Node* crowd_node = model::add_crowd(
     assets:      &assets,
     scene:       &scene,
     model:       character,
@@ -54,7 +54,7 @@ while (window.poll()) {
 | `trace` | Opt every part batch into ray tracing (default false). |
 | `actions_per_instance` | Concurrent actions per instance, fixed at preparation. Default `anim::DEFAULT_CROWD_ACTIONS` (4); in `[1, 16]`. Blend-space members consume these slots. |
 | `event_capacity` | Event entries across the whole crowd, fixed at preparation. Default `anim::DEFAULT_CROWD_EVENT_CAPACITY` (1024). |
-| `authoring` | Optional per-instance actions, masks and spaces, captured for preparation. |
+| `authoring` | Optional per-instance actions, masks and spaces, captured for preparation. One entry per active instance. |
 
 - **Admission.** Skin-free templates are valid. Every skin must have identical ordered joints and bitwise equal inverse
   binds. Distinct skeleton IDs with the same data are accepted. Incompatible bindings, invalid morph defaults and more
@@ -64,19 +64,21 @@ while (window.poll()) {
   capacity-sized placements, seed poses and colors, and keeps the pose bounds and the initial part trace flag. It
   creates no part nodes, palettes or assets. `model::prepare_crowd(assets, scene, node)` installs all runtime arrays and
   part batches atomically. `model::prepare_crowd_subtree(assets, scene, root = null)` attempts every pending crowd under
-  `root` (null selects the whole scene), returns the first fault and keeps the owners that prepared. A failed owner
-  keeps its authoring for retry. Preparing a prepared crowd is a no-op. Pending and prepared rules are in the [owner
-  readiness table](owner_readiness.md).
+  `root`, `root` included (null selects the whole scene), returns the first fault and keeps the owners that prepared. A
+  failed owner keeps its authoring for retry. Preparing a prepared crowd is a no-op. Pending and prepared rules are in
+  the [owner readiness table](owner_readiness.md).
 - **Pending crowds.** `AnimatedCrowd.is_prepared()` reports readiness. A pending crowd produces no draw, and
   `crowd_update` skips it.
 - **Replace instances.** `model::set_crowd(assets, scene, node, instances)` replaces the instances and the live count of
   every part atomically. Replacement, shrink, regrowth and reorder give fresh source and action generations, so old
-  handles never name replacements. Placement, tint and root-motion helper edits keep playback and identity.
+  handles never name replacements. On a pending crowd, `set_crowd` replaces the captured authoring and drops its
+  actions, masks and spaces. Placement, tint and root-motion helper edits keep playback and identity.
 
 ## Play and update
 
 `attach_crowd` and `set_crowd` copy each input pose and its start `time` to `AnimatedCrowd.seeds`. The seed is a base
-action, not writable runtime storage. Control playback through the crowd's playback state:
+action, not writable runtime storage. Get the component with
+`AnimatedCrowd* crowd = scene.get(crowd_node, AnimatedCrowd);`, then control playback through its playback state:
 
 1. `crowd.playback.instance_id(index)` returns the `CrowdInstanceId` of a live instance, or faults `INVALID_ID`.
 2. `player(id)` borrows a `CrowdPlayer`.
@@ -120,12 +122,14 @@ unchanged.
   `Stats.upload_bytes` counts the staged bytes.
 - **Resident limit.** `RendererDesc.max_resident_crowds` (default 64, `DEFAULT_MAX_RESIDENT_CROWDS`) bounds the crowds
   holding buffers. Past it `render_view` faults `CAPACITY_EXCEEDED`. A crowd that no view, shadow layer or trace draws
-  for more than `INSTANCE_ABSENCE_FRAMES` frames releases its buffers.
+  for more than `INSTANCE_ABSENCE_FRAMES` frames releases its buffers. A crowd keeps at most 16 resident streams (the
+  palette stream and the morph streams of its parts); `render_view` faults `CAPACITY_EXCEEDED` past that.
 - **Velocity.** The velocity pass reads the previous buffers of the resident pair. A crowd part has no deformation
   history when the view did not render in the previous submitted frame, or when the crowd is new or was released. The
   frame then shows no deformation motion, while node motion and the per-instance transform history are unchanged. A view
-  rendered less often than every frame therefore shows no crowd deformation motion. An animated LOD part rejects its
-  history instead ([animated LOD](lod_animated.md)).
+  rendered less often than every frame therefore shows no crowd deformation motion. After `set_crowd`, or after an edit
+  of the crowd's model, a part geometry or a skeleton, the part draws one frame with zero motion, node and instance
+  motion included. An animated LOD part rejects its history instead ([animated LOD](lod_animated.md)).
 - **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a skinned or morphed crowd part poses
   all its live sources in one dispatch per frame. Frozen and culled instances are posed too, so the dispatch costs the
   same whatever the draws show. Animated LOD parts keep vertex skinning.
@@ -145,8 +149,8 @@ any other. The default is untraced. Raster shadows and temporal views work eithe
 - Raise `RendererDesc.max_posed_trace_instances` past the posed slots a scene needs. Placements beyond it are left out
   of the trace and counted in `Stats.trace_posed_overflow`.
 - A slot costs the posed streams, a refit copy and a bottom level of its part, so memory scales with the number of
-  distinct poses per part batch. See [posed instances](scene_trace.md#posed-instances) and [animated
-  crowds](scene_trace.md#animated-crowds).
+  distinct poses per part batch. See [posed instances](scene_trace_reference.md#posed-instances) and [animated
+  crowds](scene_trace_reference.md#animated-crowds).
 
 ## Costs
 
@@ -161,8 +165,8 @@ any other. The default is untraced. Raster shadows and temporal views work eithe
 | Resident pose | `2 * capacity * (joints * 64 + morph_parts * 80)` bytes of device memory, where `morph_parts` counts the crowd parts and animated LOD parts that draw with morph weights. |
 | Compute skinning | `capacity * vertex_count * 52` bytes per posed part; see [caps and cost](animation.md#compute-skinning). |
 
-Allocator alignment and metadata add overhead outside these figures. Buffers allocate on first use and again when the
-capacity, the joint count or a morph layout changes.
+Allocator alignment and metadata add overhead outside these figures. Buffers allocate on first use, again after every
+`set_crowd`, and when the capacity, the joint count or a morph layout changes.
 
 ## Limits
 
@@ -176,13 +180,14 @@ capacity, the joint count or a morph layout changes.
 `python3 scripts/build.py --example skinned_crowd` plays 512 instances of the committed character through six of its
 clips. `B` switches to 512 `Animator` instances of the same model for comparison. Options include `--baseline`,
 `--compute-skinning`, `--traced-shadows` (add `--ray-queries` for the hardware kind), `--compress`, `--frozen-percent=P`
-and `--compare`. `F` freezes every other instance. The panel shows resident crowd bytes, per-frame upload bytes, root
+and `--compare`. `K` toggles compute skinning, `F` freezes every other instance, `Space` pauses or resumes the first
+source and `R` applies each update's root delta once. The panel shows resident crowd bytes, per-frame upload bytes, root
 displacement and event counts.
 
 ## See also
 
 - [Animation](animation.md) for playback, blend spaces, root motion and events.
 - [Explicit instancing](instancing.md) for the part batches.
-- [Whole-object LOD](lod_animated.md) for animated alternatives.
+- [Animated LOD](lod_animated.md) for animated alternatives.
 - [Scene trace](scene_trace.md) for posed trace slots.
 - [Custom shaders](custom_shaders.md) for the instanced vertex stages.
