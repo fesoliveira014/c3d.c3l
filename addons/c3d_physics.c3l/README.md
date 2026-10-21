@@ -7,8 +7,8 @@ feature flag.
 
 ## What it provides
 
-- Rigid bodies and colliders (sphere, capsule, box, hull, mesh, height field, compound), surface materials, filters, joints,
-  `Wind`, `Force` and `Buoyancy` components, events, scene queries, recording and replay, debug draw.
+- Rigid bodies and colliders (sphere, capsule, box, hull, mesh, height field, compound), surface materials, filters,
+  joints, `Wind`, `Force` and `Buoyancy` components, events, scene queries, recording and replay, debug draw.
   [Physics guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics.md).
 - World-free collision queries on prepared shapes and a shared cooking cache (`c3d::physics::collide`).
   [Collision queries](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/collision_queries.md).
@@ -61,8 +61,8 @@ scene.update_world();
 
 ## Boundaries
 
-- `c3d::physics` imports the standard library, core (`c3d`) and `b3`. It never imports `gpu`, `sdl` or `imgui`, and creates
-  no GPU object.
+- `c3d::physics` imports the standard library, core (`c3d`) and `b3`. It never imports `gpu`, `sdl` or `imgui`, and
+  creates no GPU object.
 - `c3d::physics::cloth` imports the standard library, core and `c3d::physics`, not `b3`. `c3d::physics::collide` imports
   the standard library, `c3d::maths` and `b3` only.
 - Under `C3D_PHYSICS_SERIAL`, `src/serial/` imports `c3d::serial`. The package never imports `c3d_job`; the `cloth`,

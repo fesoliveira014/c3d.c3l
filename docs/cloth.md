@@ -465,7 +465,8 @@ The panel shows the solver and upload statistics. An unknown or malformed flag p
 - Cloth contacts are one-way and sample particles only; thin colliders can cross unsampled faces.
 - Different `Cloth` components do not collide with each other.
 - One cloth solves on one thread; parallel staging scales across cloths.
-- Sources must be indexed triangle meshes without morph targets, custom vertex data or a bounds override, and outside LOD groups.
+- Sources must be indexed triangle meshes without morph targets, custom vertex data or a bounds override, and outside
+  LOD groups.
 - A cloth needs `--fp-math=strict` and round-to-nearest, gradual-underflow arithmetic on every thread that updates it.
 - A held skinned cloth does not follow its skeleton.
 

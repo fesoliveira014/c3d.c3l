@@ -96,9 +96,9 @@ spheres, capsules and the children of compounds draw as wires; mesh and height-f
 
 ## Example
 
-`physics_inspector` shows the panel over a level with thrown boxes, a short chain and a ragdoll figure. Keys: P pause, N step, R start or stop
-recording, L open the replay, G drop the figure, H recover it. `--frames N` closes after N frames. The character target
-moves a walker with the arrow keys.
+`physics_inspector` shows the panel over a level with thrown boxes, a short chain and a ragdoll figure. Keys: P pause, N
+step, R start or stop recording, L open the replay, G drop the figure, H recover it. `--frames N` closes after N frames.
+The character target moves a walker with the arrow keys.
 
 ## Limits
 

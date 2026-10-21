@@ -83,15 +83,15 @@ The authored fields are not checked in the step loop, as `Wind` and `Force` are 
   current pose and the fluid is sampled there. The cell's fraction is `clamp((surface - y) / h + 0.5, 0, 1)`, with `h`
   the rotated cell's world height span, so a tilted body still submerges each cell over its full height.
 - A submerged cell receives, at its centre, `-gravity * rho * V / 8 * fraction` of lift, with the world's
-  `tuning.gravity` (not the body's `gravity_scale`: a scaled body is lighter, not less buoyant), and the drag below. A cell
-  with fraction 0 receives nothing.
+  `tuning.gravity` (not the body's `gravity_scale`: a scaled body is lighter, not less buoyant), and the drag below. A
+  cell with fraction 0 receives nothing.
 - At rest on a flat surface a body settles where its mean fraction equals `rho_body / rho_fluid`, whatever its shape.
 
 ## Drag
 
-With `v_rel = v - v_fluid`, the velocity of the body at the cell centre relative to the fluid there, and `A(d)` the area of
-the solid bounds projected on the plane perpendicular to `d` (the sum of the areas of the box's three face pairs, each
-weighted by `|d . axis|` of the body axis normal to it), a cell's drag is
+With `v_rel = v - v_fluid`, the velocity of the body at the cell centre relative to the fluid there, and `A(d)` the area
+of the solid bounds projected on the plane perpendicular to `d` (the sum of the areas of the box's three face pairs,
+each weighted by `|d . axis|` of the body axis normal to it), a cell's drag is
 
 ```text
 F = -(linear_drag / 8 + 1/2 * rho * C_d * A(v_rel_hat) / 8 * |v_rel|) * v_rel * fraction

@@ -116,8 +116,8 @@ scene.update_world();
 | `Ragdoll.recovery_status()` | `RagdollRecoveryStatus`: phase, participant count, mapped-joint position and angle errors, absolute body speeds, applied force and torque, and a captured-input fault. |
 | `update_ragdolls()` | Publishes recovery and the ordinary blend. Repeating it in one frame is harmless. |
 
-Call `recover_ragdoll` or `recover_bones` before sampling fresh animation, while the preceding frame's final joint worlds are untouched. Entry
-validates every selected body and joint before changing anything. Faults:
+Call `recover_ragdoll` or `recover_bones` before sampling fresh animation, while the preceding frame's final joint
+worlds are untouched. Entry validates every selected body and joint before changing anything. Faults:
 
 | Fault | Cause |
 | --- | --- |

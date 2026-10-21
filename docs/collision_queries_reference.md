@@ -70,25 +70,25 @@ four-point manifold.
 | surface and surface | `c3d::UNSUPPORTED` | `c3d::UNSUPPORTED` | `c3d::UNSUPPORTED` | `c3d::UNSUPPORTED` | against either |
 
 - **Contacts.** Every native point of every triangle within the speculative margin is reported with the normal of that
-  triangle's contact, from the first shape toward the second, and the triangle's `triangle_index` in the cooked
-  entry. The index is meaningful only for the entry the owner holds. Points are neither deduplicated, welded nor
-  sorted. Separation is native: it can be positive inside the margin of four linear slops (0.02), and a negative value is
-  a local penetration measure, not a signed distance to a volume. A triangle reports nothing for a shape behind its
-  front face: a sphere is tested by its centre, a capsule by its segment midpoint and a hull by its centroid with one
-  slop of tolerance. Reversing the arguments reverses every normal and leaves points and separations unchanged.
+  triangle's contact, from the first shape toward the second, and the triangle's `triangle_index` in the cooked entry.
+  The index is meaningful only for the entry the owner holds. Points are neither deduplicated, welded nor sorted.
+  Separation is native: it can be positive inside the margin of four linear slops (0.02), and a negative value is a
+  local penetration measure, not a signed distance to a volume. A triangle reports nothing for a shape behind its front
+  face: a sphere is tested by its centre, a capsule by its segment midpoint and a hull by its centroid with one slop of
+  tolerance. Reversing the arguments reverses every normal and leaves points and separations unchanged.
 - **Contact storage.** Triangle contacts stream into the caller's output. Every native point is copied or the call
   returns `c3d::CAPACITY_EXCEEDED`, with no truncated prefix and unspecified output. The first failure is kept and later
   triangles write nothing. An empty output succeeds only when nothing touches.
-- **Distance.** The result is unsigned, zero means the shapes overlap, and the whole retained surface is measured, so the
-  nearest triangle can lie outside the other shape's bounds. The normal is the native one where it is defined and zero
-  otherwise. A closed mesh has no inside: a shape wholly inside it reports the distance to the surface. Reversing the
-  arguments swaps the witnesses and reverses the normal.
+- **Distance.** The result is unsigned, zero means the shapes overlap, and the whole retained surface is measured, so
+  the nearest triangle can lie outside the other shape's bounds. The normal is the native one where it is defined and
+  zero otherwise. A closed mesh has no inside: a shape wholly inside it reports the distance to the surface. Reversing
+  the arguments swaps the witnesses and reverses the normal.
 - **Casts.** The cast runs in the surface's starting frame with the convex shape moving by the relative translation, so
   either shape or both can move. The returned point is the witness at the returned time, with the surface's own
-  translation times that time added once. The shapes close to a core distance of `max(slop, r - slop)`, with `r` the sum of the two radii (5 mm for
-  a zero sum) with a tolerance of a quarter slop. A start inside that band is a hit at time zero with a zero
-  normal, and touching alone does not promise time zero. A cast never encroaches. Mesh casts reach a triangle from
-  either side.
+  translation times that time added once. The shapes close to a core distance of `max(slop, r - slop)`, with `r` the sum
+  of the two radii (5 mm for a zero sum) with a tolerance of a quarter slop. A start inside that band is a hit at time
+  zero with a zero normal, and touching alone does not promise time zero. A cast never encroaches. Mesh casts reach a
+  triangle from either side.
 - **Sweeps.** A sweep with fixed orientations is the translational cast between the start poses. Rotations that differ
   only by quaternion sign are unchanged; a change of either orientation returns `c3d::UNSUPPORTED`.
 - **Rays.** A ray hits front faces only and reports the geometric normal of the hit triangle. The fraction lies strictly
@@ -187,8 +187,8 @@ The pair table applies. Differences from a mesh:
 
 - **Holes.** Contacts skip hole cells, and casts and rays pass through them. A field of only holes reports no contacts
   and `b3::NO_HIT` for distance, casts and rays.
-- **Distance.** The result is the minimum over the retained cells of the whole field, clipped to the grid before the native
-  cell loops run, so a query box that reaches far outside the field costs no more than the field.
+- **Distance.** The result is the minimum over the retained cells of the whole field, clipped to the grid before the
+  native cell loops run, so a query box that reaches far outside the field costs no more than the field.
 - **Casts and rays.** The native traversal clips the sweep to the field grown by the proxy extent and a native margin of
   0.05. A query whose grid indices cannot be represented as native signed 32-bit integers returns `c3d::UNSUPPORTED`,
   for example a field with a very narrow spacing in x or z. A far-away pose is limited by the admission bounds, not by
@@ -225,26 +225,27 @@ world.update(dt);
 | `mark_height_field_windows_changed(scene, node, rect)` | Marks every window whose sample range `[x - 1, x + count + 1]` meets the `SampleRect`, given in samples of the map (its texels). Returns how many it marked. |
 | `remove_height_field_windows(scene, node)` | Removes the window nodes and bodies. Does nothing without windows. |
 
-- The template is a `HEIGHT_FIELD` collider over a `TEXTURE` source whose `window` is ignored. Per-cell `material_indices`
-  cover the whole map and are cut per window; `add_height_field_windows` copies the template's neighbours, cuts their
-  cells into each window's ring and keeps on a window body only the maps of the sides where the map ends. The call
-  faults `c3d::INVALID_ARGUMENT`, `c3d::CAPACITY_EXCEEDED`, `c3d::INVALID_ID` and `c3d::UNSUPPORTED`; it faults
-  `c3d::INVALID_ARGUMENT` when the node already has windows.
+- The template is a `HEIGHT_FIELD` collider over a `TEXTURE` source whose `window` is ignored. Per-cell
+  `material_indices` cover the whole map and are cut per window; `add_height_field_windows` copies the template's
+  neighbours, cuts their cells into each window's ring and keeps on a window body only the maps of the sides where the
+  map ends. The call faults `c3d::INVALID_ARGUMENT`, `c3d::CAPACITY_EXCEEDED`, `c3d::INVALID_ID` and `c3d::UNSUPPORTED`;
+  it faults `c3d::INVALID_ARGUMENT` when the node already has windows.
 - Windows share the samples on their common edge and read one sample past it, so an edit on or beside a shared edge
   marks two windows and one on or beside a shared corner marks four. A body crosses a window seam as it crosses the
   interior of a whole field.
-- A marked window is rebuilt synchronously by the next `PhysicsWorld.update`; an unmarked one is never rebuilt, so a body
-  resting on it keeps its contact and its sleep. The rebuilt window has the one-step contact gap of any `mark_changed`.
-  `PhysicsCounters.pending_bodies` counts the bodies marked and not yet built.
+- A marked window is rebuilt synchronously by the next `PhysicsWorld.update`; an unmarked one is never rebuilt, so a
+  body resting on it keeps its contact and its sleep. The rebuilt window has the one-step contact gap of any
+  `mark_changed`. `PhysicsCounters.pending_bodies` counts the bodies marked and not yet built.
 - To change `window_cells`, remove the windows and add them again. Removing the node removes its window nodes with it.
 - Each window takes one snapshot slot (the key adds the window to the texture, revision, scale and material indices).
   Size `PhysicsDesc.snapshot_capacity` for the windows plus the application's other shapes. A window that finds no free
-  slot fails to build with `c3d::CAPACITY_EXCEEDED`, reported in `build_failures` at the update; `add_height_field_windows`
-  does not check. A re-cooked window leaves its previous entry unheld, and a full table reclaims it.
+  slot fails to build with `c3d::CAPACITY_EXCEEDED`, reported in `build_failures` at the update;
+  `add_height_field_windows` does not check. A re-cooked window leaves its previous entry unheld, and a full table
+  reclaims it.
 - A collider with a neighbour reads the neighbour across a map edge, so a body crosses from one tile collider to the
   next as it crosses the interior of one field. After an edit of a neighbour within two texels of the shared edge, mark
-  this collider's facing edge: a live collider is re-cooked only when marked. Adding or removing a neighbour changes
-  the description, so rebuild the body or the windows.
+  this collider's facing edge: a live collider is re-cooked only when marked. Adding or removing a neighbour changes the
+  description, so rebuild the body or the windows.
 - With `C3D_PHYSICS_SERIAL`, `HeightFieldWindows` is a described owner whose payload is `{ window_cells, collider }`.
   Export omits the window bodies and nodes, and loading regenerates them through `add_height_field_windows`
   ([serialization](serialization.md#physics-adapter)).

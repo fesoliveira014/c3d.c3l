@@ -67,11 +67,11 @@ events or material values. `default_collision_shape_desc(kind)` returns unit sca
 `COMPOUND` returns `c3d::UNSUPPORTED`; compounds are world-query shapes. Dimensions are positive and finite. A capsule
 segment must be at least one native linear slop (0.005 m by default) and box half-extents at least 0.2 slop (0.001 m).
 Smaller positive values return `c3d::UNSUPPORTED` instead of accepting a native clamp. `scale` multiplies the shape's
-local axes at preparation; each kind accepts a different set (see [prepared scale](collision_queries_reference.md#prepared-scale)).
-`create_collision_shape` faults `c3d::INVALID_ARGUMENT`, `c3d::INVALID_ID`, `c3d::UNSUPPORTED`,
-`c3d::CAPACITY_EXCEEDED`, `physics::SOURCE_UNAVAILABLE`, `b3::DEGENERATE_GEOMETRY` and `b3::INVALID_DEFINITION`
-([causes](collision_queries_reference.md#faults)). A geometry id is local to its store: pass the store the cache was
-created with.
+local axes at preparation; each kind accepts a different set
+(see [prepared scale](collision_queries_reference.md#prepared-scale)). `create_collision_shape` faults `c3d::INVALID_ARGUMENT`,
+`c3d::INVALID_ID`, `c3d::UNSUPPORTED`, `c3d::CAPACITY_EXCEEDED`, `physics::SOURCE_UNAVAILABLE`,
+`b3::DEGENERATE_GEOMETRY` and `b3::INVALID_DEFINITION` ([causes](collision_queries_reference.md#faults)). A geometry id
+is local to its store: pass the store the cache was created with.
 
 ## Query a pair
 
@@ -171,4 +171,5 @@ scale or query shows its fault in the panel.
 
 - [Collision queries reference](collision_queries_reference.md)
 - [Physics](physics.md) for world queries and bodies
-- [Terrain](terrain.md) for height fields built from terrain, and [height-field windows](collision_queries_reference.md#height-field-windows)
+- [Terrain](terrain.md) for height fields built from terrain
+- [Height-field windows](collision_queries_reference.md#height-field-windows)

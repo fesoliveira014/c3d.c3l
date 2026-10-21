@@ -160,19 +160,20 @@ null; it clears before each attempt and after success, and the borrow ends at th
 
 ## Read authoring
 
-`state.piece_view(index)` returns the captured entity, hull ids, rest frame and optional strength. `state.weld_view(index)`
-returns the piece indices, local frames, moment axis, effective strength and override. `state.anchor_count()` and
-`state.anchor_view(index)` return copied anchor authoring and effective strength. The views contain no native ids and no
-damage. Indices stay stable for the captured runtime after removals, so check entity liveness. Reacquire the state and
-borrowed hull arrays after preparation or removal. Authoring the same automatic inputs derives the same ordered graph.
+`state.piece_view(index)` returns the captured entity, hull ids, rest frame and optional strength.
+`state.weld_view(index)` returns the piece indices, local frames, moment axis, effective strength and override.
+`state.anchor_count()` and `state.anchor_view(index)` return copied anchor authoring and effective strength. The views
+contain no native ids and no damage. Indices stay stable for the captured runtime after removals, so check entity
+liveness. Reacquire the state and borrowed hull arrays after preparation or removal. Authoring the same automatic inputs
+derives the same ordered graph.
 
 ## Wake and release
 
 A hit by a dynamic body wakes an intact assembly when `mass * approach_speed >= break_force * fixed_dt` and the speed
-passes the world's `hit_speed_threshold`. This heuristic is separate from weld evaluation. Only one qualifying hit per assembly and step
-replays. Automatic wake starts from the native assembly pose; `wake_breakable` starts from the root's authored pose.
-Fragments inherit the assembly's linear and angular motion, and the visitor's relative normal speed is restored after
-a successful wake, which approximates first contact one step later. It is not an exact collision-history
+passes the world's `hit_speed_threshold`. This heuristic is separate from weld evaluation. Only one qualifying hit per
+assembly and step replays. Automatic wake starts from the native assembly pose; `wake_breakable` starts from the root's
+authored pose. Fragments inherit the assembly's linear and angular motion, and the visitor's relative normal speed is
+restored after a successful wake, which approximates first contact one step later. It is not an exact collision-history
 reconstruction. An unanchored remainder may tip under a strong impact.
 
 Wake is transactional for the surviving pieces. It first prunes pieces removed from the scene; that cleanup stays even
