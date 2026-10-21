@@ -33,6 +33,7 @@ const float BALL_RADIUS @private = 0.3f;
 const float CONTACT_TOLERANCE @private = 1e-3f;
 const uint TWIN_STEPS @private = 60;
 const float TWIN_TOLERANCE @private = 2e-3f; // metres; the device against the CPU solver after TWIN_STEPS
+const float COLLIDER_TOLERANCE @private = 5e-3f; // metres; the same against moving colliders, whose contacts round in single precision
 const float MIN_TRAVEL @private = 0.5f; // metres; the twins must swing for the comparison to mean anything
 const float MIN_BATCH_TRAVEL @private = 0.1f; // metres; followers of a small owner motion move less than a swinging flag
 const float TWIN_GROUND @private = POLE_HEIGHT - 0.5f; // the swinging sheet reaches the plane
@@ -47,8 +48,20 @@ const Vec3 BREEZE @private = { 0, 0, 2 }; // m/s, across the hanging flag
 const float BREEZE_CAP @private = 1.8f; // m/s; below the breeze, so the cap applies
 const uint TRANSPORT_LEVELS @private = 4;
 const uint JOINT_COUNT @private = 2;
-const usz MAX_CONTROLS @private = 4; // soft, transport, wind and bends
+const usz MAX_CONTROLS @private = 6; // soft, transport, wind, bends, sphere and capsule
 const float FEATURE_FLOOR @private = 4e-3f; // metres; twice the tolerance, so a missing feature cannot hide inside it
+const float SPHERE_RADIUS @private = 0.2f;
+const float CAPSULE_RADIUS @private = 0.12f;
+const float CAPSULE_HALF_HEIGHT @private = 0.3f;
+const float SPHERE_X @private = 0.5f;
+const float CAPSULE_X @private = 1.3f;
+const float MOVER_Y @private = POLE_HEIGHT - 0.6f; // mid-height of the hanging flag
+const float MOVER_START_Z @private = -1.0f; // metres in front of the flag; the movers reach it after most of the run
+const float MOVER_SPEED @private = 0.9f; // metres per second along the flag's normal
+const float CAPSULE_PITCH_RATE @private = 0.3f; // radians per second about the horizontal axis across the flag
+const float ROUNDING_SLACK @private = 1e-6f; // metres; single-precision positions near 3 m differ by a few of 2.4e-7
+const float CONTACT_REACH_MARGIN @private = 1e-3f; // metres; a particle this close to a shape's reach is in contact
+const float SHAPE_NEIGHBOURHOOD @private = 0.3f; // metres from a shape's surface; particles this close belong to it
 
 struct Fixture @private {
     AssetStore     assets;
@@ -61,6 +74,8 @@ struct Fixture @private {
     ViewId         view;
     SkeletonId     skeleton;
     Node*[2]       joints; // the rig of skinned flags: a root at the pole and a tip under it
+    Node*          sphere_body;  // kinematic owners the flags list as colliders
+    Node*          capsule_body;
 }
 
 struct FlagOptions @private {
@@ -73,6 +88,8 @@ struct FlagOptions @private {
     bool  hanging;        // the flag starts hanging from its pins, so gravity only stretches it
     float damping;        // per second; zero keeps DAMPING
     float stretch_stiffness; // zero keeps the cloth default
+    bool  sphere;            // a moving sphere is a listed collider
+    bool  capsule;           // a moving capsule is a listed collider
 }
 
 fn void? create_fixture(Fixture* fixture, GpuClothsDesc budget = cloth_gpu::GPU_CLOTHS_DEFAULT) @private {
@@ -255,6 +272,44 @@ fn Node*? add_ball(Fixture* fixture) @private {
     return ball;
 }
 
+fn Node*? add_mover(Fixture* fixture, ColliderDesc collider) @private {
+    Node* body = fixture.scene.add_node(name: "mover")!;
+    fixture.scene.update_world();
+    fixture.physics.add_body(body, physics::default_body_desc(KINEMATIC), (&collider)[:1])!;
+    return body;
+}
+
+fn void? add_movers(Fixture* fixture) @private {
+    if (fixture.sphere_body) return;
+
+    ColliderDesc sphere = physics::default_collider_desc(SPHERE);
+    sphere.radius = SPHERE_RADIUS;
+    fixture.sphere_body = add_mover(fixture, sphere)!;
+    ColliderDesc capsule = physics::default_collider_desc(CAPSULE);
+    capsule.radius = CAPSULE_RADIUS;
+    capsule.half_height = CAPSULE_HALF_HEIGHT;
+    fixture.capsule_body = add_mover(fixture, capsule)!;
+    pose_movers(fixture, 0);
+}
+
+// Both owners advance along the flag's normal at a constant speed; the capsule also pitches, so its ends swing along it.
+fn void pose_movers(Fixture* fixture, uint step) @private {
+    float seconds = (float)step * physics::DEFAULT_FIXED_DT;
+    float travel = MOVER_START_Z + MOVER_SPEED * seconds;
+    fixture.sphere_body.local.position = { SPHERE_X, MOVER_Y, travel };
+    fixture.capsule_body.local.position = { CAPSULE_X, MOVER_Y, travel };
+    fixture.capsule_body.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, CAPSULE_PITCH_RATE * seconds);
+    fixture.scene.update_world();
+}
+
+fn Entity[] movers_of(Fixture* fixture, FlagOptions options) @private {
+    Entity[] owners = alloc::new_array(tmem, Entity, 2);
+    usz count;
+    if (options.sphere) owners[count++] = fixture.sphere_body.id;
+    if (options.capsule) owners[count++] = fixture.capsule_body.id;
+    return owners[:count];
+}
+
 // What read_positions returned in a frame, before that frame's update.
 struct Observation @private {
     Entity cloth;
@@ -263,7 +318,13 @@ struct Observation @private {
 }
 
 // One fixed step, or none, then the device update.
-fn void? run_frame(Fixture* fixture, bool stepping, Observation* observation = null) @private {
+// With update_failure, a cloth that did not fit is reported there and the frame goes on.
+fn void? run_frame(
+    Fixture* fixture,
+    bool stepping,
+    Observation* observation = null,
+    fault* update_failure = null,
+) @private {
     Renderer* renderer = &fixture.renderer;
     fixture.physics.update(stepping ? physics::DEFAULT_FIXED_DT : 0);
     fixture.physics.update_cloths();
@@ -279,7 +340,10 @@ fn void? run_frame(Fixture* fixture, bool stepping, Observation* observation = n
             observation.positions[..] = view[..];
         }
     }
-    cloth_gpu::update(&fixture.cloths, renderer, &fixture.assets, &fixture.scene)!;
+    if (catch excuse = cloth_gpu::update(&fixture.cloths, renderer, &fixture.assets, &fixture.scene)) {
+        if (!update_failure || excuse != c3d::CAPACITY_EXCEEDED) return excuse~;
+        *update_failure = excuse;
+    }
     renderer.render_view(&fixture.scene, fixture.camera, fixture.view)!;
     renderer.finish_view(fixture.view)!;
     renderer.end_frame()!;
@@ -333,6 +397,9 @@ struct TwinResult @private {
     float travel;   // metres the farthest particle moved from its rest pose
     uint  touching; // particles resting on the ground plane
     float effect;   // metres the least effective of the controls differs from the host twin
+    float inside;   // metres the deepest device particle lies inside a shape's reach, zero if none
+    uint  contacts; // device particles within CONTACT_REACH_MARGIN of a shape's reach
+    float[2] near_worst; // worst twin deviation among the particles closest to the sphere, then to the capsule
 }
 
 // The owner sways and turns along a period of MOTION_PERIOD steps; a skinned owner stays and its rig does.
@@ -354,6 +421,37 @@ fn void pose_owners(Fixture* fixture, Node*[] flags, uint step, bool skinned) @p
     fixture.scene.update_world();
 }
 
+fn float distance_to_segment(Vec3 point, Vec3 start, Vec3 end) @private {
+    Vec3 axis = end - start;
+    float squared = axis.dot(axis);
+    float along = squared > 0 ? math::clamp((point - start).dot(axis) / squared, 0.0f, 1.0f) : 0;
+    return (point - start - axis * along).length();
+}
+
+// Folds one particle's distances to the host's shapes into the result: depth inside a reach, contacts, nearest shape.
+fn void measure_shapes(TwinResult* result, ClothState* host_state, Vec3 device_position, float deviation) @private {
+    float nearest = float::max;
+    sz nearest_shape;
+    foreach (shape_index, &shape : host_state.shapes) {
+        float distance = distance_to_segment(
+            device_position,
+            host_state.shape_starts[shape_index],
+            host_state.shape_ends[shape_index],
+        );
+        float gap = distance - shape.radius - host_state.desc.thickness;
+        result.inside = math::max(result.inside, -gap);
+        if (gap < CONTACT_REACH_MARGIN) result.contacts++;
+        if (distance - shape.radius < nearest) {
+            nearest = distance - shape.radius;
+            nearest_shape = shape_index;
+        }
+    }
+    if (nearest >= SHAPE_NEIGHBOURHOOD) return;
+
+    usz bucket = host_state.shapes[nearest_shape].kind == ColliderKind.SPHERE ? 0 : 1;
+    result.near_worst[bucket] = math::max(result.near_worst[bucket], deviation);
+}
+
 fn TwinResult compare_twins(Fixture* fixture, Node* host, Node* device, Vec3[] initial) @private {
     ClothState* host_state = fixture.scene.get(host, Cloth).state;
     TwinResult result;
@@ -364,9 +462,11 @@ fn TwinResult compare_twins(Fixture* fixture, Node* host, Node* device, Vec3[] i
     float ground = TWIN_GROUND + host_state.desc.thickness;
     foreach (index, host_position : host_state.positions) {
         Vec3 device_position = { device_positions[index].x, device_positions[index].y, device_positions[index].z };
-        result.worst = math::max(result.worst, (device_position - host_position).length());
+        float deviation = (device_position - host_position).length();
+        result.worst = math::max(result.worst, deviation);
         result.travel = math::max(result.travel, (host_position - initial[index]).length());
         if (host_position.y - ground < CONTACT_TOLERANCE) result.touching++;
+        measure_shapes(&result, host_state, device_position, deviation);
     }
     return result;
 }
@@ -389,6 +489,14 @@ fn usz feature_controls(FlagOptions options, FlagOptions[] controls) @private {
     if (options.bend_stiffness != 0) {
         controls[count] = options;
         controls[count++].bend_stiffness = 0;
+    }
+    if (options.sphere) {
+        controls[count] = options;
+        controls[count++].sphere = false;
+    }
+    if (options.capsule) {
+        controls[count] = options;
+        controls[count++].capsule = false;
     }
     return count;
 }
@@ -417,8 +525,24 @@ fn TwinResult twin_run(
     bool controlled = false,
 ) @private {
     GeometryId geometry = add_flag_geometry(fixture, cells, options.skinned, options.hanging)!!;
-    Node* host = add_flag(fixture, geometry, cells, ClothExecution.CPU, options: options)!!;
-    Node* device = add_flag(fixture, geometry, cells, ClothExecution.GPU, options: options)!!;
+    bool moving_colliders = options.sphere || options.capsule;
+    if (moving_colliders) add_movers(fixture)!!;
+    Node* host = add_flag(
+        fixture:   fixture,
+        geometry:  geometry,
+        cells:     cells,
+        execution: ClothExecution.CPU,
+        colliders: movers_of(fixture, options),
+        options:   options,
+    )!!;
+    Node* device = add_flag(
+        fixture:   fixture,
+        geometry:  geometry,
+        cells:     cells,
+        execution: ClothExecution.GPU,
+        colliders: movers_of(fixture, options),
+        options:   options,
+    )!!;
     Node*[2 + MAX_CONTROLS] flags;
     flags[0] = host;
     flags[1] = device;
@@ -427,7 +551,14 @@ fn TwinResult twin_run(
         FlagOptions[MAX_CONTROLS] controls;
         usz control_count = feature_controls(options, controls[..]);
         foreach (control : controls[:control_count]) {
-            flags[flag_count++] = add_flag(fixture, geometry, cells, ClothExecution.CPU, options: control)!!;
+            flags[flag_count++] = add_flag(
+                fixture:   fixture,
+                geometry:  geometry,
+                cells:     cells,
+                execution: ClothExecution.CPU,
+                colliders: movers_of(fixture, control),
+                options:   control,
+            )!!;
         }
     }
     ClothState* host_state = fixture.scene.get(host, Cloth).state;
@@ -437,6 +568,7 @@ fn TwinResult twin_run(
 
     for (uint step = 0; step < TWIN_STEPS; step++) {
         if (moving) pose_owners(fixture, flags[:flag_count], step, options.skinned);
+        if (moving_colliders) pose_movers(fixture, step + 1);
         run_frame(fixture, true)!!;
     }
     for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(fixture, false)!!;
@@ -455,6 +587,34 @@ fn void report_twin(String name, TwinResult result) @private {
         result.effect,
     );
     assert(result.worst <= TWIN_TOLERANCE);
+}
+
+// A flag that hangs still and heavily damped, so the colliders alone move it.
+fn FlagOptions collider_options() @private {
+    return {
+        .hanging           = true,
+        .damping           = FOLLOWER_DAMPING,
+        .stretch_stiffness = FOLLOWER_STRETCH,
+        .sphere            = true,
+        .capsule           = true,
+    };
+}
+
+fn void report_colliders(String name, TwinResult result) @private {
+    io::printfn(
+        "%s worst %.3e m (sphere side %.3e, capsule side %.3e), travel %.3f m, effect %.3e m, inside %.3e m, contacts %d",
+        name,
+        result.worst,
+        result.near_worst[0],
+        result.near_worst[1],
+        result.travel,
+        result.effect,
+        result.inside,
+        result.contacts,
+    );
+    assert(result.worst <= COLLIDER_TOLERANCE);
+    assert(result.contacts > 0 && result.effect >= FEATURE_FLOOR);
+    assert(result.inside <= cloth::DEFAULT_CONTACT_TOLERANCE + ROUNDING_SLACK);
 }
 
 fn void test_small_flag_matches_its_cpu_twin_in_one_dispatch_per_step() @test {
@@ -604,6 +764,166 @@ fn void test_large_skinned_flag_follows_its_reference_like_its_cpu_twin_in_fused
         );
         report_twin("skinned fused", result);
         assert(result.effect >= FEATURE_FLOOR);
+    };
+}
+
+fn void test_small_flag_pushed_by_a_moving_sphere_and_capsule_matches_its_cpu_twin() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        TwinResult result = twin_run(
+            &fixture,
+            SMALL_CELLS,
+            ClothStepShape.SINGLE,
+            collider_options(),
+            controlled: true,
+        );
+        report_colliders("colliders single", result);
+    };
+}
+
+fn void test_large_flag_pushed_by_a_moving_sphere_and_capsule_matches_its_cpu_twin_in_fused_passes() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        TwinResult result = twin_run(
+            &fixture,
+            LARGE_CELLS,
+            ClothStepShape.FUSED,
+            collider_options(),
+            controlled: true,
+        );
+        report_colliders("colliders fused", result);
+    };
+}
+
+fn Node*? add_collider_flag(
+    Fixture* fixture,
+    GeometryId geometry,
+    ClothExecution execution,
+    FlagOptions options,
+) @private {
+    return add_flag(
+        fixture:   fixture,
+        geometry:  geometry,
+        cells:     SMALL_CELLS,
+        execution: execution,
+        colliders: movers_of(fixture, options),
+        options:   options,
+    );
+}
+
+// The flags share one place, which no cloth contact separates, and list different colliders.
+fn void test_small_flags_listing_different_colliders_step_in_one_dispatch() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        FlagOptions plain = collider_options();
+        plain.sphere = false;
+        plain.capsule = false;
+        FlagOptions[4] variants = { plain, plain, plain, plain };
+        variants[0].sphere = true;
+        variants[1].capsule = true;
+        variants[2].sphere = true;
+        variants[2].capsule = true;
+        add_movers(&fixture)!!;
+        GeometryId geometry = add_flag_geometry(&fixture, SMALL_CELLS, hanging: true)!!;
+        Node*[4] hosts;
+        Node*[4] devices;
+        Vec3[][4] initials;
+        foreach (index, options : variants) {
+            hosts[index] = add_collider_flag(&fixture, geometry, ClothExecution.CPU, options)!!;
+            devices[index] = add_collider_flag(&fixture, geometry, ClothExecution.GPU, options)!!;
+            ClothState* state = fixture.scene.get(hosts[index], Cloth).state;
+            initials[index] = alloc::new_array(tmem, Vec3, state.positions.len);
+            initials[index][..] = state.positions[..];
+        }
+
+        for (uint step = 0; step < TWIN_STEPS; step++) {
+            pose_movers(&fixture, step + 1);
+            run_frame(&fixture, true)!!;
+            assert(fixture.renderer.stats.dispatches == 1);
+        }
+        for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(&fixture, false)!!;
+
+        ClothState* bare = fixture.scene.get(hosts[3], Cloth).state;
+        foreach (index, host : hosts) {
+            TwinResult result = compare_twins(&fixture, host, devices[index], initials[index]);
+            ClothState* listed = fixture.scene.get(host, Cloth).state;
+            foreach (particle, position : listed.positions) {
+                result.effect = math::max(result.effect, (position - bare.positions[particle]).length());
+            }
+            io::printfn(
+                "colliders batch cloth %d worst %.3e m, effect %.3e m, inside %.3e m",
+                index,
+                result.worst,
+                result.effect,
+                result.inside,
+            );
+            assert(result.worst <= COLLIDER_TOLERANCE);
+            assert(result.inside <= cloth::DEFAULT_CONTACT_TOLERANCE + ROUNDING_SLACK);
+            assert(index == 3 || result.effect >= FEATURE_FLOOR);
+        }
+    };
+}
+
+// A body that owns this many spheres, far from the flags.
+fn Node*? add_sphere_cluster(Fixture* fixture, uint count) @private {
+    ColliderDesc[] spheres = alloc::new_array(tmem, ColliderDesc, (sz)count);
+    foreach (index, &sphere : spheres) {
+        *sphere = physics::default_collider_desc(SPHERE);
+        sphere.radius = 0.05f;
+        sphere.local.position = { 10 + (float)index, 0, 0 };
+    }
+    Node* body = fixture.scene.add_node(name: "cluster")!;
+    fixture.scene.update_world();
+    fixture.physics.add_body(body, physics::default_body_desc(KINEMATIC), spheres)!;
+    return body;
+}
+
+fn void test_cloth_listing_more_shapes_than_the_limit_faults_and_the_others_still_step() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    GeometryId geometry = add_flag_geometry(&fixture, SMALL_CELLS)!!;
+    Node* within = add_sphere_cluster(&fixture, cloth::MAX_DEVICE_SHAPES)!!;
+    Node* beyond = add_sphere_cluster(&fixture, cloth::MAX_DEVICE_SHAPES + 1)!!;
+    Entity[1] within_owners = { within.id };
+    Entity[1] beyond_owners = { beyond.id };
+    Node* kept = add_flag(
+        fixture:   &fixture,
+        geometry:  geometry,
+        cells:     SMALL_CELLS,
+        execution: ClothExecution.GPU,
+        colliders: within_owners[..],
+    )!!;
+    Node* refused = add_flag(
+        fixture:   &fixture,
+        geometry:  geometry,
+        cells:     SMALL_CELLS,
+        execution: ClothExecution.GPU,
+        colliders: beyond_owners[..],
+    )!!;
+
+    @pool() {
+        usz particles = fixture.scene.get(kept, Cloth).state.positions.len;
+        Observation stepped = { .cloth = kept.id, .positions = alloc::new_array(tmem, Vec4, (sz)particles) };
+        Observation lost = { .cloth = refused.id, .positions = alloc::new_array(tmem, Vec4, (sz)particles) };
+        for (uint frame = 0; frame <= render::FRAMES_IN_FLIGHT; frame++) {
+            fault update_failure;
+            run_frame(&fixture, true, &stepped, &update_failure)!!;
+            assert(update_failure == c3d::CAPACITY_EXCEEDED);
+            assert(fixture.renderer.stats.dispatches == 1);
+        }
+        fault update_failure;
+        run_frame(&fixture, true, &lost, &update_failure)!!;
+        assert(!stepped.failure && lost.failure == render::NOT_READY);
     };
 }
 

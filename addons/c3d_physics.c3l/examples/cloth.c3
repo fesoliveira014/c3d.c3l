@@ -515,7 +515,7 @@ fn void? attach_flag(Demo* demo) @local {
     };
 }
 
-// Only the device cloth subset: no cuts and one sphere; --forces adds distance bends and wind.
+// Only the device cloth subset: no cuts and a listed sphere; --forces adds distance bends and wind.
 fn void? attach_flag33(Demo* demo) @local {
     demo.physics.update(0);
     ClothDesc desc = cloth::default_cloth_desc();

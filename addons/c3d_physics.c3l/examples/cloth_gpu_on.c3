@@ -15,7 +15,7 @@ struct State {
     bool      attached;
 }
 
-const usz TABLE_BYTES_PER_PARTICLE = 320; // a bent sheet needs about 280 B; the rest is margin
+const usz TABLE_BYTES_PER_PARTICLE = 320; // a bent sheet that lists colliders needs about 284 B; the rest is margin
 
 // The default budgets hold a few small flags; a large flag or many copies outgrow them.
 fn void? attach(State* state, AssetStore* assets, uint cloths, uint particles_each) {
@@ -55,7 +55,7 @@ fn void report(
     );
     io::printfn(
         "gpu_cloth,memory,device_bytes,%d,host_readback_bytes,%d,host_tables_bytes,%d,particles_used,%d,table_bytes_used,%d",
-        positions + 5 * positions + budget.table_bytes,
+        state.cloths.device_bytes(),
         (render::FRAMES_IN_FLIGHT + 1) * positions,
         budget.table_bytes,
         state.cloths.particles_used(),

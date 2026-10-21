@@ -15,6 +15,7 @@ const uint FEATURE_SOFT @private = 1; // mirrored in cloth_root.glsl
 const uint FEATURE_TRANSPORT @private = 2; // mirrored in cloth_root.glsl
 const uint FEATURE_REFERENCE @private = 4; // mirrored in cloth_root.glsl
 const uint FEATURE_WIND @private = 8; // mirrored in cloth_root.glsl
+const uint FEATURE_SHAPES @private = 16; // mirrored in cloth_root.glsl
 
 enum ClothArena @private {
     PARTICLES, // slots of the positions and work buffers
@@ -46,6 +47,7 @@ struct ClothTables {
     usz triangles;    // three vertex indices per triangle
     usz soft;         // float per particle: effective compliance, zero off the soft attachments
     usz transport;    // float per particle: the share of the owner's motion the particle follows
+    usz limits;       // float per particle: metres contact may push it within one substep
     usz total;
 }
 
@@ -88,6 +90,10 @@ fn void settle_slot(ClothSlot* slot, Renderer* renderer) @private {
     if (!landed) slot.started = false;
 }
 
+fn usz slot_index(GpuCloths* cloths, ClothSlot* slot) @private {
+    return (usz)(slot - cloths.slots.ptr);
+}
+
 fn ClothSlot* find_slot(GpuCloths* cloths, Entity cloth) @private {
     foreach (&slot : cloths.slots) {
         if (slot.cloth.generation && c3d::same_id(slot.cloth, cloth)) return slot;
@@ -105,6 +111,18 @@ fn usz GpuCloths.tables_used(&self) {
         if (slot.cloth.generation) used = math::max(used, slot.tables_offset + slot.tables.total);
     }
     return used;
+}
+
+<*
+ Bytes of device memory the context's three buffers take once created.
+*>
+fn usz GpuCloths.device_bytes(&self) {
+    usz vectors = (usz)self.desc.max_particles * Vec4::size;
+    return vectors + WORK_SECTIONS * vectors + shape_bytes(self.desc.max_cloths) + self.desc.table_bytes;
+}
+
+fn usz shape_bytes(uint max_cloths) @private {
+    return (usz)max_cloths * cloth::MAX_DEVICE_SHAPES * ShapeGpu::size;
 }
 
 <*
@@ -248,6 +266,7 @@ fn uint cloth_features(ClothState* state) @private {
     uint features;
     if (state.soft_attachments.len) features |= FEATURE_SOFT;
     if (state.skinned) features |= FEATURE_REFERENCE;
+    if (state.bodies.len) features |= FEATURE_SHAPES;
     foreach (weight : state.transport) {
         if (weight != 0) {
             features |= FEATURE_TRANSPORT;
@@ -269,6 +288,7 @@ fn ClothTables plan_tables(uint particles, usz constraints, uint passes, usz cor
     tables.triangles = place(&cursor, corners * uint::size);
     tables.soft = place(&cursor, (features & FEATURE_SOFT) != 0 ? particles * float::size : 0);
     tables.transport = place(&cursor, (features & FEATURE_TRANSPORT) != 0 ? particles * float::size : 0);
+    tables.limits = place(&cursor, (features & FEATURE_SHAPES) != 0 ? particles * float::size : 0);
     tables.total = cursor;
     return tables;
 }
@@ -347,6 +367,10 @@ fn Aabb write_tables(
     if ((features & FEATURE_TRANSPORT) != 0) {
         float[] weights = ((float*)&block[tables.transport])[:particles];
         weights[..] = state.transport[:particles];
+    }
+    if ((features & FEATURE_SHAPES) != 0) {
+        float[] limits = ((float*)&block[tables.limits])[:particles];
+        limits[..] = state.push_limits[:particles];
     }
     return { .min = low - margin, .max = high + margin };
 }

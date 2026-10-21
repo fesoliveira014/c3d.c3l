@@ -35,6 +35,7 @@ struct ClothCounts @local {
     uint               opening_iterations;
     uint               bodies;
     uint               joints;
+    uint               device_shapes;
     bool               tangent_frame;
     bool               dihedral;
     bool               crowd;
@@ -251,6 +252,7 @@ fn ClothState*? allocate_cloth_state(
     bool dihedral,
     bool crowd,
     ClothCollisionDesc collisions,
+    uint device_shapes = 0,
 ) @private {
     ClothCounts counts = {
         .base_vertices      = sector_plan.base_particle_count,
@@ -274,6 +276,7 @@ fn ClothState*? allocate_cloth_state(
         .opening_iterations = sector_plan.opening_iterations,
         .bodies             = body_count,
         .joints             = joint_count,
+        .device_shapes      = body_count ? device_shapes : 0,
         .tangent_frame      = tangent_frame,
         .dihedral           = dihedral,
         .crowd              = crowd,
@@ -354,6 +357,7 @@ fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local
         .colliders                     = physics::carve(cursor, Entity, counts.bodies),
         .bodies                        = physics::carve(cursor, ClothBody, counts.bodies),
         .shape_storage                 = physics::carve(cursor, ClothShape, counts.collisions.max_shapes),
+        .device_shapes                 = physics::carve(cursor, ClothDeviceShape, counts.device_shapes),
         .shape_starts                  = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
         .shape_ends                    = physics::carve(cursor, Vec3, counts.collisions.max_shapes),
         .staged_shapes                 = physics::carve(cursor, ClothShape, counts.collisions.max_shapes),

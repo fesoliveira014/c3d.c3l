@@ -19,8 +19,8 @@ const uint DEVICE_SINGLE_PASS_PARTICLES = 1_500; // one 128-thread group beats f
 *>
 struct GpuClothsDesc {
     uint max_cloths;    // cloths stepped at once; the workgroups of the one dispatch the small ones share
-    uint max_particles; // across every cloth; 96 B of device state each, 16 B of it copied out every frame, and 32 B of host staging
-    usz  table_bytes;   // topology, rest, color and routing tables of every cloth; about 280 B per particle of a bent sheet, so tables bound before particles do
+    uint max_particles; // across every cloth; 112 B of device state each, 16 B of it copied out every frame, and 32 B of host staging
+    usz  table_bytes;   // topology, rest, color and routing tables of every cloth; about 284 B per particle of a bent sheet that lists colliders, so tables bound before particles do
 }
 
 <*
@@ -31,7 +31,7 @@ const uint MAX_GPU_CLOTHS = 65_535;
 <*
  Budgets that fit a handful of flags or capes.
 *>
-const GpuClothsDesc GPU_CLOTHS_DEFAULT = { .max_cloths = 64, .max_particles = 65_536, .table_bytes = 4 * 1024 * 1024 }; // 6 MiB of device state, 4 MiB of tables, 3 MiB of host copies of the positions and 2 MiB of staging; three of the renderer's 64 buffers
+const GpuClothsDesc GPU_CLOTHS_DEFAULT = { .max_cloths = 64, .max_particles = 65_536, .table_bytes = 4 * 1024 * 1024 }; // 7.2 MiB of device state, 4 MiB of tables, 3 MiB of host copies of the positions and 2.2 MiB of staging; three of the renderer's 64 buffers
 
 <*
  How a step lays its passes over dispatches.
@@ -41,7 +41,8 @@ enum ClothStepShape {
     FUSED,  // one dispatch per color pass, then the output
 }
 
-const usz WORK_SECTIONS @private = 5; // vec4 per particle for predicted positions, velocities and lambdas, then two for the reference pair
+const usz WORK_SECTIONS @private = 6; // vec4 per particle for predicted positions, velocities and lambdas, two for the reference pair, then the contact push
+const usz PUSH_SECTION @private = 5; // first vector of the contact push: the push so far, and whether it reached its limit
 
 const String FUSED_KEY @private = "c3d_physics/cloth_fused";
 const String SINGLE_KEY @private = "c3d_physics/cloth_single";
@@ -61,7 +62,7 @@ struct GpuCloths {
     ClothSlot[]   slots;
     StepBatch     batch;        // scratch of the update in progress
     BufferId      positions;    // READBACK; the world positions of every cloth, inverse mass in w
-    BufferId      work;         // predicted positions, velocities, soft attachment lambdas, then reference pairs
+    BufferId      work;         // predicted positions, velocities, soft attachment lambdas, reference pairs, contact push, then the staged shapes of each slot
     BufferId      tables;       // UPLOAD; topology, rest and routing tables
     char[]        tables_cpu;   // the tables buffer as the CPU keeps it
     bool          tables_dirty; // the buffer lacks a cloth's tables
@@ -245,7 +246,7 @@ fn void? create_buffers(GpuCloths* cloths, Renderer* renderer) @private {
     })!;
     defer catch (void)renderer.destroy_buffer(positions);
     BufferId work = renderer.create_buffer({
-        .size       = WORK_SECTIONS * particles * Vec4::size,
+        .size       = WORK_SECTIONS * particles * Vec4::size + shape_bytes(cloths.desc.max_cloths),
         .debug_name = "cloth_work",
     })!;
     defer catch (void)renderer.destroy_buffer(work);

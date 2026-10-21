@@ -16,8 +16,8 @@ void main() {
     uint thread = gl_LocalInvocationID.x;
     uint stride = gl_WorkGroupSize.x;
 
-    if ((root.features & CLOTH_FEATURE_REFERENCE) != 0u) {
-        for (uint item = thread; item < 2u * root.particle_count; item += stride) step_stage(root, item);
+    if (step_stage_count(root) != 0u) {
+        for (uint item = thread; item < step_stage_count(root); item += stride) step_stage(root, item);
         sync_workgroup();
     }
     if ((root.phases & PASS_INITIALIZE) != 0u) {
@@ -27,6 +27,7 @@ void main() {
 
     ClothWords starts = ClothWords(root.color_starts);
     bool soft = (root.features & CLOTH_FEATURE_SOFT) != 0u;
+    bool shapes = (root.features & CLOTH_FEATURE_SHAPES) != 0u;
     for (uint substep = 0u; substep < root.substeps; substep++) {
         bool final_substep = substep + 1u == root.substeps;
         float progress = float(substep + 1u) / float(root.substeps);
@@ -40,6 +41,10 @@ void main() {
                 }
                 if (pass + 1u == root.color_count) {
                     phases |= PASS_COLLIDE;
+                    if (shapes) {
+                        phases |= PASS_SHAPES;
+                        if (iteration == 0u) phases |= PASS_FIRST_CONTACT;
+                    }
                     if (iteration + 1u == root.iterations) {
                         phases |= PASS_INTEGRATE;
                     } else if (soft) {

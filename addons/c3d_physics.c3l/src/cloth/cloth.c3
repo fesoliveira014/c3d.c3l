@@ -306,6 +306,7 @@ struct ClothState {
     ColorStarts          bend_color_starts; // first bend of each color, set with the edge colors
     uint                 bend_colors;       // zero when there are no bends or they need more than MAX_CONSTRAINT_COLORS
     ClothDeviceStep      device;
+    ClothDeviceShape[]   device_shapes;       // shapes of the device request; empty unless a GPU cloth lists owners
     uint[]               selected_paths_scratch;
     uint[]               sector_scratch;
     uint[]               sector_root_scratch;
@@ -637,6 +638,7 @@ fn void? prepare(
             dihedral:              desc.bend_mode == DIHEDRAL,
             crowd:                 false,
             collisions:            desc.collisions,
+            device_shapes:         desc.execution == ClothExecution.GPU ? MAX_DEVICE_SHAPES : 0,
         )!;
         defer catch alloc::free(scene.allocator, state);
 

@@ -5,7 +5,7 @@ void main() {
     ClothRoot root = ClothRoot(DispatchRoot(pc.root_gpu).parameters);
     uint item = gl_GlobalInvocationID.x;
     if ((root.phases & PASS_STAGE) != 0u) {
-        if (item < 2u * root.particle_count) step_stage(root, item);
+        if (item < step_stage_count(root)) step_stage(root, item);
         return;
     }
     if ((root.phases & PASS_OUTPUT) != 0u) {

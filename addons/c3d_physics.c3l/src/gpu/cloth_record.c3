@@ -19,6 +19,8 @@ const uint PASS_FINAL_SUBSTEP @private = 32; // mirrored in cloth_step.glsl
 const uint PASS_SOFT_BEFORE @private = 64; // mirrored in cloth_step.glsl
 const uint PASS_SOFT_AFTER @private = 128; // mirrored in cloth_step.glsl
 const uint PASS_STAGE @private = 256; // mirrored in cloth_step.glsl
+const uint PASS_SHAPES @private = 512; // mirrored in cloth_step.glsl
+const uint PASS_FIRST_CONTACT @private = 1024; // mirrored in cloth_step.glsl
 const float NO_GROUND @private = -1e30f; // below every particle; disables the ground contact
 
 // Mirrors ClothRoot in cloth_root.glsl.
@@ -39,14 +41,17 @@ struct ClothRoot @private {
     ulong     geometry_normals;
     ulong     soft;
     ulong     transport;
+    ulong     shapes;
+    ulong     push;
+    ulong     limits;
+    uint      particle_count;
+    uint      shape_count;
     float[16] anchor_frame;
     float[16] target_frame;
     float[16] inverse_world;
     float[4]  gravity_step;
-    float[4]  sphere;
     float[4]  wind;
     float[4]  aero;
-    uint      particle_count;
     float     stretch_stiffness;
     float     bend_stiffness;
     float     damping;
@@ -64,22 +69,37 @@ struct ClothRoot @private {
     float     previous_progress;
     float     stiffness;
     uint      payload_offset;
+    float     contact_tolerance;
     uint[2]   padding;
 }
 
-$assert ClothRoot::size == 464;
+$assert ClothRoot::size == 480;
 $assert ClothRoot::size % render::STREAM_ALIGNMENT == 0; // the roots of a batch sit at this stride and are read as 16-byte aligned
-$assert $reflect(ClothRoot.anchor_frame).offset == 128;
-$assert $reflect(ClothRoot.target_frame).offset == 192;
-$assert $reflect(ClothRoot.inverse_world).offset == 256;
-$assert $reflect(ClothRoot.gravity_step).offset == 320;
-$assert $reflect(ClothRoot.sphere).offset == 336;
-$assert $reflect(ClothRoot.wind).offset == 352;
-$assert $reflect(ClothRoot.aero).offset == 368;
-$assert $reflect(ClothRoot.particle_count).offset == 384;
-$assert $reflect(ClothRoot.features).offset == 420;
-$assert $reflect(ClothRoot.stiffness).offset == 448;
-$assert $reflect(ClothRoot.payload_offset).offset == 452;
+$assert $reflect(ClothRoot.shapes).offset == 128;
+$assert $reflect(ClothRoot.particle_count).offset == 152;
+$assert $reflect(ClothRoot.anchor_frame).offset == 160;
+$assert $reflect(ClothRoot.target_frame).offset == 224;
+$assert $reflect(ClothRoot.inverse_world).offset == 288;
+$assert $reflect(ClothRoot.gravity_step).offset == 352;
+$assert $reflect(ClothRoot.wind).offset == 368;
+$assert $reflect(ClothRoot.aero).offset == 384;
+$assert $reflect(ClothRoot.stretch_stiffness).offset == 400;
+$assert $reflect(ClothRoot.features).offset == 432;
+$assert $reflect(ClothRoot.stiffness).offset == 460;
+$assert $reflect(ClothRoot.payload_offset).offset == 464;
+
+// Mirrors the shape records of cloth_step.glsl: six vectors a shape, staged once per step.
+struct ShapeGpu @private {
+    float[4] solved_position;  // owner position at the request's start; w is the radius with the contact offset
+    float[4] solved_rotation;
+    float[4] current_position; // owner position at the request's end
+    float[4] current_rotation;
+    float[4] start;            // owner-local end points of the segment
+    float[4] end;
+}
+
+$assert ShapeGpu::size == 96;
+const uint SHAPE_VECTORS @private = 6; // vec4s of a ShapeGpu; mirrored as CLOTH_SHAPE_VECTORS in cloth_root.glsl
 
 struct StepRecorder @private {
     Renderer*       renderer;
@@ -88,7 +108,7 @@ struct StepRecorder @private {
     BufferId[2]     state_writes;
     GeometryWrite[] output;
     char[]          staging;       // the root, then the reference pairs that follow it
-    usz             payload_bytes; // zero when the cloth keeps its reference in matrices
+    usz             payload_bytes; // zero when the cloth stages neither reference pairs nor shapes
 }
 
 // Parameters of the small cloths of one update: roots at a fixed stride, then the reference pairs they stage.
@@ -132,10 +152,11 @@ fn void? StepRecorder.record_fused(&self, uint[] pass_starts, bool first) {
     uint substeps = self.root.substeps;
     bool soft = (self.root.features & FEATURE_SOFT) != 0;
     bool windy = (self.root.features & FEATURE_WIND) != 0;
+    bool shapes = (self.root.features & FEATURE_SHAPES) != 0;
 
-    if ((self.root.features & FEATURE_REFERENCE) != 0) {
+    if (self.payload_bytes) {
         self.root.phases = PASS_STAGE;
-        self.run(2 * self.root.particle_count, with_payload: true)!;
+        self.run((uint)(self.payload_bytes / Vec4::size), with_payload: true)!;
     }
     // The wind gather reads every neighbour's start state, so it cannot share a pass with the initialization.
     if (first && windy) {
@@ -157,6 +178,10 @@ fn void? StepRecorder.record_fused(&self, uint[] pass_starts, bool first) {
                 }
                 if (pass + 1 == passes) {
                     phases |= PASS_COLLIDE;
+                    if (shapes) {
+                        phases |= PASS_SHAPES;
+                        if (iteration == 0) phases |= PASS_FIRST_CONTACT;
+                    }
                     if (iteration + 1 == self.root.iterations) {
                         phases |= PASS_INTEGRATE;
                     } else if (soft) {
@@ -180,10 +205,11 @@ fn void? StepRecorder.record_fused(&self, uint[] pass_starts, bool first) {
     return self.run(self.root.particle_count, writes_output: true);
 }
 
-// Roots first, so the cell count of the staging block bounds the cloths; the pairs of every skinned cloth after them.
+// Roots first, so the cell count of the staging block bounds the cloths; the reference pairs and shapes of every cloth after them.
 fn StepBatch create_step_batch(Allocator allocator, sz capacity, sz max_particles) @private {
-    sz pair_cells = (2 * max_particles * Vec4::size + ClothRoot::size - 1) / ClothRoot::size;
-    ClothRoot[] cells = alloc::new_array(allocator, ClothRoot, capacity + pair_cells);
+    sz payload_bytes = 2 * max_particles * Vec4::size + capacity * cloth::MAX_DEVICE_SHAPES * ShapeGpu::size;
+    sz payload_cells = (payload_bytes + ClothRoot::size - 1) / ClothRoot::size;
+    ClothRoot[] cells = alloc::new_array(allocator, ClothRoot, capacity + payload_cells);
     return {
         .roots   = cells[:capacity],
         .staging = ((char*)cells.ptr)[:cells.len * ClothRoot::size],
@@ -220,15 +246,34 @@ fn float pass_stiffness(float stiffness, uint iterations) @private {
     return 1 - math::pow(1 - stiffness, 1 / (float)iterations);
 }
 
-// Pairs of solved and current reference positions; returns the bytes written.
-fn usz stage_reference(char[] destination, ClothState* state) @private {
-    Vec4[] pairs = ((Vec4*)destination.ptr)[:2 * state.positions.len];
-    foreach (index, solved : state.solved_reference) {
-        Vec3 current = state.current_reference[index];
-        pairs[2 * index] = { solved.x, solved.y, solved.z, 0 };
-        pairs[2 * index + 1] = { current.x, current.y, current.z, 0 };
+// Pairs of solved and current reference positions of a skinned cloth, then its shapes; returns the bytes written.
+fn usz stage_payload(char[] destination, ClothState* state, uint features) @private {
+    usz written;
+    if ((features & FEATURE_REFERENCE) != 0) {
+        Vec4[] pairs = ((Vec4*)destination.ptr)[:2 * state.positions.len];
+        foreach (index, solved : state.solved_reference) {
+            Vec3 current = state.current_reference[index];
+            pairs[2 * index] = { solved.x, solved.y, solved.z, 0 };
+            pairs[2 * index + 1] = { current.x, current.y, current.z, 0 };
+        }
+        written = pairs.len * Vec4::size;
     }
-    return pairs.len * Vec4::size;
+
+    ShapeGpu[] records = ((ShapeGpu*)&destination[written])[:state.device.shape_count];
+    foreach (index, &record : records) {
+        ClothDeviceShape* shape = &state.device_shapes[index];
+        Vec3 solved = shape.solved.position;
+        Vec3 current = shape.current.position;
+        *record = {
+            .solved_position  = { solved.x, solved.y, solved.z, shape.reach },
+            .solved_rotation  = bitcast(shape.solved.rotation.v, float[4]),
+            .current_position = { current.x, current.y, current.z, 0 },
+            .current_rotation = bitcast(shape.current.rotation.v, float[4]),
+            .start            = { shape.start.x, shape.start.y, shape.start.z, 0 },
+            .end              = { shape.end.x, shape.end.y, shape.end.z, 0 },
+        };
+    }
+    return written + records.len * ShapeGpu::size;
 }
 
 // The due steps are taken here, so a frame that is not submitted loses them.
@@ -246,11 +291,8 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
         return;
     }
 
-    usz payload_bytes;
-    if ((root.features & FEATURE_REFERENCE) != 0) {
-        root.payload_offset = ClothRoot::size;
-        payload_bytes = stage_reference(cloths.batch.staging[ClothRoot::size..], state);
-    }
+    usz payload_bytes = stage_payload(cloths.batch.staging[ClothRoot::size..], state, root.features);
+    if (payload_bytes) root.payload_offset = ClothRoot::size;
     GeometryWrite[1] output = { output_of(slot) };
     StepRecorder recorder = {
         .renderer      = renderer,
@@ -275,11 +317,12 @@ fn void? record_batch(GpuCloths* cloths, Renderer* renderer, Scene* scene) @priv
     usz parameter_bytes = count * ClothRoot::size;
     foreach (index, slot : batch.members[:count]) {
         ClothRoot* root = &batch.roots[index];
-        if ((root.features & FEATURE_REFERENCE) == 0) continue;
-
         ClothState* state = scene.get(scene.node(slot.cloth), Cloth).state;
+        usz staged = stage_payload(batch.staging[parameter_bytes..], state, root.features);
+        if (!staged) continue;
+
         root.payload_offset = (uint)parameter_bytes;
-        parameter_bytes += stage_reference(batch.staging[parameter_bytes..], state);
+        parameter_bytes += staged;
     }
 
     BufferId[2] state_writes = { cloths.positions, cloths.work };
@@ -307,6 +350,8 @@ fn ClothRoot? step_root(
 
     float substep_seconds = device.step_seconds / (float)desc.substeps;
     Vec3 gravity = device.gravity * desc.gravity_scale;
+    if (device.shape_count > cloth::MAX_DEVICE_SHAPES) return c3d::CAPACITY_EXCEEDED~;
+
     uint features = slot.features;
     if (device.wind_present) features |= FEATURE_WIND;
     Wind* wind = &device.wind;
@@ -316,6 +361,8 @@ fn ClothRoot? step_root(
     ulong positions = (ulong)renderer.buffer_address(cloths.positions) + slot.first_particle * vector;
     ulong work = (ulong)renderer.buffer_address(cloths.work);
     ulong tables = (ulong)renderer.buffer_address(cloths.tables) + slot.tables_offset;
+    usz shape_stride = cloth::MAX_DEVICE_SHAPES * ShapeGpu::size;
+    ulong shapes = work + WORK_SECTIONS * capacity * vector + slot_index(cloths, slot) * shape_stride;
     return {
         .positions          = positions,
         .predicted          = work + slot.first_particle * vector,
@@ -333,11 +380,15 @@ fn ClothRoot? step_root(
         .geometry_normals   = (ulong)renderer.geometry_stream_address(slot.geometry, GeometryStream.NORMALS)!,
         .soft               = tables + slot.tables.soft,
         .transport          = tables + slot.tables.transport,
+        .shapes             = shapes,
+        .push               = work + (PUSH_SECTION * capacity + slot.first_particle) * vector,
+        .limits             = tables + slot.tables.limits,
+        .particle_count     = slot.particle_count,
+        .shape_count        = device.shape_count,
         .anchor_frame       = bitcast(device.anchor, float[16]),
         .target_frame       = bitcast(device.target, float[16]),
         .inverse_world      = bitcast(maths::inverse_affine(node.world), float[16]),
         .gravity_step       = { gravity.x, gravity.y, gravity.z, substep_seconds },
-        .sphere             = sphere_of(scene, state),
         .wind               = { wind.velocity.x, wind.velocity.y, wind.velocity.z, wind.max_speed },
         .aero               = {
             0.5f * cloth::AIR_DENSITY * desc.drag_coefficient,
@@ -345,7 +396,6 @@ fn ClothRoot? step_root(
             0,
             0,
         },
-        .particle_count     = slot.particle_count,
         .stretch_stiffness  = pass_stiffness(desc.stretch_stiffness, desc.iterations),
         .bend_stiffness     = pass_stiffness(desc.bend_stiffness, desc.iterations),
         .damping            = math::max(0.0f, 1 - desc.damping * substep_seconds),
@@ -355,19 +405,6 @@ fn ClothRoot? step_root(
         .color_count        = slot.passes,
         .edge_colors        = slot.edge_colors,
         .features           = features,
+        .contact_tolerance  = desc.collisions.contact_tolerance,
     };
-}
-
-// The sphere is placed at its owner's pose of this update; one whose owner is gone does not push.
-fn float[4] sphere_of(Scene* scene, ClothState* state) @private {
-    if (!state.shapes.len) return {};
-
-    ClothShape* shape = &state.shapes[0];
-    Entity owner = state.bodies[shape.body].owner;
-    if (!scene.world.is_alive(owner)) return {};
-
-    maths::Transform pose = maths::transform_from_mat4(scene.node(owner).world);
-    pose.scale = { 1, 1, 1 };
-    Vec3 center = maths::transform_point(pose.to_mat4().mul(shape.local.to_mat4()), shape.start);
-    return { center.x, center.y, center.z, shape.radius + state.desc.thickness };
 }

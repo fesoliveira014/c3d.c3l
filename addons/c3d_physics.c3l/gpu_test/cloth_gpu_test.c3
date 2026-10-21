@@ -10,9 +10,11 @@ import c3d::physics;
 import c3d::physics::cloth @public;
 import c3d::scene;
 import std::math;
+import std::math::quaternion;
 
 const uint GRID_CELLS @local = 4;
 const float REFERENCE_TOLERANCE @local = 1e-5f;
+const float BALL_RADIUS @local = 0.25f;
 
 struct Fixture @local {
     AssetStore   assets;
@@ -23,7 +25,7 @@ struct Fixture @local {
 
 fn void setup(Fixture* fixture) @local {
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
-    fixture.scene = scene::create_scene(mem, { .max_nodes = 8 });
+    fixture.scene = scene::create_scene(mem, { .max_nodes = 16 });
     physics::register_physics(&fixture.scene)!!;
     PhysicsDesc desc = physics::default_physics_desc();
     desc.tuning.interpolate = false;
@@ -260,5 +262,135 @@ fn void test_update_cloths_samples_the_reference_of_a_skinned_device_cloth() @te
         fixture.physics.update_cloths();
         assert(state.device.steps == 0);
         assert((state.solved_reference[last] - first_position - (Vec3){ 0, 0.5f, 0 }).length() < REFERENCE_TOLERANCE);
+    };
+}
+
+fn Node* add_collider_body(Fixture* fixture, ColliderDesc[] colliders, Vec3 position = {}) @local {
+    Node* node = fixture.scene.add_node(name: "body")!!;
+    node.local.position = position;
+    fixture.scene.update_world();
+    fixture.physics.add_body(node, physics::default_body_desc(KINEMATIC), colliders)!!;
+    return node;
+}
+
+fn ColliderDesc sphere_collider(float radius, Vec3 center = {}) @local {
+    ColliderDesc desc = physics::default_collider_desc(SPHERE);
+    desc.radius = radius;
+    desc.local.position = center;
+    return desc;
+}
+
+fn ColliderDesc capsule_collider(float radius, float half_height) @local {
+    ColliderDesc desc = physics::default_collider_desc(CAPSULE);
+    desc.radius = radius;
+    desc.half_height = half_height;
+    return desc;
+}
+
+fn ColliderDesc box_collider() @local {
+    ColliderDesc desc = physics::default_collider_desc(BOX);
+    desc.half_extents = { 0.1f, 0.1f, 0.1f };
+    return desc;
+}
+
+fn ClothDesc collider_desc(Entity[] owners) @local {
+    ClothDesc desc = device_desc(0);
+    desc.colliders = owners;
+    return desc;
+}
+
+fn void test_gpu_cloth_accepts_spheres_and_capsules_and_refuses_other_shapes() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    @pool() {
+        ColliderDesc ball = sphere_collider(BALL_RADIUS);
+        ColliderDesc rod = capsule_collider(0.1f, 0.4f);
+        ColliderDesc block = box_collider();
+        ColliderDesc[2] mixed = { sphere_collider(BALL_RADIUS), box_collider() };
+        Node* ball_body = add_collider_body(&fixture, (&ball)[:1]);
+        Node* rod_body = add_collider_body(&fixture, (&rod)[:1]);
+        Node* block_body = add_collider_body(&fixture, (&block)[:1]);
+        Node* mixed_body = add_collider_body(&fixture, mixed[..]);
+
+        Entity[2] accepted = { ball_body.id, rod_body.id };
+        Node* node = add_hanging_sheet(&fixture);
+        fixture.scene.add_cloth(&fixture.assets, node, collider_desc(accepted[..]))!!;
+        ClothState* state = fixture.scene.get(node, Cloth).state;
+        assert(state.bodies.len == 2 && state.shapes.len == 2);
+        assert(state.device_shapes.len == cloth::MAX_DEVICE_SHAPES);
+
+        Entity[1] refused_block = { block_body.id };
+        Entity[1] refused_mixed = { mixed_body.id };
+        Entity[1][2] refused = { refused_block, refused_mixed };
+        foreach (owners : refused) {
+            Node* sheet = add_hanging_sheet(&fixture);
+            fixture.scene.attach_cloth(&fixture.assets, sheet, collider_desc(owners[..]))!!;
+            assert(@catch(cloth::prepare(&fixture.scene, &fixture.assets, sheet)) == c3d::UNSUPPORTED);
+            assert(!fixture.scene.get(sheet, Cloth).is_prepared());
+        }
+    };
+}
+
+fn void test_update_cloths_stores_the_poses_a_collider_moves_between() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    @pool() {
+        ColliderDesc ball = sphere_collider(BALL_RADIUS, { 0, 0.1f, 0 });
+        Node* body = add_collider_body(&fixture, (&ball)[:1], { 0.5f, 0, 0 });
+        Entity[1] owners = { body.id };
+        Node* node = add_hanging_sheet(&fixture);
+        fixture.scene.add_cloth(&fixture.assets, node, collider_desc(owners[..]))!!;
+        ClothState* state = fixture.scene.get(node, Cloth).state;
+        float reach = BALL_RADIUS + state.desc.thickness;
+
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        ClothDeviceShape* shape = &state.device_shapes[0];
+        assert(state.device.shape_count == 1);
+        assert(shape.solved.position == (Vec3){ 0.5f, 0, 0 } && shape.current.position == shape.solved.position);
+        assert(shape.start == (Vec3){ 0, 0.1f, 0 } && shape.end == shape.start && shape.reach == reach);
+
+        body.local.position = { 0.5f, 0, 0.3f };
+        body.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.5f);
+        fixture.scene.update_world();
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(shape.solved.position == (Vec3){ 0.5f, 0, 0 });
+        assert(shape.solved.rotation.v == maths::TRANSFORM_IDENTITY.rotation.v);
+        assert(shape.current.position == (Vec3){ 0.5f, 0, 0.3f });
+        assert(shape.current.rotation.v == body.local.rotation.v);
+
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(shape.solved.position == shape.current.position && shape.solved.rotation.v == shape.current.rotation.v);
+
+        fixture.physics.update(0);
+        fixture.physics.update_cloths();
+        assert(state.device.steps == 0 && shape.current.position == (Vec3){ 0.5f, 0, 0.3f });
+    };
+}
+
+fn void test_update_cloths_counts_the_shapes_it_cannot_store() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    @pool() {
+        ColliderDesc[cloth::MAX_DEVICE_SHAPES + 1] spheres;
+        foreach (index, &sphere : spheres) *sphere = sphere_collider(0.05f, { (float)index, 0, 0 });
+        Node* body = add_collider_body(&fixture, spheres[..]);
+        Entity[1] owners = { body.id };
+        Node* node = add_hanging_sheet(&fixture);
+        fixture.scene.add_cloth(&fixture.assets, node, collider_desc(owners[..]))!!;
+        ClothState* state = fixture.scene.get(node, Cloth).state;
+
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+        fixture.physics.update_cloths();
+        assert(state.device.shape_count == cloth::MAX_DEVICE_SHAPES + 1);
+        assert(state.device_shapes.len == cloth::MAX_DEVICE_SHAPES);
     };
 }

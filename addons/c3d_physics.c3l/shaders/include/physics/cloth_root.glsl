@@ -14,7 +14,7 @@ layout(push_constant) uniform Push {
     uint64_t root_gpu;
 } pc;
 
-const uint64_t CLOTH_ROOT_BYTES = uint64_t(464u); // mirrored as ClothRoot::size in gpu/cloth_record.c3; the stride of the roots of a batched dispatch
+const uint64_t CLOTH_ROOT_BYTES = uint64_t(480u); // mirrored as ClothRoot::size in gpu/cloth_record.c3; the stride of the roots of a batched dispatch
 
 // Mirrors ClothRoot in gpu/cloth_record.c3.
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ClothRoot {
@@ -34,14 +34,17 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Cl
     uint64_t geometry_normals;   // packed three-float normals of the output geometry
     uint64_t soft;               // float per particle: effective compliance of a soft attachment, zero elsewhere
     uint64_t transport;          // float per particle: share of the owner's motion the particle follows
+    uint64_t shapes;             // six vec4 per shape: owner pose at the request's start and end, the segment's owner-local end points
+    uint64_t push;               // vec4 per particle: contact displacement of this substep, and 1 once it reached its limit
+    uint64_t limits;             // float per particle: metres contact may push it within one substep
+    uint     particle_count;
+    uint     shape_count;
     mat4     anchor_frame;       // owner world matrix where the request starts
     mat4     target_frame;       // owner world matrix where it ends
     mat4     inverse_world;      // node-local frame of the output geometry
     vec4     gravity_step;       // xyz gravity in m/s^2, w substep length in seconds
-    vec4     sphere;             // xyz center, w radius with the contact offset; zero disables
     vec4     wind;               // xyz air velocity, w relative speed cap; used with CLOTH_FEATURE_WIND
     vec4     aero;               // x drag scale, y lift scale
-    uint     particle_count;
     float    stretch_stiffness;  // per-pass stiffness of the edges
     float    bend_stiffness;     // per-pass stiffness of the bends
     float    damping;            // velocity share kept per substep
@@ -58,13 +61,16 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Cl
     float    progress;           // share of the request's motion the dispatched substep ends at
     float    previous_progress;  // share it starts at
     float    stiffness;          // stiffness of the dispatched pass
-    uint     payload_offset;     // bytes from the dispatch's parameters to the reference pairs this root stages
+    uint     payload_offset;     // bytes from the dispatch's parameters to the reference pairs and shapes this root stages
+    float    contact_tolerance;  // separation deficit contact accepts, in metres
 };
 
 const uint CLOTH_FEATURE_SOFT = 1u;      // mirrored as FEATURE_SOFT in gpu/cloth_pack.c3
 const uint CLOTH_FEATURE_TRANSPORT = 2u; // mirrored as FEATURE_TRANSPORT in gpu/cloth_pack.c3
 const uint CLOTH_FEATURE_REFERENCE = 4u; // mirrored as FEATURE_REFERENCE in gpu/cloth_pack.c3
 const uint CLOTH_FEATURE_WIND = 8u;      // mirrored as FEATURE_WIND in gpu/cloth_pack.c3
+const uint CLOTH_FEATURE_SHAPES = 16u;   // mirrored as FEATURE_SHAPES in gpu/cloth_pack.c3
+const uint CLOTH_SHAPE_VECTORS = 6u;     // mirrored as SHAPE_VECTORS in gpu/cloth_record.c3
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClothVectors {
     vec4 values[];

@@ -15,8 +15,12 @@ const uint PASS_OUTPUT = 16u;        // mirrored in gpu/cloth_record.c3; write t
 const uint PASS_FINAL_SUBSTEP = 32u; // mirrored in gpu/cloth_record.c3; the pass belongs to the request's last substep
 const uint PASS_SOFT_BEFORE = 64u;   // mirrored in gpu/cloth_record.c3; project the soft attachments after predicting
 const uint PASS_SOFT_AFTER = 128u;   // mirrored in gpu/cloth_record.c3; project the soft attachments after colliding
-const uint PASS_STAGE = 256u;        // mirrored in gpu/cloth_record.c3; copy the reference pairs the root names into the reference
+const uint PASS_STAGE = 256u;        // mirrored in gpu/cloth_record.c3; copy the reference pairs and shapes the root names into place
+const uint PASS_SHAPES = 512u;       // mirrored in gpu/cloth_record.c3; push the particles it collides out of the shapes
+const uint PASS_FIRST_CONTACT = 1024u; // mirrored in gpu/cloth_record.c3; the shape contacts of this pass are the substep's first
 const float MIN_EDGE_LENGTH = 1e-7;  // metres; mirrored as MIN_CONSTRAINT_LENGTH in solve.c3
+const float CONTACT_AXIS_SQUARED = 1e-14; // square metres; mirrored as CONTACT_AXIS_DISTANCE squared in cloth_contact_math.c3
+const float CONTACT_PUSH_UNBOUNDED = 0.0;  // value of the push's w until the substep's total reaches the particle's limit
 
 layout(buffer_reference, std430, buffer_reference_align = 16) CLOTH_COHERENT buffer StepVectors {
     vec4 values[];
@@ -30,6 +34,12 @@ struct StepPass {
     float progress;
     float previous_progress;
     float stiffness;
+};
+
+struct StepShape {
+    vec3  start;  // world end points of the segment at the substep
+    vec3  end;
+    float reach;  // radius and contact offset
 };
 
 struct StepConstraint {
@@ -46,9 +56,23 @@ void step_initialize(ClothRoot root, uint index) {
     StepVectors(root.velocities).values[index] = vec4(0.0);
 }
 
+uint step_pair_vectors(ClothRoot root) {
+    return (root.features & CLOTH_FEATURE_REFERENCE) != 0u ? 2u * root.particle_count : 0u;
+}
+
+// Vectors the root stages: the reference pairs, then the shapes.
+uint step_stage_count(ClothRoot root) {
+    return step_pair_vectors(root) + root.shape_count * CLOTH_SHAPE_VECTORS;
+}
+
 void step_stage(ClothRoot root, uint index) {
     ClothVectors payload = ClothVectors(DispatchRoot(pc.root_gpu).parameters + uint64_t(root.payload_offset));
-    StepVectors(root.reference).values[index] = payload.values[index];
+    uint pairs = step_pair_vectors(root);
+    if (index < pairs) {
+        StepVectors(root.reference).values[index] = payload.values[index];
+    } else {
+        StepVectors(root.shapes).values[index - pairs] = payload.values[index];
+    }
 }
 
 // Sums the columns in the order maths::transform_point does, so the device and the host round a point alike.
@@ -202,21 +226,129 @@ void step_project(ClothRoot root, StepConstraint constraint, StepPass step) {
     predicted.values[constraint.second].xyz = second.xyz - correction * second.w;
 }
 
-void step_collide(ClothRoot root, uint index) {
+// Matches Quaternion.slerp of the host, so both solvers turn an owner alike.
+vec4 step_slerp(vec4 from, vec4 to, float amount) {
+    float cosine = dot(from, to);
+    vec4 target = to;
+    if (cosine < 0.0) {
+        target = -to;
+        cosine = -cosine;
+    }
+    if (cosine >= 1.0) return from;
+    if (cosine > 0.95) return normalize(from + (target - from) * amount);
+
+    float half_theta = acos(cosine);
+    float sine = sqrt(1.0 - cosine * cosine);
+    if (abs(sine) < 0.001) return (from + target) * 0.5;
+
+    return from * (sin((1.0 - amount) * half_theta) / sine) + target * (sin(amount * half_theta) / sine);
+}
+
+vec3 step_rotate(vec4 rotation, vec3 point) {
+    vec4 unit = normalize(rotation);
+    return point + 2.0 * cross(unit.xyz, cross(unit.xyz, point) + unit.w * point);
+}
+
+// The segment of a shape where its owner stands at the share of the request's motion the substep ends at.
+StepShape step_shape_at(ClothRoot root, uint shape, float progress) {
+    StepVectors shapes = StepVectors(root.shapes);
+    uint base = shape * CLOTH_SHAPE_VECTORS;
+    vec4 solved_position = shapes.values[base];
+    vec4 solved_rotation = shapes.values[base + 1u];
+    vec3 current_position = shapes.values[base + 2u].xyz;
+    vec4 current_rotation = shapes.values[base + 3u];
+
+    vec3 position = current_position;
+    vec4 rotation = current_rotation;
+    if (progress != 1.0) {
+        position = solved_position.xyz + (current_position - solved_position.xyz) * progress;
+        rotation = step_slerp(solved_rotation, current_rotation, progress);
+    }
+    return StepShape(
+        position + step_rotate(rotation, shapes.values[base + 4u].xyz),
+        position + step_rotate(rotation, shapes.values[base + 5u].xyz),
+        solved_position.w
+    );
+}
+
+vec3 step_perpendicular(vec3 axis) {
+    float squared = dot(axis, axis);
+    if (!(squared > 0.0)) return vec3(0.0, 1.0, 0.0);
+
+    vec3 unit = axis / sqrt(squared);
+    return cross(unit, abs(unit.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0));
+}
+
+// Distance of a position outside the segment's capsule, along the direction that leaves it.
+float step_separation(StepShape shape, vec3 position, out vec3 direction) {
+    vec3 axis = shape.end - shape.start;
+    float axis_squared = dot(axis, axis);
+    float along = axis_squared > 0.0 ? clamp(dot(position - shape.start, axis) / axis_squared, 0.0, 1.0) : 0.0;
+    vec3 normal = position - shape.start - axis * along;
+    if (dot(normal, normal) <= CONTACT_AXIS_SQUARED) normal = step_perpendicular(axis);
+
+    vec3 support = dot(normal, shape.start) >= dot(normal, shape.end) ? shape.start : shape.end;
+    float normal_length = length(normal);
+    direction = normal / normal_length;
+    return dot(normal, position - support) / normal_length;
+}
+
+// Pushes a position out of every shape it overlaps, in shape order, within the substep's push limit.
+// A shape counts only if it overlaps the position the pass started from, as on the host.
+vec3 step_collide_shapes(ClothRoot root, uint index, vec3 position, StepPass step) {
+    StepVectors push_totals = StepVectors(root.push);
+    bool first_contact = (step.phases & PASS_FIRST_CONTACT) != 0u;
+    vec4 pushed = first_contact ? vec4(0.0) : push_totals.values[index];
+    if (pushed.w != CONTACT_PUSH_UNBOUNDED) return position;
+
+    uint overlapping = 0u;
+    vec3 direction;
+    for (uint shape = 0u; shape < root.shape_count; shape++) {
+        StepShape placed = step_shape_at(root, shape, step.progress);
+        if (placed.reach - step_separation(placed, position, direction) > root.contact_tolerance) {
+            overlapping |= 1u << shape;
+        }
+    }
+    if (overlapping == 0u) {
+        if (first_contact) push_totals.values[index] = pushed;
+        return position;
+    }
+
+    float limit = uintBitsToFloat(ClothWords(root.limits).values[index]);
+    vec3 total = pushed.xyz;
+    float bounded = CONTACT_PUSH_UNBOUNDED;
+    for (uint shape = 0u; shape < root.shape_count; shape++) {
+        if ((overlapping & (1u << shape)) == 0u) continue;
+
+        StepShape placed = step_shape_at(root, shape, step.progress);
+        float residual = placed.reach - step_separation(placed, position, direction);
+        if (residual <= root.contact_tolerance) continue;
+
+        vec3 target = position + direction * (residual + 0.25 * root.contact_tolerance);
+        vec3 sum = total + (target - position);
+        float length_now = length(sum);
+        if (!(length_now > limit)) {
+            total = sum;
+            position = target;
+        } else {
+            sum *= limit / length_now;
+            position += sum - total;
+            total = sum;
+            bounded = 1.0;
+        }
+    }
+    push_totals.values[index] = vec4(total, bounded);
+    return position;
+}
+
+void step_collide(ClothRoot root, uint index, StepPass step) {
     StepVectors predicted = StepVectors(root.predicted);
     vec4 particle = predicted.values[index];
     if (particle.w == 0.0) return;
 
     vec3 position = particle.xyz;
-    if (root.sphere.w > 0.0) {
-        vec3 offset = position - root.sphere.xyz;
-        float distance_now = length(offset);
-        if (distance_now < root.sphere.w) {
-            vec3 outward = distance_now > 1e-7 ? offset / distance_now : vec3(0.0, 1.0, 0.0);
-            position = root.sphere.xyz + outward * root.sphere.w;
-        }
-    }
     position.y = max(position.y, root.ground);
+    if ((step.phases & PASS_SHAPES) != 0u) position = step_collide_shapes(root, index, position, step);
     predicted.values[index].xyz = position;
 }
 
@@ -243,7 +375,7 @@ void step_enter(ClothRoot root, uint index, StepPass step) {
 
 // Work a pass does on a particle it owns after the pass's constraints project.
 void step_leave(ClothRoot root, uint index, StepPass step) {
-    if ((step.phases & PASS_COLLIDE) != 0u) step_collide(root, index);
+    if ((step.phases & PASS_COLLIDE) != 0u) step_collide(root, index, step);
     if ((step.phases & PASS_SOFT_AFTER) != 0u) step_soft(root, index, step);
     if ((step.phases & PASS_INTEGRATE) != 0u) step_integrate(root, index, step);
 }
