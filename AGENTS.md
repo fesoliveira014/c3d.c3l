@@ -1,13 +1,18 @@
-Entry point for every agent session in this repository. Read it once at task start; reread changed or newly relevant sections when needed. The repository copy is canonical; its Notion mirror follows it. Task handoffs record decisions and exceptions instead of copying this policy.
+Entry point for every agent session in this repository. Read it once at task start; reread changed or newly relevant sections when needed. The repository copy is canonical; its Notion mirror follows it.
 
 # 1. Project facts
+
+## 1.1 Facts
 
 - **Project:** `c3d`, a scene-level 3D rendering library with an ECS scene, physics, animation, and asset import. Not a game engine; a base for one.
 - **Language:** C3 **0.8.3**. C3 is pre-1.0. Verify syntax against the installed compiler and the `c3-expert` skill, never against memory of another version.
 - **Shading language:** GLSL, Vulkan 1.3 semantics through gpu.c3l. Files are `<name>.<stage>.glsl`; shared includes are plain `.glsl`. The includes listed under `public_includes` in `shaders/variants.json` are the stable contract for custom and package stages. SPIR-V is built offline by `scripts/build_shaders.py`, for core and for every shader package (a directory with `shaders/shaders.json`), and embedded with `$embed`.
 - **Module root:** `c3d`. Every module is `c3d` or a submodule of it (`c3d::render`, `c3d::asset::gltf`). The repository directory name never appears in source.
 - **Build tooling:** `scripts/build.py` is the entry point; it drives ABI codegen, shader compilation, `c3c build`, and optionally `c3c test` and `c3c run`. Python 3.10+ standard library only, under `scripts/`, only for build orchestration and code generation.
-- **Dependencies** (git submodules under `lib/`, pinned, plus project add-ons linked there):
+
+## 1.2 Dependencies
+
+Third-party libraries are git submodules under `lib/`, pinned, except stb, whose C sources sit in `csrc/`. Each is imported only by its owner.
 
 | Library | Module | Imported only by |
 | --- | --- | --- |
@@ -21,87 +26,50 @@ Entry point for every agent session in this repository. Read it once at task sta
 | stb_truetype (C source) | `c3d::asset::truetype` bindings | `c3d::asset` |
 | ufbx.c3l | `ufbx` | `c3d::asset::fbx` |
 | shaderc.c3l | `shaderc` | `c3d::shader::compile` (`src/c3d/shader/compile.c3`), compiled only under the `C3D_SHADER_COMPILER` feature |
-| c3d_profile.c3l | `c3d::profile`, private `c3d::render::profile_gpu` | Applications select it explicitly; core imports it only through the gated CPU and GPU bridges; `c3d::job` imports it only under `C3D_PROFILE_CPU` |
-| c3d_profile_gui.c3l | profiler additions to `c3d::gui` | Applications select it explicitly; it imports only the standard library, `c3d::profile` and `imgui` |
-| c3d_physics.c3l | `c3d::physics`, `c3d::physics::collide`, `c3d::physics::cloth` | Applications select it explicitly; it imports the standard library, `c3d` and `b3`, plus `c3d::serial` under `C3D_PHYSICS_SERIAL` |
-| c3d_nav.c3l | `c3d::nav` | Applications select it explicitly; it imports the standard library and `c3d`, plus `c3d::serial` under `C3D_NAV_SERIAL` |
-| c3d_character.c3l | `c3d::character` | Applications select it explicitly; it imports the standard library, `c3d` and `c3d::physics`, and `c3d::nav` under `C3D_CHARACTER_NAV`, plus `c3d::serial` under `C3D_CHARACTER_SERIAL` |
-| c3d_physics_gui.c3l | physics additions to `c3d::gui` | Applications select it explicitly; it imports the standard library, `c3d`, `c3d::physics` and `imgui`, and `c3d::character` only under `C3D_PHYSICS_GUI_CHARACTER` |
-| c3d_job.c3l | `c3d::job` | Applications select it explicitly; it imports the standard library and `c3d`, and `c3d::profile` only under `C3D_PROFILE_CPU`, and declares `@private` externs for libc and kernel32 processor-affinity and thread power-throttling calls |
-| c3d_landscape.c3l | `c3d::landscape`, `c3d::landscape::terrain`, `c3d::landscape::foliage`, `c3d::landscape::water`, `c3d::landscape::water_gpu` | Applications select it explicitly; it imports the standard library, `c3d`, `c3d::serial` only under `C3D_LANDSCAPE_SERIAL` and `c3d::render` only in `water_gpu`, under `C3D_LANDSCAPE_GPU` |
-| c3d_particle.c3l | `c3d::particle`, `c3d::particle::gpu` | Applications select it explicitly; it imports the standard library, `c3d`, `c3d::serial` only under `C3D_PARTICLE_SERIAL` and `c3d::render` only in `c3d::particle::gpu`, which exists only under `C3D_PARTICLE_GPU` |
-| c3d_serial.c3l | `c3d::serial` | Applications select it explicitly; it imports the standard library and core, never renderer or platform dependencies directly; `c3d::particle` imports it only under `C3D_PARTICLE_SERIAL`, `c3d::landscape` only under `C3D_LANDSCAPE_SERIAL`, and `c3d::audio` only under `C3D_AUDIO_SERIAL` |
 | clay.c3l | `clay` | `c3d::ui`, in `addons/c3d_ui.c3l`; core never imports it |
-| c3d_ui.c3l | `c3d::ui` | Applications select it explicitly; it imports the standard library, `c3d` and `clay` |
 | miniaudio.c3l | `ma` | `c3d::audio`, in `addons/c3d_audio.c3l`; core never imports it |
-| c3d_audio.c3l | `c3d::audio` | Applications select it explicitly; it imports the standard library, `c3d` and `ma`, and `c3d::serial` only under `C3D_AUDIO_SERIAL` |
 
 Boundaries are checked at review. No dependency is added without updating this table.
 
-`c3d::asset::gltf` provides opt-in source inspection alongside its store-free document: independent encoded images, source indices, sampler values and extension names. Ordinary decoding is unchanged. See `docs/gltf_source.md` for ownership and fidelity.
+## 1.3 Add-on packages
 
-The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the collector add-on explicitly. The `addons/c3d_profile_gui.c3l` presentation adapter extends `c3d::gui` under `C3D_PROFILE_GUI`; it consumes neutral capture data and ImGui and is never imported by core or the collector. Standalone CPU collector builds need no native/shader setup. GUI consumers select ImGui and Vulkan bindings explicitly, while GPU data tests additionally select backend dependencies; neither data-test project creates a device.
+Each add-on is a package under `addons/<name>.c3l/`. `std` is the standard library and `core` is `c3d`. An add-on imports only what its row lists; a feature-gated import exists only while its feature is selected.
 
-The `addons/c3d_physics.c3l` package owns rigid-body physics: the box3d world, bodies bound to scene nodes, cooked collision data and frame event lists, bounded dynamic ragdoll recovery with transient status and checked completion, pre-fractured hull assemblies with owned breakable welds, explicit multi-hull graph recipes with static anchors, force/twist/bending limits, transactional rest resets and indexed read-only authoring views, position-based cloth over owned geometry copies with physical-to-render material routing, optional Mikk-compatible tangent frames, compliant XPBD attachments, signed dihedral bending, transactional one-way particle contacts against the sphere, capsule, box, hull, mesh, height-field and compound colliders of listed bodies, plus opt-in vertex-face and edge-edge self-contact with explicit collision seams and bounded continuous contact over prediction, solver corrections and final-pose publication, changed-range publication, and rest and holds for idle cloth (`c3d::physics::cloth`, which imports the standard library, core and `c3d::physics`), buoyancy against a fluid the application installs (`set_fluid_surface`, or `set_fluid_sampler` with a fluid velocity), the world-free collision queries of `c3d::physics::collide` (manifolds, distance, casts, time of impact, ray casts against one shape), and windowed texture height fields (`HeightField.window`, `add_height_field_windows`), which tile a terrain into static bodies so an edit re-cooks only the windows it touches. Its `c3d::physics` module imports the standard library, core (`c3d`) and `b3`, never `gpu`, `sdl` or `imgui`. Core never imports it and carries no physics feature flag; selecting the library is the gate. Its `src/serial/` adapter imports `c3d::serial` only under `C3D_PHYSICS_SERIAL`; consumers select `c3d_serial` explicitly. `physics_serial_test` and the isolated `physics_serial_policy_test` run alongside the feature-off tests in `scripts/build.py --test`. The package owns its `project.json`, `physics_test` target, the manual `test/gpu` acceptance project with its `cloth_acceptance` target, and `physics`, `physics_instanced`, `physics_components`, `vehicle`, `ragdoll`, `collision_math`, `breakable` and `cloth` examples. Cloth staging runs through core's neutral `c3d::ParallelFor`, installed with `PhysicsWorld.set_parallel`; the `cloth` example selects `c3d_job` for its `--workers` option, and the package never imports it.
+| Package | Modules | Always imports | Never imports | Gated imports | Detail |
+| --- | --- | --- | --- | --- | --- |
+| `c3d_profile` | `c3d::profile`; private `c3d::render::profile_gpu` under `src/gpu/` | `std` | core types, in either module | `gpu` and neutral profile values, in `profile_gpu` only, under `C3D_PROFILE_GPU` | [profiling](docs/profiling.md) |
+| `c3d_profile_gui` | profiler additions to `c3d::gui` | `std`, `c3d::profile`, `imgui` | core | none | [profiling](docs/profiling.md) |
+| `c3d_physics` | `c3d::physics`, `c3d::physics::collide`, `c3d::physics::cloth` | `std`, core, `b3`; `physics::cloth` imports `c3d::physics` and not `b3`, and `physics::collide` imports `std`, `c3d::maths` and `b3` only | `gpu`, `sdl`, `imgui`, `c3d::job` | `c3d::serial` under `C3D_PHYSICS_SERIAL` | [README](addons/c3d_physics.c3l/README.md) |
+| `c3d_nav` | `c3d::nav`, a port of Recast/Detour | `std`, core | `gpu`, `sdl`, `imgui`, `b3`, `c3d::physics` | `c3d::serial` under `C3D_NAV_SERIAL` | [README](addons/c3d_nav.c3l/README.md) |
+| `c3d_character` | `c3d::character` | `std`, core, `c3d::physics` | `b3`, `gpu`, `sdl`, `imgui` | `c3d::nav` under `C3D_CHARACTER_NAV`; `c3d::serial` under `C3D_CHARACTER_SERIAL` | [README](addons/c3d_character.c3l/README.md) |
+| `c3d_physics_gui` | physics additions to `c3d::gui` | `std`, core, `c3d::physics`, `imgui` | `b3`, `gpu`, `sdl` | `c3d::character`, in `src/character/` alone, under `C3D_PHYSICS_GUI_CHARACTER` | [physics inspector](docs/physics_inspector.md) |
+| `c3d_job` | `c3d::job` | `std`, core | `gpu`, `sdl`, `imgui`, `b3`, another add-on | `c3d::profile`, in `src/profile.c3` alone, under `C3D_PROFILE_CPU` | [jobs](docs/jobs.md) |
+| `c3d_landscape` | `c3d::landscape`, `::terrain`, `::foliage`, `::water`, `::water_gpu` | `std`, core, and the landscape modules named in the rule below | `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` outside `water_gpu`, another add-on | `c3d::serial` under `C3D_LANDSCAPE_SERIAL`; `c3d::render`, in `water_gpu` alone, under `C3D_LANDSCAPE_GPU` | [README](addons/c3d_landscape.c3l/README.md) |
+| `c3d_particle` | `c3d::particle`, `c3d::particle::gpu` | `std`, core | `gpu`, `sdl`, `imgui`, `c3d::physics`, `c3d::job`, `c3d::profile`, `c3d::shader`, `c3d::render` outside `particle::gpu` | `c3d::serial` under `C3D_PARTICLE_SERIAL`; `c3d::render`, in `particle::gpu` alone, under `C3D_PARTICLE_GPU` | [particles](docs/particles.md) |
+| `c3d_serial` | `c3d::serial` | `std`, core | renderer and platform dependencies; GPU resources and native systems are never created | none | [README](addons/c3d_serial.c3l/README.md) |
+| `c3d_ui` | `c3d::ui` | `std`, core (including `c3d::render` for the overlay list and `c3d::platform` for input), `clay` | `gpu`, `sdl`, `imgui`, another add-on | none | [README](addons/c3d_ui.c3l/README.md) |
+| `c3d_audio` | `c3d::audio` | `std`, core, `ma` | `gpu`, `sdl`, `imgui`, another add-on | `c3d::serial` under `C3D_AUDIO_SERIAL` | [README](addons/c3d_audio.c3l/README.md) |
 
-The package also owns world-free prepared convex, mesh and height-field `CollisionShape` owners and borrowed
-`CollisionShapeView` values over an explicit `CollisionCache` bound to one asset store.
-Worlds may borrow that cache through the optional fifth constructor argument; default worlds
-keep private cooking. Native length units remain fixed through cache, prepared-owner and
-world lifetimes. See `docs/collision_queries.md` for preparation, sharing and destruction.
+Rules for every package:
 
-Fracture generation is maintained in the standalone [c3d_fracture.c3l](https://github.com/fesoliveira014/c3d_fracture.c3l) project under the `fracture` namespace, with c3d as a dependency. The physics package retains generic authored Breakable pieces, multi-hull collision, preparation, welds and read-only authoring views. Core retains store-free glTF source inspection. See `docs/fracture.md` for the project boundary.
-
-`Breakable` is a pointer-sized physics component whose state block owns captured piece IDs, graph edges and runtime storage. Its public `Weld.joint` is an approved read-only `b3::JointId` escape hatch alongside the existing physics body/joint handles; applications do not mutate owned welds through it. Static anchor bodies remain application-owned; the Breakable owns their anchor welds. The package README documents fracture authoring, lifetime, wake, reset and reporting contracts.
-
-The `addons/c3d_nav.c3l` package owns navigation meshes, a port of Recast/Detour (`recastnavigation` at `9f4ce64`, zlib; the notice ships in the package). Its `c3d::nav` module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or `c3d::physics`. Core never imports it and carries no navigation feature flag; selecting the library is the gate. Its `src/serial/` adapter imports `c3d::serial` only under `C3D_NAV_SERIAL`; consumers select `c3d_serial` explicitly. `nav_serial_test` and the isolated `nav_serial_policy_test` run alongside the feature-off `nav_test` in `scripts/build.py --test`. The package owns its `project.json`, `nav_test` target and `navmesh`, `crowd`, `grid` and CPU `nav_persistence` examples.
-
-The `addons/c3d_character.c3l` package owns the kinematic capsule character controller built on the physics package's mover primitives: the `Character` component, the `CharacterSystem` that installs the physics world's mover pass, the kinematic push body and debug drawing. Its `c3d::character` module imports the standard library, core (`c3d`) and `c3d::physics`, never `b3`, `gpu`, `sdl` or `imgui`. Under `C3D_CHARACTER_NAV`, `src/nav/` adds the crowd binding (`NavDriven`, `drive_characters`) and imports `c3d::nav`; a consumer that enables the feature also selects `c3d_nav`, and the plain targets build without it. Core, the physics package and the nav package never import it and core carries no character feature flag; selecting the library is the gate. Its `src/serial/` adapter imports `c3d::serial` only under `C3D_CHARACTER_SERIAL`, which requires `C3D_PHYSICS_SERIAL`; navigation-enabled serialization also requires `C3D_NAV_SERIAL`. Consumers select `c3d_serial` explicitly. Feature-on adapter and independent policy targets run with and without navigation in `scripts/build.py --test`. The package owns its `project.json`, `character_test` and `character_nav_test` targets, `character` and `character_nav` examples and `rebase_bench` benchmark example.
-
-The `addons/c3d_physics_gui.c3l` package is the physics inspector: under `C3D_PHYSICS_GUI` it extends `c3d::gui` with the physics panel (world tuning, pause and step, counters, step profile, debug-draw flags, bodies, the selected node, events, queries, recording and replay) and the inspectors of the physics components. It imports the standard library, core (`c3d`), `c3d::physics` and `imgui`, never `b3`, `gpu` or `sdl`. Under `C3D_PHYSICS_GUI_CHARACTER`, `src/character/` adds the characters table, the character block and the `Character` inspector and alone imports `c3d::character`; a consumer that enables that feature also selects `c3d_character`. Its manifest names no dependency; consumers select `c3d_physics`, ImGui and the rest. Core, the physics package and the character package never import it. The package owns its `project.json`, the `physics_panel_off`, `physics_panel` and `physics_panel_character` targets and the `physics_inspector` and `physics_inspector_character` examples.
-
-The `addons/c3d_job.c3l` package owns the fork-join job pool: a fixed set of worker threads running a function over index ranges in frame and background classes, with inline execution at zero workers, and the processor sets its workers bind to. Its `c3d::job` module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or another add-on, except `c3d::profile` under `C3D_PROFILE_CPU`. Its platform files (`src/affinity_linux.c3`, `src/affinity_win32.c3`) declare `@private` externs for the libc and kernel32 calls the standard library already links (`sched_getaffinity`, `sched_setaffinity`, `SetThreadGroupAffinity`, `GetThreadGroupAffinity`, `GetActiveProcessorCount`, `GetActiveProcessorGroupCount`, `GetLogicalProcessorInformationEx`, `SetThreadInformation`), with their native structs pinned by `$assert`; no other module declares system externs. Under `C3D_PROFILE_CPU`, `src/profile.c3` adds the worker range records and their forwarding into a recorder and alone imports `c3d::profile`; a consumer that enables the feature also selects `c3d_profile`. Core never imports it and carries no job feature flag; selecting the library is the gate. The package owns its `project.json`, `job_test` and `job_profile_test` targets and `job_bench` example.
-
-The `addons/c3d_landscape.c3l` package owns height-field terrain: the `Terrain` component over an `R16_UINT` height map, drawn as the node's own instanced batch of quadtree chunks through a custom material, with levels selected per view on the GPU through core's quadtree mode and optionally geomorphed (`morph_band`), with CPU height queries on the physics height-field convention and the neutral setup values `collision_input` and `height_range`, which an application maps into physics colliders and navigation sources. Its root module `c3d::landscape` holds the generated constants of its shader package, the hash and Gaussian helpers its submodules share and the optional `src/serial/` adapter, which imports `c3d::serial` only under `C3D_LANDSCAPE_SERIAL`; `c3d::landscape::terrain` imports the standard library, core (`c3d`) and the root module `c3d::landscape` (its shader constants and the shared `STALE` fault), never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` or another add-on; its `bounds_job` and `commit_bounds` run a whole bounds build's leaf work as ranges on any scheduler the application drives, and only the `terrain` and `vegetation` examples select `c3d_job`. It also owns vegetation: `c3d::landscape::foliage` scatters one geometry and material per `Foliage` layer over a terrain node into per-cell instanced batches drawn with core sway and fade, and imports the standard library, core, `c3d::landscape::terrain` and, for the shared `STALE` fault, the root module `c3d::landscape`, never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` or another add-on; its `scatter_job` and `commit_scatter` run the placement kernels as ranges on any scheduler the application drives. It also owns water: `c3d::landscape::water` draws a Gerstner surface, as one grid or, for an ocean, as a core quadtree of chunks with waves anchored to the world, or a CPU-simulated surface over a built grid, through an owned custom material with scene reads, places one mirror camera per viewing view (`update_mirror`, which reports `BELOW` for a camera under the rest plane) whose target the application provides to that view as a view texture, owns a child node of the body carrying its core `MediumVolume` (the surface is shaded from below through the double-sided material), and answers CPU height, normal and velocity queries and provides `fluid_sample` for buoyancy; it imports the standard library, core and `c3d::landscape::terrain`, never `c3d::physics`. A spectral body (`wave_model` `SPECTRAL`) draws a field that a GPU module evolves: `c3d::landscape::water_gpu`, gated by `C3D_LANDSCAPE_GPU`, records the evolution of the spectrum and an inverse FFT through `Renderer.dispatch` into store textures that water owns, and imports the standard library, core, `c3d::render` and `c3d::landscape::water`, never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader` or another add-on, and creates no GPU object. Without the feature, preparing a spectral body faults `UNSUPPORTED` and `c3d::landscape::water` stays scene-layer; a consumer that enables it also selects the GPU dependencies. Core never imports it and carries no terrain feature flag; selecting the library is the gate. The package owns its `project.json`, `landscape_test` target (which selects `c3d_physics` and `c3d_nav` for the setup tests) and the gated `landscape_gpu_test`, the manual `test/gpu` acceptance project with its `terrain_acceptance`, `water_acceptance` and gated `water_gpu_acceptance` targets, and the `terrain`, `vegetation`, `water` and gated `water_gpu` examples. Serialization consumers also select `c3d_serial`; `landscape_serial_test` and the isolated `landscape_serial_policy_test` run alongside the unchanged feature-off `landscape_test` in `scripts/build.py --test`.
-
-The `addons/c3d_particle.c3l` package owns fixed-pool particle simulation on the CPU, on worker threads or, under `C3D_PARTICLE_GPU`, on the GPU, with emitters, lifetime tables and depth-reading effect materials. Its `c3d::particle` module imports the standard library and core, never `gpu`, `sdl`, `imgui`, physics or the render/shader-compiler modules. Under `C3D_PARTICLE_GPU`, `src/gpu/` adds `c3d::particle::gpu`, which steps the systems whose `ParticleSystemDesc.execution` is `GPU` through `Renderer.dispatch` over application buffers and draws them from core's device billboard, ribbon and instanced sources, packing instance records with core's public `instance_record.glsl`; it imports the standard library, core with `c3d::render` and `c3d::particle`, creates buffers only through `Renderer.create_buffer` and never imports `gpu`. Without the feature, preparing a GPU system faults `UNSUPPORTED`. Core supplies generic billboard, mesh and ribbon batches and never imports the particle package. The package owns `particle_test`, the `particles` and gated `particles_gpu` examples and a separate manual `test/gpu` project with its `particle_acceptance` and gated `particle_gpu_acceptance` targets. The example selects the profiler collector explicitly for GPU timing, `c3d_physics` for `--collide` and `c3d_job` for `--workers`; the simulation package depends on none of them and never imports physics or the job pool. `particle::update` takes core's `ParallelFor` to fork its range kernels. Its `src/serial/` adapter imports `c3d::serial` only under `C3D_PARTICLE_SERIAL`; consumers select `c3d_serial` explicitly. `particle_serial_test` and the isolated `particle_serial_policy_test` run alongside the unchanged feature-off `particle_test` in `scripts/build.py --test`.
-
-The `addons/c3d_serial.c3l` package owns the portable subtree container and explicit component codec registry. It imports the standard library and core and never creates GPU resources or native systems. Core never imports it. The particle, landscape, physics, navigation, character and audio packages import it only through their `C3D_PARTICLE_SERIAL`, `C3D_LANDSCAPE_SERIAL`, `C3D_PHYSICS_SERIAL`, `C3D_NAV_SERIAL`, `C3D_CHARACTER_SERIAL` and `C3D_AUDIO_SERIAL` adapters. Described values hold references to custom asset kinds by key through the kind's process-wide slot. The package owns `serial_test`, `serial_order_forward`, `serial_order_reverse`, `serial_text_test`, `serial_described_test`, `serial_core_policy_test` and `serial_all_test`; `scripts/build.py --test` runs them. Its explicit `serial_lookup_bench` target stays outside that test sequence. `register_core_codecs` installs all 21 built-in component policies and their description/default prerequisites idempotently; the independent policy target first checks registration without a Scene, then creates a Scene and classifies every assigned slot against the expected policies. New unclassified core components fail the inventory. The combined target selects every serialization adapter and checks all 62 registered policies alongside the existing independent package inventories. See `docs/serialization.md` for the wire format, ownership, rollback and current codec coverage.
-
-Core `c3d::describe` owns synchronous field visitors and process-lifetime type descriptions. It imports only the standard library and core, never GUI, serialization or backend libraries. Struct descriptions are registered explicitly; only component descriptions consume ECS slots. The Scene panel consumes their slot table in `c3d::gui`, with custom inspectors taking precedence. `register_core_components` idempotently installs the Mesh, Camera, Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe, Decal, CloudLayer and MediumVolume descriptions and their nested types. The serialization add-on consumes descriptions through its separate codec registry; core never imports it. See `docs/type_descriptions.md` for registration, fresh-read ownership, reconstruction hooks and schema traversal.
-
-The `addons/c3d_ui.c3l` package owns game UI: retained JSONC documents with styles (single inheritance, state blocks, ordered sheets), data bindings that code registers (getters, member tags, list scopes) and named actions, laid out with Clay every frame, routed against the previous frame's layout, and drawn into an `OverlayList` as rectangles and glyph runs. Its `c3d::ui` module imports the standard library, core (`c3d`, including `c3d::render` for the overlay list and `c3d::platform` for input and events) and `clay`, never `gpu`, `sdl`, `imgui` or another add-on. ImGui and the UI share the GUI capture flags and `Input.text_input_wanted_by_gui`; a frame without ImGui calls `Input.clear_gui_flags()` first. Core never imports it and carries no UI feature flag; selecting the library is the gate. The package owns its `project.json`, `ui_test` target, the manual `test/gpu` acceptance project with its `ui_acceptance` target, and the `ui` example. See `addons/c3d_ui.c3l/README.md` for the document schema and frame order.
-
-The `addons/c3d_audio.c3l` package owns audio playback over miniaudio: the `AudioClip` store kind (encoded WAV, FLAC, MP3 or Ogg Vorbis bytes with a probed format), the `AudioSystem` with its named buses, voice table and per-clip mirrors, the `AudioEmitter` and `AudioListener` scene components with remove hooks bound to the system, and the null-device `mix` path that tests use. Its `c3d::audio` module imports the standard library, core (`c3d`) and `ma`, never `gpu`, `sdl`, `imgui` or another add-on. Every miniaudio allocation goes through the system allocator on the owner thread; the audio thread reads only system-owned mirrors. Core never imports it and carries no audio feature flag; selecting the library is the gate. Its `src/serial/` adapter imports `c3d::serial` only under `C3D_AUDIO_SERIAL`; consumers select `c3d_serial` explicitly. `audio_serial_test` and the isolated `audio_serial_policy_test` run alongside the unchanged feature-off `audio_test` in `scripts/build.py --test`. The package owns its `project.json`, `audio_test` target and `audio` example. See `docs/audio.md` for the threading and ownership rules.
-
-Core `c3d::scene` also owns pointer-sized `LodGroup` components: copied rigid
-whole-object alternatives with ordinary or fixed-capacity instanced placement.
-Renderer-owned per-view histories select ordinary groups on the CPU and instanced
-groups on the GPU. Picking, spatial indexing and tracing use level-zero parts.
-The landscape foliage package may own a copied descriptor and create LOD cells;
-core does not import landscape. The `lod` example explicitly selects the profiler
-add-on and its CPU/GPU/internal features. See `docs/lod.md` for the contract.
-
-Core `InstancedMesh` batches may carry an `InstanceQuadtree`: the renderer selects
-their levels per view on the GPU (`Scene.set_instance_quadtree`), by projected sphere
-size or, under `QuadtreeMetric.BOX_RANGES` (`Scene.set_quadtree_ranges`), by per-depth
-box ranges that a vertex stage morphs with (`quadtree_morph`). Each view's depth
-prepass and shadow layers draw that view's selection. Stages read the selecting view's
-camera from `FrameRoot.selection_camera`; `FRAME_SELECTION_ORTHOGRAPHIC` marks an
-orthographic one. CPU walkers see leaves only.
-A custom material slot may read a texture the drawing view provides
-(`TextureRefKind.VIEW`, `Renderer.set_view_texture`); shadow layers and closed
-frames read it as absent. See `docs/instancing.md` and `docs/views.md`.
+- **Selection.** Applications select an add-on explicitly in `project.json`; selecting the library is the gate. Core never imports an add-on and carries no feature flag for one, with one exception: the profiler. Core imports `c3d::profile` and `c3d::render::profile_gpu` only through two gated bridges, `c3d::instrumentation` under `C3D_PROFILE_CPU` with `C3D_PROFILE_INTERNAL` and `render/profile.c3` under `C3D_PROFILE_GPU`. Core has no unconditional profiler dependency.
+- **Manifest.** An add-on's manifest owns its sources and dependencies; core never compiles add-on sources through its source glob. The manifests of `c3d_physics_gui` and `c3d_profile_gui` name no dependency; consumers select the packages they display, ImGui and the rest.
+- **Features.** A module that needs an optional library, add-on or backend is gated by a `C3D_*` feature and is absent without it. A consumer that enables the feature also selects the dependency it names, and targets without the feature build without it. The flags are listed in [docs/architecture.md](docs/architecture.md#feature-flags).
+- **Landscape modules.** Within `c3d_landscape`, the root `c3d::landscape` imports `std` and `c3d::asset` only; `terrain` imports the root; `foliage` imports the root and `terrain`; `water` imports the root and `terrain`; `water_gpu` imports the root and `water` and, under `C3D_LANDSCAPE_GPU`, `c3d::render`. No other landscape module imports `c3d::render`. The serial adapter, a root-module file under `C3D_LANDSCAPE_SERIAL`, also imports the submodules and `c3d::serial`.
+- **Presentation adapters.** `c3d_profile_gui` and `c3d_physics_gui` extend `c3d::gui`. Every module of each exists only under its feature (`C3D_PROFILE_GUI` with a capture feature, `C3D_PHYSICS_GUI`), so the imports in their rows apply only while the feature is selected. Core and the packages they present never import them or reference their public types and functions.
+- **Serial adapters.** Each of physics, nav, character, landscape, particle and audio keeps `src/serial/`, which imports `c3d::serial` only under `C3D_<PACKAGE>_SERIAL`; consumers select `c3d_serial` explicitly. A package's `<package>_serial_test` and the isolated `<package>_serial_policy_test` run beside its feature-off test in `scripts/build.py --test`; the character targets run with and without `C3D_CHARACTER_NAV`. `C3D_CHARACTER_SERIAL` requires `C3D_PHYSICS_SERIAL`, and with `C3D_CHARACTER_NAV` also `C3D_NAV_SERIAL`. A new core component needs a classified serialization policy, or `serial_core_policy_test` fails.
+- **Profiler.** The collector's CPU builds need no native or shader setup. GUI consumers select ImGui and the Vulkan bindings explicitly, and GPU data tests also select the backend dependencies; neither data-test project creates a device.
 
 # 2. Where truth lives
 
 - Project root: [C3 Rendering Project](https://app.notion.com/p/3cfcb7903a5880fbba9bcdadb3bb61c3)
 - Architecture (master and per subsystem): [Architecture](https://app.notion.com/p/3cfcb7903a58819dacdfdcf2492a7879), start at `00 Master Architecture`
 - Milestones and tasks: [Milestones](https://app.notion.com/p/3cfcb7903a58810e9424f58b86397eda) under Development
-- Style baseline (mandatory): `docs/style.md` in the repository, ported from gpu.c3l's `docs/contributing/style.md` and extended with the allocator, initializer, contract, and docstring rules of the [Style Guide (docs/style.md)](https://app.notion.com/p/3bccb7903a5881089469c7001fa88d7c). Section 6 of this file refines it; nothing here relaxes it.
+- Style baseline (mandatory): [docs/style.md](docs/style.md), the single home of the code-style rules, ported from gpu.c3l's `docs/contributing/style.md` and extended with the allocator, initializer, contract, and docstring rules of the [Style Guide (docs/style.md)](https://app.notion.com/p/3bccb7903a5881089469c7001fa88d7c). Section 6 of this file refines it; nothing here relaxes it.
+- Repository guides: [docs/architecture.md](docs/architecture.md) (module map, feature flags, directory map, and the index of subsystem contracts), [docs/development.md](docs/development.md) (build, shader pipeline, test targets), [docs/release.md](docs/release.md).
 - Change records (OpenSpec mirrors, one page per change): [Changes](https://app.notion.com/p/3cfcb7903a5881da8d4cdc33909a6a24) under Development
 
-Work items name the architecture sections to read. Read those and follow additional references only when the task requires them. Product documentation describes current behavior, contracts and usage. Proposals, test plans, validation results and review history belong in the change artifacts described in section 13.
+Work items name the architecture sections to read. Read those and follow additional references only when the task requires them. Product documentation (`docs/`, the root README and the package READMEs) explains current behavior, contracts, limitations and usage. Proposals, test plans, validation results, review history and review receipts belong in the change artifacts described in section 13, never in product documentation; the exemption for development terminology in `docs/` ([docs/style.md](docs/style.md) section 14) does not make product documentation a destination for them.
 
 # 3. Skills, mandatory
 
@@ -117,14 +85,12 @@ The skills live in `.claude/skills/`, which is gitignored. Verify the required s
 # 4. Session protocol
 
 1. Read this file; read `docs/style.md` for code work. Inspect the working tree and preserve unrelated changes.
-2. Read the assigned milestone, its named architecture sections and the current change artifacts. Collect all known design questions before requesting answers.
+2. Read the assigned milestone, its named architecture sections and the current change artifacts.
 3. Load the applicable skills in section 3. Verify the toolchain and dependency pins once for the working environment; repeat only when they change or a failure requires it.
-4. Follow the proposal, approval and implementation stages in section 13. Tests land with the behavior they cover.
+4. Follow the lifecycle in section 13. Tests land with the behavior they cover.
 5. Run the scoped checks and required acceptance commands in section 5 and the approved tasks. If a required check fails and cannot be fixed in scope, report the failure.
 
-One milestone is active at a time. Do not pull work from a later milestone into an idle lane. Every code change runs through the change lifecycle in section 13; no change exists outside one.
-
-Keep a short handoff with the active contract, checkout and commit, outstanding decisions, applicable check results and next action. Reuse it when resuming instead of reconstructing the entire conversation. Keep historical evidence in the change artifacts.
+Keep a short handoff with the active contract, checkout and commit, outstanding decisions, applicable check results and next action. It records decisions and exceptions, never a copy of this policy. Reuse it when resuming instead of reconstructing the entire conversation. Keep historical evidence in the change artifacts.
 
 Use `gh` for GitHub operations. On Windows, a sandboxed authentication failure can reflect unavailable keyring access; use the approved execution context before treating credentials as invalid. Reuse a prepared checkout and pin-matched native artifacts where possible; keep mutable build outputs isolated. Use native shell path operations, verify cleanup targets, and remove only known task-owned files. Do not change global Git settings to inspect a checkout.
 
@@ -133,183 +99,104 @@ Use `gh` for GitHub operations. On Windows, a sandboxed authentication failure c
 From the repository root:
 
 ```bash
-python3 scripts/build.py                  # compile SPIR-V, verify committed generated C3, build all examples
+python3 scripts/build.py                  # compile SPIR-V, verify committed generated files, build all examples
 python3 scripts/build.py --test           # same, then run every test target; what CI runs
-python3 scripts/build.py --regen          # rewrite the generated ABI twins and registry table, then build
+python3 scripts/build.py --regen          # rewrite the generated ABI twins and registry tables, then build
 python3 scripts/build.py --example cube   # build and run one example
-python3 scripts/build.py --init-deps      # first checkout: submodules and native dependency builds
+python3 scripts/build.py --init-deps      # first checkout: initialize submodules, download dependency natives
 python3 scripts/build.py --clean
 ```
 
-Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`: core's `shaders/variants.json`, its public-include probes, then every shader package, `addons/*/` and `test/` with a `shaders/shaders.json`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler, compiles one probe per public include so each compiles after the ABI headers alone, and writes each package's `output` C3 file (its SPIR-V as `@private` `$embed` constants and, when it has `shaders/include/<name>/`, a public `<NAME>_SHADER_INCLUDES` table); the build copies the shaderc shared library (`shaderc_shared.dll`, `libshaderc_shared.so.1`) next to example and test executables, and shaderc's own Linux manifest sets the runpath to `$ORIGIN`; SDL3 links statically on both platforms. `--init-deps` downloads each dependency's natives from its release at the submodule's tag (sdl3, c3imgui, box3d, shaderc, vma, spvreflect), checked against `SHA256SUMS`. SPIR-V is compiled into `shaders/spv/` and each package's `shaders/spv/` (not committed) on every run; the generated C3 (`src/c3d/shader/*.c3` and every package `output`) and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. A consumer outside the repository compiles its own package with `python3 lib/c3d.c3l/scripts/build_shaders.py --package <dir>`, which compiles only the named packages and needs only `scripts/build_shaders.py` and `shaders/{common,generated,gpu}`; `shaders/gpu/` is a committed copy of gpu.c3l's `include/shaders`, refreshed by `--regen` and checked otherwise. The test step first runs the scripts' unit tests (`scripts/test_*.py`). `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
-
-Releases: a `v*` tag runs `.github/workflows/release.yml`, which reuses `ci.yml`, compiles SPIR-V, packs every package with `scripts/package_release.py` (core as `c3d_core-v<version>.c3l`, each add-on as `<provides>-v<version>.c3l`, `c3d_shader_tools-v<version>.zip`, `SHA256SUMS`) and publishes them with the dependency pins read from the submodules' release tags. Every submodule must sit on a released tag first. Consumer setup and the per-package dependency list are in `docs/release.md`.
+Steps run in this order and stop at the first failure: tools, deps, abi, shaders, build, test, run. Generated C3 and GLSL twins are committed and verified unless `--regen` is given; SPIR-V is never committed. The pipeline, the target inventory and the acceptance projects are in [docs/development.md](docs/development.md); releases are in [docs/release.md](docs/release.md). A release needs every submodule on a released tag first.
 
 Local verification is scoped to the change. The full `scripts/build.py --test` is the CI integration gate, not a requirement before every local commit.
 
 - During implementation, run the failing case and directly affected tests, using `--test-filter` where appropriate.
 - Before review, build the changed consumers and run the affected subsystem targets and acceptance cases listed in `tasks.md`. Broaden local checks only for a demonstrated dependency or unresolved risk, or when the approved plan requires it.
-- The reviewer runs broader suites and hardware acceptance when warranted. Final merge requires the reviewer's `MERGE` verdict at the final head and all required CI checks passing at that head.
+- The reviewer runs broader suites and hardware acceptance when warranted.
 - After a fix, rerun the checks affected by that fix. Repeat other checks only when their inputs changed or new evidence invalidates the earlier result. Prose-only changes need document, link and diff checks, not compilation or GPU runs.
 
-Record the tested commit, compiler/options, commands, fixtures and results in change evidence and the PR. Compilation, CPU tests, native/GPU acceptance and performance measurements are distinct claims. When independent validators check the same corpus, use identical versioned fixtures. Do not add validation reports or review receipts to product documentation.
+Record the tested commit, compiler/options, commands, fixtures and results in change evidence and the PR. Compilation, CPU tests, native/GPU acceptance and performance measurements are distinct claims. When independent validators check the same corpus, use identical versioned fixtures.
 
-Before committing, review the diff and pass the applicable local checks. Do not commit known build failures. GPU examples run manually; every development GPU run enables Vulkan validation through gpu.c3l. CI runs the full `--test` sequence. Cancel obsolete PR runs when supported; never use a result from a superseded head as the merge gate.
+Before committing, review the diff and pass the applicable local checks. Do not commit known build failures.
 
-The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced`, `physics_components`, `vehicle`, `ragdoll`, `collision_math`, `breakable` and `cloth` examples, the nav package's `navmesh`, `crowd`, `grid` and `nav_persistence` examples, the character package's `character`, `character_nav` and `rebase_bench` examples, the physics GUI package's `physics_inspector` and `physics_inspector_character` examples, the job package's `job_bench` example, the landscape package's `terrain`, `vegetation`, `water` and gated `water_gpu` examples, the particle package's `particles` and gated `particles_gpu` examples, the UI package's `ui` example, the audio package's `audio` example, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, the physics GUI package's `physics_panel_off`, `physics_panel` and `physics_panel_character` targets, the job package's `job_test` and `job_profile_test` targets, the landscape package's `landscape_test` and gated `landscape_gpu_test` targets, the particle package's `particle_test` target, the UI package's `ui_test` target, the audio package's `audio_test`, `audio_serial_test` and `audio_serial_policy_test` targets, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI. An acceptance project run directly with `c3c test <target> --path <project>` gets no runtime copy from `build.py`: when it links shaderc (`test/gpu/render`, the landscape package's `terrain_acceptance`, or its gated `water_gpu_acceptance`, or the particle package's gated `particle_gpu_acceptance`), copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` or `lib/shaderc.c3l/windows/shaderc_shared.dll` next to its executable first.
+GPU examples run manually; every development GPU run enables Vulkan validation through gpu.c3l. CI runs the full `--test` sequence; cancel obsolete PR runs when supported. Real Vulkan acceptance projects are invoked separately, run manually and never in CI. An acceptance project run directly with `c3c test <target> --path <project>` gets no runtime copy from `build.py`, with one exception: a build of the default set or of the `profile_gpu` example places the library for `test/gpu/profile`. Every acceptance project lists shaderc as a dependency, but only an executable with code under `C3D_SHADER_COMPILER` needs the shared library at run time. When the project enables that feature, copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` or `lib/shaderc.c3l/windows/shaderc_shared.dll` next to its executable first.
 
 # 6. Style
 
-The baseline is `docs/style.md`: naming, K&R braces, four-space indentation, one parameter per line in function/method signatures with more than three parameters (four-space indentation and trailing comma), two-space continuation for other declarations, blank lines between logical blocks, named arguments at four or more call arguments with a trailing comma, `.field = value` in every struct initializer, definition order (typedefs, aliases, constants, enums and bitstructs, structs, struct methods, free functions), optionals and named faults for every operational failure, `defer` for cleanup, one `faultdef` file per domain with one fault per line, never `c3fmt`, no development terminology in code.
+The baseline is [docs/style.md](docs/style.md), the single home of the code-style rules: naming and abbreviations, definition order, lifecycle and ownership (`create_x`/`destroy_x`, `X` owns and `XView` borrows), allocation, optionals and named faults, contracts and `assert`, ids and faults files, call and declaration formatting, initializers, braces, docstrings, comments and development terminology, signature hygiene, GLSL and the ABI twins, tunable constants, tests, and the ban on `c3fmt`. Read it before code work. The rules that stay here:
 
-Project refinements:
-
-- **Names are descriptive.** `Renderer renderer`, `AssetStore assets`, `GeometryId geometry_id`. Single letters only for loop counters and coordinate math in scopes under ten lines. No abbreviations that are not already in the architecture vocabulary (`rt`, `gpu`, `uv`, `sh`, `ik` are vocabulary; `r`, `mgr`, `ctx`, `tmp` are not).
-- **Contracts are the precondition mechanism.** A precondition that only a programming error can violate is a `@require` in the docstring, not a runtime branch. An operational failure (input data, capacity, I/O, device, a dead id at an API entry point) returns a named fault. Runtime `assert` appears only under `test/`. `$assert` layout pins are required on every ABI-visible struct.
-- **Happy path.** No defensive checks on internal paths. A function trusts its contract and the invariants of the structs it receives. `try_get` exists at API entry points; inside the renderer, `get` with a contract.
-- **Ids** live in `src/c3d/types.c3`; an add-on declares its own ids in its package; `std::math` supplies the vector, matrix and quaternion types, and c3d declares no aliases for them. Faults for the root module live in `src/c3d/faults.c3`; a module with its own faults has its own `faults.c3`.
-- **Ownership.** Free functions `create_x` and `destroy_x` own project resources. `X` owns, `XView` borrows, views have no destructor. GPU objects live only in `c3d::render` mirrors; the store owns CPU assets; the scene owns nodes.
+- **Checks.** On internal paths there are no defensive checks: a function trusts its contract and the invariants of the structs it receives. No null checks on pointers the contract says are non-null, no range checks on indices the module itself produced, no validation of data gpu.c3l already validates, no defensive copies. `try_get` exists at API entry points; inside the renderer, `get` with a contract.
 - **Interfaces** only at user extension points named in the architecture. Everything hot is enums with `switch` or component stores.
-- **Tunable constants** state their why and cost in a trailing comment: `const uint MAX_LIGHTS = 256; // 16 KiB per frame in the ring; the flat light loop's cost lever`.
-- **GLSL mirrors C3** through `abi/c3d.abi` and `gen_abi.py`. A constant mirrored by hand names its twin: `// mirrored as SHADOW_CASCADES in shadows.glsl`. Never hand-edit generated files.
 
 # 7. Docstrings
 
-Every public function, method, macro, constant, and type carries a `<* ... *>` docstring. Nothing else does.
-
-Rules:
-
-- The description is one line: the purpose of the entity, nothing about how it does it. No "this function", no "returns" as the first word, no restatement of the name. Under about twelve words.
-- Use only the official directives: `@param [mode] name : "..."`, `@return "..."`, `@return? FAULT_A, FAULT_B`, `@require`, `@ensure`, `@pure`, `@deprecated`.
-- `@param` for every pointer parameter, with its mode (`[&in]`, `[in]`, `[&out]`, `[&inout]`, `[inout]`), and for any parameter whose meaning or unit is not already in its name and type. Do not document a parameter the name already explains.
-- `@return "..."` only when the name does not make the value obvious. `@return?` lists every fault the function can produce; it is mandatory on every optional return.
-- `@require` for preconditions that are programming errors. `@ensure` only for an invariant the caller relies on. `@pure` where true.
-- Descriptions are quoted phrases that start with a capital and end with a period, under about ten words.
-- One dangerous property, when there is one, goes in the description: "exits without running defers", "invalidates component pointers of the same store".
-- Narration is a defect: no step lists, no history, no rationale essays, no examples in docstrings. Rationale lives in the architecture pages.
-
-Example:
-
-```c3
-<*
- Add a geometry asset and return its id.
- @param [&in] geometry : "Arrays are copied into the store allocator."
- @return? CAPACITY_EXCEEDED, INVALID_ARGUMENT
-*>
-fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "")
-
-<*
- Solve the chain so its end joint reaches the target.
- Invalidates nothing; writes local rotations only.
- @require self.joints.len >= 2
-*>
-fn void IkChain.solve(&self)
-
-<*
- Slot size of one material block in the material heap.
-*>
-const usz MATERIAL_STRIDE = 256;
-```
-
-Counter-example, rejected on review:
-
-```c3
-<*
- This function adds a new geometry to the asset store. It first checks the
- capacity, then copies the arrays, registers the key, and finally returns
- the new id which callers can use later to reference the geometry.
- @param geometry : "the geometry to add"
- @param key : "the key"
- @return "the id"
-*>
-```
+The docstring rules, the directive set and the examples are in [docs/style.md](docs/style.md) section 12.
 
 # 8. Comments and self-documentation
 
-- Code is self-documenting: names carry meaning, structure carries flow.
-- A `//` comment is allowed only on non-trivial code and only to state a why that the code cannot: an invariant, a deliberate asymmetry, a hardware or backend quirk, a layout requirement that `$assert` cannot express. As short as possible while conveying the message.
-- A comment that says what the code does is a defect: delete it and improve the names.
-- No development terminology anywhere in code: no milestone numbers, ticket or PR references, "TODO for M12", change ids, or plan vocabulary in identifiers, filenames, comments, docstrings, test names, or string literals. `AGENTS.md`, `docs/`, and `scripts/` are exempt.
-- If a comment is needed to explain a number, the number becomes a named constant instead.
+The comment rules and the ban on development terminology in code are in [docs/style.md](docs/style.md) sections 13 and 14.
 
 # 9. KISS, checks, and tests
 
 - Prefer the simplest implementation that satisfies the architecture. Fixed capacity over growth; one allocation per resource; enums and switch over dispatch. Add complexity only when a measurement on this codebase demands it, and record the measurement in the change evidence. The milestone records the accepted decision and links to that evidence.
 - No per-frame allocation. A resource is allocated once when its owner is created and freed when the owner is destroyed; spawn and destroy may happen inside the frame loop. Never allocate and free the same thing within a frame, or rebuild it every frame. Derived data of asset size (cooked collision data, wireframes, packed vertex streams, baked tables) is built once at load or add time and owned by the resource that uses it; a cache with an identity (source id and revision) beats a rebuild. Per-frame recomputation is for values that are cheap and change every frame (transforms, interpolation, culling); recompute those rather than caching them.
 - No speculative generality: no configuration for a case the milestones do not name, no abstraction with one implementor, no hooks nobody calls. This rejects shapes nobody has committed to, not supporting structure for a committed capability: when the engine already does something internally, or the architecture has committed to it, the application-facing form (its types, lifetimes, and entry points) is built then, in its right shape, without waiting for an example to need it.
-- No over-checking: no null checks on pointers the contract says are non-null, no range checks on indices produced by the module itself, no validation of data that gpu.c3l already validates, no defensive copies.
-- No over-testing: tests cover contracts and invariants that can break (math identities, pool generations, ECS store invariants, transform hierarchies, geometry packing, animation sampling, parser output, the asset revision protocol). No tests for trivial accessors, no tests that restate the implementation, no mocks of the GPU device, no GPU tests in CI. One test file per group under `test/`, ordinary `@test` functions named `test_<what_it_checks>`. Fault-path tests assert the specific fault.
+- No over-testing. What tests cover, how they are named and the ban on GPU mocks and GPU tests in CI are in [docs/style.md](docs/style.md) section 18.
 - A missing defensive check is not a bug. A suspected cost is not a bottleneck until measured.
 
 # 10. Architecture rules
 
-- Two layers, plus the UI add-on above the render layer. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::describe`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`, `c3d::particle`, `c3d::audio`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation. `c3d::ui` fills `c3d::render`'s overlay list and creates no GPU object; it never imports `gpu`. `c3d::landscape::water_gpu`, gated by `C3D_LANDSCAPE_GPU`, is render-layer code in the landscape add-on on the same terms: it records compute dispatches into store textures through `Renderer.dispatch`, creates no GPU object and never imports `gpu`. `c3d::particle::gpu`, gated by `C3D_PARTICLE_GPU`, is render-layer code in the particle add-on on the same terms: it records compute dispatches over application buffers through `Renderer.dispatch`, creates buffers only through `Renderer.create_buffer` and never imports `gpu`.
+- Two layers, plus the UI add-on above the render layer. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::describe`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::debug`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`, `c3d::particle`, `c3d::audio`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation. `c3d::ui` fills `c3d::render`'s overlay list and creates no GPU object; it never imports `gpu`.
+- Two add-on modules are render-layer code on the same terms: `c3d::landscape::water_gpu` (`C3D_LANDSCAPE_GPU`) records compute dispatches into store textures, and `c3d::particle::gpu` (`C3D_PARTICLE_GPU`) records compute dispatches over application buffers and creates buffers only through `Renderer.create_buffer`. Both record through `Renderer.dispatch`, create no GPU object and never import `gpu`. Without the feature, preparing a spectral water body or a GPU particle system faults `UNSUPPORTED`, and `c3d::landscape::water` stays scene-layer.
+- No module declares system externs except `c3d_job`: its `src/affinity_linux.c3` and `src/affinity_win32.c3` declare `@private` externs for the libc and kernel32 calls the standard library already links (`sched_getaffinity`, `sched_setaffinity`, `SetThreadGroupAffinity`, `GetThreadGroupAffinity`, `GetActiveProcessorCount`, `GetActiveProcessorGroupCount`, `GetLogicalProcessorInformationEx`, `SetThreadInformation`), with their native structs pinned by `$assert`.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
 - Pass order is fixed; barriers are explicit; the renderer tracks `TextureState` only for targets it owns.
 - Every entity is a node; everything else about a node is a component. Systems are functions the application calls; there is no scheduler.
-- Reviewers check every new `import` against these rules and the dependency table of section 1.
+- Reviewers check every new `import` against these rules and the tables of section 1.
 
 # 11. Directory map
 
 ```
 c3d.c3l/
-├── manifest.json
-├── addons/c3d_profile.c3l/ CPU/GPU capture package, standalone data tests and CPU example
-├── addons/c3d_profile_gui.c3l/ ImGui presentation package and standalone data tests
-├── addons/c3d_physics.c3l/ box3d rigid bodies, colliders, events, cloth; owns its tests and examples
-├── addons/c3d_nav.c3l/     Recast/Detour port: tiled navmesh build, tile cache, store, path queries and crowds; owns its tests and examples
-├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives, crowd binding under C3D_CHARACTER_NAV; owns its tests and examples
-├── addons/c3d_physics_gui.c3l/ physics inspector panel and component inspectors, characters under C3D_PHYSICS_GUI_CHARACTER; owns its tests and examples
-├── addons/c3d_job.c3l/     fork-join job pool over index ranges; owns its tests and benchmark example
-├── addons/c3d_landscape.c3l/ height-field terrain, vegetation and water, its shader package, tests and examples; the gated render-layer module src/water_gpu/
-├── addons/c3d_particle.c3l/ fixed-pool particles on the CPU or the GPU, effect materials, tests and examples; the gated render-layer module src/gpu/
-├── addons/c3d_serial.c3l/ portable subtree format, explicit codecs and CPU tests
-├── addons/c3d_ui.c3l/      game UI: JSONC documents, styles, bindings and actions over Clay; owns its tests, acceptance project and example
-├── addons/c3d_audio.c3l/   audio over miniaudio: clips, buses, voices, emitters and a listener; owns its tests and example
-│                           an add-on that ships GLSL keeps shaders/shaders.json, its sources and shaders/include/<name>/ under its own shaders/, and a generated, committed src/shaders.c3
-├── abi/c3d.abi             shared C3 and GLSL layouts
-├── docs/style.md           mandatory style baseline
-├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l · clay.c3l · miniaudio.c3l (submodules)
-│                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
-│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l, c3d_job.c3l, c3d_landscape.c3l, c3d_particle.c3l, c3d_serial.c3l, c3d_ui.c3l and c3d_audio.c3l symlinks to the add-ons
-├── linked-libs/            empty; every dependency ships its own native artifacts
-├── csrc/                   stb_image, stb_truetype
-├── src/c3d/
-│   ├── types.c3            ids
-│   ├── faults.c3           root-module faults
-│   ├── parallel.c3         ParallelFor, the neutral fork-join hook
-│   ├── pool.c3             the generic pool, module c3d::pool <Type, IdType>
-│   ├── maths/ ecs/ describe/ asset/ scene/ geometry/ camera/ material/ light/ anim/ model/ spatial/
-│   ├── platform/           the only sdl importer
-│   ├── render/  shader/                            the gpu importers; render/post/ holds display processing
-│   └── gui/                the only imgui importer; gui/backend imports gpu
-├── shaders/                GLSL sources, variants.json (registry entries and public includes), common/, generated/; spv/ is build output
-├── scripts/                build.py (entry point) · gen_abi.py · build_shaders.py
-├── examples/               one executable per milestone
-└── test/                   CPU tests, one file per group; test/shaders/ is the shader package the unit tests read
+├── AGENTS.md  CONTRIBUTING.md  README.md  manifest.json
+├── abi/        c3d.abi: shared C3 and GLSL layouts
+├── addons/     one <name>.c3l package per add-on (section 1.3)
+├── csrc/       stb_image and stb_truetype sources
+├── docs/       guides and references; style.md, architecture.md, development.md
+├── examples/   example executables: project.json, src/, assets/
+├── lib/        dependency submodules, plus symlinks to this repository and to every add-on so consumers resolve them
+├── scripts/    build.py (entry point), gen_abi.py, build_shaders.py, package_release.py
+├── shaders/    GLSL sources, variants.json, common/, generated/, gpu/; spv/ is build output
+├── src/c3d/    core: types.c3 (ids), faults.c3, parallel.c3, pool.c3, one directory per area
+└── test/       CPU tests, fixtures, and the manual acceptance projects under test/gpu/
 ```
+
+The full map, with the add-on layout, is in [docs/architecture.md](docs/architecture.md#directory-map). `.claude/` is gitignored; the bootstrap in section 13 creates `.claude/skills/` and the link `.claude/CLAUDE.md` to this file.
 
 # 12. Anti-patterns, rejected on sight
 
-- `null`, `-1`, or `bool` out-parameters as error signals.
-- Runtime `assert` outside `test/`; `unreachable()` for a failure that can occur at runtime.
-- A `@require` that checks operational data (a file, a device, user input) instead of a programming error.
-- Single-letter or abbreviated identifiers outside loop counters and coordinate math.
-- Docstrings that narrate the body, restate the name, or document parameters the name already explains.
-- Comments that say what; comments with milestone, ticket, or plan vocabulary.
-- A GPU type or call outside the render layer; a `sdl::`, `imgui::`, `cg::`, or `b3::` reference outside its owning module.
-- Hand edits to generated files; a layout change on one side of the ABI only.
-- Speculative abstractions, configuration, or hooks without a named consumer.
-- Defensive checks on internal paths; tests for trivial code; GPU mocks.
-- `c3fmt` output; camelCase anywhere; `->` for pointer access; `sizeof` instead of `Type::size`.
+Each item names where its rule lives.
+
+- `null`, `-1`, or `bool` out-parameters as error signals ([style](docs/style.md) 7).
+- Runtime `assert` outside `test/`; `unreachable()` for a failure that can occur at runtime ([style](docs/style.md) 7).
+- A `@require` that checks operational data (a file, a device, user input) instead of a programming error ([style](docs/style.md) 7, 12).
+- Single-letter or abbreviated identifiers outside loop counters and coordinate math ([style](docs/style.md) 3).
+- Docstrings that narrate the body, restate the name, or document parameters the name already explains ([style](docs/style.md) 12).
+- Comments that say what; comments with milestone, ticket, or plan vocabulary ([style](docs/style.md) 13, 14).
+- A GPU type or call outside the render layer; a `sdl::`, `imgui::`, `cg::`, or `b3::` reference outside its owning module; an import outside the section 1 tables (sections 1 and 10; [style](docs/style.md) 15).
+- Hand edits to generated files; a layout change on one side of the ABI only ([style](docs/style.md) 16).
+- Speculative abstractions, configuration, or hooks without a named consumer (section 9).
+- Defensive checks on internal paths (section 6); tests for trivial code; GPU mocks ([style](docs/style.md) 18).
+- `c3fmt` output; camelCase anywhere; `->` for pointer access; `sizeof` instead of `Type::size` ([style](docs/style.md) 3, 10, 19).
 
 # 13. Change workflow, customized OpenSpec
 
 The owner sets scope and resolves consequential design choices. A designated reviewer may act within the authority the owner delegates. The owner or an explicitly delegated agent implements the approved work. A request to implement a scoped task delegates that work; it does not require permission for each routine edit.
 
-Ask all known questions up front, then raise follow-ups when answers or new evidence reveal another decision. Keep the proposal and tasks as the shared basis for implementation and review.
+One milestone is active at a time; do not pull work from a later milestone into an idle lane. Every code change runs through the lifecycle below; no change exists outside one. Keep the proposal and tasks as the shared basis for implementation and review.
 
 ## Bootstrapping the harness
 
@@ -318,6 +205,7 @@ On a fresh checkout or a new machine, before the first session:
 ```bash
 openspec init --tools none          # then add openspec/ to .gitignore
 mkdir -p .claude/skills             # .claude/ is gitignored
+ln -s ../AGENTS.md .claude/CLAUDE.md   # the harness reads this file through the link
 cp -r <claude-skills>/c3-expert <claude-skills>/c3-style <claude-skills>/c3-bindings .claude/skills/
 cp -r <minimax-skills>/skills/shader-dev .claude/skills/    # optional, GLSL technique
 git submodule update --init --recursive
@@ -330,36 +218,36 @@ python3 scripts/build.py --init-deps
 
 Every milestone task, or a tightly coupled group of tasks from one milestone, runs as one OpenSpec change through these steps in order:
 
-1. **Brainstorm.** Read the assigned milestone, relevant architecture and code. Present all known questions together, grouped by topic, with options, tradeoffs and a recommendation where useful. Cover ownership, public contracts, compatibility, failure behavior, exclusions and acceptance. Resolve dependent follow-ups after the initial answers. Record decisions in `interview.md`; do not reopen settled choices without new evidence. Agree the shape before drafting the proposal.
+1. **Brainstorm.** Read the assigned milestone, relevant architecture and code. Ask all known questions up front, grouped by topic, with options, tradeoffs and a recommendation where useful. Cover ownership, public contracts, compatibility, failure behavior, exclusions and acceptance. Raise follow-ups when answers or new evidence reveal another decision. Record decisions in `interview.md`; do not reopen settled choices without new evidence. Agree the shape before drafting the proposal.
 2. **Propose.** Write `proposal.md` and `tasks.md`. The proposal defines scope, placement, contracts, ownership, invariants, faults and exclusions. Tasks define the implementation order, affected APIs, completion criteria and scoped validation commands. Specify tests in full in one canonical annex or executable test file referenced by the tasks. Include required spec deltas and a PR plan based on reviewable behavior. For uncertain numerical, performance or platform work, identify the assumptions and bounded prototypes needed before dependent implementation; record their evidence here. Obtain approval of the proposal and tasks from the owner or designated reviewer before production implementation.
 3. **Apply.** Implement the approved tasks within the delegated scope. Tests are delegated to the agent by default. Keep artifacts current when implementation reveals a necessary change. Ask follow-up questions for unresolved contract, ownership or scope decisions; routine implementation choices within the approved contract do not need another approval.
-4. **Review.** Review the diff against the approved artifacts, milestone exit criteria, style and applicable skills. Report actionable findings as `file:line:fix`. Distinguish defects and contract violations from optional improvements. Keep check results and reviewer responses in change evidence and PRs. Resolve findings, then obtain a `MERGE` verdict for the final head and passing required CI before merging.
+4. **Review.** Review the diff against the approved artifacts, milestone exit criteria, style and applicable skills. Report actionable findings as `file:line:fix`. Distinguish defects and contract violations from optional improvements. Keep check results and reviewer responses in change evidence and PRs. Resolve findings, then obtain a `MERGE` verdict for the final head. Merge only with every required CI check passing at that head; a result from a superseded head never gates a merge.
 5. **Sync.** Verify the PR is `MERGED` and record its merge commit before final close-out. Complete the change artifacts with delivered behavior, divergences, acceptance evidence and carried-forward work. Mirror proposal, tasks/specs and close-out to one Notion Changes page. Correct affected architecture and product documentation in place to describe current contracts and behavior; keep test logs, pass counts, validation receipts and review history in the change record. Update milestone status and affected downstream handoffs with links to the record. Read back the changed records once to verify the update; do not rewrite unchanged pages.
 6. **Archive.** Archive the local OpenSpec change and mark its Notion record `[Archived]` after required work and synchronization are complete. Preserve intentionally deferred work as open items. Synchronize the checkout and remove only verified task-owned, merged branches and temporary checkouts. Report an archive-tool failure accurately and use a verified in-tree fallback when appropriate; do not claim a failed command succeeded.
 
 Trivial corrections with already agreed scope may collapse to apply, review and sync. Milestones retain the interview and approved proposal/tasks stages unless the owner explicitly waives them. A waiver applies only to its stated task. Keep one current version of each artifact and link to it from review requests; avoid copying the full design into every comment or status update.
 
-## Change artifacts and product documentation
+## Change artifacts
 
 - `openspec/` is in `.gitignore`. No proposal, spec delta, or task list is committed or pushed.
 - Notion is the durable record: Development, Milestones for the plan; Development, Changes for the per-change record.
-- Keep validation reports, experiment logs, test receipts, proposal history and review discussions in the change artifacts, their Notion mirror or PR evidence. Product documentation explains behavior, limitations and usage. The section 8 exemptions permit development terminology where needed; they do not make `docs/` a destination for validation reports.
+- Validation reports, experiment logs, test receipts, proposal history and review discussions live in the change artifacts, their Notion mirror or PR evidence (section 2).
 
 ## Authoring
 
 - Bound the change by approved behavior and acceptance. If investigation changes its scope materially, review the plan before expanding dependent work.
 - Tests ship in the same change, written against the milestone's exit criteria.
 - No drive-by refactors. A refactor is its own change, made on the second pain, with behavior unchanged.
-- Read your own diff once, top to bottom, before committing and pass the applicable section 5 checks.
+- Read your own diff once, top to bottom, before committing (section 5).
 - PR size is advisory. Roughly 500-line slices and the 1,000-line guideline are prompts to assess reviewability, never mandatory limits. Split at independently reviewable behavior or dependency boundaries. Keep tightly coupled implementation, tests and documentation together when splitting adds only review and CI cycles. Each slice builds and passes its scoped checks; each merge still requires final-head review and CI. Design the change as one unit and record the chosen PR boundaries in `tasks.md`.
 
 ## Reviewing
 
-The reviewer uses `docs/style.md` and the applicable section 3 skills, reusing already loaded guidance. Review against the approved proposal/tasks/specs, milestone exit criteria, affected architecture and sections 6 to 9. Flag concrete correctness, contract and style violations. A missing defensive check is not automatically a defect. Review fixes against the finding and affected behavior; broaden the review when a fix changes the contract or exposes another problem.
+The reviewer uses `docs/style.md` and the applicable section 3 skills, reusing already loaded guidance. Review against the approved proposal/tasks/specs, milestone exit criteria, affected architecture and sections 6 to 9. Flag concrete correctness, contract and style violations; a missing defensive check is not automatically a defect (section 9). Review fixes against the finding and affected behavior; broaden the review when a fix changes the contract or exposes another problem. The review procedure (inputs, checkout, checks, runs, findings, verdict, authority) is in [REVIEW.md](REVIEW.md).
 
 ## Coordination
 
-- When parallel agent work is authorized, give each participant a bounded assignment with inputs, owned files, expected output and completion criteria. Keep one owner for integration and shared files. Do not start work from a later milestone to occupy an idle agent.
+- When parallel agent work is authorized, give each participant a bounded assignment with inputs, owned files, expected output and completion criteria. Keep one owner for integration and shared files.
 - Agree a communication venue with the owner and reviewer at task start. Use direct, event-driven messages when available. Keep accepted design decisions in the change artifacts and final review verdicts in GitHub at the reviewed commit; a notification or transport acknowledgement is not approval.
 - Send a complete question set or review request with artifact links, the relevant commit and the requested decision. Send further messages for new findings, blockers, changed readiness or completion. Avoid repeated status requests while the state is unchanged.
 - Prefer bounded waits or notifications to repeated full comment-history reads. When polling is necessary, use one coordinator and fetch only changes since the last observation. Continue independent work within the approved change while waiting.
