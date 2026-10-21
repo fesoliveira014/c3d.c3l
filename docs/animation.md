@@ -51,7 +51,7 @@ Physics and IK run between the animation update and the final `Scene.update_worl
 
 1. `anim::update` (and `anim::crowd_update` for crowds).
 2. `Scene.update_world`.
-3. Physics, including ragdoll publication; see [Physics add-on](../addons/c3d_physics.c3l/README.md#ragdoll-recovery).
+3. Physics, including ragdoll publication; see [Ragdolls](ragdoll.md#frame-order).
 4. IK solves ([Inverse kinematics](animation_ik.md#solve-order)).
 5. `Scene.update_world`, then the renderer.
 
@@ -472,8 +472,8 @@ history and residuals restart empty on restore.
 ## Physics and IK
 
 - **Ragdolls.** Recovery from a physical ragdoll (`recover_ragdoll`, `finish_ragdoll_recovery`) is a physics API. It
-  captures the fresh animation pose and runs around `PhysicsWorld.update`. The contract is in the
-  [physics add-on README](../addons/c3d_physics.c3l/README.md#ragdoll-recovery).
+  captures the fresh animation pose and runs around `PhysicsWorld.update`. The contract is in
+  [Ragdolls](ragdoll.md#physical-recovery).
 - **IK.** `c3d::anim::ik` bends joints after the animator has written its pose ([Inverse kinematics](animation_ik.md)).
 
 ## Run the examples
