@@ -21,7 +21,7 @@ sections are in [cloth](cloth.md).
 | `CrowdCloth.request_cut(part, instance, path)`, `CrowdCloth.cut_result(part, instance, path)` | The same for one crowd placement; `instance` is a `CrowdInstanceId`. |
 | `Cloth.sleep()`, `Cloth.wake()`, `Cloth.activity()` | Hold, wake and read the activity. |
 | `CrowdCloth.sleep_slot(slot)`, `wake_slot(slot)`, `slot_activity(slot)` | The same for one crowd slot. |
-| `cloth::reset_contact_history(&cloth)` | Reset collider observations after a direct collider teleport. |
+| `cloth::reset_contact_history(Cloth*)` | Reset collider observations after a direct collider teleport. A null or pending cloth is unchanged. |
 | `cloth::pins_from_colors(allocator, &geometry, threshold = 0.5)` | Pin the vertices whose red channel is at least `threshold`; the caller frees the result. |
 
 ## ClothDesc
@@ -53,7 +53,7 @@ sections are in [cloth](cloth.md).
 | `rest_angles` | empty | `ClothRestAngle { first, second, angle }` overrides on interior edges. |
 | `transport` | empty | Per physical particle weight in [0, 1] for skeletal reference motion. |
 | `cuts` | empty | `ClothCutPath { id, vertices, strain_trigger, strain_threshold }`. |
-| `tears` | `default_cloth_tear_limits()` | `ClothTearLimits { max_requests = 0, opening_iterations = 32 }`. |
+| `tears` | `default_cloth_tear_limits()` | `ClothTearLimits { max_requests = 0, opening_iterations = 32 }`; 0 for `max_requests` means `cuts.len`, and 0 for `opening_iterations` means 32. |
 | `sleep_speed` | 0 | m/s; 0 never rests. |
 | `sleep_steps` | 30 | Consecutive slow steps before resting. |
 
@@ -79,23 +79,32 @@ truncate them.
 
 ## Attach faults
 
+`Scene.attach_cloth` and `Scene.attach_crowd_cloth` validate the description; `Scene.add_cloth` attaches and then prepares.
 Every fault leaves the mesh, the component store and the asset counts as they were.
 
 | Fault | Cause |
 | --- | --- |
-| `cloth::NO_MESH` | The node has no `Mesh` (or a crowd owner has no `AnimatedCrowd`). |
+| `cloth::NO_MESH` | The node has no `Mesh`, or a crowd owner has no `AnimatedCrowd` or part batch. |
 | `cloth::CLOTH_EXISTS` | The node, or that crowd part, already carries cloth. |
 | `c3d::INVALID_ID` | The mesh geometry, a listed collider entity, a skeleton, a joint node or a crowd model is dead. |
 | `physics::SOURCE_UNAVAILABLE` | The source's CPU positions were released. |
-| `physics::NO_BODY` | A listed collider node has no built `RigidBody`. |
-| `c3d::UNSUPPORTED` | Morph targets or weights, vertex channels or custom data, a bounds override, membership of an LOD group, a custom material with vertex stages, a non-indexed or non-triangle topology, joint streams on a node without `SkinBinding`, or a `SkinBinding` mesh without joint streams. |
-| `c3d::INVALID_ARGUMENT` | Zero substeps, iterations or contact capacities; non-positive or non-finite contact tolerance or density; a stiffness outside [0, 1]; negative or non-finite damping, thickness, drag, lift, bend compliance or `sleep_speed`; non-finite gravity scale or ground height; `tangent_uv_set` above 1; invalid `render_particles`, `attachments`, `rest_angles`, `transport` or `cuts`; a non-manifold or inconsistently wound interior hinge; a pin, seam endpoint or index out of range; non-finite positions; a degenerate triangle; an edge shared by more than two triangles; a collider listed twice; missing or invalid UVs with `tangent_frame`; an invalid skin binding; a node that carries a `ClothOutput` marker; a `world` that does not match the scene and store. |
-| `c3d::CAPACITY_EXCEEDED` | More than 32 listed colliders, binding metadata past `max_shapes`, a full geometry pool, state-size overflow or a state block that cannot be allocated. |
-| `cloth::CONTACT_PRECISION_EXCEEDED` | A captured native shape bound cannot be represented conservatively. |
+| `c3d::UNSUPPORTED` | Morph targets or weights, vertex channels or custom data, a bounds override, membership of an LOD group (rigid, skinned or crowd), a custom material with vertex stages, a non-indexed or non-triangle topology, joint streams on a node without `SkinBinding`, a `SkinBinding` mesh without joint streams, or a crowd part batch with `sway` or `fade` enabled. |
+| `c3d::INVALID_ARGUMENT` | Zero substeps, iterations or contact capacities; non-positive or non-finite contact tolerance or density; a stiffness outside [0, 1]; negative or non-finite damping, thickness, drag, lift, bend compliance or `sleep_speed`; non-finite gravity scale or ground height; `tangent_uv_set` above 1; invalid `render_particles`, `attachments`, `rest_angles`, `transport` or `cuts`; a non-manifold or inconsistently wound interior hinge; a pin, seam endpoint or index out of range; non-finite positions; a degenerate triangle; an edge shared by more than two triangles; a collider listed twice; missing or invalid UVs with `tangent_frame`; an invalid skin binding; a node that carries a `ClothOutput` marker. |
+| `c3d::CAPACITY_EXCEEDED` | More than 32 listed colliders, or the authoring copy cannot be allocated. |
 
-Preparation can also return the update faults below when a starting penetration, bend or frame cannot be resolved.
-`prepare_subtree` and `prepare_crowd_cloth` additionally return `cloth::REFERENCE_UNAVAILABLE` and
-`cloth::OWNERSHIP_CHANGED`.
+## Prepare faults
+
+`cloth::prepare`, `prepare_subtree`, `prepare_crowd_cloth` and the second half of `add_cloth` return these, and may also
+return the update faults below when a starting penetration, bend or frame cannot be resolved. A failed owner keeps its
+source mesh and authoring.
+
+| Fault | Cause |
+| --- | --- |
+| `physics::NO_BODY` | A listed collider node has no built `RigidBody`. |
+| `c3d::INVALID_ARGUMENT` | A `world` that does not match the scene and store, or a world-space input that is not finite. |
+| `c3d::CAPACITY_EXCEEDED` | Binding metadata past `max_shapes`, a full geometry pool, state-size overflow or a state block that cannot be allocated. |
+| `cloth::CONTACT_PRECISION_EXCEEDED` | A captured native shape bound cannot be represented conservatively. |
+| `cloth::REFERENCE_UNAVAILABLE`, `cloth::OWNERSHIP_CHANGED` | A skinned or crowd owner, from `prepare_subtree` and `prepare_crowd_cloth`: see the update faults. |
 
 ## Update faults
 
@@ -111,8 +120,9 @@ An update records its fault in `cloth.state.contact_result.failure` (zero on suc
 | `cloth::BEND_UNRESOLVED` | A dihedral hinge collapsed, became non-finite, or turned half a revolution within one substep. |
 | `cloth::FRAME_UNRESOLVED` | A deformed normal or tangent frame could not produce a finite unit frame. |
 | `cloth::OPENING_UNRESOLVED` | A requested or strain-triggered cut could not be opened and certified within its reserves and tolerances. |
-| `cloth::REFERENCE_UNAVAILABLE` | A skinned or crowd reference cannot be sampled: the source asset, skeleton or joint nodes changed or were released, or the owner moved into an LOD group. |
+| `cloth::REFERENCE_UNAVAILABLE` | The reference cannot be sampled: the owner moved into an LOD group, or a skinned or crowd source, skeleton, joint nodes or placement changed or were released. |
 | `cloth::OWNERSHIP_CHANGED` | The mesh or generated output node no longer matches what preparation installed. The output node is hidden. |
+| `c3d::INVALID_ARGUMENT` | A soft-attachment result that is not finite (stage `ATTACHMENT`), or a non-finite owner matrix or skinned positions (stage `REFERENCE`). |
 
 ## Diagnostics
 
@@ -132,6 +142,11 @@ report unvisited work as checked.
 
 `ClothCutResult` (from `cut_result`) holds `path_id`, `attempts`, `outcome` (`ClothCutOutcome`: `NONE`, `APPLIED`,
 `ALREADY_CUT`, `REFUSED`), `is_cut`, `failure` and `stage`.
+
+`request_cut` and `cut_result` fault `c3d::INVALID_ARGUMENT` on a cloth that is not prepared, for path id 0 or an id that
+`cuts` does not list, and `request_cut` faults `c3d::CAPACITY_EXCEEDED` when the queue holds `max_requests` requests
+(a repeated request for a queued path is ignored). The crowd forms also fault `NOT_FOUND` for a part with no
+`CrowdCloth` entry and `c3d::INVALID_ID` for an instance that is not live in its slot.
 
 `PhysicsWorld.cloth_stats` (`ClothStats`) holds the last `update_cloths` totals:
 

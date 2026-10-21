@@ -30,15 +30,15 @@ while (running) {
 }
 ```
 
-`flag_node` carries a `Mesh` and has a current, invertible world matrix. `anim::update`, `render_views` and the wind
-velocity are the application's. The `cloth` example builds this scene; run it with
+`flag_node` carries a `Mesh` and has a current, invertible world matrix. `anim::update` is core's; `render_views` and
+the wind velocity are the application's. The `cloth` example builds this scene; run it with
 `python3 scripts/build.py --example cloth`.
 
 ## Concepts
 
 - **Owned copy.** `Scene.add_cloth` copies the node's mesh into a private geometry asset (positions, indices, UV and
   color streams, computed normals and, with `tangent_frame`, tangents), points `Mesh.geometry` at the copy and enables
-  `Mesh.vertex_motion`. The source geometry is never written, and two cloths on one source own separate copies.
+  `Mesh.vertex_motion`. The source geometry is never written, and two cloths on one source own separate copies. Do not replace or edit the copy.
 - **Physical and render particles.** Without `render_particles`, each source vertex is one physical particle. With it,
   several render vertices (for example across a UV seam) map to one particle, and the simulation moves particles while
   the mesh keeps its render vertices.
@@ -88,15 +88,15 @@ non-triangle topology are `c3d::UNSUPPORTED`.
 
 `Scene.remove_cloth(node)` restores the source geometry and the previous `vertex_motion`, then removes the component;
 its hook removes the private geometry and frees the state. Removing the node runs the same hook. While a cloth is
-attached, do not replace or remove the mesh, release the private geometry's CPU streams, change its topology, remove
-the source asset or write the library-owned `ClothState`. To change pins, attachments, settings or the source, remove
+attached, do not replace or remove the mesh, replace or edit the private geometry, release its CPU streams, change its
+topology, remove the source asset or write the library-owned `ClothState`. To change pins, attachments, settings or the source, remove
 the cloth and attach it again. The state outlives `destroy_physics_world`; destroy the scene before the asset store.
 
 ### Pending authoring
 
 `scene.attach_cloth(&assets, node, desc)` validates and attaches authoring without creating geometry or state.
 `Cloth.authoring` holds the source identity, the original `vertex_motion` flag, the complete descriptor and copies of
-the requested pins, seams and collider ids. Until `Cloth.is_prepared()` is true, the mesh stays untouched and draws the
+the requested pins, seams and collider ids; its arrays are read-only. Until `Cloth.is_prepared()` is true, the mesh stays untouched and draws the
 authored source. `cloth::prepare(&scene, &assets, node, &world)` prepares one cloth after node world matrices are
 current; `cloth::prepare_subtree(&scene, &assets, root, &world)` prepares every pending `Cloth` and `CrowdCloth` under
 `root` (the whole scene when `root` is omitted), returns the first fault and keeps the owners that succeeded. A failed
@@ -206,7 +206,8 @@ first updates.
 ### Teleports
 
 `PhysicsWorld.teleport` resets the affected body's observations in referencing cloths after writing the pose. After
-moving a listed collider directly through scene transforms, call `cloth::reset_contact_history(&cloth)`. Reset and body
+moving a listed collider directly through scene transforms, call `cloth::reset_contact_history` with the `Cloth*` from
+`scene.get(node, Cloth)`. Reset and body
 replacement use current poses on both sides of the discontinuity and endpoint contacts still apply; reset does not
 move the fabric or change its velocity. Ordinary pose edits without reset remain continuous motion.
 
@@ -280,10 +281,11 @@ unskinned `ClothOutput` child per placement slot. Active slots (`slot < crowd.co
 owner-local space with vertex colors equal to the source colors (or white) times `crowd.colors[slot]`. Inactive slots
 are hidden, and a slot generation change reseeds the slot and advances `Mesh.vertex_history_token`.
 
-Remove skinned and crowd cloth only with `Scene.remove_cloth` and `Scene.remove_crowd_cloth`. They restore the source
-mesh or hidden batch, increment `Mesh.vertex_history_token` (which invalidates correspondence-based motion blur and
-trace caches) and delete the generated `ClothOutput` children. `scene.remove_component` releases private state without
-undoing the takeover, and `scene.remove(owner)` removes the children with the owner.
+Remove skinned and crowd cloth only with `Scene.remove_cloth` and `Scene.remove_crowd_cloth`. `remove_cloth` restores
+the source mesh, increments its `Mesh.vertex_history_token` (which invalidates correspondence-based motion blur and
+trace caches) and deletes the generated `ClothOutput` child. `remove_crowd_cloth` deletes the per-slot outputs and
+re-shows the hidden batch. `scene.remove_component` releases private state without undoing the takeover, and
+`scene.remove(owner)` removes the children with the owner.
 
 ## Tear
 
@@ -291,7 +293,10 @@ undoing the takeover, and `scene.remove(owner)` removes the children with the ow
 particle ids: `id` is nonzero and unique across the cloth, `vertices.len >= 2`, and consecutive vertices are joined by
 an interior physical edge. `ClothDesc.tears` (`ClothTearLimits`) sets `max_requests` (default 0, which means
 `cuts.len`) and `opening_iterations` (default 32). Preparation reserves the split vertices and storage
-for every path, so a runtime cut allocates nothing and never rewrites the triangle index buffer.
+for every path, so a runtime cut allocates nothing and never rewrites the triangle index buffer. Each split sector takes
+its rest-area share of the base particle's mass, and a split soft attachment divides its compliance by that share, so
+the sectors' stiffness sums to the authored stiffness. A committed cut advances the output `Mesh.vertex_history_token`,
+so temporal views drop that cloth's previous positions for the frame.
 
 ```c3
 Cloth* flag_cloth = scene.get(flag_node, Cloth);
@@ -347,7 +352,8 @@ and the request stays pending.
 
 A resting or held cloth skips the solve and publication, so it marks no geometry dirty and the renderer sees no new
 revision. A held cloth still mirrors the owner's layers, world matrix and visibility onto a skinned or crowd output
-node. `ClothStats.resting` and `held` count them. Activity and holds are runtime state: a restored cloth is pending,
+node. A resting crowd slot still publishes a change of `crowd.colors[slot]`; a held slot keeps its last color.
+`ClothStats.resting` and `held` count them. Activity and holds are runtime state: a restored cloth is pending,
 then awake.
 
 ## Update on a job pool
@@ -375,7 +381,8 @@ item does not stop the others. Parallelism is across cloths and crowd slots: one
 
 **Areal mass.** `ClothDesc.density` (kg/m², default 0.2) sets each particle's mass to
 `density * (sum of the areas of its adjacent rest triangles) / 3`, measured on the world-scaled rest positions the edge
-rest lengths use. The total mass is `density * area` at any tessellation, and a finer mesh has lighter particles. Hard
+rest lengths use. The total mass is `density * area` at any tessellation, and a finer mesh has lighter particles. A split sector takes
+its rest-area share of this mass ([tear](#tear)). Hard
 pins have zero inverse mass, and a vertex in no triangle keeps unit mass and moves under gravity alone. Soft
 attachments and dihedral hinges are XPBD constraints in physical units, so their compliance acts against the real
 particle mass: the same compliance reads stiffer on lighter particles, and a finer mesh has lighter particles. Scale a
@@ -435,14 +442,14 @@ height and is not shifted. The full order is in [origin rebasing](origin_rebasin
 
 With `C3D_PHYSICS_SERIAL`, `Cloth` and `CrowdCloth` save their authoring (settings, pins, seams, collider references,
 attachments, cuts and the rest) and restore pending, then awake. Runtime contacts, diagnostics, native identities,
-velocities, buffers, cut state, histories, rest and hold state are not saved. Older payloads still load with the missing
-fields at their defaults, and incompatible older binary layouts return `c3d::UNSUPPORTED` before anything is changed.
-Stored fields and payload versions are in [serialization](serialization.md#cloth-adapter).
+velocities, buffers, cut state, histories, rest and hold state are not saved. Stored fields, payload versions and
+compatibility are in [serialization](serialization.md#cloth-adapter).
 
 ## Example
 
-`python3 scripts/build.py --example cloth` runs `addons/c3d_physics.c3l/examples/cloth.c3`. Run it from
-`addons/c3d_physics.c3l`: the character model path is relative to it. `--scene` selects one of:
+`python3 scripts/build.py --example cloth` builds and runs `addons/c3d_physics.c3l/examples/cloth.c3` with its default
+scene. To pass flags, build it with `python3 scripts/build.py --target cloth` and run `build/cloth --scene contacts` from
+`addons/c3d_physics.c3l`: the character model path is relative to that directory. `--scene` selects one of:
 
 | Scene | Shows |
 | --- | --- |
