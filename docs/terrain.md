@@ -471,7 +471,7 @@ setup](#physics-and-navigation-setup).
 - **Region uploads.** The renderer copies only the marked texels of the height map into its image, so a
   49 × 49 stamp stages 4,802 B where the whole map is 8 MiB at 2049² and 32 MiB at 4097². Two marks between
   frames upload the union of their rectangles. A mark followed by `assets.mark_texture_dirty`, a replacement or
-  a pixel release uploads the map whole; see [editing a region](textures.md#editing-a-region) for the
+  a pixel release uploads the map whole; see [editing a region](texture_streaming.md#editing-a-region) for the
   conditions and the log each texture keeps.
 - **Control map.** Terrain never reads the control map, so the application marks its edits itself, in control-map
   texels: `assets.mark_texture_region_dirty(control_map, 0, region)!`. The control map keeps its generated mips.

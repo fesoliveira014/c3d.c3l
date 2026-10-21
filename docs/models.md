@@ -678,4 +678,4 @@ texture: extent, resident and total mips, resident KiB, required mip, last used
 frame, and whether it is streamed or pinned. `--texture-budget <MiB>` (or
 `--texture-budget=<MiB>`) starts the viewer, and the benchmark, under a budget; zero or
 absent leaves textures unbudgeted. See
-[Residency and memory budgets](textures.md#residency-and-memory-budgets).
+[Residency and memory budgets](texture_streaming.md#residency-and-memory-budgets).
