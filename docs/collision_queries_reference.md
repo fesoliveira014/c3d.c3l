@@ -251,7 +251,7 @@ world.update(dt);
   description, so rebuild the body or the windows.
 - With `C3D_PHYSICS_SERIAL`, `HeightFieldWindows` is a described owner whose payload is `{ window_cells, collider }`.
   Export omits the window bodies and nodes, and loading regenerates them through `add_height_field_windows`
-  ([serialization](serialization.md#physics-adapter)).
+  ([serialization](serialization_reference.md#physics)).
 
 ## Faults
 

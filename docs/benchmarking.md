@@ -241,7 +241,7 @@ lacks it, so an excluded mode never silently reports zero timings.
 | `--anti-aliasing none\|fxaa\|taa` | nothing | Selects the measured view's anti-aliasing filter (`benchmark.py --anti-aliasing`); FXAA by default. |
 | `--msaa 1\|2\|4\|8` | nothing | Selects the measured view's samples per pixel (`benchmark.py --msaa`, one job per value, the label of a count above 1 ending in `-msaa<N>`); 1 by default. `--anti-aliasing taa` or `--shading path-traced` with a count above 1 is rejected as an invalid argument. The banner prints `msaa=<N>`. A deferred count above 1 reports its classification pass as `gpu_msaa_edges_ms`, the last CSV column, beside `gpu_lighting_ms`. |
 | `--depth-prepass on\|off` | nothing | Selects the forward measured view's depth prepass (`benchmark.py --depth-prepass`); on by default, as in the view constructors. Deferred views always run it. |
-| `--depth-pruning on\|off` | nothing | `many_lights` only: sets `ClusterDesc.depth_pruning` on the measured clustered view ([depth pruning](many_lights.md#depth-pruning)); off by default. A forward run without a depth prepass, or with traced reflections, ignores it. A second banner line prints `depth_pruning=on\|off`. |
+| `--depth-pruning on\|off` | nothing | `many_lights` only: sets `ClusterDesc.depth_pruning` on the measured clustered view ([depth pruning](lights.md#depth-pruning)); off by default. A forward run without a depth prepass, or with traced reflections, ignores it. A second banner line prints `depth_pruning=on\|off`. |
 | `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Selects the measured view's AO: screen space at half or full resolution, or ray traced at half resolution with 4 rays (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
 | `--auto-exposure on\|off` | nothing | Turns automatic exposure on for the measured view (`benchmark.py --auto-exposure`); off by default. The CSV reports it as `gpu_exposure_ms`. |
 | `--reflections on\|off` | a ray-query adapter and a deferred or forward `--shading` | Ray-traced reflections on the measured view (`benchmark.py --reflections`); off by default. A path-traced view faults `UNSUPPORTED`. The CSV reports it as `gpu_rt_reflections_ms`. |
@@ -381,11 +381,11 @@ time-lapse gate expects `floor(sweep / period)` regenerations after its first fr
 the noon segment's first frame and `ascent_regenerations` none after the ascent segment's first; at the default 300 frames the ascent crosses the top of
 the atmosphere, so the crossing regenerates nothing. `--volumetric-fog` adds a froxel volume to the main and mirror views and the
 `FOG_SCATTERING` and `FOG_INTEGRATION` pass lines report it (0 without the switch), with `--fog-quality low|medium|high`
-choosing its grid and `--fog-temporal` adding its [temporal accumulation](sky.md#temporal-accumulation); `--local-lights N`, `--lamp-range METRES` and `--lamps-in-fog on|off` place and configure
+choosing its grid and `--fog-temporal` adding its [temporal accumulation](fog.md#temporal-accumulation); `--local-lights N`, `--lamp-range METRES` and `--lamps-in-fog on|off` place and configure
 [lamps](sky.md#example) that `FOG_SCATTERING` scatters; `--taa` turns on TAA, so
-`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl; `--clouds` adds a [cloud layer](sky.md#clouds) and the
+`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl; `--clouds` adds a [cloud layer](clouds.md) and the
 `CLOUDS` and `CLOUD_SHADOWS` pass lines report it (0 without the switch), with `--cloud-temporal` adding its
-[temporal accumulation](sky.md#cloud-temporal-accumulation). A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
+[temporal accumulation](clouds.md#cloud-temporal-accumulation). A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
 dense and the non-scattering atmospheres of [the sky example](sky.md#example); the header prints the value.
 
 ## Instancing benchmark

@@ -30,7 +30,7 @@ extras). Applications that use cloth compile with `--fp-math=strict`.
 
 With the `C3D_PHYSICS_SERIAL` feature, also select `c3d_serial` and call `physics::register_serial_codecs()` beside
 `physics::register_physics(scene)`. Without it the package has no serialization dependency
-([serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md#physics-adapter)).
+([serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#physics)).
 
 ## Quick start
 

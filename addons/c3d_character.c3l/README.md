@@ -138,7 +138,7 @@ the next `update`. Grounding and velocity are kept. Under `C3D_CHARACTER_NAV` it
 
 With `C3D_CHARACTER_SERIAL` and `C3D_PHYSICS_SERIAL`, call `character::register_serial_codecs()`. A `Character` saves its
 description and restores at the saved node pose; velocity, intent, contact and jump state restart. See
-[serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md#character-adapter).
+[serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#navigation-and-character).
 
 ## Targets
 

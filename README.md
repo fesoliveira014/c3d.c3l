@@ -165,8 +165,8 @@ capacity, including deliberate overflow with complete flat fallback:
 python3 scripts/build.py --example many_lights
 ```
 
-See [Many lights](docs/many_lights.md) for controls, buffer ownership, material
-exceptions and separate wall/CPU/GPU comparison measurements.
+See [Lights](docs/lights.md) for light selection, buffer ownership and material
+exceptions.
 
 `materials` combines masked foliage, ordinary premultiplied alpha blending, Toon
 lighting and Physical clearcoat/sheen/specular/anisotropy/transmission in one
@@ -211,7 +211,7 @@ python3 scripts/build.py --example taa
 
 `deferred` renders one scene forward on the left and deferred on the right, switches either
 half at runtime and shows the G-buffer channels through the targets panel; see the
-[shading path](docs/views.md#shading-path) section.
+[shading paths](docs/shading_paths.md) page.
 
 `shading_paths` renders one scene with many lights and two custom materials through every
 shading path and light selection pair in a 2x2 grid, with a per-view switch and a side-by-side
@@ -291,7 +291,7 @@ source ownership, preparation and current display limits. The
 [bundled HDRs](examples/assets/ibl/README.md) are CC0 and require no runtime download.
 
 `sky` draws a physical sky with its sun and exponential height fog over readers, transmission and a planar
-mirror, with a time-of-day slider and a scripted benchmark. See [Sky, atmosphere and height fog](docs/sky.md):
+mirror, with a time-of-day slider and a scripted benchmark. See [Sky and atmosphere](docs/sky.md), [fog](docs/fog.md) and [clouds](docs/clouds.md):
 
 ```bash
 python3 scripts/build.py --example sky

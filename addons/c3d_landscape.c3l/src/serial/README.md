@@ -1,17 +1,43 @@
 # Landscape serialization
 
-Select `c3d_landscape` and `c3d_serial`, enable `C3D_LANDSCAPE_SERIAL`, register the normal landscape stores/hooks, then call `landscape::register_serial_codecs()`. The plain landscape manifest has no serialization dependency. Registration creates no scene or asset state.
+Saves terrain, terrain tile sets, foliage and water as portable authoring under `C3D_LANDSCAPE_SERIAL`. The serialization model is in [Serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md). Component versions, restore phases and what older payloads read as are in the [versions table](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#versions-and-older-payloads).
 
-The portable component names are `terrain`, `terrain_set`, `terrain_tile`, `foliage` and `water`. `terrain` is version 4, which adds `trace` and `trace_level` after version 3 added `morph_band` and version 2 added `slope_projection` and `triplanar_sharpness`, `foliage` is version 3, which adds `trace_sway` after version 2 added `rules.slope_normal`, and `water` is version 5, which adds `wave_model`, `simulation`, `spectrum` and `ground` after version 4 added `mode` and `depth`, version 3 added `trace` and version 2 added `max_mirrors` and `reflection_view_slot`; the others are version 1. Version 1 terrain reads with `TOP`, the default sharpness, a zero band and tracing off, version 2 terrain with a zero band and tracing off, and version 3 terrain with tracing off, through explicit binary compatibility readers and listed JSONC defaults. Version 1 foliage reads in both encodings with `slope_normal` set to `FACE` and `trace_sway` off, and version 2 foliage with `trace_sway` off. Version 1 water reads in both encodings with one mirror slot, view texture slot 0 and tracing off, version 2 water with tracing off, version 3 water as a `BODY` of `DEFAULT_WATER_DEPTH`, and version 4 water as `GERSTNER` with the default `simulation` and `spectrum` and no `ground`. Their generated binary, JSONC and schema forms share the registered authoring descriptions and committed layout fingerprints. `TerrainDesc`, `TerrainTile` and `WaterDesc` are used directly; the set's authoring value holds its `texels`, `cell_size` and `height_scale` and never its neighbour table. Foliage's authoring value contains every `FoliageDesc` field, with `lod` represented as a zero-or-one-element `LodDesc` array. The descriptor, levels and parts are copied by attachment.
+## Enable and register
 
-Defaults come from the existing terrain, foliage and water descriptor constructors. Nested scatter and sway defaults come from the foliage constructor. A standalone `Wave` declares zero defaults; the water constructor still supplies its two calm waves. Shared LOD, transform and effect values use `serial::register_core_value_types()`.
+Select `c3d_landscape` and `c3d_serial`, enable `C3D_LANDSCAPE_SERIAL`, register the landscape stores and hooks, then call `landscape::register_serial_codecs()`. The plain landscape package has no serialization dependency. Registration creates no scene or asset state. Shared LOD, transform and effect values come from `serial::register_core_value_types()`.
 
-Read restores pending authoring. Terrain, `TerrainSet` and `TerrainTile` attach in VALUE phase, and foliage and water in OWNER phase so their ground already carries Terrain. A water `ground` follows the foliage rule: the node must carry Terrain in the same exported subtree. No generated geometry, material, batch, cell or mirror is created during read. Prepare terrain before foliage through the existing explicit preparation APIs; water prepares independently. Existing owner validation faults propagate unchanged.
+The portable components are `terrain`, `terrain_set`, `terrain_tile`, `foliage` and `water`.
 
-Export borrows authoring without changing it. Terrain and water generated same-node draw components are omitted, and so is a prepared water body's medium child node with its `MediumVolume`. A prepared terrain's trace grid, a child `Mesh` node found through `TerrainRuntime.trace_grid`, is checked and omitted. Foliage cell nodes and water mirror nodes are omitted only after their runtime ownership is verified. An external mirror, one per slot, is omitted when it belongs to the selected subtree; exporting only a mirror or foliage cell fails `INVALID_ARGUMENT`. Application-authored children or components on omitted generated nodes also fail instead of disappearing. Ordinary authored children on owner nodes remain in the graph.
+## What is saved
 
-`TerrainRuntime`, `FoliageRuntime`, `FoliageCellOwner`, `WaterRuntime` and `WaterMirror` are transient. The cell marker identifies its owner and table index; the runtime table remains authoritative. Both pending and prepared owners export the same authoring.
+- `terrain`, `terrain_tile` and `water` save `TerrainDesc`, `TerrainTile` and `WaterDesc` directly. A standalone `Wave` defaults to zeros; the water constructor supplies its two calm waves.
+- `terrain_set` saves `texels`, `cell_size` and `height_scale`, never the neighbour table.
+- `foliage` saves every `FoliageDesc` field. `lod` is a zero-or-one-element `LodDesc` array, and attachment copies the descriptor, levels and parts.
+- Defaults come from the terrain, foliage and water descriptor constructors.
 
-Run `c3c test landscape_serial_test --path addons/c3d_landscape.c3l`. The focused target checks both encodings, schema/layout pins, version 1, 2 and 3 terrain, version 1 and 2 foliage and version 1, 2, 3 and 4 water fixtures, the trace and ocean fields, the omitted trace grid, pending reads, deterministic export before and after preparation, copied LOD matrices, both foliage modes, keyed water geometry, external mirrors, generated-node rejection, capacity errors and rollback after a later authoring-copy failure.
+## What restarts
 
-`landscape_serial_policy_test` discovers all landscape component slots through normal registration and checks the five authoring and five transient policies. Registration is idempotent. The normal `landscape_test` target remains the feature-off check; `scripts/build.py --test` runs all three.
+A read restores pending authoring and creates no geometry, material, batch, cell or mirror. Neither `TerrainRuntime`, `FoliageRuntime`, `FoliageCellOwner`, `WaterRuntime` nor `WaterMirror` is saved. The set's neighbour links rebuild when the tiles prepare.
+
+## Order of read and preparation
+
+`terrain`, `terrain_set` and `terrain_tile` restore in `VALUE`; `foliage` and `water` restore in `OWNER`, so their ground already carries `Terrain`. A water `ground` must name a node that carries `Terrain` in the same exported subtree.
+
+Prepare terrain before foliage through the explicit prepare calls; water prepares independently. Owner validation faults propagate unchanged. See [owner readiness](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/owner_readiness.md).
+
+## Export
+
+Export borrows authoring and changes nothing. Pending and prepared owners write the same authoring.
+
+- It omits the generated draw components on a terrain or water node, a prepared water body's medium child node with its `MediumVolume`, and a prepared terrain's trace grid, which `TerrainRuntime.trace_grid` names.
+- It omits foliage cell nodes and water mirror nodes only after their runtime ownership checks out. An external mirror, one per slot, is omitted when it belongs to the selected subtree.
+- Exporting a mirror or a foliage cell on its own faults `INVALID_ARGUMENT`. So does an application-authored child or component on an omitted generated node. Ordinary authored children of owner nodes stay in the document.
+
+## Targets
+
+```bash
+c3c test landscape_serial_test --path addons/c3d_landscape.c3l
+c3c test landscape_serial_policy_test --path addons/c3d_landscape.c3l
+```
+
+`landscape_serial_test` runs the adapter with the feature on. `landscape_serial_policy_test` checks every landscape component slot for its policy. `landscape_test` is the feature-off check. `scripts/build.py --test` runs all three.

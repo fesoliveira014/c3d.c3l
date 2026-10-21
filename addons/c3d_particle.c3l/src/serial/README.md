@@ -1,15 +1,36 @@
 # Particle serialization
 
-Select `c3d_particle` and `c3d_serial`, enable `C3D_PARTICLE_SERIAL`, register particles normally, then call `particle::register_serial_codecs()`. The plain particle manifest retains no serialization dependency. Registration creates no scene or asset state.
+Saves particle systems as portable authoring under `C3D_PARTICLE_SERIAL`. The serialization model is in [Serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md). The component's version, restore phase and what older payloads read as are in the [versions table](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#versions-and-older-payloads).
 
-The portable component name is `particle_system`, version 9. One authoring description contains the complete `ParticleSystemDesc`, including `saturation`, `sub_emitters`, `sub_emitter_count`, `max_events`, `collision`, `flipbook`, `turbulence`, `trail`, `mesh_cast_shadow`, `mesh_trace` and `execution`, and the `emitting` flag. Version-1 payloads lack `saturation` and read `REFUSE`; version-1 and version-2 payloads lack the sub-emitter fields and read no sub-emitters; payloads before version 4 lack `collision` and read the response `NONE`; payloads before version 5 lack `flipbook` and read it disabled; payloads before version 6 lack `turbulence` and read it disabled; payloads before version 7 lack `trail` and read it disabled; payloads before version 8 lack `mesh_cast_shadow` and `mesh_trace` and read both false; payloads before version 9 lack `execution` and read `CPU`. Binary reads use an explicit layout reader per older version; text reads fill the missing fields from the defaults. The collision cast and its context are runtime state, not part of the description; a loaded system needs `ParticleSystem.set_collision` again.
+## Enable and register
 
-A sub-emitter `target` is an entity reference, encoded as a record index like the ground reference of foliage. A target outside the exported subtree fails `INVALID_ARGUMENT` on export. Entries past `sub_emitter_count` are written as empty, so a stale entity in an unused entry does not block export. Binary, JSONC and schema use that description and committed layout fingerprints. Descriptor defaults come from `default_particle_system_desc()`, emitting defaults to true, lifetime tables default to unit multipliers, and the generic `ParticleRange` declares zero defaults. Shared values use `serial::register_core_value_types()`.
+Select `c3d_particle` and `c3d_serial`, enable `C3D_PARTICLE_SERIAL`, register particles normally, then call `particle::register_serial_codecs()`. The plain particle package has no serialization dependency. Registration creates no scene or asset state, and installs the value descriptions it needs idempotently. Shared values come from `serial::register_core_value_types()`.
 
-Read copies the descriptor into a pending system through `Scene.attach_particle_system`, then restores the emitting flag. Capacity, seed, references, shape, numeric ranges and every lifetime-table entry are preserved. Live particles, stored trail points, queued bursts, queued events, dropped, evicted, dropped-event, skipped-event and collision-skip counts, spawn indices, fractional emission, turbulence time and PRNG progress restart. No draw child, simulation pool or asset is created during read. Use `particle::prepare` or `prepare_subtree` before ordinary updates; updates skip pending systems.
+The portable component is `particle_system`.
 
-Export borrows authoring without changing it. It verifies the owned draw child, and the trail child when trails are on, and excludes only their billboard/mesh or ribbon batch and runtime marker. Exporting the draw child or trail child by itself fails `INVALID_ARGUMENT`. Application-authored children or components on that generated node also fail rather than being omitted. Ordinary authored children under the emitter remain portable. `ParticleDrawOwner` is transient.
+## What is saved
 
-Run `c3c test particle_serial_test --path addons/c3d_particle.c3l`. The focused target checks both encodings, schema/layout pins, version-1 to version-7 fixtures, collision, flipbook, turbulence, trail and mesh flag round trip, sub-emitter target round trip and rejection, pending and prepared deterministic export, mesh and stretched-billboard modes, emitting=false, update after preparation, generated-node rejection, reader allocation/capacity faults and preparation retry.
+One description holds the complete `ParticleSystemDesc` and the `emitting` flag. Binary, JSONC and the schema use it. Defaults come from `default_particle_system_desc()`; `emitting` defaults to true, lifetime tables default to unit multipliers and `ParticleRange` defaults to zeros.
 
-`particle_serial_policy_test` discovers all registered particle component slots and checks their explicit authored or transient policies. Registration installs prerequisite value descriptions idempotently. The normal `particle_test` target remains the feature-off check; `scripts/build.py --test` runs all three.
+Capacity, seed, references, shape, numeric ranges and every lifetime-table entry are preserved. A sub-emitter `target` is an entity reference, encoded as a record index like the ground reference of foliage. A target outside the exported subtree faults `INVALID_ARGUMENT` on export. Entries past `sub_emitter_count` are written empty, so a stale entity in an unused entry does not block export.
+
+## What restarts
+
+Live particles, trail points, queued bursts and events, the drop, eviction, event-drop, event-skip and collision-skip counters, spawn indices, fractional emission, turbulence time and the random state restart. The collision cast and its context are runtime state; a loaded system needs `ParticleSystem.set_collision` again. No draw child, simulation pool or asset is created during a read.
+
+## Preparation after a read
+
+A read copies the descriptor into a pending system through `Scene.attach_particle_system`, then restores the emitting flag. Call `particle::prepare` or `prepare_subtree` before ordinary updates; updates skip pending systems. See [owner readiness](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/owner_readiness.md).
+
+## Export
+
+Export borrows authoring and changes nothing. It verifies the owned draw child, and the trail child when trails are on, and omits only their billboard, mesh or ribbon batch and runtime marker. `ParticleDrawOwner` is transient. Exporting a draw or trail child on its own faults `INVALID_ARGUMENT`, as does an application-authored child or component on a generated node. Ordinary authored children under the emitter stay in the document.
+
+## Targets
+
+```bash
+c3c test particle_serial_test --path addons/c3d_particle.c3l
+c3c test particle_serial_policy_test --path addons/c3d_particle.c3l
+```
+
+`particle_serial_test` runs the adapter with the feature on. `particle_serial_policy_test` checks every particle component slot for its policy. `particle_test` is the feature-off check. `scripts/build.py --test` runs all three.

@@ -84,7 +84,7 @@ surfaces, which more rays reduce.
   scene nothing prepared, shades without its sheen lobe on the frame that first resolves it.
 - **Fog.** A hit takes the view's height fog and, behind it, the scene's atmosphere over the path from the
   reflecting surface to the hit, and a miss takes the height fog to infinity; the camera's own fog pass fogs the
-  rest ([fog at hits](sky.md#where-fog-applies)).
+  rest ([fog at hits](fog.md#where-fog-applies)).
 - **Back face.** A reflection ray passes the back of a single-sided surface, as raster culls it,
   and reflects what lies behind; double-sided materials shade both sides
   ([facing](scene_trace.md#facing)).
@@ -189,7 +189,7 @@ and the specular-weight input. `reflections` forces the depth prepass on whateve
 The pass packs its own light list each frame, apart from the view's. It holds every light eligible for
 the camera's `layers`, so a finite light outside the camera frustum still lights a reflected surface.
 Lights keep the view's budget order and stop at `RendererDesc.max_lights`. The list lives in the frame's
-upload ring, together with its own [spatial lookup](many_lights.md#spatial-light-lookup).
+upload ring, together with its own [spatial lookup](lights.md#spatial-light-lookup).
 The lookup uses the hit position and preserves the list's original indices and complete
 finite/global membership.
 

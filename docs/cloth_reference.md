@@ -165,4 +165,4 @@ report unvisited work as checked.
 ## See also
 
 - [Cloth](cloth.md), [physics](physics.md)
-- [Serialization](serialization.md#cloth-adapter) for stored fields and payload versions
+- [Serialization](serialization_reference.md#physics) for stored fields and payload versions

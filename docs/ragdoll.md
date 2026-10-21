@@ -174,7 +174,7 @@ inspector](physics_inspector.md) shows the same status for any ragdoll.
 
 With `C3D_PHYSICS_SERIAL` a `Ragdoll` saves its authoring: bone mappings, modes, weights, drives and node placements.
 Recovery state, captured sources and native identities are transient, so a restored ragdoll starts with no recovery
-and zero bone velocities. See [serialization](serialization.md#ragdoll-adapter).
+and zero bone velocities. See [serialization](serialization_reference.md#physics).
 
 ## Limits
 

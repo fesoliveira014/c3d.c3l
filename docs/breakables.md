@@ -289,7 +289,7 @@ exposes independent encoded images, source indices, sampler values and extension
 
 With `C3D_PHYSICS_SERIAL` a `Breakable` saves its recipe and restores pending, without a world or native objects;
 `prepare_breakable` creates the runtime afterward. Native ids, damage, measured reactions and velocities are not saved.
-See [serialization](serialization.md#breakable-adapter).
+See [serialization](serialization_reference.md#physics).
 
 ## Limits
 

@@ -146,7 +146,7 @@ triangle, and map render vertices that share a particle to identical rest positi
 
 `Mesh.trace` is the application's choice. A traced cloth takes a vertex-motion posed slot: each simulation revision
 copies positions and normals into the slot and refits the trace data, while the top level still rebuilds every revision.
-See [scene trace](scene_trace.md).
+See [vertex-motion slots](scene_trace_reference.md#vertex-motion-slots).
 
 ## Collide with bodies
 
@@ -443,7 +443,7 @@ height and is not shifted. The full order is in [origin rebasing](origin_rebasin
 With `C3D_PHYSICS_SERIAL`, `Cloth` and `CrowdCloth` save their authoring (settings, pins, seams, collider references,
 attachments, cuts and the rest) and restore pending, then awake. Runtime contacts, diagnostics, native identities,
 velocities, buffers, cut state, histories, rest and hold state are not saved. Stored fields, payload versions and
-compatibility are in [serialization](serialization.md#cloth-adapter).
+compatibility are in [serialization](serialization_reference.md#physics).
 
 ## Example
 
@@ -481,4 +481,4 @@ The panel shows the solver and upload statistics. An unknown or malformed flag p
 
 - [Cloth reference](cloth_reference.md)
 - [Physics](physics.md), [ragdolls](ragdoll.md), [owner readiness](owner_readiness.md), [large worlds](large_world.md)
-- [Serialization](serialization.md#cloth-adapter), [scene trace](scene_trace.md), [post](post.md#edited-vertices)
+- [Serialization](serialization_reference.md#physics), [scene trace](scene_trace.md), [post](post.md#edited-vertices)

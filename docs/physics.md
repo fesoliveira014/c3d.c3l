@@ -338,7 +338,7 @@ With `C3D_PHYSICS_SERIAL`, `physics::register_serial_codecs()` installs the code
 `Wind`, `Force`, `Buoyancy`, `Ragdoll`, `Breakable`, `Cloth`, `CrowdCloth` and `HeightFieldWindows`. Restored bodies
 are `PENDING`; the world builds them on its next update. `RigidBody`, `Joint`, `ClothOutput` and
 `HeightFieldWindowOwner` are transient. Payload versions and coverage are in
-[serialization](serialization.md#physics-adapter).
+[serialization](serialization_reference.md#physics).
 
 ## Examples
 
