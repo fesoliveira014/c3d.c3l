@@ -119,8 +119,8 @@ require HEIGHT sway or a zero amplitude ([impostors](impostors.md)).
 
 Selection uses the projected diameter of the [size sphere](#size-sphere) divided by the viewport height, multiplied by
 `exp2(ViewDesc.lod_bias)`. The bias defaults to zero, and a positive bias adds detail. A non-finite bias is
-`INVALID_ARGUMENT`. Perspective uses the Euclidean camera-to-center distance. Orthographic size is independent of
-distance.
+`INVALID_ARGUMENT`. Resolution and render scale do not change the normalized size. Perspective uses the Euclidean
+camera-to-center distance. Orthographic size is independent of distance.
 
 - **Fresh selection** takes the first level whose minimum is no greater than the size.
 - **With history**, selection coarsens below the current level's threshold and refines only above the finer threshold
@@ -128,7 +128,7 @@ distance.
 - **Extremes.** Zero size selects the last level and infinite size selects level zero. There is no final-size cull.
 - **Bounds.** Bounds enclose every level and refresh on geometry revisions. An override covers one logical object before
   placement. Placements form an aggregate bound that the owner transform and the world-space sway reach expand. Custom
-  vertex stages require an override.
+  vertex stages require an override and the common part and instance helpers.
 - **History.** Each view keeps its own history per group incarnation and logical slot. Movement and reflection keep it.
   Replacement, regrowth, identity reuse and an incompatible bounds change select fresh. Pending values publish only
   after submission.
@@ -169,8 +169,8 @@ visibility tests, and its shadows reuse those selections, including offscreen ca
   blended parts all join the [weighted pass](materials.md#weighted-transparency) takes no sorted list and no sort keys.
 - **Motion vectors.** Fresh and incompatible LOD pixels write 1 into velocity alpha, and stable compatible pixels write
   0. Velocity xy and previous depth z keep their meaning. TAA, screen-space GI, temporal ambient occlusion and the
-  reflection history reject the flagged pixels without discarding view history. Custom stages that use
-  `write_mesh_outputs` inherit the part and velocity contracts.
+reflection history reject the flagged pixels without discarding view history. Custom stages that use
+`write_mesh_outputs` inherit the part and velocity contracts.
 - **Fallback.** A group whose lists do not fit the cull arena uses level zero in every pass. The fallback may draw
   unculled and unsorted, drops temporal correspondence and selects fresh once classification resumes. Other groups may
   still fit. GPU allocation failures remain faults.
@@ -182,12 +182,13 @@ visibility tests, and its shadows reuse those selections, including offscreen ca
 - Each group and view also reserves two 80-byte history records per instance of capacity.
 - The cull arena reserves, for the main view and `max_shadow_layers` passes, 32 bytes per part and parity command plus
   an aligned 4-byte index per placement and level, and sort keys for a main bin with blended parts. The reservation is
-  conservative and can exceed the actual use.
+  conservative and can exceed the actual use. The previous matrices are written by the classification pass, with no
+  per-view upload. The CPU history array is indexed by entity slot, so it scales with the scene's node capacity.
 
 ## Animated models and crowds
 
-`model::attach_animated_lod` attaches alternatives to a model instance or an animated crowd. See
-[animated LOD](lod_animated.md).
+`model::attach_animated_lod` attaches alternatives to a model instance or an animated crowd. See [animated
+LOD](lod_animated.md).
 
 ## Static impostors
 
@@ -245,8 +246,9 @@ python3 scripts/build.py --example lod
 ```
 
 The `lod` example draws 5,000 placements with three mesh levels and a terminal impostor. Buttons select the near, middle
-and far waypoints. The bias and forced-base controls compare detail. `--frames 30` bounds a windowed smoke run.
-`--benchmark` joins CPU, GPU and LOD counters by submission frame with native validation on.
+and far waypoints. The bias and forced-base controls compare detail. `--frames 30` bounds a windowed smoke run. The
+example selects the profiler add-on explicitly. `--benchmark` joins CPU, GPU and LOD counters by submission frame with
+native validation on.
 
 The manual GPU acceptance cases live in `test/gpu/render`:
 `c3c test acceptance --path test/gpu/render --test-filter test_lod_`.

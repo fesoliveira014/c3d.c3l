@@ -33,13 +33,17 @@ scene.mark_instances_dirty(trio);
 
 `add_instanced_mesh` allocates `transforms` and `colors` once, at `capacity`, from the scene allocator, and copies the
 slices in. Instances live in `[0, count)`. Colors past the given slice start white. Removing the node frees both arrays
-and never the assets.
+and never the assets. `add_instanced_mesh` requires a `capacity` above zero. It faults `CAPACITY_EXCEEDED` when
+`transforms` is longer than `capacity`, and `INVALID_ARGUMENT` for more colors than transforms, for `transforms` on a
+device batch or for `mirror` on a host batch.
 
 ## Concepts
 
 - **Node-relative records.** An instance's model matrix is `node.world * transforms[i].to_mat4()`. The renderer stores
   `transforms[i].to_mat4()` and composes the node's world on the GPU. A moved node, a moved ancestor and a change of the
   [frame origin](large_world.md) upload no record.
+- **Library-owned fields.** `InstancedMesh.aggregate`, `ranges` and `revision` belong to the library. Applications do
+  not write them.
 - **Index is position.** The instance index is the array position, not a generational identity. It moves when the
   application reorders or resizes.
 - **Sources.** `InstancedMesh.source` is `TRANSFORMS` (the default; the arrays above) or `DEVICE` (records that compute
@@ -78,8 +82,9 @@ The batch keeps its last `INSTANCE_RANGE_MARKS` (4) range marks. A renderer slot
 for that frame instead of the span when:
 
 - more than `INSTANCE_RANGE_MARKS` marks have accumulated since its last upload;
-- it holds a mirrored record or the span contains a mirrored instance, because mirrored records pack after the others
-  and a parity change moves every record after it;
+- an upload slot holds a mirrored record or the span contains a mirrored instance, because mirrored records pack after
+  the others and a parity change moves every record after it (a view's motion history falls back when any instance of
+  the batch mirrors);
 - the live count changed since its last upload, or the capacity grew;
 - it has no uploaded revision: the batch is new, its records were released, or the frame that uploaded it was aborted.
 
@@ -154,7 +159,8 @@ includes](custom_shaders.md#public-includes)): an affine model, a color and a se
 space. Records draw as one range, so a negative scale draws with the wrong winding. Motion vectors follow the node
 alone, because a device batch keeps no per-instance history.
 
-A device instance batch supports no quadtree (`set_instance_quadtree` faults `UNSUPPORTED`), no `LodGroup` and no crowd.
+A device instance batch culls in the view, its depth prepass and every shadow layer, so `cast_shadow` holds with no CPU
+count. It supports no quadtree (`set_instance_quadtree` faults `UNSUPPORTED`), no `LodGroup` and no crowd.
 
 ### Host mirror
 
@@ -181,18 +187,20 @@ device batch is not traced.
   fade](#sway-and-distance-fade). Skinning and morph targets are not applied; [crowds](crowds.md) are the animated path.
 - **Motion vectors.** Each instance moves by its own previous matrix, kept per view while the batch's live count stays
   the same. After a count change the batch node's motion applies for one rendering. A batch at rest, or one whose node
-  moves without an edit, draws through the node's motion with no per-instance work and no upload. An edit uploads 48
-  bytes of history per edited instance. A batch marked whole every frame pays for the whole batch every frame, so mark a
-  large batch by range or edit it rarely.
+  moves without an edit, draws through the node's motion with no per-instance work and no upload. At rest its velocity
+  is exactly zero when its sway is off, or has frequency 0 and unchanged parameters. An edit uploads 48 bytes of history
+  per edited instance. A batch marked whole every frame pays for the whole batch every frame, so mark a large batch by
+  range or edit it rarely.
 
 ### Uploads and residency
 
 The renderer keeps each batch's records in GPU memory, 128 bytes per instance of capacity, shared by every view and
 shadow layer. It uploads them when the batch's revision changes or its capacity grows. A batch at rest, or under a
 moving node, uploads nothing. After a range mark it uploads the marked span in one copy, except in the cases listed
-under [Mark a range](#mark-a-range). `Stats.uploads` counts the uploads and `Stats.upload_bytes` the bytes staged.
-`Stats.instances` and `Stats.triangles` count the instances and triangles of unlisted ranges across passes. Listed
-ranges, culled or blended, report through the counters in [Reference](#reference).
+under [Mark a range](#mark-a-range). `Stats.uploads` counts the uploads and `Stats.upload_bytes` the bytes staged: 128
+per instance of the span, or of the batch for a whole upload. `Stats.instances` and `Stats.triangles` count the
+instances and triangles of unlisted ranges across passes. Listed ranges, culled or blended, report through the counters
+in [Reference](#reference).
 
 `RendererDesc.max_instance_batches` (default 1024) bounds the batch nodes holding records: live ones plus those
 unresolved within the last `INSTANCE_ABSENCE_FRAMES` frames. Past it, `render_view` faults `CAPACITY_EXCEEDED`. A batch
@@ -204,9 +212,12 @@ while a shadow-casting light is on, unless it lies wholly past its fade band.
 
 `ViewDesc.instance_culling`, on in `default_view_desc` and `texture_view_desc`, culls every instance of a batch against
 the frustum on the GPU before it is drawn. The view's shadow layers and depth prepass follow the flag of the view that
-renders them. Culling is frustum only: no occlusion, no level of detail. GPU work grows with the instances tested, and
-CPU recording with the listed ranges times the culling passes. A batch at rest in views that do not trace costs the CPU
-nothing per instance.
+renders them. Culling is frustum only: no occlusion, no level of detail. A range of any instance count culls in one
+dispatch, so no dispatch-size limit bounds a batch below its capacity. GPU work grows with the instances tested. CPU
+recording grows with the listed ranges times the culling passes: one dispatch per range per pass and one barrier per
+pass, so 300 batches of one range each in six passes record about 1,800 dispatches. A batch at rest in views that do not
+trace costs the CPU nothing per instance. A batch with `trace` set in a view that traces, a batch marked every frame,
+and picking still walk every instance.
 
 - **Passes.** Each culling pass runs one compute dispatch per listed range: the view, its depth prepass and all of its
   shadow layers. The other passes read the ranges and dispatch nothing. `Pass.INSTANCE_CULL` times the dispatches and
@@ -221,7 +232,8 @@ nothing per instance.
   instanced vertex stage that reads per-instance data itself must do the same ([Vertex
   contract](custom_shaders.md#vertex-contract)).
 - **Memory.** Each frame slot owns one device-local arena of `RendererDesc.instance_cull_bytes` (default
-  `INSTANCE_CULL_ARENA_BYTES`, 16 MiB), reserved once the first range is listed. A culling pass places one 32-byte
+  `INSTANCE_CULL_ARENA_BYTES`, 16 MiB), so culling reserves `FRAMES_IN_FLIGHT * instance_cull_bytes` of device memory
+  once the first range is listed, which a blended batch does with culling off too. A culling pass places one 32-byte
   indirect command per listed range, then each range's visible list of 4 bytes per instance, and for a blended range its
   sort keys. A range that does not fit is drawn unculled and counted in `Stats.cull_overflows` (`Stats.sort_overflows`
   for a blended range). Nothing faults.
@@ -241,14 +253,16 @@ rewrites the visible list far to near. Equal depths keep storage order, which ho
 - **Order across draws.** Each parity range sorts on its own, the unmirrored range first. The batch orders as one unit
   among other blended draws by its bound center ([Materials](materials.md)). The key point ignores sway and custom
   vertex displacement.
-- **Cost.** The sort plan is sized by the range's instance count, and each step is one dispatch. The step count grows
-  with the square of the logarithm of the count. A sorted range of `n` instances takes `32 + align8(4n) + 8 * pow2(n)`
-  bytes of the cull arena per view and frame slot, where `pow2` rounds up to a power of two.
+- **Cost.** The sort plan is sized by the range's instance count, not its visible count. Each step is one dispatch, and
+  the view's sorted ranges step together with one barrier per step round. The step count grows with the square of the
+  logarithm of the count. A sorted range of `n` instances takes `32 + align8(4n) + 8 * pow2(n)` bytes of the cull arena
+  per view and frame slot, where `pow2` rounds up to a power of two.
 - **Overflow.** A range above `MAX_SORTED_INSTANCES`, or whose list and keys do not fit the arena, draws unsorted and
   unculled from CPU arguments and counts in `Stats.sort_overflows`.
 - **Weighted views.** In a view with `transparency = WEIGHTED`, a batch whose material joins the [weighted
   pass](materials.md#weighted-transparency) does not sort. Its ranges list and cull like an opaque batch's and have no
-  instance limit. A batch with an `ADDITIVE` material keeps the sort in every view.
+  instance limit. A batch with an `ADDITIVE` material keeps the sort in every view. The sorted order applies again when
+  the view switches back to `SORTED`.
 ## Sway and distance fade
 
 ```c3
@@ -312,9 +326,9 @@ is the application's value, copied into its batches. Extraction checks the contr
 
 Picking's per-instance tests, CPU triangle trees and the scene trace see the rest pose and every instance. A swaying
 batch traces at its rest pose and casts a still traced shadow unless `trace_sway` is set; `trace = false` keeps the
-batch out ([scene trace](scene_trace.md#what-traces)). Normals and tangents are not bent. Amplitude neither varies per
-instance nor scales with it. There is no fade for plain meshes, no per-view opt-out, no dithered or alpha fade, and no
-weight from `Geometry.custom_data`.
+batch out ([scene trace](scene_trace.md#what-traces)); the error is bounded by the sway reach. Picking's broad phase
+uses the grown bound. Normals and tangents are not bent. Amplitude neither varies per instance nor scales with it. There
+is no fade for plain meshes, no per-view opt-out, no dithered or alpha fade, and no weight from `Geometry.custom_data`.
 
 ## Custom vertex stages
 
@@ -330,8 +344,8 @@ built-in instanced variant and sees the undisplaced instances. Fragment-only cus
 
 ## Quadtree selection
 
-An `InstancedMesh` whose instances are the nodes of a quadtree selects, per view, which nodes draw. Terrain and water use
-it. See [instance quadtrees](instancing_quadtree.md).
+An `InstancedMesh` whose instances are the nodes of a quadtree selects, per view, which nodes draw. Terrain and water
+use it. See [instance quadtrees](instancing_quadtree.md).
 
 ## Crowds
 

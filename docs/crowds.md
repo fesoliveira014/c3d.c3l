@@ -95,7 +95,7 @@ unchanged.
   atomically, and updates allocate nothing.
 - **Root motion.** A crowd publishes each instance's delta in `crowd.playback.slots[index].root_motion`. Call
   `scene.apply_crowd_root_motion(crowd)` once after an update to consume each live delta. Movement stays
-  application-controlled.
+  application-controlled. Root mode, yaw and the offset-turn pivot match `Animator`.
 - **Events.** One crowd-wide buffer, `crowd.playback.events`, holds `event_count` entries. Each entry names the instance
   (slot and generation) and the fired event. The order is source slot, action order, then crossing order. A zero
   `event_capacity` drops every event. A smaller buffer keeps the fitting prefix. `events_dropped` saturates, and both
@@ -109,12 +109,15 @@ unchanged.
 - **Batch marks.** `crowd_update` marks every part batch whose records can change. Rigid and morph-only part records
   upload every frame (128 bytes per instance per part) because they follow the pose. A skinned part's records hold the
   placement and color alone, so `crowd_update` marks only the changed span with `mark_instances_range_dirty`, or nothing
-  when no placement or color changed. A change of the live count marks every part whole.
+  when no placement or color changed. A change of the live count marks every part whole. The view's per-instance
+  transform history of a crowd part is rewritten whole every frame.
 - **Resident pose.** The renderer keeps each crowd's palettes and morph blocks in its own GPU memory, in logical source
   order, and every part, view, shadow layer, animated LOD part and trace pose reads them. `publish_crowd_pose` (so
   `crowd_update`) advances `AnimatedCrowd.pose_revisions[i]` when instance `i`'s palette or morph weights differ
-  bytewise from its last publish. A frame uploads only the instances whose revision changed, so a paused, frozen or
-  culled instance uploads nothing. `Stats.upload_bytes` counts the staged bytes.
+  bytewise from its last publish. A frame uploads only the instances whose revision differs from the one last staged
+  into the buffer it writes, so a paused, frozen or culled instance uploads nothing. The two buffers swap after a
+  submitted frame, so a changed instance uploads once into each. An aborted frame stages its rows again.
+  `Stats.upload_bytes` counts the staged bytes.
 - **Resident limit.** `RendererDesc.max_resident_crowds` (default 64, `DEFAULT_MAX_RESIDENT_CROWDS`) bounds the crowds
   holding buffers. Past it `render_view` faults `CAPACITY_EXCEEDED`. A crowd that no view, shadow layer or trace draws
   for more than `INSTANCE_ABSENCE_FRAMES` frames releases its buffers.
@@ -153,7 +156,7 @@ any other. The default is untraced. Raster shadows and temporal views work eithe
 | Two-dimensional blend rows | Reserved for every capacity slot, even with no active group ([prepared storage](animation.md#prepared-storage)). |
 | Owner scratch | Copied model baselines and one pose scratch block. Each concurrent `sample_range` caller adds one from `create_crowd_pose_scratch`. Event output and crossing scratch cost `event_capacity * (CrowdEvent::size + EventBookmark::size)`. |
 | Placements, tints, seeds, parts, palettes | Separate arrays; the palettes take `capacity * joints * Mat4::size`. |
-| Cursors, additive references, masks | Allocated at play, sized by the clip. A captured weighted mask adds `N * float::size` per masked action. |
+| Cursors, additive references, masks | Allocated at play, sized by the clip. A captured weighted mask adds `N * float::size` per masked action. Retarget clips at load time. |
 | Part records | 128 bytes per instance of capacity per part, on the device ([instancing](instancing.md#uploads-and-residency)). |
 | Resident pose | `2 * capacity * (joints * 64 + morph_parts * 80)` bytes of device memory, where `morph_parts` counts the crowd parts and animated LOD parts that draw with morph weights. |
 | Compute skinning | `capacity * vertex_count * 52` bytes per posed part; see [caps and cost](animation.md#compute-skinning). |

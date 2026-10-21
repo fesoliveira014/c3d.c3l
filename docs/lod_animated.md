@@ -138,6 +138,9 @@ placements and colors.
 
 ### Costs
 
+- Animated binding metadata adds copied part records, channel maps and defaults, and one ordered joint list per group.
+
+
 - An ordinary group retains `joints * 64` bytes of palette and 4 bytes per logical morph weight for history.
 - Temporal views additionally retain `capacity * rigid_meshes * 64` bytes of rigid affines per owner, independent of the
   level count.
