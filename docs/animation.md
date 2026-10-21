@@ -901,7 +901,7 @@ turns them into deformed draws:
   rest bound, and a skinned geometry drawn without a live binding draws
   unskinned.
 
-Explicit [animated LOD groups](lod.md#animated-models-and-crowds) consume the same
+Explicit [animated LOD groups](lod_animated.md) consume the same
 evaluated source pose and complete logical morph weights. Attach copied
 alternatives to a `ModelInstance` or `AnimatedCrowd` owner with
 `model::attach_animated_lod`; selection never replaces playback or changes the
@@ -911,7 +911,7 @@ weights/defaults. The renderer uses one model-space palette
 per owner/source across its parts, selected levels, views and shadows, rather
 than the ordinary mesh-local palette above. A crowd's palettes and morph blocks
 stay resident on the GPU, and a frame uploads only the instances whose pose
-revision advanced ([crowds](instancing.md#crowds)). Animated rigid/morph-only
+revision advanced ([crowds](crowds.md#rendering)). Animated rigid/morph-only
 parts use their sampled mesh affine. Complete animation and world updates before
 the frame's view/shadow/velocity/trace preparation.
 
@@ -921,11 +921,11 @@ hysteresis. Each view retains compatible submitted deformation independently;
 incompatible representations use current-pose fallback and temporal rejection.
 Picking and opt-in posed tracing retain level-zero logical source/part identity.
 Creation, lifetime, bind/channel admission and replacement rules are in
-[Whole-object LOD](lod.md#animated-models-and-crowds).
+[Animated LOD](lod_animated.md).
 
 Generic skinned `InstancedMesh` bindings are not part of this.
 Animated crowds provide the supported shared-pose instanced path
-([crowds](instancing.md#crowds)). Traced effects see the raster
+([crowds](crowds.md#rendering)). Traced effects see the raster
 pose of a skinned or morphed mesh through a posing pass ([scene trace](scene_trace.md#posed-instances)); the
 velocity pass reads the view's previous palettes, and a crowd's previous resident buffers. A view that skipped a
 submitted frame has none: a crowd part binds the current buffers and gets no deformation motion for that frame,

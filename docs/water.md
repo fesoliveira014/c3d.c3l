@@ -644,7 +644,7 @@ five can pass the envelope. `Mesh.local_bounds` are what culling and shadows rea
 ## Ocean
 
 `WaterDesc.mode = OCEAN` draws a sea that reaches the horizon. The body is an `InstancedMesh` quadtree under
-[box ranges](instancing.md#box-ranges), like the [terrain](terrain.md) of the same package: every node is an instance
+[box ranges](instancing_quadtree.md#box-ranges), like the [terrain](terrain.md) of the same package: every node is an instance
 of one shared unit chunk of `OCEAN_CHUNK_CELLS` (64) cells per side, and each view selects the nodes it draws. The
 node's local XZ plane is the rest plane, as for a body, and mirrors, the clip plane, `surface_view`, the queries and
 `fluid_sample` work on it as before.
@@ -675,13 +675,13 @@ scene.update_world();
   hold what it covers, and queries outside answer `NOT_FOUND`. At the default 1.25 m cell a chunk is 80 m: 128 chunks
   cover 10 km and 256 cover 20 km. A 10 km sea has eight levels and 21,845 nodes. The largest tree has nine levels and
   87,381 nodes: 4.9 MiB of instance records on the CPU, 11 MiB on the device, 1.4 MB of selection state shared by the
-  views and 0.7 MB more for each ([instancing](instancing.md#quadtree-selection)).
+  views and 0.7 MB more for each ([quadtree cost](instancing_quadtree.md#passes-history-and-cost)).
 - **Chunk size.** The box ranges of a level grow with its chunk's diagonal, so large chunks draw their finest cells far
   past the distance where a cell is a pixel. A chunk of 64 cells keeps that reach short. The price is four times the
   nodes for an extent that 128-cell chunks would cover, and half the extent at the cap for a cell size.
 - **Per-view levels.** The split threshold is 512 px, the hysteresis 0.25 and the morph band 0.25, constants of the
   package (the terrain's defaults). An application tunes the threshold in place on the node's
-  `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing.md#quadtree-selection)); it survives `set_desc`.
+  `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing_quadtree.md#create-and-tune-a-tree)); it survives `set_desc`.
   Each view selects its own levels. Adjacent chunks differ by at most one level. The body casts no shadow.
 - **Morph.** A vertex at an odd lattice position moves toward the mean of its two parent-lattice neighbours' points
   over the last quarter of its level's range: the full displaced position, the normal and the crest factor, not a

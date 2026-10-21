@@ -75,7 +75,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
 | `msaa` | `MsaaSamples`: samples per pixel of the opaque scene passes, `ONE`, `TWO`, `FOUR` or `EIGHT` (see [Multisample anti-aliasing](#multisample-anti-aliasing)); `ONE`, the zero value and the value of both constructors, is off |
 
-An installed [static impostor](lod.md#static-impostors) participates in the same
+An installed [static impostor](impostors.md) participates in the same
 per-view LOD selection and hysteresis. Forward and deferred views share its
 reconstructed surface depth. Shadow passes retain the main choice and select
 atlas directions from the light. LOD or direction-triplet changes reject the
@@ -359,7 +359,7 @@ provides nothing for it reads it as absent, and the stage's own fallback runs.
 
 ## Selection camera
 
-`FrameRoot.selection_camera` holds the camera that selected the pass's [quadtree](instancing.md#quadtree-selection) levels: `xyz` is its position relative to the frame origin and `w` its pixel scale, `working_height / (2 tan(fov_y / 2))` for a perspective camera and `working_height / ortho_height` for an orthographic one. The working height includes `render_scale`. `FrameRoot.previous_selection_camera` is the same camera one rendering earlier. A vertex stage that morphs a quadtree batch reads both, so the surface it draws agrees with the selection, and with the previous rendering's surface for motion vectors.
+`FrameRoot.selection_camera` holds the camera that selected the pass's [quadtree](instancing_quadtree.md) levels: `xyz` is its position relative to the frame origin and `w` its pixel scale, `working_height / (2 tan(fov_y / 2))` for a perspective camera and `working_height / ortho_height` for an orthographic one. The working height includes `render_scale`. `FrameRoot.previous_selection_camera` is the same camera one rendering earlier. A vertex stage that morphs a quadtree batch reads both, so the surface it draws agrees with the selection, and with the previous rendering's surface for motion vectors.
 
 `FRAME_SELECTION_ORTHOGRAPHIC` (bit 11 of `FrameRoot.flags`, 2048) is set when the selecting camera is orthographic, which selects by size and gives no morph. It describes the selecting camera, not the root's own `proj`: a shadow layer's `proj` is the light's, orthographic for every directional cascade. `quadtree_selection_orthographic(frame)` in `quadtree_morph.glsl` reads it. It is clear in a probe update.
 

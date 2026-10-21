@@ -5,7 +5,7 @@ seen from afar. Each strip is a run of segments, and every segment is a quad who
 Ribbons use the transparent material, sorting and view pipeline of [billboard batches](billboards.md). The renderer never
 advances the application data that populates them.
 
-## Create and update a batch
+## Quick start
 
 Given a live scene and a blended material ID, with `c3d::scene` imported:
 
@@ -32,22 +32,23 @@ replacement prefix; `resize_ribbons` changes its length and initializes newly ex
 (unit width, white, at the origin). Neither grows capacity. Invalid data returns `INVALID_ARGUMENT`; exceeding capacity
 returns `CAPACITY_EXCEEDED`. Faults leave existing points unchanged.
 
-A `RibbonPoint` holds a `position`, a `width`, a straight linear RGBA `color`, a texture coordinate `v` and `flags`.
-Points require finite values, a nonnegative `width` and no flag bit other than `RIBBON_BREAK`. Direct edits to points,
-count or material require `mark_ribbons_dirty`; the count must stay within capacity. The aggregate cache is
-library-owned. Component pointers are short-lived ECS borrows.
+| `RibbonPoint` field | Meaning |
+| --- | --- |
+| `position` | Node-local position. |
+| `width` | Metres across the strip before the node scale. Nonnegative. |
+| `color` | Straight linear RGBA. |
+| `v` | Texture coordinate along the strip. |
+| `flags` | `RIBBON_BREAK` starts a new strip at the point. No other bit is allowed. |
+
+Points require finite values. Direct edits to points, count or material require `mark_ribbons_dirty`; the count must stay
+within capacity. The aggregate cache is library-owned. Component pointers are short-lived ECS borrows.
 
 ## Sources
 
 `RibbonBatch.source` says where the points live. `Scene.add_ribbons` takes it as a trailing `RibbonSource`.
 
 - **`POINTS`**, the default, holds the scene-owned `RibbonPoint` array described above. Core packs it once per revision.
-- **`DEVICE`** has no CPU array. Compute writes `capacity` `RibbonPointGpu` records, one terminating record and one
-  `uint` count into an application buffer from `Renderer.create_buffer`. Every record is relative to
-  `Renderer.frame_origin`, which the writer subtracts, and widths are in metres after the node scale.
-  `Scene.set_ribbon_device` attaches a `RibbonDevice` naming the buffer, the byte offsets of the records and of the count
-  word, and the capacity, which must equal the batch's, together with the node-local bound. The records offset is a
-  multiple of 16, the count offset a multiple of 4, and the buffer holds both. Core does not check them.
+- **`DEVICE`** has no CPU array. Compute writes the records into an application buffer ([Device batches](#device-batches)).
 
 `set_ribbons` and `resize_ribbons` apply to `POINTS` batches only, and passing `points` with `DEVICE` returns
 `INVALID_ARGUMENT`. A `DEVICE` batch is drawn without its node's world matrix, so its node must keep an identity world; a
@@ -56,17 +57,21 @@ WORLD child with an identity pose does. Records are not validated: the owner kee
 
 ### Device batches
 
-The count word is the number of live points. The record at that index must carry `RIBBON_BREAK`, so no segment joins a
-record past the last live point and the tangent search stops there. The draw is `count - 1` segments for a count above one
-and none otherwise. The GPU computes that figure: one thread in the frame's culling pass copies it into the indirect draw
-arguments, clamped to `capacity - 1`, so nothing on the CPU reads the count. A `Renderer.dispatch` that names the buffer
-in `DispatchDesc.writes` orders its writes before that copy and the draw. One buffer serves every view.
+A `DEVICE` ribbon batch follows the [shared device-batch contract](instancing.md#device-batches): buffer layout and
+alignment, the bounds override, dispatch ordering, buffer lifetime, cull arena overflow and excluded consumers. The
+differences for ribbons:
 
-- A batch with no attached buffer draws nothing. A destroyed buffer skips the draw and counts in `Stats.dangling_refs`.
-- When the cull arena cannot hold the draw arguments, the batch draws nothing and the frame counts the overflow in
-  `Stats.cull_overflows`.
-- Bounds come from the override below. Picking and `SceneIndex` skip a `DEVICE` batch, and serialization faults
-  `UNSUPPORTED` on it.
+- **Records.** Compute writes `capacity` `RibbonPointGpu` records (`RIBBON_RECORD_BYTES`, 48 bytes), one terminating
+  record and one `uint` count into a buffer from `Renderer.create_buffer`. Every record is relative to
+  `Renderer.frame_origin`, which the writer subtracts, and widths are in metres after the node scale.
+- **Attach.** `Scene.set_ribbon_device` attaches a `RibbonDevice` with the buffer, the byte offsets of the records and of
+  the count word, and the capacity, together with the node-local bound. The capacity must equal the batch's.
+- **Count.** The count word is the number of live points. The record at that index must carry `RIBBON_BREAK`, so no
+  segment joins a record past the last live point and the tangent search stops there. The draw is `count - 1` segments for
+  a count above one and none otherwise. One thread in the frame's culling pass copies that figure into the indirect draw
+  arguments, clamped to `capacity - 1`.
+- **Culling.** A ribbon batch culls as a whole against its bound. There is no per-segment test. When the cull arena cannot
+  hold the draw arguments, the batch draws nothing and counts in `Stats.cull_overflows`.
 
 ### Bounds override
 
@@ -117,7 +122,7 @@ of an image, its top. A strip whose travel points up the screen and whose `v` ri
 upside down, with its top at the start; author `v` falling along the travel to put the top of the image toward the head.
 
 The vertex stage writes UV0 and UV1 as `(u, v)`, `v_billboard` (location 8) as `(u, v, 0)`, the normal facing the eye,
-the tangent along the strip and the point colour, interpolated. Materials that sample UV0 or UV1 need no ribbon-specific
+the tangent along the strip and the point color, interpolated. Materials that sample UV0 or UV1 need no ribbon-specific
 setup; custom fragments read the varyings as described in [custom shaders](custom_shaders.md#billboard-varying).
 
 ## Materials and supported paths
@@ -128,20 +133,13 @@ skipped and counted as dangling draws. `BlendMode`, depth testing, fog and per-v
 view. In a view with `transparency = WEIGHTED`, a source-over batch with a built-in material, or a custom fragment with a
 [weighted form](custom_shaders.md#weighted-transparency), records in the weighted pass.
 
-- **Order.** A batch draws its segments in index order and is not sorted by depth within itself. Overlapping source-over
-  segments, and a strip that crosses itself, blend in that order; additive blending or weighted transparency is
-  order-independent. Batches still sort against each other by their centre depth.
-- **No shadows and no tracing.** Ribbons cast no shadows and are absent from ray tracing and scene tracing.
-- **Velocity.** Blended draws write no velocity, so a ribbon is seen with camera motion only.
-- **No per-segment culling.** The CPU culls the batch by its bounds; every segment of a visible batch is drawn.
-
 ## Bounds, queries and lifetime
 
 CPU batch bounds are the union of the world points, each grown by half its scaled width on every axis, cached by revision
 and node world, unless the [override](#bounds-override) replaces them. They bound the strip in every view. Linear picking
 and `SceneIndex` treat the batch as one entry with these bounds: `PickHit.ribbon` is set, `instanced` is false and
 triangle requests fall back to bounds. A batch with fewer than two points is not picked. A `SceneIndex` counts one entry
-per ribbon batch against its capacity.
+per ribbon batch against its capacity ([scene index](picking.md#scene-index)).
 
 Removing the node or an ancestor frees its points through the scene hook. Shared materials and textures remain in the
 asset store. GPU records are 48 bytes per capacity point plus one terminating record. A `POINTS` batch uploads them only
@@ -153,3 +151,21 @@ single-point batches create no upload and no draw.
 
 `c3d.RibbonBatch` is a core codec at version 1. It carries the material, the capacity and the live points, and applies the
 point rules above on read and write. See [serialization](serialization.md).
+
+## Limits
+
+- **Order.** A batch draws its segments in index order and is not sorted by depth within itself. Overlapping source-over
+  segments, and a strip that crosses itself, blend in that order; additive blending or weighted transparency is
+  order-independent. Batches still sort against each other by their center depth.
+- **No shadows and no tracing.** Ribbons cast no shadows and are absent from ray tracing and scene tracing.
+- **Velocity.** Blended draws write no velocity, so a ribbon is seen with camera motion only.
+- **No per-segment culling.** The CPU culls the batch by its bounds; every segment of a visible batch is drawn.
+- A `DEVICE` batch is not picked, indexed or serialized, and its node must keep an identity world.
+
+## See also
+
+- [Explicit instancing](instancing.md#device-batches) for the shared device-batch contract.
+- [Billboards](billboards.md) for quads, sprite sheets and the texture convention.
+- [Custom shaders](custom_shaders.md#billboard-varying) for the varyings a custom fragment reads.
+- [Particles](particles.md#trails) for a system that publishes ribbon batches.
+- [Picking](picking.md#scene-index) for the index capacity rule.

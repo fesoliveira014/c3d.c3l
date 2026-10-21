@@ -293,7 +293,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 
 ### Quadtree morph
 
-A custom vertex stage that draws a [quadtree batch](instancing.md#quadtree-selection) under `BOX_RANGES` morphs its vertices toward the parent level with the numbers that selected the node. `quadtree_morph.glsl` declares
+A custom vertex stage that draws a [quadtree batch](instancing_quadtree.md#box-ranges) under `BOX_RANGES` morphs its vertices toward the parent level with the numbers that selected the node. `quadtree_morph.glsl` declares
 
 ```glsl
 float quadtree_range(QuadtreeGpu tree, uint depth, float pixel_scale, float world_scale);
@@ -626,7 +626,7 @@ A custom vertex stage that writes its outputs itself instead of calling `write_m
 Limits of a custom vertex stage:
 
 - It has one compiled form per pass. The renderer does not select `SKINNED`, `SKINNED_U16` or `MORPH` forms of user SPIR-V; compile with the defines that match the geometry when `apply_mesh_deformation` should skin or morph, or leave them out for rigid meshes. `DrawRoot.skin` and `DrawRoot.morph` are written either way.
-- A crowd part (see [Instancing](instancing.md)) draws through the instanced pair. Compiled with `INSTANCED` and the deformation defines, `apply_mesh_deformation` reads the palette row and morph block of the instance's logical source, `InstanceGpu.normal_2.w`, at `DrawRoot.skin_stride` joints per row; compiled without them, the crowd draws at the bind pose.
+- A crowd part (see [Crowds](crowds.md)) draws through the instanced pair. Compiled with `INSTANCED` and the deformation defines, `apply_mesh_deformation` reads the palette row and morph block of the instance's logical source, `InstanceGpu.normal_2.w`, at `DrawRoot.skin_stride` joints per row; compiled without them, the crowd draws at the bind pose.
 - The velocity pass draws the velocity form when the shader supplies one for the draw; those items are redrawn on every rendering with history. Without it, velocity uses the built-in `mesh` variant and sees the undisplaced mesh. The built-in instanced velocity variant, and velocity forms that end in `write_mesh_outputs`, include the batch's sway.
 - Built-in materials sample with `FrameRoot.mip_bias` on TAA views; a custom fragment opts in with
   `sample_custom_map(material, slot, uv0, uv1, frame.mip_bias)`. The depth prepass cuts custom
