@@ -10,6 +10,9 @@ instantiating a model is in [Models](models.md), and ids, keys and file sources 
 Decode and publish in two steps, for a tool that edits the document in between:
 
 ```c3
+import c3d::asset;
+import c3d::asset::gltf;
+
 ModelDocument document = gltf::decode_model(assets.allocator, "models/helmet.glb")!;
 defer asset::destroy_model_document(&document);
 ModelId helmet = assets.publish_document(&document)!;
@@ -18,7 +21,9 @@ ModelId helmet = assets.publish_document(&document)!;
 Load in the background and publish on the owner thread:
 
 ```c3
+import c3d::asset;
 import c3d::asset::loader;
+import std::io;
 
 AsyncLoader loader = loader::create_async_loader(mem, &assets)!;
 defer loader::destroy_async_loader(&loader);
@@ -78,9 +83,9 @@ error and unused capacity costs one entry record.
 | --- | --- | --- |
 | `decode_model`, `decode_model_memory` | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `CAPACITY_EXCEEDED` | As for the loaders in [Models](models.md#faults); `CAPACITY_EXCEEDED` is an allocation failure while decoding. |
 | | `INVALID_ARGUMENT` | An image file has zero bytes. |
-| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, a clip has invalid or unsorted events, a storage texture has a non-storage format, a tangent stream or LOD group is invalid, or a template reference is unset, outside the document's entries or a dead store record. |
+| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, a clip has invalid or unsorted events, a texture breaks the storage-format, semantic, alpha-coverage or mip rules, a tangent stream or LOD group is invalid, or a template reference is unset, outside the document's entries or a dead store record. |
 | | `CAPACITY_EXCEEDED` | A pool has fewer free slots than the document has entries of that kind; the model pool needs one. |
-| | `UNSUPPORTED` | A texture entry has no source data. |
+| | `UNSUPPORTED` | A texture entry has no source data, or its format or shape does not support its semantic or alpha-coverage policy. |
 | | `ASSET_DATA_UNAVAILABLE` | A texture entry with an alpha-coverage policy has no pixels. |
 
 Ordinary public `ModelDocument` values stay editable. `publish_document` and `replace_document` validate and prepare the
@@ -89,7 +94,12 @@ document presented to each call, so edits after decoding cannot reuse stale deri
 ## Replace a model
 
 ```c3
-ModelReplaceReport report = gltf::replace_model(&assets, model, "models/city.gltf", missing: missing[..])!;
+ModelReplaceReport report = gltf::replace_model(
+    assets:  &assets,
+    model:   model,
+    path:    "models/city.gltf",
+    missing: missing[..],
+)!;
 ```
 
 `replace_document(model, &document, missing)` replaces a live model and its keyed parts from a decoded document.
@@ -236,7 +246,7 @@ report contains only its current call and has no cancellation field or event cur
 | Function | Fault | Meaning |
 | --- | --- | --- |
 | `create_async_loader` | `thread::INIT_FAILED` | Mutex, condition variable or worker initialization failed; owned resources are released. |
-| `request` | `INVALID_ARGUMENT` | The add path is already a key in the store, a pending request owns the path, or a replacement path differs from its model key. The path must be nonempty. |
+| `request` | `INVALID_ARGUMENT` | The add path is already a key in the store, a pending request owns the path, or a replacement path differs from its model key. An empty path is a contract violation. |
 | | `CAPACITY_EXCEEDED` | Every slot has an unreleased request. |
 | | `INVALID_ID` | The replacement model is dead. |
 | `cancel`, `release` | `INVALID_ID` | Stale, released or never-issued ID. Releasing a pending request is a programming error. |

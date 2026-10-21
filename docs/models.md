@@ -104,7 +104,7 @@ referenced as base color, emissive, sheen color or specular color becomes an sRG
 linear texture; an image used both ways becomes two textures. Images nothing references are not decoded. Normal-map roles
 and color roles use distinct texture variants, and a glTF masked base texture gets a variant for its effective alpha
 threshold, including the material factor. A mask that every texel passes or fails, such as a zero cutoff, shares the
-unmasked texture.
+unmasked texture. A DDS or KTX image with supplied mip levels keeps its authored levels and gets no masked variant.
 
 ## Options
 
@@ -192,7 +192,9 @@ the channels address in first-appearance order, and each `Track.target` indexes 
 - Interpolation maps to `STEP`, `LINEAR` or `CUBIC_SPLINE`; cubic keys keep their in-tangent, value and out-tangent triples.
   `duration` is the largest key time.
 - The template lists its clip IDs and every instance copies them. Channels whose target nodes are outside the imported
-  node set are omitted, such as nodes of unselected scenes. A clip with no imported channels has no tracks. `options.animations = false` skips clips.
+  node set are omitted, such as nodes of unselected scenes and alternate subtrees skipped when an optional LOD falls back
+  to its highest-detail subtree. A clip with no imported channels has no tracks. `options.animations = false` skips
+  clips.
 - Clip events import from animation metadata ([Event import schema](animation_reference.md#event-import-schema)).
 
 The renderer builds joint palettes from `SkinBinding` and selects the skinned and morphed vertex variants
@@ -280,7 +282,8 @@ roughness.
   weights are the channels' weights.
 - **Animation.** Each animation stack is baked at the file frame rate from time zero into one clip: linear translation,
   rotation and scale tracks per animated node, and one morph-weight track per part child of a mesh with animated channels,
-  holding every channel's weight per key.
+  holding every channel's weight per key. Event metadata comes from the stack's `c3d_events` property
+  ([Event import schema](animation_reference.md#event-import-schema)).
 - **Animation files.** A file that carries animation for another model, such as a Mixamo animation downloaded without
   skin, loads through `fbx::load_animations`, which rebinds each stack onto the model's template by node name
   ([Retargeting](animation_retargeting.md)).

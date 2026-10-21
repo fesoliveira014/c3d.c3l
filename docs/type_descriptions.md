@@ -107,9 +107,8 @@ arrays and slices are scopes. Vectors, matrices and quaternions stay leaf values
 - `MAT4` carries all sixteen float coefficients in column-major order (element `4 * column + row`, column-vector
   convention, so translation occupies elements 12, 13 and 14). Each coefficient follows the consumer's `FLOAT` rules,
   including exceptional values, shear and reflection. Consumers must not decompose or normalize a matrix.
-- A distinct integer typedef describes as its base integer type. A typedef of `Id` that is not one of the asset ID types
-  (`SkinId`, `AnimationActionId`, `CrowdInstanceId`, `ViewId`) describes as an asset reference of kind `CUSTOM` with no
-  custom slot.
+- A typedef of `Id` that is not one of the asset ID types (for example `SkinId`, `AnimationActionId`, `CrowdInstanceId`,
+  `ViewId`, `BufferId` or `LoadId`) describes as an asset reference of kind `CUSTOM` with no custom slot.
 
 Reflection rejects unsupported fields at compile time and names the field. Pointers, unions, `constdef`, flags and
 recursive type shapes are unsupported. A transient tag is the only deliberate omission from a reflected description. A
@@ -130,7 +129,8 @@ still hide unsupported raw members, such as owned pointers.
 
 Reflection rejects invalid tags at compilation with the field name; handwritten fields enforce the same rules through
 their metadata contract. Range metadata uses `double`, so it cannot express every 64-bit integer endpoint exactly. An
-absent range leaves the widget bounded by the scalar type's limits for narrow integers and unsigned vector lanes.
+absent range leaves the widget bounded by the scalar type's limits for 8-bit and 16-bit integers, `uint` and unsigned
+vector lanes.
 Sequence elements inherit range, unit and asset-kind metadata; the display name labels the container.
 
 An asset leaf reports its resolved kind in `Info.metadata.asset_kind` with `has_asset_kind` true, whether it came from a

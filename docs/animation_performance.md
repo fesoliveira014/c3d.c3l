@@ -81,7 +81,9 @@ time and hit rate. `job_bench --crowd COUNT --shared-phases` times the same crow
   is the larger of those samples and not a true maximum.
 - **Faults.** `TOLERANCE_EXCEEDED` when an error exceeds its tolerance; `CAPACITY_EXCEEDED` on allocation failure;
   `INVALID_ARGUMENT` for invalid track data. A fault of any kind leaves the clip, its arrays and its revision unchanged.
-  On success the raw arrays are freed, one block holds the packed keys and the revision moves once.
+  On success the raw arrays are freed, one block holds the packed keys and the revision moves once. A clip with no
+  packable track (no keys, or only cubic rotations) stays unchanged: the report shows equal byte counts and the revision
+  does not move.
 - **Contract.** Compressing a compressed clip is a contract violation (`clip.data.is_compressed()`). A later
   `replace_clip_owned` installs raw tracks again.
 - **Drift.** Error is bounded per key, so a looping root-motion clip's per-cycle displacement can drift by up to twice the
@@ -91,14 +93,14 @@ time and hit rate. `job_bench --crowd COUNT --shared-phases` times the same crow
 
 Compressed tracks sample with the same cursor contract but cost more CPU to sample than raw ones, because every key read
 is dequantized: compression trades sampling time for memory. The blends pick the raw or the dispatching sampler once per
-clip, so raw clips sample as before. `skinned_crowd --compress` and `job_bench --crowd COUNT --compress` compress the
+clip, so raw clips pay no dequantization cost. `skinned_crowd --compress` and `job_bench --crowd COUNT --compress` compress the
 model's clips with a tolerance of 1e-3 on every path and print the bytes before and after.
 
 ## Memory costs
 
 | Storage | Cost |
 | --- | --- |
-| `Animator` component store | One `Animator` per scene node slot, used or not, plus the ECS index arrays and the arrays of each live animator. |
+| `Animator` component store | `(max_nodes + 1) * Animator::size` bytes, used or not (16,385 slots in the default scene), plus the ECS index arrays and the arrays of each live animator. |
 | Mask rows | `MAX_ACTIONS * node_count` bytes per animator, allocated by `add_animator`. |
 | Weighted mask | `node_count * float::size` extra bytes per masked action until it is removed. |
 | Action cursors and additive references | Sized by the clip's tracks, allocated at `play`. |

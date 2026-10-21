@@ -28,7 +28,7 @@ retains, per joint, the bound of the vertices that joint influences and of their
 (`GeometryAsset.skin_bounds`). The bounds survive `release_geometry_cpu` and are rebuilt by `mark_geometry_dirty` and by
 a stream mark that names positions, joints or weights while the streams are present. Each frame, every influencing
 joint's bound, widened by the mesh's selected morph targets, is transformed by `joint.world * inverse_bind[joint]` and
-merged. A `Mesh.local_bounds` override replaces it. A binding that addresses none of the geometry's joints falls back to
+merged. Setting `Mesh.has_bounds_override` makes `Mesh.local_bounds` replace it. A binding that addresses none of the geometry's joints falls back to
 the rest bound, and a skinned geometry drawn without a live binding draws unskinned.
 
 ### Animated LOD
@@ -67,7 +67,7 @@ instead of in the vertex stage of every draw. It is off by default and applies f
 
 With it on, every view, depth prepass, shadow layer and velocity pass of the frame draws the posed positions, normals and
 tangents. Images match vertex skinning visually, not bit for bit. The posed normals are unnormalized and the vertex stage
-normalizes them as before; a tangent keeps its handedness.
+normalizes them as it does under vertex skinning; a tangent keeps its handedness.
 
 **Cost trade.** The pass replaces the vertex-stage skinning of every pass with one dispatch and one root upload per mesh
 or crowd part per frame. It pays when a mesh is drawn by many passes (velocity, more views, cascades) or is heavy per
@@ -93,8 +93,8 @@ Each drawn mesh node and each drawn crowd part owns a pair of posed blocks, allo
 geometry's layout or the crowd's capacity changes and released after `INSTANCE_ABSENCE_FRAMES` frames without a draw.
 A mesh costs up to 52 B per vertex (positions 12 B, normals 12 B, tangents 16 B and a second positions block of 12 B;
 normals and tangents only when the geometry has them) plus two root blocks, in one device allocation. A crowd part is sized by the crowd's
-capacity, whatever the live count: `capacity * vertex_count * 52 B`. A crowd with more sources than one dispatch can
-address keeps vertex skinning as a whole. Exceeding a cap is never a fault, while a failed device allocation still is
+capacity, whatever the live count: `capacity * vertex_count * 52 B`. A crowd whose capacity exceeds the sources one
+dispatch can address (the device's `max_compute_work_group_count.z`) keeps vertex skinning as a whole. Exceeding a cap is never a fault, while a failed device allocation still is
 one.
 
 | `Stats` field | Meaning |
@@ -126,8 +126,8 @@ afterwards compiles them on first use, in the first frame that draws a deformed 
 
 A traced skinned or morphed mesh or crowd part claims its binding as a pass does, so a traced mesh no view draws is posed
 once too, and its trace slot takes that pose instead of dispatching its own. The trace keeps its own dispatch with the
-switch off, for a mesh with `Mesh.vertex_motion`, for animated LOD parts, for a mesh or crowd part past a cap and in a
-preparation outside a frame. See [scene trace](scene_trace.md#posed-instances).
+switch off, for a mesh with `Mesh.vertex_motion`, for animated LOD parts, for a mesh or crowd part drawn by a custom
+vertex stage, for a mesh or crowd part past a cap and in a preparation outside a frame. See [scene trace](scene_trace.md#posed-instances).
 
 ## Limits
 

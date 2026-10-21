@@ -16,15 +16,22 @@ import c3d::asset::fbx;
 
 RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
 options.root_motion = RootMotion.STRIP_XZ;
-ClipId[] clips = fbx::load_animations(mem, &assets, "mixamo/walk.fbx", hero, options)!;
+ClipId[] clips = fbx::load_animations(
+    allocator: mem,
+    assets:    &assets,
+    path:      "mixamo/walk.fbx",
+    target:    hero,
+    options:   options,
+)!;
 defer alloc::free(mem, clips.ptr);
 animator.play(&assets, clips[0])!;
 ```
 
-`load_animations(allocator, assets, path, model, options)` parses the file privately, bakes every animation stack,
+`load_animations(allocator, assets, path, target, options)` parses the file privately, bakes every animation stack,
 retargets it onto the model's template and stores the clips. The file's own nodes never enter the store. The returned
 IDs live in the caller's allocator and the clip data belongs to the store. A dead model faults `INVALID_ID`. On any fault
-the call removes every clip it inserted. The model is the template named by `model`; its instances play the clips.
+the call removes every clip it inserted. `target` names the model whose template receives the clips; its instances play
+them.
 
 ## Concepts
 
@@ -61,10 +68,11 @@ into independent arrays.
 | Mode | Result |
 | --- | --- |
 | `KEEP` | Copies the root translation. |
-| `STRIP_XZ` | Pins every key's horizontal position to the first key's, giving an in-place clip. Cubic tracks also lose their horizontal tangents. |
-| `EXTRACT` | Strips the root's horizontal (X and Z) translation, keeping its height, and adds one translation track on `options.root_node`, a destination template node, holding that node's rest position plus the horizontal displacement since the first key. The new track keeps the source interpolation. |
+| `STRIP_XZ` | Pins every key's horizontal position to the first key's, giving an in-place clip. Cubic tracks also lose their horizontal tangents, as the stripped root does under `EXTRACT`. |
+| `EXTRACT` | Strips the root's horizontal (X and Z) translation, keeping its height, and adds one translation track on `options.root_node`, a destination template node, holding that node's rest position plus the horizontal displacement since the first key. The new track keeps the source interpolation, and on a cubic track its vertical tangents are zero. Without an animated root translation it adds no track. |
 
-`EXTRACT` without a root node faults `INVALID_ARGUMENT`. A Mixamo template has no node above `Hips`, so it offers `KEEP`
+`EXTRACT` without a root node faults `INVALID_ARGUMENT`. `root_node` must be `NO_ROOT_NODE` or a node of the destination,
+and `bake_rate` and `root_translation_scale` must not be negative; breaking either is a contract violation. A Mixamo template has no node above `Hips`, so it offers `KEEP`
 and `STRIP_XZ` only. Play the extracted clip with `RootMotion.EXTRACT` and `Animator.root_node` set to that node
 ([Root motion](animation.md#root-motion)).
 
@@ -137,7 +145,12 @@ desc.source_motion_node = hips_source;
 desc.target_motion_node = hips_target;
 desc.target_carrier = carrier;
 
-RetargetProfile profile = retarget::create_retarget_profile(mem, source_nodes, target, desc)!;
+RetargetProfile profile = retarget::create_retarget_profile(
+    allocator:    mem,
+    source_nodes: source_nodes,
+    target:       target,
+    desc:         desc,
+)!;
 defer retarget::destroy_retarget_profile(&profile);
 
 RetargetBakeOptions bake = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
@@ -162,7 +175,7 @@ ClipId[] clips = fbx::load_animations_with_profile(
 | `source_calibration`, `target_calibration` | required | One unit rotation per node of each template. |
 | `source_motion_node`, `target_motion_node` | `RETARGET_NO_NODE` | The nodes whose motion is consumed. Leave both unset for no motion chain; when set, they must map to each other. |
 | `target_carrier` | `RETARGET_NO_NODE` | Optional reserved destination node that receives extracted motion. Every mapped node, mesh, LOD group and skin joint must descend from it, and it and its ancestors must stay upright. |
-| `facing` | identity | A proper Y-up yaw matrix. Reflection, shear or scale is invalid. |
+| `facing` | identity | A proper Y-up yaw matrix with no translation. Reflection, shear or scale is invalid. |
 
 ### Ownership and validation
 
@@ -203,7 +216,7 @@ the mesh.
 
 ### Profiled FBX loading
 
-`fbx::load_animations_with_profile(allocator, assets, path, model, profile, variant, options)` borrows a prepared profile,
+`fbx::load_animations_with_profile(allocator, assets, path, target, profile, variant, options)` borrows a prepared profile,
 a target model and an explicit nonempty variant name. It validates the animation file's actual imported template against
 the profile, including files with no animation stacks. A profiled clip is keyed
 `<path>#anim/<k>#<model key>#<mode>#profile/<byte length>:<variant>`, with no `#rest`. Distinct variant names keep

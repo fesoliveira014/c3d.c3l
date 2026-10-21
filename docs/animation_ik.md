@@ -2,8 +2,9 @@
 
 `c3d::anim::ik` bends existing joint nodes toward targets after the animator has written its pose. Three types cover
 limbs, feet and looking, and retained foot contacts keep a planted foot on a moving support. `solve`, `align` and
-`align_contact` read world matrices and write local rotations only. `place`, `release` and `reset_contact` move the
-target node and `lower_pelvis` moves the pelvis. Nothing allocates, and no feature flag applies.
+`align_contact` read world matrices and write local rotations only. `place`, `release`, `reset_contact`,
+`begin_contact`, `update_contact` and `end_contact` move the target node, and `lower_pelvis` moves the pelvis. Nothing
+allocates, and no feature flag applies.
 
 ## Quick start
 
@@ -13,7 +14,13 @@ Solve a leg to a target node after animation and a world refresh.
 import c3d::anim;
 import c3d::anim::ik;
 
-IkChain leg = ik::ik_chain(hip, knee, ankle, target, pole);
+IkChain leg = ik::ik_chain(
+    root:   hip,
+    middle: knee,
+    end:    ankle,
+    target: target,
+    pole:   pole,
+);
 
 anim::update(&assets, &scene, dt);
 scene.update_world();
@@ -35,8 +42,9 @@ a parent, `PARENT` space on the middle and end joints, and nonzero bone lengths.
 - **`LookAt`** turns the `forward` axis of its last joint toward a target, at most `max_angle` from the incoming pose,
   without adding roll. It spreads the turn over up to eight joints by `weights`. `look_at(joints, target, forward)`
   fills shares that grow toward the tip and sum to 1: joint `i` of `n` takes `(i + 1) / (n * (n + 1) / 2)`, so the tip
-  turns most. A second pass corrects the tip's own swing about the lower joints. `solve` requires `look_at_valid`: every
-  joint has a parent, the later joints use `PARENT` space and the shares sum to 1 within `1e-4`.
+  turns most. A second pass corrects the tip's own swing about the lower joints. `solve` requires `look_at_valid`: one to eight
+  joints that each have a parent, each later joint the `PARENT`-space child of the one before it, a target with a parent,
+  and shares that sum to 1 within `1e-4`.
 - **Components.** `create_scene` registers all three as components, so the Scene inspector and `DebugDraw.ik` find
   them. Nothing solves them for you: the application calls `solve`, `place`, `release` and `align` in its own order.
 - **Ownership.** Joints, targets and poles are borrowed nodes and must outlive the component that names them.

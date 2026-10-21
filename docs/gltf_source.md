@@ -2,7 +2,7 @@
 
 `c3d::asset::gltf` offers `decode_model_with_source` and `decode_model_memory_with_source` for tools that need source
 metadata alongside a `ModelDocument`: independent encoded images, source indices, original sampler values and extension
-names. Ordinary decoding is unchanged and keeps its allocations. An exporter or converter uses it to write what the source
+names. The ordinary decoders build no source record. An exporter or converter uses it to write what the source
 file contained; an application that only loads models does not need it.
 
 ## Quick start

@@ -49,11 +49,13 @@ The renderer reads the pose it finds. Crowds advance through `anim::crowd_update
 
 Physics and IK run between the animation update and the final `Scene.update_world`:
 
-1. `anim::update` (and `anim::crowd_update` for crowds).
-2. `Scene.update_world`.
-3. Physics, including ragdoll publication; see [Ragdolls](ragdoll.md#frame-order).
-4. IK solves ([Inverse kinematics](animation_ik.md#solve-order)).
-5. `Scene.update_world`, then the renderer.
+1. Ragdoll recovery entry (`recover_ragdoll`, `recover_bones`), when requested, before fresh animation.
+2. `anim::update` (and `anim::crowd_update` for crowds).
+3. `Scene.update_world`.
+4. Physics, including ragdoll publication; the physics steps are in the [ragdoll frame order](ragdoll.md#frame-order).
+5. `Scene.update_world`.
+6. IK solves ([Inverse kinematics](animation_ik.md#solve-order)).
+7. `Scene.update_world`, then the renderer.
 
 Animation owns the final pose until a later writer changes it. Root motion and events are outputs for the application to
 consume; no scheduler consumes them.
@@ -258,12 +260,14 @@ an action is allocated.
 - **Once per update.** Apply each delta once; it resets to zero translation and identity rotation every update. For
   crowds, call `Scene.apply_crowd_root_motion` once after `anim::crowd_update`.
 - **Blending.** Masks and regular layer weights apply to motion as to pose. A half-weight extractor emits half the
-  displacement. Mixing actions does not promise subdivision-invariant trajectories.
+  displacement. A `KEEP` or `STRIP_XZ` action that animates the root counts toward the layer's motion weight with zero
+  motion, so it dilutes an extractor beside it. Mixing actions does not promise subdivision-invariant trajectories.
 - **Clock.** `Action.time` edits seek to a new starting sample and emit no motion or events; the next clock step does.
   `dt` is finite and nonnegative, speed may be negative, and clocks must stay finite. Paused, zero-step and
   zero-duration actions emit no movement.
-- **Accuracy.** Repeated float32 application accumulates position drift as distance grows; compare a controlled pose in
-  its carrier's frame.
+- **Accuracy.** For a single action, splitting `dt` into smaller updates gives the same motion within sampling tolerance,
+  forward, reverse or across loops. Repeated float32 application accumulates position drift as distance grows; compare a
+  controlled pose in its carrier's frame.
 
 ![Extracted walk and run motion on the left, the in-place comparison on the right](images/animation_motion.png)
 
@@ -339,7 +343,8 @@ authored ID and time. Applications can filter by current action weight.
   included and the ending instant excluded. A non-looping action that reaches the clip end (duration forward, zero in
   reverse) also delivers the marker at that endpoint.
 - At a loop seam, the closing marker (duration forward, zero backward) fires on arrival and the opening marker fires on
-  continuing into the next cycle. A step spanning both delivers closing before opening.
+  continuing into the next cycle. A step spanning both delivers closing before opening. Reverse playback of a looping
+  action that starts at zero starts at the equivalent duration boundary.
 - Pauses and seeks alone fire nothing.
 - The fixed buffer keeps the first 16 crossings per update. `events_dropped` counts the rest, saturating at `uint::max`.
   Both counts reset every update.
@@ -466,8 +471,9 @@ the same motion node, selected axes, up, twist and frame; the compensated pose m
 
 Velocity history is invalidated by seeks, instant play, stop and group changes without a fade, removed target nodes and
 clip or model revisions; an active residual keeps decaying. Fades and weight changes keep history, and no playback
-change cancels a residual. Serialization keeps authored settings and target playback; sampled clocks, source velocities,
-history and residuals restart empty on restore.
+change cancels a residual. A rotation that cannot be normalized (zero or nonfinite) records no angular velocity and gets
+no rotation residual, so enabling inertia admits the same clips as an owner without it. Serialization keeps authored
+settings and target playback; sampled clocks, source velocities, history and residuals restart empty on restore.
 
 ## Physics and IK
 
@@ -486,7 +492,7 @@ python3 scripts/build.py --example animation
 | --- | --- |
 | `animation` | Two instances of a glTF model, each playing a different clip; cross-fade, quarter weight and pause. Takes a model path. |
 | `animation_authoring` | A crowd and an `Animator` with a 2D blend space, feathered and multiplicative overlays, generalized jog, inertial turns and the animator inspector. |
-| `mixamo` | A regular masked wave and an additive wave over locomotion, with blend-space extraction. Takes animation file paths. |
+| `mixamo` | A regular masked wave and an additive wave over locomotion, with blend-space extraction. Takes a character FBX path, then animation FBX paths. |
 | `retarget` | A Mixamo walk on the Quaternius rig with each retargeting mode ([Retargeting](animation_retargeting.md)). |
 | `ik` | Feet, look-at and a reaching hand ([Inverse kinematics](animation_ik.md)). |
 | `skinned_crowd` | A skinned crowd ([Performance](animation_performance.md), [Deformation](animation_deformation.md)). |

@@ -123,13 +123,14 @@ Types, constants, faults, blend formulas, sampling and the clip event import sch
 | `play`, `add_blend_space`, `add_blend_space_2d` | `INVALID_ID` for a dead clip. `INVALID_ARGUMENT` for a clip that does not fit the instance (a target beyond the node table, a morph target outside its mesh table, a present mesh with a different morph count), an invalid layer, fade or mask, both mask types, a mask of the wrong width, a weight outside `[0,1]`, missing root configuration, `root_yaw` with `KEEP`, a non-`KEEP` additive action, an unsupported `root_yaw` basis under `EXTRACT`, generalized extraction with `root_yaw`, a mode other than `EXTRACT` or `additive`, an `EXTRACT` action whose extraction settings differ from a live `EXTRACT` action, an invalid extraction chain (nonuniform or nonpositive scale, two tracks on one node and path, zero quaternion keys) or invalid additive scale keys, and for groups, bad positions, coordinates or triangulation and nonpositive clip durations. `CAPACITY_EXCEEDED` when action or group slots are exhausted or an allocation fails. `UNSUPPORTED` for a `CUBIC_SPLINE` scale track under multiplicative additive or on a generalized extraction chain. |
 | `stop`, `cross_fade` | `INVALID_ID` for a stale ID. `INVALID_ARGUMENT` for an invalid duration, a cross-fade to the same ID or an action that belongs to a blend space. |
 | `stop_blend_space`, `fade_blend_space` | `INVALID_ARGUMENT` for a removed group, an invalid duration or an invalid weight. |
-| `inertialize` | The `play` faults for each target. `INVALID_ARGUMENT` for a nonfinite or negative `duration`, a nonfinite `start_time`, `speed` or `weight`, a negative `weight`, an invalid group description (see `CrowdSpaceAuthoring`) or a nonpositive consumed scale. `CAPACITY_EXCEEDED` when `actions` exceeds the owner's action slots or `spaces` exceeds `MAX_BLEND_SPACES`. A crowd player also faults `INVALID_ID` for a stale instance. |
+| `inertialize` | The `play` faults for each target. `INVALID_ARGUMENT` for a nonfinite or negative `duration`, a nonfinite `start_time`, `speed` or `weight`, a negative `weight`, an invalid group description (see `CrowdSpaceAuthoring`) or a nonpositive consumed scale. `CAPACITY_EXCEEDED` when `actions` exceeds the owner's action slots or `spaces` exceeds `MAX_BLEND_SPACES`. |
 | `CrowdPlayer.cancel_inertial_transition` | `INVALID_ID` for a stale instance. |
 | `create_joint_mask` | `NOT_FOUND` for a missing name. |
 | `create_weighted_joint_mask`, `create_feathered_joint_mask` | `INVALID_ID` for a dead model; `INVALID_ARGUMENT` for mismatched array lengths or a weight outside `[0,1]`; `NOT_FOUND`; `CAPACITY_EXCEEDED`. |
 | `AssetStore.set_clip_events` | `INVALID_ID`; `INVALID_ARGUMENT` for a nonfinite time or one outside `[0, duration]`. |
 
-An inertial request on an owner without enabled storage is a contract violation, not a fault.
+Every `CrowdPlayer` call also faults `INVALID_ID` for a stale instance. An inertial request on an owner without enabled
+storage is a contract violation, not a fault.
 
 ## Blend formulas
 
@@ -194,8 +195,9 @@ property `c3d_events`, which holds the inner object.
 ```
 
 For FBX the property value is `{"version":1,"events":[{"time":0.25,"id":7}]}`. Both importers read it whenever
-`LoadOptions.animations` is enabled, including store-free and background loading. Absent metadata or an empty array
-produces an empty table, and replacing a clip replaces its table.
+`LoadOptions.animations` is enabled, including store-free and background loading. `fbx::load_animations` and
+`fbx::load_animations_with_profile` read the same property, and an import with animations disabled reads no event
+metadata. Absent metadata or an empty array produces an empty table, and replacing a clip replaces its table.
 
 | Field | Rule |
 | --- | --- |

@@ -44,7 +44,7 @@ records of that kind.
 
 `AssetRef { kind, slot, id }` names an asset of any kind. `find` returns it and `AssetKind` enumerates the kinds:
 `GEOMETRY`, `TEXTURE`, `SAMPLER`, `MATERIAL`, `MODEL`, `CLIP`, `SKELETON`, `SHADER`, `COMPUTE_SHADER`, `ENVIRONMENT`,
-`FONT` (11 built-in kinds) and `CUSTOM` ([Custom asset kinds](custom_assets.md)).
+`CUSTOM` ([Custom asset kinds](custom_assets.md)) and `FONT`, in enum order: 11 built-in kinds plus `CUSTOM`.
 
 ### Keys
 
@@ -89,9 +89,9 @@ Capacities never grow: adding to a full pool faults `CAPACITY_EXCEEDED`.
 | `max_fonts` | 16 | Zero selects the default. |
 | `file_source` | file system | Copied at creation; see [File sources](#file-sources). |
 
-`default_asset_store_desc()` returns the defaults. Start from it and change the fields you need. The renderer sizes
-mirrors and tables for the assets a scene uses, and asset textures share the renderer's texture table
-([Views](views.md)).
+`default_asset_store_desc()` returns the defaults. Start from it and change the fields you need. `create_renderer` sizes
+its mirror tables and the material heap from these capacities, so every slot costs renderer memory whether or not it is
+used. Asset textures also share the renderer's texture table ([Views](views.md)).
 
 Every store holds these built-in assets:
 
