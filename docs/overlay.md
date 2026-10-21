@@ -163,7 +163,8 @@ list.add_rect(panel)!;
   first one's result.
 - The shape, the clip and the transform apply as for any rect: a rotated item blurs the pixels under its rotated shape, and a
   clipped item blurs only inside its clip, though the blur reads pixels outside it.
-- The blur is a Gaussian in linear light. Past the output's edge the image repeats its edge pixels. Alpha is blurred like a
+- The blur is a Gaussian in linear light, applied along x and then along y. Its deviation is a third of the radius, at least
+  half a pixel, and it ends at the radius. Past the output's edge the image repeats its edge pixels. Alpha is blurred like a
   color channel, so the result is exact over opaque pixels.
 - A radius above `MAX_BACKDROP_RADIUS` (32 pixels) clamps to it, and a fractional radius rounds up to a whole pixel.
 - A backdrop item draws alone, in its own run, in submission order with the items around it.
@@ -191,9 +192,24 @@ holds no text. See [Text](text.md) for placing text and rounding the origin.
 ## Shapes
 
 ```c3
-list.add_triangle(first, second, third, color)!;
-list.add_line(from, to, width, color)!;
-list.add_path(points, width, color, closed: true)!;
+list.add_triangle(
+    first:  first,
+    second: second,
+    third:  third,
+    color:  color,
+)!;
+list.add_line(
+    from:  from,
+    to:    to,
+    width: width,
+    color: color,
+)!;
+list.add_path(
+    points: points,
+    width:  width,
+    color:  color,
+    closed: true,
+)!;
 ```
 
 - `color` is sRGB with straight alpha, like `fill`. Coordinates and `width` are output pixels, or local pixels under a
@@ -286,7 +302,8 @@ Any later fault aborts the frame, like other renderer faults. The faults of anch
 - One rectangle, glyph, triangle or segment is 96 bytes of instance data in the frame upload ring. The default 4,096 items
   cost 384 KiB of the ring per prepared list; 16,384 glyphs cost 1.5 MiB.
 - A transform table entry is 80 bytes of the frame upload ring. A prepared list uploads its entries only when it pushed a
-  transform, an anchor or a transformed clip. An anchor takes one entry, so `max_transforms` also bounds the anchors.
+  transform, an anchor or a transformed clip. An anchor takes one entry, so `max_transforms` also bounds the anchors. The list
+  allocates 44 bytes of CPU anchor data and a 4-byte root index for every table entry at creation.
 - One run costs one draw. Rects with alternating clips cost one run each. Items under different transforms and the same
   scissor share a run.
 - `Pass.OVERLAY` times `draw_list` when GPU timings are on; a frame's window, target and world overlays add up.

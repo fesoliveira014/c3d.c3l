@@ -15,7 +15,12 @@ defer scene::destroy_scene(&scene);
 
 Node* pivot = scene.add_node(name: "pivot")!;
 pivot.local.position = { 0, 1, 0 };
-Node* child = scene.add_mesh(geometry, material, pivot, "child")!;
+Node* child = scene.add_mesh(
+    geometry: geometry,
+    material: material,
+    parent:   pivot,
+    name:     "child",
+)!;
 child.local.position = { 2, 0, 0 };
 
 scene.update_world();
@@ -31,8 +36,8 @@ scene.update_world();
 - `SceneDesc.max_nodes` fixes the node count at creation, excluding the root; `default_scene_desc()` sets 16,384, about
   2.6 MiB. `add_node` and the helpers built on it fault `CAPACITY_EXCEEDED` when the scene is full.
 - The synthetic root has an identity transform; a node added without a parent hangs from it.
-- A node pointer stays valid until the node is removed. The entity `id` stays valid across structural changes; resolve it
-  with `Scene.node(entity)`.
+- A node pointer stays valid until the node is removed. The entity `id` stays valid across structural changes; check it with
+  `scene.world.is_alive(id)`, then resolve it with `Scene.node(entity)`, which requires a live entity.
 - The application calls `update_world` itself. No scheduler runs it.
 
 ## Authored and published transforms
@@ -75,7 +80,8 @@ and rendering consume the published node matrix through their usual paths.
 | `set_world_pose(position, rotation)` | Authored position and rotation | Scale |
 | `look_at(target, up)` | Authored rotation, local negative Z toward the world point | Position and scale |
 
-Call them on live non-root nodes whose parents' world matrices are current, then call `update_world`. `WORLD` operations do
+Call them on live non-root nodes whose parents' world matrices are current (`look_at` also reads the node's own matrix), then
+call `update_world`. `WORLD` operations do
 not inspect ancestor scale or shear.
 
 ## Reparent a node
@@ -99,7 +105,7 @@ ancestor's. Layer masks stay independent: a child does not inherit its parent's 
 | Call | Effect |
 | --- | --- |
 | `Scene.remove(node)` | Removes the node and every descendant, in either space, through the component removal hooks. |
-| `Scene.remove_later(node)` | Queues the subtree; safe inside a component iteration. |
+| `Scene.remove_later(node)` | Queues the subtree; safe inside a component iteration. The node and its ancestors must not be queued already. |
 | `Scene.flush_removals()` | Removes the queued subtrees in queue order. |
 | `Scene.find(name)` | First live node with the name by linear scan; faults `NOT_FOUND`. |
 

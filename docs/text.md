@@ -41,7 +41,8 @@ list.add_glyphs({
 
 - `add_font` copies the bytes; `add_font_owned` takes bytes allocated with the store allocator on success and leaves them
   with the caller on a fault.
-- `find_font(key)` returns the id of a key.
+- `find_font(key)` returns the id of a key and faults `NOT_FOUND` for an unknown key and `INVALID_ARGUMENT` for a key of another
+  asset kind.
 - `remove_font` frees the file and outlines. The renderer retires the font's textures on its next frame.
 - `replace_font` and `replace_font_owned` swap the file and capacities under the same id and key. Built glyphs are discarded
   and rebuild on next placement. The renderer re-uploads the outline rows from the start, and recreates its textures when
@@ -58,8 +59,17 @@ list.add_glyphs({
 | `band_texels` | Band storage, same rounding and limit. | 384 rows |
 
 The defaults hold the whole committed CJK subset, 4,197 glyphs, with room to spare; a Latin UI font fits in far less. Storage
-is allocated once. The defaults take 6 MiB of curves and 6 MiB of bands in the store, and 3 MiB and 6 MiB on the GPU. A font
-whose glyphs need more faults `CAPACITY_EXCEEDED` from `place_text`; give it a larger `FontDesc`.
+is allocated once, at these costs:
+
+| Capacity | In the store | On the GPU |
+| --- | --- | --- |
+| One curve row (4,096 texels) | 64 KiB | 32 KiB |
+| One band row (4,096 texels) | 16 KiB | 16 KiB |
+| One `max_glyphs` entry | 32 bytes | none |
+
+The store also keeps 4 bytes per glyph of the font file. The defaults take 6 MiB of curves and 6 MiB of bands in the store, and
+3 MiB and 6 MiB on the GPU. A font whose glyphs need more faults `CAPACITY_EXCEEDED` from `place_text`; give it a larger
+`FontDesc`.
 
 Faults of `add_font` and `add_font_owned`; the replace calls fault the same way, without `CAPACITY_EXCEEDED`:
 

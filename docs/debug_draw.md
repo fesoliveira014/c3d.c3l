@@ -17,7 +17,12 @@ sink.clear();
 sink.mesh_bounds(&scene, &assets, debug::COLOR_GREEN);
 sink.node_axes(selected_node, 1.0f);
 
-renderer.render_view(&scene, camera_node, renderer.default_view, debug: &sink)!;
+renderer.render_view(
+    scene:       &scene,
+    camera_node: camera_node,
+    view:        renderer.default_view,
+    debug:       &sink,
+)!;
 ```
 
 Fill the sink after `Scene.update_world`, so the helpers read current world matrices.

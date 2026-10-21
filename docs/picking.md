@@ -29,13 +29,15 @@ Ray ray = camera::screen_to_ray(&matrices, window.input.mouse_position, viewport
 };
 ```
 
-`camera` is the node's `Camera*`, from `scene.get(camera_node, Camera)`. `hits` is nearest first; an empty array means no hit.
+`camera` is the node's `Camera*`, from `scene.get(camera_node, Camera)`. `hits` is nearest first and owned by the allocator
+passed to `pick`; an empty array means no hit.
 
 ## Concepts
 
 - **What takes part.** A mesh takes part when it is effectively visible, on a layer of `options.layers`, not `trace_only`,
-  and its geometry, material and, for a skinned mesh, skeleton ids are live. Host-authored instanced batches, billboard
-  batches, ribbon batches and LOD groups take part as listed under [Hits](#hits). Device-authored batches do not.
+  and its geometry, material and, for a skinned mesh, skeleton ids are live. Host-authored instanced batches and billboard
+  batches, ribbon batches and LOD groups take part too; the exact list is under [Capacity](#capacity). Device-authored
+  batches do not.
 - **One hit per mesh.** A mesh yields at most one hit. Each live instance of an [instanced batch](instancing.md) that the ray
   meets is its own hit on the batch node.
 - **Order.** Hits sort by ascending distance, then node index, then instance index, then part index.
@@ -57,7 +59,7 @@ zero, so the ray matches the rendered projection whatever the render scale.
 | `geometry` | Geometry of the hit mesh, instance or LOD part; zero for billboards and ribbons. |
 | `distance` | World distance along the ray. |
 | `position` | `origin + distance * direction`. |
-| `instanced` | Set for an instance of an instanced batch and for a billboard. |
+| `instanced` | Set for an instance of an instanced batch, for a billboard, and for a placement of an instanced-mode LOD group. |
 | `instance_index` | Array position of the instance, billboard or LOD placement; zero for a mesh. |
 | `billboard` | Set when the hit is a billboard of a [billboard batch](billboards.md); `instanced` is set too. |
 | `ribbon` | Set when the hit is a [ribbon batch](ribbons.md), bounded by the whole batch. |
@@ -167,14 +169,15 @@ index.refresh(&assets, &scene)!;
 
 - an effectively visible mesh that is not `trace_only`;
 - a live leaf instance of a host-authored instanced batch (every instance when the batch has no quadtree);
-- a billboard of a visible billboard batch;
+- a billboard of a visible host-authored billboard batch (`BILLBOARDS` or `RECORDS` source);
 - a visible ribbon batch with at least two points;
 - a placement of a visible LOD group, per part of level zero.
 
 A refresh that finds more faults `CAPACITY_EXCEEDED` and leaves `count` at zero, so picks return nothing until a refresh fits.
 
 The index allocates once at creation. Per unit of capacity it holds a 56-byte entry, a 104-byte batch key, two 32-byte tree
-nodes and a 4-byte primitive index, about 230 bytes. Each tree rebuild takes temporary memory from the temp allocator.
+nodes and a 4-byte primitive index, about 230 bytes. Each tree rebuild takes about 40 bytes per entry from the temp
+allocator.
 
 ## Query your own boxes
 
@@ -206,8 +209,8 @@ The `collision_math` example of the physics package picks a scatter of boxes thi
 | Call | Fault |
 | --- | --- |
 | `SceneIndex.refresh` | `CAPACITY_EXCEEDED` when the scene holds more entries than `capacity`. |
-| `AssetStore.triangle_bvh` | `INVALID_ARGUMENT` when the arrays form no triangle list; `ASSET_DATA_UNAVAILABLE` after `release_geometry_cpu`. |
-| `AssetStore.triangles_valid` | `ASSET_DATA_UNAVAILABLE` after `release_geometry_cpu`. |
+| `AssetStore.triangle_bvh` | `INVALID_ARGUMENT` when the revision's arrays form no triangle list, also after a release; `ASSET_DATA_UNAVAILABLE` when the arrays are released and no tree exists. |
+| `AssetStore.triangles_valid` | `ASSET_DATA_UNAVAILABLE` only when the arrays were released before the current revision was checked; a checked revision keeps its answer after a release. |
 | `bvh::build_box_bvh` | `INVALID_ARGUMENT` for an empty box list. |
 
 `spatial::pick`, `SceneIndex.pick` and `prepare_triangle_picks` do not fault.
@@ -225,4 +228,3 @@ The `collision_math` example of the physics package picks a scatter of boxes thi
 - [Scene nodes](scene.md) for transforms, visibility and layers.
 - [Instancing](instancing.md), [billboards](billboards.md), [ribbons](ribbons.md) and [LOD](lod.md) for the batch kinds that
   take part.
-- [Benchmarking](benchmarking.md#scene-index-and-triangle-trees) for index and tree timings.

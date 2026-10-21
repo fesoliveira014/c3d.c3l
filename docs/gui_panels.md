@@ -79,25 +79,46 @@ its own. See [Display processing](post.md).
 
 ## Stats panel
 
-`stats_panel` shows the previous frame's counters and the latest completed GPU timings. The groups, in order: frame and CPU
-record time; draw work (draws, indirect draws, dispatches, scene snapshots, triangles, instances); culling (visible of tested
-instances, cull and sort dispatches and overflows, culled and faded batches); LOD; lights, decals and probes with their dropped
-counts, probe rays and updates, and debug lines; uploads and preparation; resources (dangling references, shader rejections,
-textures and texture views against their capacities); trace instances, nodes, builds and samples; the completed cluster
-figures; the previous frame slot's upload ring use; the completed GPU frame's per-pass milliseconds; per-heap memory usage and
-budget; and a Diagnostics section with the validation state and recent debug messages.
+`stats_panel` shows the previous frame's counters and the latest completed GPU timings. In panel order: frame and CPU record
+time; draw work (draws, indirect draws, dispatches, scene snapshots, triangles, instances); culling (visible of tested
+instances, cull and sort dispatches and overflows, culled and faded batches); LOD; lights, decals, probes and debug lines;
+uploads and [preparation](#preparation-counters); dangling references; trace instances, nodes, builds and path-trace samples;
+shader rejections; textures and texture views against their capacities; the completed cluster figures; the previous frame
+slot's upload ring use; the completed GPU frame's per-pass milliseconds; per-heap memory; and a Diagnostics section with the
+validation state and recent debug messages.
 
 - Draw totals include composition and GUI. Indirect draws count batch draws issued through indirect commands, every pass
   included. Triangle totals include mesh and GUI geometry. Each scene snapshot is one image copy and one draw; snapshots serve
   [scene readers](custom_shaders.md#scene-reads).
-- Upload bytes are the bytes staged this frame, not GPU resident memory; an edited geometry range counts only its vertices.
-  Preparation progress is in [Budgeted preparation](views.md#budgeted-preparation).
 - Instance visibility, GPU LOD counts and cluster figures arrive after frame-slot completion. They lag the CPU counters and can
   describe a different frame.
 - Decals and Decals dropped sum current CPU selection counts across views. Completed decal overflows counts cells that exceeded
   their decal list capacity; those cells use the complete ordered list, so overflow does not discard decals.
-- With several views, per-view figures follow the [last-recorded-view policy](views.md#frames), not an aggregate.
-  `view_stats_table` lists images, lights, decals, cluster counts, exposure, accumulated samples and shadow set per view.
+- The cluster figures describe the view named by `Stats.cluster_view`; with several clustered views read each view's
+  `ViewStats` ([lights](lights.md#diagnostics)). `view_stats_table` lists images, lights, decals, cluster counts, exposure,
+  accumulated samples and shadow set per view; the fields are in the [views reference](views_reference.md#counters).
+- The upload ring rows report the previous frame slot's used and total bytes and its overflow allocations. A dormant frame can
+  also be the previous slot.
+- The memory rows show the device's advisory usage and budget per heap, with its allocation and block sizes.
+
+### Preparation counters
+
+Upload bytes are the bytes staged this frame, not GPU resident memory; an edited geometry range counts only its vertices. The
+preparation rows count the work of [preparation](preparation.md) this frame:
+
+| Row | Meaning |
+| --- | --- |
+| `Prepare units` | Preparation units completed. |
+| `Prepare bytes` | GPU-bound bytes staged. CPU-only copies, such as shader descriptions, are not counted here; they are `PrepareReport.copied_bytes` of an advance. |
+| `Prepare generated texels` | Texels of generated mips. |
+| `Prepare pipeline calls` | Pipeline creation calls that preparation issued. |
+| `Pipelines created` | Cache lookups that missed and built a pipeline this frame, prepared ones included. `Stats.pipeline_lookups` counts every lookup, so the difference is the hits. |
+| `Prepare generation ns`, `Prepare pipeline driver ns` | Time spent generating mips and in the driver creating pipelines. |
+| `Prepare elapsed / overrun ns` | Wall time of the advances and the time beyond the requested time limit. |
+
+The counters keep the work spent before a propagated fault; `abort_frame` does not clear them, and they reset at the next
+`begin_frame`. Progress of a budgeted preparation (units, bytes and texels done) comes from its progress report; see
+[Budgeted preparation](preparation.md#budgeted-preparation).
 
 GPU timings are off by default. Build with the [GPU profiling features](profiling.md#capture-gpu-work) and set
 `RendererDesc.gpu_timings`:
@@ -120,14 +141,14 @@ previews. Open entries request previews for the next overlay, so call it before 
 
 - Its Forward, Deferred and Path traced and its Flat and Clustered controls apply through `configure_view`, which can fault
   with invalid-argument, unsupported, allocation, recording and wait faults; do not treat the panel as an infallible display.
-  Path traced needs ray tracing pipelines. The [view contract](views.md#light-selection) describes the cluster settings.
+  Path traced needs ray tracing pipelines. The [light selection contract](lights.md#select-lights-with-clusters) describes the cluster settings.
 - Controls set the preview exposure, depth and velocity ranges and size. The panel says when no preview slot is free.
 
 ### Cluster diagnostics
 
 For a clustered view, `Cluster slice` starts at zero and is clamped to the current slice count. Expand `clusters` to see that
 slice's tile occupancy. Color is the stored finite-light count over the per-cell capacity: blue is empty, intermediate values
-add green, red is full, and **magenta marks overflow**. Dark grey marks a cell that [depth pruning](many_lights.md#depth-pruning)
+add green, red is full, and **magenta marks overflow**. Dark grey marks a cell that [depth pruning](lights.md#depth-pruning)
 skipped. Globals are excluded. This is a selected-slice heatmap, not the occupancy at visible surfaces. An overflowing cell
 uses complete flat lighting, so magenta does not mean lights were dropped.
 
@@ -146,12 +167,15 @@ uses complete flat lighting, so magenta does not mean lights were dropped.
 
 - Panels draw immediately and keep only the state structs the application owns.
 - Custom materials are shown, not edited.
+- `targets_panel` lists at most `TARGETS_PANEL_ENTRIES` (64) entries and shows at most `render::PREVIEW_CAPACITY` (8) previews
+  at once.
 - Counters that arrive after completion describe an earlier frame than the CPU figures.
 - Only described and exposed component types get inspectors.
 
 ## See also
 
 - [GUI overlay](gui.md) for creating the adapter and ordering the frame.
-- [Many lights](many_lights.md) for the cluster settings the heatmap serves.
-- [Views](views.md) for view configuration and frame statistics.
+- [Lights](lights.md) for the cluster settings the heatmap serves.
+- [Views](views.md) for view configuration and [Views reference](views_reference.md#counters) for the counters.
+- [Preparation](preparation.md) for budgeted preparation, whose counters the Stats panel prints.
 - [Debug lines](debug_draw.md), whose counters the Stats panel prints.

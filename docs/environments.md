@@ -109,7 +109,7 @@ renderer.upload_environment(preview)!;
 | Setting | Default | Domain and effect |
 | --- | --- | --- |
 | `conversion_size` | 512 | Positive for equirectangular input; ignored for native cubes and solid sources |
-| `specular_size` | 256 | At least 32 (`MIN_ENVIRONMENT_SPECULAR_SIZE`), allowing six roughness mips |
+| `specular_size` | 256 | At least 32 (`asset::MIN_ENVIRONMENT_SPECULAR_SIZE`), allowing six roughness mips |
 
 Sizes are not restricted to powers of two. Each filtered mip halves the previous dimensions, rounded down. GPU device limits
 and allocation failures still apply. Sampling budgets and the six roughness levels are internal choices. Generated cubes use
@@ -125,12 +125,12 @@ dimension roughly quadruples a generated cube's storage and processing work.
 
 Each generated cube keeps one storage view per face and mip. The views occupy texture heap slots while the cube lives:
 
-| Environment | Heap slots |
+| Environment | Heap slots, about |
 | --- | --- |
-| Lit, equirectangular source at the default size | 96 |
+| Lit, equirectangular source at the default size | 96; six more per extra source mip |
 | Lit, solid source | 42 |
 | Lit, native cube | 36 |
-| Charlie cube for active sheen | 36 more |
+| Charlie cube for active sheen | 37 more |
 
 The renderer's default heap holds 4,096 slots (`RendererDesc.texture_heap_capacity` changes it). A full heap fails preparation
 with `gpu::DESCRIPTOR_HEAP_FULL`. A native cube needs no converted copy, and a solid source uses one texel per face.
@@ -157,9 +157,10 @@ environment, the Charlie cube. That one-time allocation and filtering can stall 
 loading-screen path for complete material-dependent preparation. Prepared LUTs and cubes are retained and shared on later
 frames.
 
-Changing intensity, rotation, sheen color or sheen roughness reuses prepared filtering. Changing the environment source or
-`specular_size` invalidates the Charlie cube as well as the base filtered results; it is rebuilt only when active sheen next
-needs that environment.
+Sheen demand does not depend on environment intensity. Changing intensity, rotation, sheen color or sheen roughness reuses
+prepared filtering. Changing the environment source or `specular_size` invalidates the Charlie cube as well as the base
+filtered results; it is rebuilt only when active sheen next needs that environment. Disabling sheen keeps a still-current
+Charlie cube for later reuse.
 
 Edit a borrowed environment record and mark its description dirty:
 
@@ -246,18 +247,20 @@ images are allocated on use, not for every reserved store slot.
 | `NOT_FOUND` | No asset exists under the requested key |
 | `ASSET_DATA_UNAVAILABLE` | Source bytes are needed for upload but were released |
 
-Conversion size is checked only for supported equirectangular input. GPU allocation, descriptor, pipeline, command and device
-faults propagate unchanged from gpu.c3l.
+Validation checks, in this order, the processing size, source liveness, zero extent, positive depth, cube or array shape and
+format. Conversion size is checked only for supported equirectangular input. GPU allocation, descriptor, pipeline, command and
+device faults propagate unchanged from gpu.c3l.
 
 ## Limits
 
 - Compressed cube sources and compressed environment textures are not supported. Depth textures and non-cube arrays are not
   supported either.
 - The environment pool is fixed at store creation.
-- Each lit environment holds up to 96 texture heap slots; plan the heap size for several environments.
-- Rendering writes scene-linear HDR. A default view tonemaps with ACES and applies `Camera.exposure`; adaptive exposure is an
-  opt-in post setting. Source and lighting intensities help inspect the result but do not replace display processing; see
-  [Display processing](post.md).
+- A lit environment holds about 96 texture heap slots at the default sizes, six more per extra source mip, and 37 more with
+  sheen; plan the heap size for several environments.
+- Rendering writes scene-linear HDR. A `DISPLAY_LDR` view, the default, tonemaps with ACES and applies `Camera.exposure`;
+  adaptive exposure is an opt-in post setting. A `LINEAR_HDR` view does not tonemap. Source and lighting intensities help
+  inspect the result but do not replace display processing; see [Display processing](post.md).
 
 Run the worked example with `python3 scripts/build.py --example ibl`. It bundles two small CC0 HDRs; see
 `examples/assets/ibl/README.md`.

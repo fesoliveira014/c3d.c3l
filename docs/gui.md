@@ -45,8 +45,8 @@ Run the worked example with `python3 scripts/build.py --example cube_gui`. The s
 
 ## Concepts
 
-- **Ownership.** `GuiRenderer` owns the ImGui context, the font atlas texture and view, a sampler and a pipeline cache. It
-  borrows the renderer and the window. Both stay at stable addresses until the GUI is destroyed. The supplied allocator owns
+- **Ownership.** `GuiRenderer` owns the ImGui context, the font atlas texture and view and a pipeline cache, and uses an
+  interned linear clamp sampler. It borrows the renderer and the window. Both stay at stable addresses until the GUI is destroyed. The supplied allocator owns
   c3d-side cache storage; ImGui keeps its native allocation policy.
 - **Fonts.** ImGui's built-in font atlas is uploaded once at creation as an RGBA8 texture. The font is not an asset-store
   texture and `FontId` fonts do not apply to ImGui.
@@ -132,8 +132,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang \
     -DSDL3_INCLUDE_DIR="$PWD/vendor/sdl-src/include"
 cmake --build build --parallel
+mkdir -p linked-libs/linux-x64
 cp build/libdcimgui.a linked-libs/linux-x64/libdcimgui.a
 ```
+
+Then, from the c3d root, run `python3 scripts/build.py --test` to check that everything links against the new archive.
 
 - `bootstrap.sh` fetches Dear ImGui at `v1.92.8-docking` and `dear_bindings` at a pinned revision into `vendor/`;
   `generate.sh` writes the C API sources into `generated/`. Both directories and `build/` are ignored by the submodule.

@@ -63,7 +63,7 @@ while (window.poll()) {
 | `resizable`, `fullscreen` | Window flags. |
 
 `default_window_desc(title, width, height)` returns a resizable window. The first `create_window` starts SDL's video and
-gamepad subsystems; the last `destroy_window` stops them and frees the retained clipboard string.
+gamepad subsystems; the last `destroy_window` closes every open pad, stops both and frees the retained clipboard string.
 
 ## Poll one or several windows
 
@@ -87,7 +87,7 @@ Keys are named by `platform::Scancode`, SDL's scancode names and numbers with th
 | Call or field | Meaning |
 | --- | --- |
 | `Input.key_down(key)`, `key_pressed(key)`, `key_released(key)` | Held, went down this frame, went up this frame. |
-| `Input.button_down(button)`, `button_pressed(button)` | Same for mouse buttons. |
+| `Input.button_down(button)`, `button_pressed(button)` | Held, went down this frame. |
 | `Input.mouse_position`, `mouse_delta` | Framebuffer pixels; the delta sums the frame's motion. |
 | `Input.wheel` | Vertical wheel movement of the frame, as SDL reports it. |
 | `Input.modifiers` | `Keymod` of the last key event: `shift`, `ctrl`, `alt`, `gui`, `caps`, `num`. |
@@ -108,6 +108,9 @@ The arrays behind these calls stay public and use the same indices: `Input.keys`
 | `GAMEPAD_CONNECTED`, `GAMEPAD_DISCONNECTED` | `gamepad_slot` |
 | `GAMEPAD_BUTTON_DOWN`, `GAMEPAD_BUTTON_UP` | `gamepad_slot`, `gamepad_button` |
 | `GAMEPAD_AXIS_MOTION` | `gamepad_slot`, `gamepad_axis`, normalized `axis_value` |
+
+Event `position` and `delta` are framebuffer pixels, converted from SDL window coordinates with the window's pixel density. A
+density change rescales the stored mouse position when the next poll begins.
 
 A window keeps `EVENT_CAPACITY` (256) events and `EVENT_TEXT_CAPACITY` (1,024) bytes of event text per frame. Anything
 beyond is dropped and counted in `events_dropped`. `Event.text` borrows the arena until the next `poll` or `clear_events`.
@@ -163,7 +166,8 @@ Windows own SDL's gamepad subsystem. `create_window` faults `GAMEPAD_INIT_FAILED
 
 Destroy the renderer and any GPU surface before `destroy_window()`. Renderer destruction waits for GPU and presentation
 completion. An unexpected cleanup wait failure exits the process without running defers; confirmed device loss permits
-teardown.
+teardown. A renderer whose construction fails uses the same cleanup policy. The last `destroy_window` closes every open pad
+and stops the video and gamepad subsystems.
 
 ## Reference
 
@@ -173,7 +177,7 @@ teardown.
 | `GAMEPAD_INIT_FAILED` | `create_window` when the gamepad subsystem does not start. |
 | `WINDOW_CREATION_FAILED` | `create_window` when SDL cannot create the window. |
 | `CLIPBOARD_FAILED` | `set_clipboard_text` when SDL refuses. |
-| `UNSUPPORTED` | `create_surface` and `create_window_renderer` for a video driver other than X11, Wayland or Windows. |
+| `c3d::UNSUPPORTED` | `create_surface` and `create_window_renderer` for a video driver other than X11, Wayland or Windows; `create_window_renderer` for `RendererDesc.gpu_timings` without `C3D_PROFILE_GPU`. |
 
 ## Limits
 
