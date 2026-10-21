@@ -23,7 +23,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Cl
     uint64_t velocities;         // vec4 per particle
     uint64_t lambdas;            // vec4 per particle: soft attachment multiplier of this substep
     uint64_t reference;          // two vec4 per particle: world reference position at the request's start, then its end
-    uint64_t constraints;        // two uvec4 per edge, then per bend: first, second, rest length bits, rest direction
+    uint64_t constraints;        // uvec4 per edge, then per bend: first, second, rest length bits; then a uvec4 rest direction for each
     uint64_t initial;            // vec4 per particle: world position at the first step, inverse mass
     uint64_t rest;               // vec4 per particle: node-local rest position, inverse mass
     uint64_t marks;              // uint per particle: bit 0 set on a constraint of the first pass, bit 1 of the last

@@ -36,7 +36,6 @@ struct StepConstraint {
     uint  first;
     uint  second;
     float rest_length;
-    vec3  rest_direction;
 };
 
 void step_initialize(ClothRoot root, uint index) {
@@ -176,18 +175,18 @@ void step_soft(ClothRoot root, uint index, StepPass step) {
 }
 
 StepConstraint step_constraint(ClothRoot root, uint index) {
-    ClothConstraints constraints = ClothConstraints(root.constraints);
-    uvec4 head = constraints.values[2u * index];
-    uvec4 tail = constraints.values[2u * index + 1u];
-    return StepConstraint(
-        head.x,
-        head.y,
-        uintBitsToFloat(head.z),
-        vec3(uintBitsToFloat(tail.x), uintBitsToFloat(tail.y), uintBitsToFloat(tail.z))
-    );
+    uvec4 head = ClothConstraints(root.constraints).values[index];
+    return StepConstraint(head.x, head.y, uintBitsToFloat(head.z));
 }
 
-void step_project(ClothRoot root, StepConstraint constraint, StepPass step) {
+// Read only for a pair that collapsed onto one point, so a projection touches 16 B of each constraint.
+vec3 step_rest_direction(ClothRoot root, uint index) {
+    uint total = ClothWords(root.color_starts).values[root.color_count];
+    uvec4 stored = ClothConstraints(root.constraints).values[total + index];
+    return vec3(uintBitsToFloat(stored.x), uintBitsToFloat(stored.y), uintBitsToFloat(stored.z));
+}
+
+void step_project(ClothRoot root, uint index, StepConstraint constraint, StepPass step) {
     StepVectors predicted = StepVectors(root.predicted);
     vec4 first = predicted.values[constraint.first];
     vec4 second = predicted.values[constraint.second];
@@ -196,7 +195,12 @@ void step_project(ClothRoot root, StepConstraint constraint, StepPass step) {
 
     vec3 delta = second.xyz - first.xyz;
     float length_now = length(delta);
-    vec3 direction = length_now > MIN_EDGE_LENGTH ? delta / length_now : constraint.rest_direction;
+    vec3 direction;
+    if (length_now > MIN_EDGE_LENGTH) {
+        direction = delta / length_now;
+    } else {
+        direction = step_rest_direction(root, index);
+    }
     vec3 correction = direction * ((length_now - constraint.rest_length) * step.stiffness / total_weight);
     predicted.values[constraint.first].xyz = first.xyz + correction * first.w;
     predicted.values[constraint.second].xyz = second.xyz - correction * second.w;
@@ -256,7 +260,7 @@ void step_item(ClothRoot root, uint item, StepPass step) {
         StepConstraint constraint = step_constraint(root, step.first + item);
         step_enter(root, constraint.first, step);
         step_enter(root, constraint.second, step);
-        step_project(root, constraint, step);
+        step_project(root, step.first + item, constraint, step);
         step_leave(root, constraint.first, step);
         step_leave(root, constraint.second, step);
         return;

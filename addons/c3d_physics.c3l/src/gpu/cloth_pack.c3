@@ -22,16 +22,19 @@ enum ClothArena @private {
 }
 
 struct EdgeGpu @private {
-    uint     first;
-    uint     second;
-    float    rest_length;
-    uint     _pad0;
-    float[3] rest_direction;
-    uint     _pad1;
+    uint  first;
+    uint  second;
+    float rest_length;
+    uint  _pad0;
 }
 
-$assert EdgeGpu::size == 32;
-$assert $reflect(EdgeGpu.rest_direction).offset == 16;
+struct DirectionGpu @private {
+    float[3] direction;
+    uint     _pad0;
+}
+
+$assert EdgeGpu::size == 16;
+$assert DirectionGpu::size == 16;
 
 <*
  Byte offsets of one cloth's tables from the start of its range, and the range's length.
@@ -39,7 +42,7 @@ $assert $reflect(EdgeGpu.rest_direction).offset == 16;
 struct ClothTables {
     usz initial;      // vec4 per particle: world position at the first step, inverse mass
     usz rest;         // vec4 per particle: node-local rest position, inverse mass
-    usz constraints;  // EdgeGpu per edge, ordered by color, then per bend, ordered by color
+    usz constraints;  // EdgeGpu per edge, ordered by color, then per bend, ordered by color; then a DirectionGpu for each
     usz marks;        // uint per particle: FIRST_COLOR_BIT and LAST_COLOR_BIT set
     usz color_starts; // uint per pass plus one: first constraint of each pass
     usz adjacency;    // uint offsets per particle plus one, then the incident triangle numbers
@@ -262,7 +265,7 @@ fn ClothTables plan_tables(uint particles, usz constraints, uint passes, usz cor
     usz cursor;
     tables.initial = place(&cursor, particles * Vec4::size);
     tables.rest = place(&cursor, particles * Vec4::size);
-    tables.constraints = place(&cursor, constraints * EdgeGpu::size);
+    tables.constraints = place(&cursor, constraints * (EdgeGpu::size + DirectionGpu::size));
     tables.marks = place(&cursor, particles * uint::size);
     tables.color_starts = place(&cursor, ((usz)passes + 1) * uint::size);
     tables.adjacency = place(&cursor, ((usz)particles + 1 + corners) * uint::size);
@@ -308,9 +311,17 @@ fn Aabb write_tables(
     uint passes = edge_colors + bend_colors;
     usz edge_count = state.edges.len;
     usz bend_count = bend_colors ? state.bends.len : 0;
-    EdgeGpu[] constraints = ((EdgeGpu*)&block[tables.constraints])[:edge_count + bend_count];
-    foreach (index, &edge : state.edges) constraints[index] = constraint_record(edge);
-    foreach (index, &bend : state.bends[:bend_count]) constraints[edge_count + (usz)index] = constraint_record(bend);
+    usz constraint_count = edge_count + bend_count;
+    EdgeGpu[] constraints = ((EdgeGpu*)&block[tables.constraints])[:constraint_count];
+    DirectionGpu[] directions = ((DirectionGpu*)&block[tables.constraints + constraint_count * EdgeGpu::size])[:constraint_count];
+    foreach (index, &edge : state.edges) {
+        constraints[index] = constraint_record(edge);
+        directions[index] = direction_record(edge);
+    }
+    foreach (index, &bend : state.bends[:bend_count]) {
+        constraints[edge_count + (usz)index] = constraint_record(bend);
+        directions[edge_count + (usz)index] = direction_record(bend);
+    }
 
     uint[] starts = ((uint*)&block[tables.color_starts])[:passes + 1];
     starts[:edge_colors + 1] = state.edge_color_starts[:edge_colors + 1];
@@ -352,13 +363,16 @@ fn Aabb write_tables(
 }
 
 fn EdgeGpu constraint_record(ClothConstraint* constraint) @private {
-    Vec3 direction = constraint.rest_direction;
     return {
-        .first          = constraint.first,
-        .second         = constraint.second,
-        .rest_length    = constraint.rest_length,
-        .rest_direction = { direction.x, direction.y, direction.z },
+        .first       = constraint.first,
+        .second      = constraint.second,
+        .rest_length = constraint.rest_length,
     };
+}
+
+fn DirectionGpu direction_record(ClothConstraint* constraint) @private {
+    Vec3 direction = constraint.rest_direction;
+    return { .direction = { direction.x, direction.y, direction.z } };
 }
 
 fn void mark_pass(uint[] marks, EdgeGpu[] pass_constraints, uint mark) @private {
