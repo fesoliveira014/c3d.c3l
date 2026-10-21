@@ -1,27 +1,47 @@
 # c3d
 
-c3d is a scene-level 3D rendering library for [C3](https://c3-lang.org/). It provides an ECS scene, an asset store with
-glTF and FBX import, animation and a Vulkan 1.3 renderer (through gpu.c3l), plus add-on packages for physics, navigation,
-terrain and water, particles, UI and audio. It is a base for a game engine, not an engine.
+[![ci](https://github.com/fesoliveira014/c3d.c3l/actions/workflows/ci.yml/badge.svg)](https://github.com/fesoliveira014/c3d.c3l/actions/workflows/ci.yml)
 
-The target platforms are linux-x64 and windows-x64, with C3 0.8.3 exactly. The Vulkan device must support
+`c3d` is a scene-level 3D rendering library for [C3](https://c3-lang.org/). It provides an ECS scene, an asset store with
+glTF and FBX import, animation and a Vulkan 1.3 renderer built on gpu.c3l. Add-on packages cover physics, navigation,
+terrain and water, particles, UI and audio.
+
+c3d is a base for a game engine, not an engine. It has no scheduler and does not run your game loop: the application
+creates the window, the asset store, the renderer and the scene, and calls each system as a function, in the order it
+chooses.
+
+## Highlights
+
+- a fixed-capacity node hierarchy over an ECS, with typed generational asset ids and glTF and FBX import;
+- forward, deferred and path-traced shading over views and render targets;
+- materials and custom shaders, lights and shadows, sky and fog, traced reflections and display processing;
+- instancing, whole-object LOD, CPU picking and camera-relative large worlds;
+- animation with clips, layers, blend spaces, root motion and inverse kinematics; and
+- add-on packages for physics, navigation, character control, terrain, vegetation, water, particles, game UI, audio, a
+  job pool, scene serialization and a profiler, each selected by the application in `project.json`.
+
+## Requirements and status
+
+The current release targets **C3 0.8.3** exactly, on `linux-x64` and `windows-x64`. The Vulkan device must support
 `shaderClipDistance`; `create_renderer` faults `UNSUPPORTED` without it.
 
-## Features
+Other tools are Python 3.10 or newer, `glslangValidator` on `PATH`, the Vulkan loader and validation layer, a C compiler
+and git. [Getting started](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md#requirements)
+lists them and the Windows setup.
 
-- **Scene and assets.** A fixed-capacity [node hierarchy](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/scene.md) over an ECS; an [asset store](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/assets.md) with typed generational ids; [glTF and FBX import](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/models.md); [CPU picking](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/picking.md); [camera-relative large worlds](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/large_world.md).
-- **Rendering.** [Views and render targets](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/views.md) with forward, deferred and path-traced [shading paths](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/shading_paths.md); [materials](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/materials.md) and [custom shaders](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/custom_shaders.md); [lights](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/lights.md) and [shadows](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/shadows.md); [sky, fog](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/sky.md) and clouds; [display processing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/post.md); traced [reflections](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/reflections.md) and [path tracing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/path_tracing.md); [instancing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/instancing.md) and [LOD](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/lod.md).
-- **Animation.** [Clips, layers, blend spaces and root motion](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/animation.md), [inverse kinematics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/animation_ik.md) and [crowds](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/crowds.md).
-- **Add-ons.** [Physics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics.md), [navigation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/navigation.md), [terrain](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain.md), [particles](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/particles.md), [UI](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/ui.md), [audio](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/audio.md), a [job pool](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/jobs.md), [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md) and a [profiler](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/profiling.md). Each is a separate package that an application selects in `project.json`; core imports none of them, except the profiler through bridges gated by the `C3D_PROFILE_*` features. The [index](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/README.md#add-on-packages) links each package's README.
+This project is pre-1.0.
 
-## Requirements
+## Start here
 
-c3c 0.8.3, Python 3.10 or newer, `glslangValidator` on `PATH`, the Vulkan loader and its validation layer, a C compiler
-and git. The build script downloads SDL3, Dear ImGui and the other native libraries. The
-[getting-started page](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md#requirements) has the
-details and the Windows setup.
+- [Getting started](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md): install, your own project, a first scene and the frame loop.
+- [Documentation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/README.md): every page by task and by subsystem, and the add-on READMEs.
+- [Examples](https://github.com/fesoliveira014/c3d.c3l/blob/main/examples/README.md): every example with its options.
+- [Architecture](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/architecture.md): layers, modules, add-ons and feature flags.
+- [Releases](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/release.md): the packed packages and what each needs in `project.json`.
 
-## Build
+## Install
+
+Clone with submodules, fetch the native libraries once, then build and run an example:
 
 ```bash
 git clone --recurse-submodules https://github.com/fesoliveira014/c3d.c3l
@@ -32,13 +52,15 @@ python3 scripts/build.py                            # build every example
 python3 scripts/build.py --test                     # then run every test target; what CI runs
 ```
 
-GPU examples run by hand; CI has no GPU. [Development](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/development.md)
-describes the build pipeline, the test targets and the manual GPU acceptance projects.
+`hello` prints the library version and opens no window. GPU examples open a window and run by hand; CI creates no GPU
+device.
+
+To use c3d in your own project, take a [release](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/release.md) or a checkout.
+[Getting started](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md#use-c3d-in-your-project) shows the `project.json`.
 
 ## First program
 
-A window, an asset store, a renderer, one box and a camera. `python3 scripts/build.py --example cube` runs a similar
-scene with an orbit camera.
+A window, an asset store, a renderer, one box and a camera. Save it as `src/main.c3` of the project in getting started.
 
 ```c3
 module first_program;
@@ -81,26 +103,7 @@ fn int main() {
 }
 ```
 
-## Use c3d in your project
-
-Each release publishes core as `c3d_core-v<version>.c3l` and every add-on as its own packed library. The
-[releases page](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/release.md) lists the files, the libraries each
-package needs in `project.json`, the feature flags and the shader tools. The
-[getting-started page](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md#use-c3d-in-your-project)
-shows a project that builds this program against a checkout and explains the frame loop.
-
-## Where next
-
-- [Documentation index](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/README.md): every page by task and by subsystem, and the add-on READMEs.
-- [Getting started](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md): install, your own project, a first scene and the frame loop.
-- [Examples](https://github.com/fesoliveira014/c3d.c3l/blob/main/examples/README.md): every example with its options.
-- [Architecture](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/architecture.md): layers, modules, add-ons and feature flags.
-
 ## Contributing and licence
 
-Read [CONTRIBUTING.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/CONTRIBUTING.md), then
-[AGENTS.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/AGENTS.md) and
-[docs/style.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/style.md). c3d is MIT licensed (`LICENSE`). The glyph shader port is covered by `LICENSE-slug.txt`. Third-party notices sit beside
-the files they cover: [`test/fixtures/LICENSES.md`](https://github.com/fesoliveira014/c3d.c3l/blob/main/test/fixtures/LICENSES.md)
-for the texture fixtures, each fixture set's README, and the asset READMEs listed in the
-[examples](https://github.com/fesoliveira014/c3d.c3l/blob/main/examples/README.md#example-assets).
+Read [CONTRIBUTING.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/CONTRIBUTING.md) before changing code. c3d is MIT licensed ([LICENSE](https://github.com/fesoliveira014/c3d.c3l/blob/main/LICENSE)). Third-party
+notices sit beside the files they cover; the [example assets](https://github.com/fesoliveira014/c3d.c3l/blob/main/examples/README.md#example-assets) list theirs.
