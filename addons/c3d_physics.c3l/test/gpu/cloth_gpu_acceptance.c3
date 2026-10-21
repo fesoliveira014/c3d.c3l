@@ -53,13 +53,16 @@ const usz MAX_CONTROLS @private = 6; // soft, transport, wind, bends, sphere and
 const float FEATURE_FLOOR @private = 4e-3f; // metres; twice the tolerance, so a missing feature cannot hide inside it
 const float SPHERE_RADIUS @private = 0.2f;
 const float CAPSULE_RADIUS @private = 0.12f;
-const float CAPSULE_HALF_HEIGHT @private = 0.3f;
+const float CAPSULE_HALF_HEIGHT @private = 0.5f;
 const float SPHERE_X @private = 0.5f;
 const float CAPSULE_X @private = 1.3f;
 const float MOVER_Y @private = POLE_HEIGHT - 0.6f; // mid-height of the hanging flag
 const float MOVER_START_Z @private = -1.0f; // metres in front of the flag; the movers reach it after most of the run
 const float MOVER_SPEED @private = 0.9f; // metres per second along the flag's normal
-const float CAPSULE_PITCH_RATE @private = 0.3f; // radians per second about the horizontal axis across the flag
+const float CAPSULE_Z @private = -0.35f; // the capsule turns about its centre here, in front of the flag
+const float CAPSULE_START_YAW @private = -0.4f; // radians; the capsule lies across the flag, both ends clear of it
+const float CAPSULE_FINAL_YAW @private = 0.72f; // radians at the end of the run; one end has swept 0.1 m into the flag
+const float CAPSULE_TURN_RATE @private = 2.3f; // radians per second about the vertical axis through its centre
 const float ROUNDING_SLACK @private = 1e-6f; // metres; single-precision positions near 3 m differ by a few of 2.4e-7
 const float CONTACT_REACH_MARGIN @private = 1e-3f; // metres; a particle this close to a shape's reach is in contact
 const float SHAPE_NEIGHBOURHOOD @private = 0.3f; // metres from a shape's surface; particles this close belong to it
@@ -293,13 +296,17 @@ fn void? add_movers(Fixture* fixture) @private {
     pose_movers(fixture, 0);
 }
 
-// Both owners advance along the flag's normal at a constant speed; the capsule also pitches, so its ends swing along it.
+// The sphere advances along the flag's normal at a constant speed. The capsule lies across the flag and holds
+// still, then turns about its centre so one end sweeps into the flag at the speed of the sphere.
 fn void pose_movers(Fixture* fixture, uint step) @private {
     float seconds = (float)step * physics::DEFAULT_FIXED_DT;
-    float travel = MOVER_START_Z + MOVER_SPEED * seconds;
-    fixture.sphere_body.local.position = { SPHERE_X, MOVER_Y, travel };
-    fixture.capsule_body.local.position = { CAPSULE_X, MOVER_Y, travel };
-    fixture.capsule_body.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, CAPSULE_PITCH_RATE * seconds);
+    fixture.sphere_body.local.position = { SPHERE_X, MOVER_Y, MOVER_START_Z + MOVER_SPEED * seconds };
+
+    float remaining = (float)(TWIN_STEPS - step) * physics::DEFAULT_FIXED_DT;
+    float yaw = math::max(CAPSULE_START_YAW, CAPSULE_FINAL_YAW - CAPSULE_TURN_RATE * remaining);
+    Quat across = quaternion::from_axis_angle{float}({ 0, 0, 1 }, -(float)math::PI / 2);
+    fixture.capsule_body.local.position = { CAPSULE_X, MOVER_Y, CAPSULE_Z };
+    fixture.capsule_body.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, yaw) * across;
     fixture.scene.update_world();
 }
 
