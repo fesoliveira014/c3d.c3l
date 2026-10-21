@@ -1,14 +1,15 @@
 # Contributing
 
-Build and run c3d with the [README](README.md), then read these before you change anything. They are mandatory, and none of
-them is optional for a one-line change.
+Build and run c3d with the [README](README.md). Then read, in this order:
 
-- [AGENTS.md](AGENTS.md): the project rules. Module and import boundaries, simplicity and testing rules, verification, and the
-  change workflow.
-- [docs/style.md](docs/style.md): the code style baseline for every `.c3`, `.c3i` and `.glsl` file. Naming, call and
-  declaration formatting, error handling, docstrings and the review checklist.
-- [docs/development.md](docs/development.md): the build, the shader pipeline, the test targets and the acceptance projects.
-- [docs/architecture.md](docs/architecture.md): layers, modules, add-on packages and feature flags.
+- [AGENTS.md](AGENTS.md): the project rules. Mandatory at the start of every task. Module and import boundaries, simplicity
+  rules, verification, and the change workflow. It names the other pages and says when to read them.
+- [docs/style.md](docs/style.md): the code style baseline for every `.c3`, `.c3i` and `.glsl` file. Mandatory for code work.
+  Naming, call and declaration formatting, error handling, docstrings, comments, tests and the review checklist.
+- [docs/architecture.md](docs/architecture.md) and [docs/development.md](docs/development.md): layers, modules, add-on
+  packages and feature flags; the build, shader pipeline, test targets and acceptance projects. Read them when your task
+  touches those areas.
+- [REVIEW.md](REVIEW.md): how your change is reviewed.
 
 ## Before you commit
 
