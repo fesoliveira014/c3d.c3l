@@ -503,7 +503,7 @@ add-on. The Mixamo files the examples use are listed in `examples/assets/mixamo/
 - **Events.** An event holds an ID and a time; there are no names or payloads.
 - **Scheduling.** No scheduler runs animation, consumes root motion or reads events.
 - **Persistence.** `c3d_serial` keeps authored settings; clocks, fades and transitions restart
-  ([Serialization](serialization.md)).
+  ([Serialization](serialization_reference.md#models-rigs-and-animation)).
 
 ## See also
 

@@ -433,7 +433,7 @@ synchronous and is unsuitable for the frame loop.
 Source asset edits do not update an existing atlas; rebake explicitly after
 changing the captured geometry or material.
 
-An installed impostor draws at the view's [multisample count](views.md#multisample-anti-aliasing) in the multisample
+An installed impostor draws at the view's [multisample count](msaa.md) in the multisample
 pass, but its alpha cut is evaluated once per pixel, so the cut edge is not antialiased. `bake_impostor` renders through
 an internal single-sample view.
 

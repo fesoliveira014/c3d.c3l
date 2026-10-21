@@ -66,7 +66,7 @@ children. An instantiation that runs out of nodes removes the partial subtree an
 A subtree serialized with `c3d_serial` keeps its model key, exact structural signature, captured template identities and
 authored overrides. Restore creates the saved graph directly, preserving deleted template slots and application children.
 The source model and the referenced keyed assets must be live in the destination store. A structural mismatch returns
-`INCOMPATIBLE_TEMPLATE` with the model key and the first differing template index ([Serialization](serialization.md)).
+`INCOMPATIBLE_TEMPLATE` with the model key and the first differing template index ([Serialization](serialization_reference.md#models-rigs-and-animation)).
 
 ### Node index contract
 

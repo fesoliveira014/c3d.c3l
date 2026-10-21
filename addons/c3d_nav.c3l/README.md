@@ -12,7 +12,7 @@ not be used by navigation's grid conversion and motion calculations.
 Serialization also requires a finite POSITION target; the void target setters
 retain their existing contracts. NONE/VELOCITY targets, inactive shape fields
 and node transforms preserve their IEEE values. The complete field/domain table
-is in [serialization](../../docs/serialization.md#authored-numeric-domains).
+is in [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#authored-numeric-domains).
 
 ## Port notice
 

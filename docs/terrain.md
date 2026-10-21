@@ -365,7 +365,7 @@ point outside it is `NOT_FOUND`. Each tile keeps its own collider, height map re
 an edit of one tile does not reach its neighbours' texels.
 
 Serialization stores the set's `texels`, `cell_size` and `height_scale` and each tile's coordinates; the links are
-rebuilt when the tiles prepare (see [serialization](serialization.md#landscape-particle-and-audio-adapters)).
+rebuilt when the tiles prepare (see [serialization](serialization_reference.md#landscape)).
 
 ## Height queries
 

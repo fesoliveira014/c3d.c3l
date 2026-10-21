@@ -43,7 +43,7 @@ if (status.phase == LoadPhase.PUBLISHED) {
 ```
 
 Handle a terminal result once, then stop querying its released ID. `prepare` is the `PrepareId` the application holds;
-instantiate the model when its preparation reaches `READY` ([Budgeted preparation](views.md#budgeted-preparation)).
+instantiate the model when its preparation reaches `READY` ([Budgeted preparation](preparation.md#budgeted-preparation)).
 
 ## Decode and publish
 
@@ -267,5 +267,5 @@ requests the glTF importer, so an FBX path ends `FAILED` with `ASSET_FORMAT_ERRO
 
 - [Models](models.md) for what an import creates.
 - [Asset store](assets.md) for keys, capacities, file sources and replacement of single assets.
-- [Views](views.md#budgeted-preparation) for budgeted GPU preparation after a publish.
+- [Preparation](preparation.md#budgeted-preparation) for budgeted GPU preparation after a publish.
 - [Textures](textures.md) for texture residency.

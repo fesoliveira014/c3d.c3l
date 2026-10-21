@@ -2,7 +2,7 @@
 
 `c3d::nav` saves an initialized `NavMesh` to portable bytes and replaces a mesh from those bytes. The snapshot includes baked geometry, current polygon flags/areas, coarse quantized query bounds, bounded surface and clearance metadata, and original off-mesh connections. It needs no scene, renderer or serialization add-on.
 
-[Authored navigation serialization](serialization.md#navigation-adapter) saves NavSource, NavVolume, NavLink, NavObstacle and NavAgent setup. A baked snapshot is independent of that authoring. File I/O, asset versioning, streaming, builder/cache inputs, agents, crowd state and saved searches belong to the application.
+[Authored navigation serialization](serialization_reference.md#navigation-and-character) saves NavSource, NavVolume, NavLink, NavObstacle and NavAgent setup. A baked snapshot is independent of that authoring. File I/O, asset versioning, streaming, builder/cache inputs, agents, crowd state and saved searches belong to the application.
 
 ## Use and ownership
 
