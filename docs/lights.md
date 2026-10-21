@@ -72,7 +72,7 @@ need no dirty call. Call `scene.update_world()` after transform changes, before 
 - A spot has full angular weight inside the inner cone, zero at the outer cone, and a smooth ramp between. The
   renderer floors the inner-to-outer cosine difference at 0.001, so a very narrow cone can lose some weight inside
   its inner angle. The GUI shows spot angles in degrees.
-- `Light.volumetric` makes the light scatter in the [volumetric fog](sky.md#volumetric-fog) of a view that has one
+- `Light.volumetric` makes the light scatter in the [volumetric fog](fog.md#volumetric-fog) of a view that has one
   and does nothing else. The three constructors set it; set it to false to opt a light out. A zero-initialized
   `Light` does not scatter.
 - `Light.source_radius` (point and spot, metres) and `Light.source_angle` (directional, half-angle in radians) size
@@ -191,7 +191,7 @@ lights in a different order.
   ambient occlusion or screen-space GI, which imply one) ignores the field, and so does a forward view with traced
   reflections, whose thin reflection prepass is both the depth producer and a reader of the decal lists. Neither is
   a fault. Deferred views always have depth.
-- On a pruned view the reduction, the cull and the [volumetric fog](sky.md#volumetric-fog) volume run after the
+- On a pruned view the reduction, the cull and the [volumetric fog](fog.md#volumetric-fog) volume run after the
   depth prepass instead of before every other pass. On a deferred view that is between the prepass and the G-buffer
   pass.
 - Tiles map from the unjittered view. Under TAA a pixel within half a pixel of a tile edge can shade with the

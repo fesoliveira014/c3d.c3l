@@ -381,11 +381,11 @@ time-lapse gate expects `floor(sweep / period)` regenerations after its first fr
 the noon segment's first frame and `ascent_regenerations` none after the ascent segment's first; at the default 300 frames the ascent crosses the top of
 the atmosphere, so the crossing regenerates nothing. `--volumetric-fog` adds a froxel volume to the main and mirror views and the
 `FOG_SCATTERING` and `FOG_INTEGRATION` pass lines report it (0 without the switch), with `--fog-quality low|medium|high`
-choosing its grid and `--fog-temporal` adding its [temporal accumulation](sky.md#temporal-accumulation); `--local-lights N`, `--lamp-range METRES` and `--lamps-in-fog on|off` place and configure
+choosing its grid and `--fog-temporal` adding its [temporal accumulation](fog.md#temporal-accumulation); `--local-lights N`, `--lamp-range METRES` and `--lamps-in-fog on|off` place and configure
 [lamps](sky.md#example) that `FOG_SCATTERING` scatters; `--taa` turns on TAA, so
-`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl; `--clouds` adds a [cloud layer](sky.md#clouds) and the
+`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl; `--clouds` adds a [cloud layer](clouds.md) and the
 `CLOUDS` and `CLOUD_SHADOWS` pass lines report it (0 without the switch), with `--cloud-temporal` adding its
-[temporal accumulation](sky.md#cloud-temporal-accumulation). A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
+[temporal accumulation](clouds.md#cloud-temporal-accumulation). A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline. `--atmosphere dense|empty` selects the
 dense and the non-scattering atmospheres of [the sky example](sky.md#example); the header prints the value.
 
 ## Instancing benchmark

@@ -12,7 +12,7 @@ not be used by navigation's grid conversion and motion calculations.
 Serialization also requires a finite POSITION target; the void target setters
 retain their existing contracts. NONE/VELOCITY targets, inactive shape fields
 and node transforms preserve their IEEE values. The complete field/domain table
-is in [serialization](../../docs/serialization.md#authored-numeric-domains).
+is in [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#authored-numeric-domains).
 
 ## Port notice
 
@@ -488,7 +488,7 @@ nothing. A later `set_source` takes `GridCache.source_origin()` as its origin, b
 any other. A bare `GridTileBuilder` keeps no cache: move the `origin` of its `source`, or retake the source.
 
 Pass multiples of 256 m, the step of the large-world rebase, so origins stay exactly representable. Other
-offsets also work, within float rounding. See [large worlds](../../docs/large_world.md#navigation-grid-caches)
+offsets also work, within float rounding. See [large worlds](../../docs/origin_rebasing.md#navigation-grid-caches)
 for the order across all owners.
 
 ## Tests
