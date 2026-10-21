@@ -725,7 +725,7 @@ one, and nothing else. The three constructors set it; set it to false to opt a l
 `Light` has it false and does not scatter.
 
 `Light.source_radius` (point and spot lights, metres) and `Light.source_angle` (directional lights, half-angle in
-radians) size the source that [ray-traced shadows](shadows.md#soft-shadows) sample. Both are zero by default, a point
+radians) size the source that [ray-traced shadows](ray_traced_shadows.md#soft-shadows) sample. Both are zero by default, a point
 source with a hard shadow. They are finite and not negative, and the angle is below `PI / 2`. Atlas shadows ignore them.
 
 `Scene.add_light` can return `c3d::CAPACITY_EXCEEDED` when node capacity is full.

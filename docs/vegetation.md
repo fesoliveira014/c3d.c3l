@@ -180,7 +180,7 @@ foliage::commit_scatter(&scene, &assets, &job)!;
 
 Remove `Foliage` from a live node, or remove the node. Removing the node removes its cells first, then the runtime, whose hook frees the cell table and the runtime LOD copy; the `Foliage` hook frees the authoring LOD copy. Removing only `Foliage` leaves the runtime until the next `update`, which removes the layer's cell nodes and then the runtime. Removing `FoliageRuntime` or a cell node directly is unsupported. The layer owns no assets. Destroy the scene before the store.
 
-`Foliage` is the authored component, including its ground node reference. The cell nodes and their `InstancedMesh` or `LodGroup` components are derived. [Serialization](serialization.md#landscape-particle-and-audio-adapters) saves the authoring and `prepare` regenerates the cells.
+`Foliage` is the authored component, including its ground node reference. The cell nodes and their `InstancedMesh` or `LodGroup` components are derived. [Serialization](serialization_reference.md#landscape) saves the authoring and `prepare` regenerates the cells.
 
 ## Faults
 

@@ -151,7 +151,7 @@ foreach (tile : tiles) {
 - A tile takes one [foliage layer](vegetation.md#place-on-a-tile-set), whose placement does not depend on the order tiles are added.
 - Each tile has its own collider, height-map revision and `mark_dirty` rectangle. CPU queries stay within one tile; a point outside it faults `NOT_FOUND`.
 - A tile shades its edge texels through a border ring, a small texture the terrain owns that holds the neighbour's texels just outside the tile's border. The ring rebuilds when an edge neighbour links or unlinks, and `terrain::refresh_neighbour_rings(scene, assets, tile, rect)` rebuilds the rings that read an edit. A bare `mark_dirty` on a set tile leaves the neighbours' rings stale.
-- Serialization stores the set's `texels`, `cell_size` and `height_scale` and each tile's coordinates; the links rebuild when the tiles prepare ([serialization](serialization.md#landscape-particle-and-audio-adapters)).
+- Serialization stores the set's `texels`, `cell_size` and `height_scale` and each tile's coordinates; the links rebuild when the tiles prepare ([serialization](serialization_reference.md#landscape)).
 
 ### Propagate an edit
 

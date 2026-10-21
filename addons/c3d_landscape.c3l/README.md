@@ -56,7 +56,7 @@ Each component's descriptor is the application's. The guides give the descriptor
 
 ## Serialization
 
-Select `c3d_serial` and enable `C3D_LANDSCAPE_SERIAL` to register the codecs. Reads restore pending owners without generated assets or nodes; call `prepare` afterwards. See [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md#landscape-particle-and-audio-adapters).
+Select `c3d_serial` and enable `C3D_LANDSCAPE_SERIAL` to register the codecs. Reads restore pending owners without generated assets or nodes; call `prepare` afterwards. See [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md#landscape).
 
 ## Tests and examples
 
