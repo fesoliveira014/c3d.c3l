@@ -69,7 +69,8 @@ the frame.
   ordinary rule. `Stats.vertex_history_bytes` counts the bytes uploaded per frame.
 - A first observation, another geometry or count, re-enabling after an untracked rendering, a reset, a missing previous
   rendering or an aborted capture writes zero motion and sets the rejection channel (`DRAW_VERTEX_HISTORY_INVALID`). TAA,
-  screen-space GI, temporal ambient occlusion and the reflection history drop history for those pixels only.
+  screen-space GI, temporal ambient occlusion and the reflection history drop history for those pixels only; an
+  `RG16_FLOAT` velocity image keeps only the zero motion.
 - A temporal view faults `c3d::ASSET_DATA_UNAVAILABLE` from `render_view`, before recording, when a flagged mesh's CPU
   positions were released. Its published history stays as it was.
 - A geometry that a dispatch writes ([geometry writes](compute.md#geometry-writes)) takes its previous positions from a

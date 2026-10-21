@@ -49,12 +49,13 @@ render::configure_view(&renderer, view, desc)!;
 | `trace` | `SsgiTrace.LINEAR` by default; `HIERARCHICAL` enables depth-pyramid block rejection |
 | `rays` | Rays per half-resolution texel and frame, `SSGI_RAYS_MIN` (1) to `SSGI_RAYS_MAX` (8); default 4 |
 | `max_steps` | March steps per ray, `SSGI_STEPS_MIN` (4) to `SSGI_STEPS_MAX` (64); default 24 |
-| `max_distance` | View-space units a ray marches; default 2 |
-| `thickness` | View-space depth a marched point may sit behind a stored surface and count as a hit; default 0.2 |
+| `max_distance` | View-space units a ray marches; finite and above zero; default 2 |
+| `thickness` | View-space depth a marched point may sit behind a stored surface and count as a hit; finite and above zero; default 0.2 |
 | `intensity` | Blend strength in `[0, 1]`; 0 gives the base term exactly; default 1 |
 | `history_weight` | Share of the accumulation kept per frame, `[0, 1)`; default 0.9 |
 
-`configure_view` faults `c3d::INVALID_ARGUMENT` for values outside these ranges while `enabled` is set, and for the effect on
+`create_view` and `configure_view` fault `c3d::INVALID_ARGUMENT` for values outside these ranges while `enabled` is set,
+and for the effect on
 a `PATH_TRACED` view.
 
 ## Choose a trace mode
@@ -111,6 +112,8 @@ A custom forward stage takes the term with `draw_screen_space_indirect(frame, dr
   noisier.
 - The depth history is kept at half resolution, so near a depth edge a hit can be accepted or rejected by the neighboring
   texel's depth. A projection change between two frames (field of view, near plane) can decide wrongly for that frame.
+- On a TAA view the copied color is the jittered image while hit positions are unjittered. The offset stays below one pixel
+  and is not corrected.
 - Only what is on screen bounces. Off-screen and occluded emitters contribute nothing, which the probe or SH term covers.
 - After `configure_view`, `reset_view_history`, a new scene, or on the first frame, the effect contributes nothing until a
   frame has been rendered.

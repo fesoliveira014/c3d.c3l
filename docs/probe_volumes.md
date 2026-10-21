@@ -108,7 +108,7 @@ A `SCENE` volume casts `update.rays_per_probe` rays from each probe of a window 
   are followed with the lag of the blend, about 33 updates of travel at the default hysteresis.
 - **Hidden volumes** are not updated. They keep their texels and resume from them when shown.
 - **Two scenes in one frame** both update; the trace is rebuilt for each.
-- **Trace preparation.** A scene with a `SCENE` volume prepares the scene trace every frame it renders. On a ray-query
+- **Trace preparation.** A scene prepares the scene trace in each frame a visible `SCENE` volume is due. On a ray-query
   renderer the first due update also builds one bottom level per traceable geometry, so a scene whose only trace consumer is
   a probe volume pays those builds in its first frame. A traced view of the same scene reuses them.
 

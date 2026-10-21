@@ -53,7 +53,8 @@ before motion blur, depth of field, bloom and grading. The parameters are `TaaPa
 - **Jitter.** `post::taa_jitter` walks `TAA_SAMPLE_COUNT` (8) Halton(2,3) points, each within half a pixel.
   `camera::jitter_matrices` applies the offset to the rasterized projection only (`FrameRoot.proj`, `view_proj`,
   `inv_view_proj`; `FrameRoot.jitter_time.xy` holds it in NDC). Culling, picking, light selection, shadows and the cluster
-  grid keep the unjittered matrices, and `Camera.lens_shift` is untouched.
+  grid keep the unjittered matrices, and `Camera.lens_shift` is untouched. The sample index advances when a rendering is
+  published, so an aborted frame repeats its jitter.
 - **Resolve.** One dispatch, timed under `Pass.TEMPORAL_AA`. It rebuilds the current color from its 3x3 jittered samples,
   reads the history at `uv - velocity` with a Catmull-Rom filter, and clips it to the neighborhood's variance box in YCoCg
   (`mean +/- clip_gamma * sigma`). The blend follows `current_weight` and `1 / (1 + luma)` in stored, pre-exposed units; TAA
@@ -101,7 +102,7 @@ and the same per-view history.
 - **Cost.** A view that uses an early-velocity effect without TAA or motion blur also pays the velocity pass and the
   per-candidate history commit.
 - **Rejection flag.** A pixel whose velocity carries the rejection flag takes the new sample alone in every consumer.
-  The flag marks a fresh or incompatible [LOD](lod.md) level and an invalid vertex history.
+  The flag marks a fresh or incompatible [LOD](lod.md) level, an invalid crowd history and an invalid vertex history.
 - **Blended and scene-read surfaces.** Blended surfaces carry the velocity of the surface behind them and ghost when they
   move. Depth-writing scene-read surfaces carry their own velocity on views that record velocity after the scene.
 

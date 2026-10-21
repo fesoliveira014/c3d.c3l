@@ -98,7 +98,7 @@ inside its domain and returns sRGB-encoded color; there is no conversion paramet
 ### Load a `.cube` file
 
 `image::parse_lut_cube(allocator, text)` and `image::load_lut_cube(allocator, path, file_source)` read an Adobe `.cube` 3D
-LUT, or a Resolve one with `LUT_3D_INPUT_RANGE`, into a `Lut3d { size, domain_min, domain_max, rgba }`.
+LUT, or a Resolve one with `LUT_3D_INPUT_RANGE`, into a `Lut3d { allocator, size, domain_min, domain_max, rgba }`.
 
 ```c3
 image::Lut3d table = image::load_lut_cube(mem, "look.cube")!;
@@ -164,8 +164,9 @@ the center, `focus_radius` to 16 and `focus_time` to 0.25.
   same time as the previous one holds the focus. Pass a finite `FrameInfo.time`; with the default 0 every rendering snaps.
 - **No target.** A region with nothing counted holds the previous focus, and with none, on the first rendering and after a
   cut, the focus is `focus_distance`. The first rendering that meters anything snaps to its target.
-- **History.** Per view. `reset_view_history`, a scene change and turning `AUTO` on restart it. Parameter edits and resizes
-  keep it, so `focus_point` can move every frame and the focus follows over `focus_time`. An aborted frame changes
+- **History.** Per view. `reset_view_history`, a scene change and turning automatic focus on (`AUTO` through
+  `configure_view`, enabling depth of field, or hiding a TAA debug image) restart it. Parameter edits and resizes keep
+  it, so `focus_point` can move every frame and the focus follows over `focus_time`. An aborted frame changes
   nothing, and a skipped view folds the elapsed time into its next step.
 - **Cost.** `AUTO` allocates a small GPU buffer and readback per view and records two extra dispatches. `MANUAL` records
   nothing extra.
@@ -212,8 +213,9 @@ runs after TAA and before depth of field.
   rendering that meters anything snaps to its target. An aborted frame changes nothing, and a skipped or dormant view folds
   the elapsed time into its next step.
 - **Cost.** A small GPU buffer and readback per view and two dispatches. Manual mode records nothing.
-- **Readback.** `Renderer.view_stats(view).exposure` reports the applied multiplier, `FRAMES_IN_FLIGHT` frames old and zero
-  until the first readback. The readback also sets the view's [pre-exposure](#pre-exposure) from the next rendering on.
+- **Readback.** `Renderer.view_stats(view).exposure` reports the applied multiplier, `FRAMES_IN_FLIGHT` frames old; on a
+  view created with auto exposure on it is zero until the first readback. The readback also sets the view's
+  [pre-exposure](#pre-exposure) from the next rendering on.
 
 ## Edit settings in the GUI
 
@@ -234,6 +236,10 @@ Run `python3 scripts/build.py --example post` for the panel with a LUT and expos
 - The LUT is RGBA8 and at most 64 on a side.
 - Pass timings describe the last recorded view of the frame; counters accumulate across views.
 - A bloom preview requested after its view finished stays pending until a frame records the chain.
+- Opaque, sky and ordinary transparent draws share one attachment pass. A scene reader (Physical transmission or a custom
+  stage with scene reads) ends it for the scene snapshots, and drawing continues in loaded passes.
+- A `LINEAR_HDR` view still allocates the working images of FXAA and bloom while those settings are on, though it skips
+  them. Turn `bloom` off and select `AntiAliasing.NONE` on such a view to save the memory.
 
 ## See also
 

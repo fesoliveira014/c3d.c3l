@@ -95,7 +95,7 @@ values as no domain.
 | `max_ev` | 10 | Upper bound, stops |
 | `brightening_time` | 0.5 | Seconds; not negative. Time constant when the scene gets brighter |
 | `darkening_time` | 2 | Seconds; not negative. Time constant when the scene gets darker |
-| `low_percentile` | 0.1 | Lower edge of the metered window; below `high_percentile` |
+| `low_percentile` | 0.1 | Lower edge of the metered window; at least 0 and below `high_percentile` |
 | `high_percentile` | 0.9 | Upper edge, at most 1 |
 
 Every field is finite. The metered log2 luminance that maps to each bound, `log2(0.18) + compensation_ev - ev`, stays inside
@@ -121,7 +121,7 @@ Parameters of an effect that is off are not checked. `UNSUPPORTED` for multisamp
 
 | Field | Meaning |
 | --- | --- |
-| `Stats.post_dispatches` | Compute dispatches of the post effects this frame |
+| `Stats.post_dispatches` | Compute dispatches this frame of the post chain and the screen-space effects: TAA, AO, SSGI, reflections, fog, clouds, the depth pyramid, probe volumes and probe updates |
 | `Stats.gpu_post_stage_ms` | Completed time of each `PostStage`, summed over the frame's views |
 | `Stats.vertex_history_bytes` | Previous vertex positions written for temporal views this frame |
 | `ViewStats.exposure` | Applied exposure multiplier, `FRAMES_IN_FLIGHT` frames old under auto exposure |
@@ -135,7 +135,8 @@ With GPU timings, `Pass.POST_CHAIN` times the effects that run before the displa
 is timed under `COMPOSITE`.
 
 With internal scopes, `POST_CHAIN` also has one stage scope per effect: `post.bloom`, `post.depth_of_field` and
-`post.motion_blur`. `Stats.gpu_post_stage_ms`, indexed by `PostStage` (`BLOOM`, `DEPTH_OF_FIELD`, `MOTION_BLUR`), holds their completed times. They are parts of the
+`post.motion_blur`. `Stats.gpu_post_stage_ms`, indexed by `PostStage` (`BLOOM`, `DEPTH_OF_FIELD`, `MOTION_BLUR`), holds
+their completed times. They are parts of the
 `POST_CHAIN` bucket and are not added to it. The grade, FXAA and identity-composite dispatches belong to the pass alone.
 The depth-of-field stage covers its auto-focus metering and tile reduction, and the motion-blur stage its tile reduction.
 See [benchmarking](benchmarking.md) and [profiling](profiling.md) for capture and the `effects --gpu-timings --benchmark`
@@ -149,7 +150,13 @@ Dispatch counts per effect:
 | Depth of field | 6, plus 2 under `AUTO` focus |
 | Motion blur | 3 |
 | Auto exposure | 2 |
+| TAA | 1 |
 | Grade with FXAA | 1 on the direct route, 2 on the fallback route |
+| Ambient occlusion | 2, 3 with `temporal` |
+| Screen-space GI | 3, plus one per mip of the hierarchical depth pyramid |
+| Ray-traced reflections | 2, plus 1 at `HALF` and 1 with `reflection_history` |
+
+Fog, clouds, probe-volume fills and probe updates add their own dispatches to `Stats.post_dispatches`.
 
 ## Helper functions
 

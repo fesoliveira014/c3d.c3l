@@ -104,8 +104,9 @@ record nothing, so a path-traced view samples what raster views keep resident.
 
 The step runs at `begin_frame`, after retired resources are released.
 
-- A drawn texture rises toward its needed mip when the bytes fit the budget. The first raise of a frame is always
-  admitted. Further raises share `TEXTURE_STREAM_FRAME_BYTES` (8 MiB) per frame, largest deficit first.
+- A drawn texture rises toward its needed mip when the bytes fit the budget. The first raise of a frame is exempt
+  from pacing but must still fit the budget. Further raises share `TEXTURE_STREAM_FRAME_BYTES` (8 MiB) per frame, largest
+  deficit first.
 - A raise of a texture whose chain is generated from mip zero also costs its mip-zero texels. Further raises must keep
   the frame within `TEXTURE_REGENERATION_FRAME_TEXELS`, one 1024x1024 regeneration per frame. Supplied mips cost no
   texels and are paced by bytes alone. The first resolve of a texture under a budget still regenerates from mip zero,
@@ -113,13 +114,14 @@ The step runs at `begin_frame`, after retired resources are released.
 - When bytes exceed the budget, textures that were not drawn return to their tail, least recently used first.
 - When the drawn set still does not fit, one global bias holds every drawn texture the same number of levels below its
   need. The bias relaxes once the set fits within 90% of the budget.
-- Lifting the budget raises every streamed texture to full residency under the same allowance: the first raise of each
-  frame, then 8 MiB.
+- Lifting the budget raises every streamed texture to full residency under the same pacing: the first raise of each frame,
+  then 8 MiB and the regeneration-texel limit.
 
 ### Full readers
 
-Some paths read a texture outside material sampling and need every level: environment sources, overlay and UI images,
-compute dispatch reads, textures in custom-material slots (except the base-color slot of a masked material) and toon
+Some paths read a texture outside material sampling and need every level: environment sources, cloud-layer coverage maps,
+overlay and UI images, compute dispatch reads, textures in custom-material slots (except the base-color slot of a masked
+material) and toon
 gradient maps. A texture used this way is a full reader. It never streams and is never evicted, and its bytes count against
 the budget as fixed bytes. The flag stays set for the texture's life in that renderer, replacements included. A texture
 already streamed that becomes a full reader rises to full residency at the next step.

@@ -83,8 +83,8 @@ To inspect a container first, parse it into a borrowed view:
 };
 ```
 
-The view's level slices point into `bytes`. The exception is KTX1 `R16_UINT` with an odd width, whose padded rows are
-copied tight into the `scratch` allocator. The view is invalid once `bytes` or `scratch` is freed.
+The view's level slices point into `bytes`. The exception is a KTX1 `R16_UINT` level with an odd width, whose padded rows
+are copied tight into the `scratch` allocator. The view is invalid once `bytes` or `scratch` is freed.
 
 ### Rows and orientation
 
@@ -153,7 +153,7 @@ Container loaders separate malformed files from unsupported ones:
   length or alignment is wrong, overlapping KTX2 levels, bytes after the last KTX2 level, a level count the extent cannot
   have, or fields that contradict each other (KTX1 `glType` and `glFormat`, KTX2 `typeSize`, `uncompressedByteLength` and
   the data format descriptor's transfer function).
-- `c3d::UNSUPPORTED`: a well-formed container outside the supported set.
+- `c3d::UNSUPPORTED`: a well-formed container outside the supported set, or a normal semantic on `R16_UINT`.
 - `c3d::INVALID_ARGUMENT`: `SRGB` for a format without an sRGB twin, a normal semantic on an sRGB format, or a key the
   store rejects.
 - `c3d::CAPACITY_EXCEEDED`: the texture pool is full.

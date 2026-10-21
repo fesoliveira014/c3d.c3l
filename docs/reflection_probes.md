@@ -67,8 +67,9 @@ global share is zero specular.
 
 - **Seen:** shadows from every shadowing light, the global environment and background, the atmosphere sky and its aerial
   perspective, probe volumes and every other reflection probe.
-- **Not seen:** the probe being captured, ambient occlusion, screen-space indirect light, traced effects, volumetric fog and
-  `HeightFog`. A static cube would freeze the fog the capture point saw and leave every probe stale after each fog edit.
+- **Not seen:** the probe being captured, ambient occlusion, screen-space indirect light, traced effects, volumetric fog,
+  `HeightFog` and cloud layers. A static cube would freeze the fog the capture point saw and leave every probe stale
+  after each fog edit.
 - **Time.** Frames run at time 0: sway, water waves and animated custom stages are captured at time 0.
 - **Description.** `ReflectionCaptureDesc` sets the face edge in texels (`size`, a power of two from
   `asset::MIN_ENVIRONMENT_SPECULAR_SIZE` to `MAX_REFLECTION_CAPTURE_SIZE`; default `DEFAULT_REFLECTION_CAPTURE_SIZE`), the
@@ -76,10 +77,14 @@ global share is zero specular.
   `Renderer.last_reflection_capture` holds the time and bytes of the last capture.
 - **Frame state and faults.** Both entry points need an unopened frame. They fault `INVALID_ID` for a dead node,
   `INVALID_ARGUMENT` for a node without a probe, an invalid probe or description or a rejected key, `CAPACITY_EXCEEDED` for a
-  full store, view or target pool, and the gpu faults of rendering six frames. A fault leaves the store, the frame index and
-  an existing cube unchanged.
+  full store, view or target pool, `UNSUPPORTED`, `ASSET_DATA_UNAVAILABLE`, `SHADER_NOT_FOUND`, `RESOURCE_IN_USE` and the
+  gpu faults of rendering six frames. A fault leaves the store, the frame index and an existing cube unchanged.
+- **Re-capture faults.** `recapture_reflection_probe` also faults `INVALID_ID` for a dead environment or texture, and
+  `INVALID_ARGUMENT` when the environment is not a texture environment or its cube is not an `RGBA16_FLOAT` cube of
+  `desc.size`.
 
-A re-capture at the same size rewrites the cube in place. The next preparation re-uploads the texture and re-filters the
+A re-capture rewrites the cube in place; its `size` must match the cube. The next preparation re-uploads the texture and
+re-filters the
 environment without a new GPU allocation. Every probe that names that environment changes.
 
 To author a cube yourself, register any cube [environment](environments.md) and assign it to `ReflectionProbe.environment`.
@@ -117,7 +122,8 @@ removes the probe from every view.
 - Each probe takes one environment and one texture record from the asset store. Raise `AssetStoreDesc.max_environments`
   (default 16, shared with authored environments) for more than 15 probes beside a global environment.
 - `assets.release_texture_cpu(source)` frees the CPU copy once the renderer has prepared the probe. A renderer created
-  afterwards cannot upload that probe and counts it in `Stats.reflection_probes_unavailable`. A re-capture restores the copy.
+  afterwards cannot upload that probe and counts it in `Stats.reflection_probes_unavailable`; it still takes one of the 16
+  nearest slots, so it can push usable probes out. A re-capture restores the copy.
 - `Stats.reflection_probes_dropped` counts, per view and frame, probes past the nearest 16. `Stats.dangling_refs` includes
   probes whose environment is dead.
 

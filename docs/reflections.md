@@ -24,8 +24,8 @@ without clearcoat, sheen, anisotropy, transmission or specular overrides. Materi
 forward shading and the environment reflection. A pixel traces when it has geometry, a specular weight above zero and a
 roughness at or below `max_reflection_roughness`.
 
-- On a deferred view with one sample per pixel, a ray also ignores the hits on [trace proxies](scene_trace.md#trace-proxies)
-  that its pixel's G-buffer flags name.
+- On a deferred view (sample 0 when multisampled), a ray also ignores the hits on
+  [trace proxies](scene_trace.md#trace-proxies) that its pixel's G-buffer flags name.
 - A hit sees what the scene trace contains; see [what traces](scene_trace.md#what-traces).
 - Traced reflections ignore a view's clip plane and trace the whole scene. A planar mirror is a clipped view of its own; see
   [planar reflections](views.md#planar-reflections).
@@ -79,7 +79,8 @@ A ray hit is shaded from its material. Custom shader code cannot run at a hit.
 The lighting resolve uses the traced radiance in place of the prefiltered environment reflection, which includes the
 specular of [reflection probes](reflection_probes.md), and weights it with the same split-sum term, so a surface's
 reflection is counted once. On a forward view the Standard and Physical fragment stages do the same. Near the threshold the
-two blend over the top fifth of `max_reflection_roughness` (`RT_REFLECTION_FADE`), which hides the seam between traced and environment
+two blend over the top fifth of `max_reflection_roughness` (`RT_REFLECTION_FADE`), which hides the seam between traced
+and environment
 reflections.
 
 - The traced term carries its own occlusion, so it skips the ambient occlusion specular term the environment reflection
@@ -118,8 +119,8 @@ The images exist while `reflections` is set and retire when it is cleared. The
 ## Half resolution
 
 With `reflection_resolution = HALF` the trace writes one texel per 2 x 2 block and spends a quarter of the rays. With TAA
-the traced pixel of each block steps through four positions, so four frames cover each block; without TAA or
-`reflection_history` it stays on one. A reconstruction pass fills the full-resolution image from the 2 x 2 texels around each
+or `reflection_history` the traced pixel of each block steps through four positions, so four frames cover each block;
+without either it stays on one. A reconstruction pass fills the full-resolution image from the 2 x 2 texels around each
 pixel, weighted by position and by the blur's depth and normal weights. A texel counts for nothing when it differs in
 roughness or specular weight beyond the tolerances above, or traced nothing. A pixel with no compatible texel is untraced:
 it keeps the prefiltered specular and shows no traced reflection.
@@ -178,7 +179,8 @@ shadow ray at a hit, whether it uses a shadow atlas or ray-traced shadows in ras
   benchmarks report it as `gpu_rt_reflections_ms`. `render_view` prepares the scene trace and the split-sum table itself.
 - `gui::targets_panel` lists `reflection_blur` and `reflection`. `PreviewKind.VIEW_REFLECTION` previews `reflection_blur` at
   level 0 and `reflection` at level 1.
-- The post panel's "Ray tracing" header toggles reflections on a deferred view and sets the threshold, the rays per pixel,
+- The post panel's "Ray tracing" header toggles reflections on any view but a path-traced one and sets the threshold,
+  the rays per pixel,
   half resolution and the history.
 
 Run `python3 scripts/build.py --example rt_effects` for a mirror floor, a roughness ramp and Physical material spheres

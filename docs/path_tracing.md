@@ -103,8 +103,8 @@ adaptation rate. A headless still at constant time snaps on every rendering and 
 | `c3d::INVALID_ARGUMENT` | A non-zero `clip_plane` or `volumetric_fog` |
 | `c3d::INVALID_ARGUMENT` | `msaa` above `ONE` |
 
-`depth_prepass` is ignored. The view has no depth image, so debug lines are not drawn on it. FXAA and the rest of the display
-stage work as usual.
+`depth_prepass` is ignored. The view has no depth image, so debug lines are not drawn on it, and `Renderer.set_view_overlay`
+faults `UNSUPPORTED` for a world-space overlay on it. FXAA and the rest of the display stage work as usual.
 
 ## Read the image back
 

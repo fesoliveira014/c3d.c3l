@@ -40,8 +40,9 @@ Upload earlier with [`renderer.upload(texture)`](#upload-edit-and-release-cpu-so
   clamping, and each cube face filters independently. Disable `desc.generate_mips` for mip zero alone, or supply every level
   ([supplied mips](textures_reference.md#supply-mip-levels)); supplied levels are never regenerated.
 - **Samplers.** The material slot selects the sampler, so materials can share a texture with different filtering. Builtin
-  ids: `asset::SAMPLER_NEAREST`, `SAMPLER_LINEAR_REPEAT`, `SAMPLER_LINEAR_CLAMP` and `SAMPLER_ANISOTROPIC` (clamped to the
-  device limit). A comparison sampler in a material slot faults `c3d::INVALID_ARGUMENT`. Builtin texture and sampler ids live
+  ids: `asset::SAMPLER_NEAREST`, `SAMPLER_LINEAR_REPEAT`, `SAMPLER_LINEAR_CLAMP`, `SAMPLER_ANISOTROPIC` (clamped to the
+  device limit) and `SAMPLER_SHADOW` (a comparison sampler for shadow reads). A comparison sampler in a material slot faults
+  `c3d::INVALID_ARGUMENT`. Builtin texture and sampler ids live
   for the store lifetime and cannot be replaced or removed; their CPU pixels can still be released after preparation.
 
 ### Pixel formats
@@ -50,10 +51,11 @@ Upload earlier with [`renderer.upload(texture)`](#upload-edit-and-release-cpu-so
 | --- | --- |
 | `RGBA8_UNORM`, `RGBA8_SRGB` | Eight-bit color and data; the PNG and JPEG loaders produce these |
 | `RGBA16_FLOAT`, `RGBA32_FLOAT` | Floating-point data; Radiance HDR produces `RGBA32_FLOAT` |
-| `R16_UINT` | One unsigned 16-bit integer per texel, such as heights; single mip, integer fetch only |
+| `R16_UINT` | One unsigned 16-bit integer per texel, such as heights; no generated mips, integer fetch only |
 | `BC1_RGBA_*`, `BC3_*`, `BC4_UNORM`, `BC5_UNORM`, `BC6H_UFLOAT`, `BC7_*` | Block-compressed 2D textures, supplied with their mips |
 
-Two-dimensional textures take every format. Cubes are uncompressed, and volumes are single-mip RGBA8. A slot that is empty, dead or stale uses that slot's
+Two-dimensional textures take every format. Cubes are uncompressed, and volumes are single-mip RGBA8. A slot that is
+empty, dead or stale uses that slot's
 scalar or unperturbed-normal fallback; a dead sampler uses builtin trilinear repeat.
 
 ## Load a color map
@@ -107,7 +109,8 @@ fallback, see [tangent frames](materials_reference.md#tangent-frames).
 TextureId environment_pixels = image::load_hdr(&assets, "studio.hdr")!;
 ```
 
-`load_hdr` accepts Radiance HDR and stores tightly packed four-channel floats (`RGBA32_FLOAT`), keeping values above one. It rejects PNG and JPEG with
+`load_hdr` accepts Radiance HDR and stores tightly packed four-channel floats (`RGBA32_FLOAT`), keeping values above
+one. It rejects PNG and JPEG with
 `c3d::ASSET_FORMAT_ERROR`. Loading does not tone map. Register the texture with `light::texture_environment` and
 `assets.add_environment` for [image-based lighting or a sky](environments.md).
 
@@ -264,8 +267,9 @@ constant coverage.
   insertion, replacement and generation after an in-place edit.
 - Coverage applies only to uncompressed generated color mips of a 2D texture or a cube with `mip_levels` 1. A supplied
   chain, a compressed format, `R16_UINT`, a volume or a storage texture faults `c3d::UNSUPPORTED`.
-- A generated level whose passing fraction is within 0.02 of mip zero's keeps its filtered alpha. Otherwise its alpha is
-  rescaled about the threshold so the passing count is the nearest achievable. Color channels are unchanged.
+- A generated level (per cube face) whose passing fraction is within 0.02 of that face's mip zero keeps its filtered alpha.
+  Otherwise its alpha is rescaled about the threshold so the passing count is the nearest achievable. Color channels are
+  unchanged.
 - Mip zero's passing count is taken while the first level filters. `mark_texture_dirty` advances the revision and
   `restore_texture_cpu` keeps it, so call `mark_texture_dirty` after restoring different pixels.
 
@@ -309,13 +313,14 @@ To upload only the changed texels, to change dimensions, format or mip count, or
 | --- | --- |
 | `c3d::ASSET_IO_ERROR` | A file cannot be read or written |
 | `c3d::ASSET_FORMAT_ERROR` | Malformed image data, a loader given the wrong kind (PNG to `load_hdr`, HDR to `load_texture`), mismatched cube faces |
-| `c3d::INVALID_ARGUMENT` | Empty path or data, a duplicate key, malformed cube or mip metadata, a bad coverage threshold, sRGB with a normal semantic, `R16_UINT` with generated mips or storage |
+| `c3d::INVALID_ARGUMENT` | Empty data or data over `int::max` bytes, a duplicate key, malformed cube or mip metadata, a bad coverage threshold, sRGB with a normal semantic, `R16_UINT` with generated mips or storage |
 | `c3d::UNSUPPORTED` | An unsupported texture form: coverage on a supplied or compressed chain, `R16_UINT` or a cube in a built-in slot, an `R16_UINT` volume, render target or environment source |
 | `c3d::CAPACITY_EXCEEDED` | The texture pool is full |
 | `c3d::ASSET_DATA_UNAVAILABLE` | An upload or insertion needs pixels that are absent |
 | `c3d::INVALID_ID` | A dead texture id at an entry point |
 
-GPU upload faults propagate unchanged. Container, region and replacement faults are in the
+Paths are nonempty (a contract, not a fault). GPU upload faults propagate unchanged. Container, region and replacement
+faults are in the
 [reference](textures_reference.md#container-faults) and [streaming](texture_streaming.md#replacing-a-texture) pages.
 
 ## Limits
