@@ -6,7 +6,7 @@ submission-owned history, temporal rejection, transparency sorting, common
 sway/fade anchors and a level that does not change when the object turns about Y
 (`test_lod_level_does_not_depend_on_yaw`, instanced and ordinary groups).
 Image comparisons use 512×512 reference color/depth/shadows.
-See [LOD acceptance](../../../docs/lod_acceptance.md) for the separate example run.
+The `lod` example and its benchmark are described in [whole-object LOD](../../../docs/lod.md#run-the-example).
 
 The quadtree cases in `test_quadtree.c3` read each view's selection words back from the renderer-owned history. A 21-node
 batch (a root, four children and sixteen grandchildren) is drawn by two views at different distances: each view selects its own

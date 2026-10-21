@@ -184,7 +184,7 @@ the [velocity form](custom_shaders.md#velocity-form).
   `apply_instance_effects` on the world position and, in velocity forms, `apply_previous_instance_effects` on the
   previous world position. It sets `v_color.a = 1` when `DRAW_SWAY_VERTEX_ALPHA` is set. A stage supplies its own bend
   weight by writing `vertex.color.a` before `write_mesh_outputs` and selecting `VERTEX_ALPHA`.
-- **Crowds.** A crowd part ([Instancing](instancing.md)) draws through the instanced pair. Compiled with `INSTANCED` and
+- **Crowds.** A crowd part ([Crowds](crowds.md)) draws through the instanced pair. Compiled with `INSTANCED` and
   the deformation defines, `apply_mesh_deformation` reads the palette row and morph block of the instance's logical
   source, `InstanceGpu.normal_2.w`, at `DrawRoot.skin_stride` joints per row. Compiled without them, the crowd draws at
   the bind pose.
@@ -356,7 +356,7 @@ geometry.
 
 ## Quadtree morph
 
-A custom vertex stage that draws a [quadtree batch](instancing.md#quadtree-selection) under `BOX_RANGES` morphs its
+A custom vertex stage that draws a [quadtree batch](instancing_quadtree.md#box-ranges) under `BOX_RANGES` morphs its
 vertices toward the parent level with the numbers that selected the node. `quadtree_morph.glsl` declares:
 
 ```glsl
