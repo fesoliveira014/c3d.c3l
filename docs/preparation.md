@@ -141,4 +141,4 @@ stale id.
 - [Views](views.md) for views and frames.
 - [Models](models.md) for loading and instantiating models.
 - [Textures](textures.md) for upload and residency budgets.
-- [GUI](gui.md) for the preparation panel.
+- [GUI](gui.md#statistics) for the preparation counters.
