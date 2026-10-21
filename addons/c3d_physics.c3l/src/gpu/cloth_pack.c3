@@ -265,6 +265,9 @@ fn uint bend_passes(ClothState* state) @private {
     return state.desc.bend_stiffness != 0 ? state.bend_colors : 0;
 }
 
+// A lean stage has no soft attachment, transport, reference or wind code; shape contact stays in it.
+fn bool lean_features(uint features) @private => (features & ~FEATURE_SHAPES) == 0;
+
 fn uint cloth_features(ClothState* state) @private {
     uint features;
     if (state.soft_attachments.len) features |= FEATURE_SOFT;

@@ -47,15 +47,15 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Cl
     uint     phases;             // PASS_* bits of the dispatched pass
     uint     member_bit;         // bit of marks that tells a particle is on a constraint of the dispatched pass
     float    progress;           // share of the request's motion the dispatched substep ends at
-    uint64_t lambdas;            // vec4 per particle: soft attachment multiplier of this substep
-    uint64_t reference;          // two vec4 per particle: world reference position at the request's start, then its end
-    uint64_t soft;               // float per particle: effective compliance of a soft attachment, zero elsewhere
-    uint64_t transport;          // float per particle: share of the owner's motion the particle follows
     uint64_t shapes;             // six vec4 per shape: owner pose at the request's start and end, the segment's owner-local end points; the placed segments follow
     uint64_t push;               // vec4 per particle: contact displacement of this substep, and 1 once it reached its limit
     uint64_t limits;             // float per particle: metres contact may push it within one substep
     uint     shape_count;
     float    contact_tolerance;  // separation deficit contact accepts, in metres
+    uint64_t lambdas;            // vec4 per particle: soft attachment multiplier of this substep
+    uint64_t reference;          // two vec4 per particle: world reference position at the request's start, then its end
+    uint64_t soft;               // float per particle: effective compliance of a soft attachment, zero elsewhere
+    uint64_t transport;          // float per particle: share of the owner's motion the particle follows
     vec4     wind;               // xyz air velocity, w relative speed cap; used with CLOTH_FEATURE_WIND
     vec4     aero;               // x drag scale, y lift scale
     uint     edge_colors;

@@ -58,15 +58,15 @@ struct ClothRoot @private {
     uint      phases;
     uint      member_bit;
     float     progress;
-    ulong     lambdas;
-    ulong     reference;
-    ulong     soft;
-    ulong     transport;
     ulong     shapes;
     ulong     push;
     ulong     limits;
     uint      shape_count;
     float     contact_tolerance;
+    ulong     lambdas;
+    ulong     reference;
+    ulong     soft;
+    ulong     transport;
     float[4]  wind;
     float[4]  aero;
     uint      edge_colors;
@@ -86,14 +86,14 @@ $assert $reflect(ClothRoot.inverse_world).offset == 224;
 $assert $reflect(ClothRoot.gravity_step).offset == 288;
 $assert $reflect(ClothRoot.particle_count).offset == 304;
 $assert $reflect(ClothRoot.progress).offset == 348;
-$assert $reflect(ClothRoot.lambdas).offset == 352;
-$assert $reflect(ClothRoot.shapes).offset == 384;
+$assert $reflect(ClothRoot.shapes).offset == 352;
+$assert $reflect(ClothRoot.lambdas).offset == 384;
 $assert $reflect(ClothRoot.wind).offset == 416;
 $assert $reflect(ClothRoot.aero).offset == 432;
 $assert $reflect(ClothRoot.features).offset == 452;
 $assert $reflect(ClothRoot.payload_offset).offset == 460;
 
-const usz LEAN_ROOT_BYTES @private = $reflect(ClothRoot.progress).offset + float::size; // the lean fused stage reads no root field past this; the lean single stage reads the whole root
+const usz LEAN_ROOT_BYTES @private = $reflect(ClothRoot.contact_tolerance).offset + float::size; // the lean fused stage reads no root field past this; the lean single stage reads the whole root
 
 $assert $reflect(ClothRoot.lambdas).offset == LEAN_ROOT_BYTES; // the feature fields start where the lean copy ends
 $assert $reflect(ClothRoot.edge_colors).offset >= LEAN_ROOT_BYTES;
@@ -102,9 +102,11 @@ $assert $reflect(ClothRoot.previous_progress).offset >= LEAN_ROOT_BYTES;
 $assert $reflect(ClothRoot.payload_offset).offset >= LEAN_ROOT_BYTES;
 $assert $reflect(ClothRoot.bend_stiffness).offset >= LEAN_ROOT_BYTES;
 $assert $reflect(ClothRoot.stretch_stiffness).offset >= LEAN_ROOT_BYTES;
-$assert $reflect(ClothRoot.shapes).offset >= LEAN_ROOT_BYTES; // the shape fields follow the lean copy
-$assert $reflect(ClothRoot.shape_count).offset >= LEAN_ROOT_BYTES;
-$assert $reflect(ClothRoot.contact_tolerance).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.shapes).offset < LEAN_ROOT_BYTES; // a lean stage keeps shape contact, so its fields are in the copy
+$assert $reflect(ClothRoot.push).offset < LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.limits).offset < LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.shape_count).offset < LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.contact_tolerance).offset < LEAN_ROOT_BYTES;
 
 // Mirrors the shape records of cloth_step.glsl: six vectors a shape, staged once per step.
 struct ShapeGpu @private {
@@ -125,6 +127,7 @@ struct StepRecorder @private {
     ClothRoot       root;
     bool            lean;          // the stage is a lean one, so only the first LEAN_ROOT_BYTES of the root travel
     ComputeShaderId stage;
+    ComputeShaderId staging_stage; // the full stage, which reads the payload offset a lean copy leaves out
     BufferId[2]     state_writes;
     GeometryWrite[] output;
     char[]          staging;       // the root, then the reference pairs and shapes that follow it
@@ -151,18 +154,19 @@ fn void StepBatch.add(&self, ClothSlot* slot, ClothRoot root) {
 }
 
 fn char[] StepRecorder.root_bytes(&self, bool with_payload) {
-    if (self.lean) return material::@as_bytes(self.root)[:LEAN_ROOT_BYTES];
+    if (self.lean && !with_payload) return material::@as_bytes(self.root)[:LEAN_ROOT_BYTES];
 
-    if (!with_payload || !self.payload_bytes) return material::@as_bytes(self.root);
+    if (!with_payload) return material::@as_bytes(self.root);
 
     self.staging[:ClothRoot::size] = material::@as_bytes(self.root)[..];
     return self.staging[:ClothRoot::size + self.payload_bytes];
 }
 
 fn void? StepRecorder.run(&self, uint threads, bool writes_output = false, bool with_payload = false) {
+    bool staging = with_payload && self.payload_bytes != 0;
     return self.renderer.dispatch({
-        .shader   = self.stage,
-        .root     = self.root_bytes(with_payload),
+        .shader   = staging ? self.staging_stage : self.stage,
+        .root     = self.root_bytes(staging),
         .groups   = { (threads + FUSED_GROUP_SIZE - 1) / FUSED_GROUP_SIZE, 1, 1 },
         .writes   = self.state_writes[..],
         .geometry = writes_output ? self.output : {},
@@ -323,8 +327,9 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
     GeometryWrite[1] output = { output_of(slot) };
     StepRecorder recorder = {
         .renderer      = renderer,
-        .lean          = root.features == 0,
-        .stage         = root.features == 0 ? cloths.stages.fused_lean : cloths.stages.fused,
+        .lean          = lean_features(root.features),
+        .stage         = lean_features(root.features) ? cloths.stages.fused_lean : cloths.stages.fused,
+        .staging_stage = cloths.stages.fused,
         .state_writes  = { cloths.positions, cloths.work },
         .output        = output[..],
         .staging       = cloths.batch.staging,
@@ -356,7 +361,7 @@ fn void? record_batch(GpuCloths* cloths, Renderer* renderer, Scene* scene) @priv
     }
 
     BufferId[2] state_writes = { cloths.positions, cloths.work };
-    ComputeShaderId stage = features == 0 ? cloths.stages.single_lean : cloths.stages.single;
+    ComputeShaderId stage = lean_features(features) ? cloths.stages.single_lean : cloths.stages.single;
     renderer.dispatch({
         .shader   = stage,
         .root     = batch.staging[:parameter_bytes],

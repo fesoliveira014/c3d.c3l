@@ -397,9 +397,7 @@ void step_collide(ClothRoot root, uint index, StepPass step) {
 
     vec3 position = particle.xyz;
     position.y = max(position.y, root.ground);
-#ifndef CLOTH_LEAN
     if ((step.phases & PASS_SHAPES) != 0u) position = step_collide_shapes(root, index, position, step);
-#endif
     predicted.values[index].xyz = position;
 }
 
@@ -447,9 +445,7 @@ void step_item(ClothRoot root, uint item, StepPass step) {
 
     uint particle = item - step.count;
     if (particle >= root.particle_count) {
-#ifndef CLOTH_LEAN
         if ((step.phases & PASS_PLACE) != 0u) step_place_item(root, particle - root.particle_count, step);
-#endif
         return;
     }
     if (((ClothWords(root.marks).values[particle] >> step.member_bit) & 1u) != 0u) return;
@@ -460,12 +456,8 @@ void step_item(ClothRoot root, uint item, StepPass step) {
 
 uint step_item_count(ClothRoot root, StepPass step) {
     bool owns_particles = (step.phases & (PASS_PREDICT | PASS_COLLIDE)) != 0u;
-#ifdef CLOTH_LEAN
-    return step.count + (owns_particles ? root.particle_count : 0u);
-#else
     uint placed = (step.phases & PASS_PLACE) != 0u ? root.shape_count : 0u;
     return step.count + (owns_particles ? root.particle_count : 0u) + placed;
-#endif
 }
 
 vec3 step_local_position(ClothRoot root, uint particle) {
