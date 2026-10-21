@@ -1,36 +1,69 @@
 # Animation
 
-`c3d::anim` plays the clips a model import stored onto a model instance. The
-application owns the update sequence; nothing in the scene graph or the
-renderer advances an animation.
+`c3d::anim` plays the clips a model import stored onto a model instance. It samples clips, blends them in layers,
+extracts root motion, delivers clip events, drives blend spaces and corrects pose jumps with inertial transitions. The
+application owns the update sequence; nothing in the scene graph or the renderer advances an animation. The module needs
+no feature flag and creates no GPU object.
 
-## Update sequence
+| Page | Contents |
+| --- | --- |
+| This guide | Playing, blending, masking, root motion, events, blend spaces and inertial transitions on an `Animator`. |
+| [Reference](animation_reference.md) | Types, constants, faults, blend formulas and the clip event import schema. |
+| [Inverse kinematics](animation_ik.md) | Two-bone limbs, feet and look-at, with retained foot contacts. |
+| [Retargeting](animation_retargeting.md) | Rebinding clips onto another model, rest-pose correction and calibrated profiles. |
+| [Performance](animation_performance.md) | Crowd playback on worker threads, shared samples, compressed clips and memory costs. |
+| [Deformation](animation_deformation.md) | What the renderer draws for skinned and morphed meshes, and compute skinning. |
+
+## Quick start
+
+Load a model once, instantiate it, add an `Animator` to the instance root and play a clip.
 
 ```c3
+import c3d;
+import c3d::anim;
+import c3d::asset::gltf;
+import c3d::model;
+import c3d::scene;
+
+ModelId model = gltf::load_model(&assets, "models/fox.glb")!;
+Node* fox = model::instantiate(&assets, &scene, model)!;
+ClipId[] clips = scene.get(fox, ModelInstance).clips;
+
+Animator* animator = anim::add_animator(&scene, fox);
+animator.play(&assets, clips[0])!;
+
+// Every frame:
 anim::update(&assets, &scene, dt);
 scene.update_world();
 renderer.render(&scene, camera_node)!;
 ```
 
-`anim::update` advances every action, samples its clip and writes the local
-transforms of the instance nodes and the morph weights of the instance meshes.
-`Scene.update_world` turns the locals into world matrices. The renderer reads
-the pose it finds. Physics and IK, when present, run between the animation
-update and the final `update_world` ([Inverse kinematics](#inverse-kinematics)).
+`anim::update` advances every action of every `Animator`, samples its clip and writes the local transforms of the
+instance nodes and the morph weights of the instance meshes. `Scene.update_world` turns the locals into world matrices.
+The renderer reads the pose it finds. Crowds advance through `anim::crowd_update` instead
+([Performance](animation_performance.md#crowd-playback-on-workers)).
 
-## Animator and actions
+## Concepts
 
-An `Animator` is a component on the synthetic root that `model::instantiate`
-returns. It owns a fixed pool of 16 actions, addressed by `AnimationActionId`.
-The pool header, live-ID order, events, 1D spaces and model-sized boolean mask
-rows share one per-animator heap block. Prepared 2D spaces use a separate fixed
-block. Optional inertial history and residuals also use fixed owner storage.
-The scene component contains pointers, counts and the last motion delta.
+### Update sequence
 
-The fixed component store reserves a value for every possible scene node,
-including unused slots: `scene_capacity * Animator::size`. The default scene
-has 16,385 slots, including its root. ECS index arrays and allocations for live
-animators are additional.
+Physics and IK run between the animation update and the final `Scene.update_world`:
+
+1. `anim::update` (and `anim::crowd_update` for crowds).
+2. `Scene.update_world`.
+3. Physics, including ragdoll publication; see [Physics add-on](../addons/c3d_physics.c3l/README.md#ragdoll-recovery).
+4. IK solves ([Inverse kinematics](animation_ik.md#solve-order)).
+5. `Scene.update_world`, then the renderer.
+
+Animation owns the final pose until a later writer changes it. Root motion and events are outputs for the application to
+consume; no scheduler consumes them.
+
+### Animator and actions
+
+An `Animator` is a component on the synthetic root that `model::instantiate` returns. Add it with `anim::add_animator`,
+once per root. It owns a fixed pool of 16 actions, addressed by `AnimationActionId`. Its action pool, event buffer, model-sized
+mask rows and two blend-space slots live in per-animator blocks allocated by `add_animator`. The component itself holds
+pointers, counts and the last root-motion delta, and the component store reserves one `Animator` per scene node slot.
 
 ```c3
 Node* left = model::instantiate(&assets, &scene, model)!;
@@ -45,88 +78,72 @@ AnimationActionId run = right_animator.play(&assets, clips[1])!;
 right_animator.action(run).speed = 1.5f;
 ```
 
-`play` validates the clip's model-local targets and returns its ID at time zero,
-weight one, looping. It faults
-`INVALID_ID` for a dead clip and `INVALID_ARGUMENT` for a clip that does not
-fit the instance (a target beyond the node table, a morph target outside its
-mesh table, or a present mesh with a different morph count), or an invalid
-layer, fade or mask.
-`CAPACITY_EXCEEDED` means all 16 action slots are live. `stop(action)` removes the action;
-`stop(action, seconds)` fades it out first. `cross_fade(from, to, seconds)`
-fades one action out while the other fades to full weight. Use
-`play(&assets, clip, { .fade_in = seconds })` to start at zero and fade in.
-Both stop and cross_fade return optionals: stale IDs fault `INVALID_ID`, invalid
-durations or a cross-fade to the same ID fault `INVALID_ARGUMENT`. They validate
-before changing either action. This includes IDs whose fade-out already ended.
+`play` validates the clip's model-local targets against the instance and returns the action ID at time zero, weight one,
+looping. Its faults are listed in [Faults](animation_reference.md#faults).
 
-IDs survive other plays/removals and are meaningful only with the animator that
-issued them. A removed generation never resolves to its replacement while that
-animator lives. Destroying/recreating the animator starts a new owner; discard
-its old IDs.
-`try_action(id)` faults `INVALID_ID`; `action(id)` borrows a known-live action.
-Retain IDs and reacquire action pointers after structural action operations;
-reacquire Animator pointers after component-store changes. Iterate
-`order[:action_count]` for live IDs in play order.
+| Call | Effect |
+| --- | --- |
+| `stop(action)` | Remove the action. |
+| `stop(action, seconds)` | Fade the action out, then remove it. |
+| `cross_fade(from, to, seconds)` | Fade `from` out while `to` fades to full weight. |
+| `play(&assets, clip, { .fade_in = seconds })` | Start at weight zero and fade in. |
 
-`Action.time`, `speed`, `weight`, `loop` and `playing` are runtime controls;
-numeric values must be finite and weight nonnegative. `playing` gates only the
-clock, so paused actions still pose. Clip, layer, additive mode, masks and
-reference arrays are captured/library-owned. Recreate an action to change them.
-Clip tracks, duration and target mappings must remain unchanged and live during
-playback. Root mode/yaw, generalized extraction and sampling data are captured
-too. Blend-space members are read-only; their space controls playback.
+`stop` and `cross_fade` validate before changing either action. An ID whose fade-out already ended is stale.
 
-While an animator exists it owns the pose of its instance: every update writes
-every present instance node's local transform and every present instance mesh's
-morph weights.
-The synthetic root is not an instance node and stays under application control,
-so moving or spinning an instance as a whole is unaffected. Removing the root
-removes the animator and its arrays through the ordinary component hook; the
-shared clips stay in the store.
+IDs survive other plays and removals and are meaningful only with the animator that issued them. A removed generation
+never resolves to its replacement while that animator lives. Destroying and recreating the animator starts a new owner:
+discard its old IDs.
 
-## Replacing clips and models
+- `try_action(id)` faults `INVALID_ID`; `action(id)` borrows a known-live action.
+- Retain IDs, not pointers. Reacquire action pointers after any structural action operation, and `Animator` pointers
+  after component-store changes.
+- Iterate `order[:action_count]` for the live IDs in play order.
 
-A clip replacement keeps its track layout (see [Models](models.md#replacing-geometry-skeletons-and-clips)), so playback
-re-seeks on the next update. A model replacement may grow the template's clip list. Crowd actions accept any live clip
-compatible with their captured node and morph layout, including clips outside that list. Cursors are allocated at play
-or seed replacement, so a longer compatible clip does not require recreating the crowd.
+`Action.time`, `speed`, `weight`, `loop` and `playing` are runtime controls. Numeric values must be finite and `weight`
+nonnegative. `playing` gates only the clock, so paused actions still pose. Everything captured at play (clip, layer,
+additive mode, masks, reference samples, root-motion mode and extraction) is fixed: recreate the action to change it.
+The clip's tracks, duration and target mappings must stay unchanged and live during playback. Blend-space members are
+read-only; their space controls playback.
 
-## Removed instance nodes
+### Pose ownership
 
-`ModelInstance.present_node(template_index)` borrows the original node or returns
-null after removal. Each pointer has a captured `Entity` identity; slot reuse
-cannot bind a template index to the replacement node. The captured identities,
-node table, authored baselines and mesh indices retain their original extents.
-They are library-owned and must not be rebound. Use the accessor before reading
-a template node; `Animator.nodes` is only a borrowed alias of the pointer table.
-The identity check follows the scene's generational-ID lifetime assumption:
-a stale identity must not survive generation wrap and become equal again.
+While an animator exists it owns the pose of its instance: every update writes the local transform of every present
+instance node and the morph weights of every present instance mesh. The synthetic root is not an instance node and stays
+under application control, so moving or spinning an instance as a whole is unaffected. Removing the root removes the
+animator through the component hook and frees its arrays; the shared clips stay in the store.
 
-Animation skips tracks for absent nodes and morph tracks for removed `Mesh`
-components. A missing root-motion target contributes no motion. Actions retain
-their clips, modes, masks and playback state, and surviving tracks continue.
-Reparenting a live template node outside the instance subtree preserves its
-identity and animation membership.
+### Removed instance nodes
 
-`SkinBinding.joints` remains a borrowed array of live joint nodes. Every joint
-must stay live while its binding is used for skinning, bounds or joint search.
-Remove dependent bindings before removing their joints; the model accessor
-does not make dead skin joints recoverable.
+`ModelInstance.present_node(template_index)` borrows the original node or returns null after its removal. Each pointer
+has a captured `Entity` identity, so slot reuse never binds a template index to a replacement node. Use the accessor
+before reading a template node. `Animator.nodes` is only a borrowed alias of the pointer table.
 
-## Layers and masks
+- The captured identities, node table, authored baselines and mesh indices keep their original extents. They are
+  library-owned and must not be rebound.
+- Animation skips tracks for absent nodes and morph tracks for removed `Mesh` components. A missing root-motion target
+  contributes no motion. Actions keep their clips, modes, masks and playback state, and surviving tracks continue.
+- Reparenting a live template node outside the instance subtree keeps its identity and animation membership.
+- `SkinBinding.joints` is a borrowed array of live joint nodes. Every joint must stay live while its binding is used for
+  skinning, bounds or joint search, so remove dependent bindings before their joints.
 
-`PlayDesc.layer` selects one of four layers, folded in ascending index. Layer 0
-starts from the authored baseline; upper layers start from the result below.
-Play order does not change the order of layers. A channel with no contribution
-on a layer retains its lower result.
+### Replacing clips and models
 
-Masks address model-local nodes, including morph-bearing mesh nodes. Their
-storage is sized once from the model; there is no 512-node limit. The caller
-owns a `JointMask`, and play copies it into one of the animator's preallocated
-mask rows. A null mask selects all nodes; an all-false mask selects none.
+A clip replacement keeps its track layout ([Replacing geometry, skeletons and clips](assets.md#replacing-geometry-skeletons-and-clips)),
+so playback re-seeks on the next update. Additive reference samples and root-motion state stay as sampled from the old
+clip until the action is played again. A model replacement may grow the template's clip list. Crowd actions accept any
+live clip compatible with their captured node and morph layout, including clips outside that list.
 
-Inside a fallible function, after adding the animator, with a live model and
-an overlay clip targeting that model:
+## Play and blend
+
+### Layers and masks
+
+`PlayDesc.layer` selects one of four layers, folded in ascending index. Layer 0 starts from the authored baseline; upper
+layers start from the result below. Play order does not change layer order. A channel with no contribution on a layer
+keeps the lower result.
+
+Masks address model-local nodes, including morph-bearing mesh nodes. The caller owns a `JointMask`; `play` copies it into
+one of the animator's preallocated mask rows, so destroying or editing the input afterwards changes no action. A null
+mask selects all nodes; an all-false mask selects none.
 
 ```c3
 String[1] names = { "mixamorig:Spine1" };
@@ -141,28 +158,24 @@ AnimationActionId overlay = animator.play(&assets, overlay_clip, {
 animator.action(overlay).weight = 0.5f;
 ```
 
-Use the model's actual names. Every exact match is selected; descendants are
-included by default. Pass `include_descendants: false` for only matching nodes.
-A missing name faults `NOT_FOUND` before allocation. Repeated requested names
-are harmless and an empty name list produces empty membership. Play rejects a
-mask with a different node count. Reuse a mask only with instances of the model
-whose indices it describes. Destroying/editing the input mask after play does
-not alter existing actions.
+Use the model's actual joint names. Every exact match is selected, with descendants by default; pass
+`include_descendants: false` for only the matching nodes. A missing name faults `NOT_FOUND` before allocation. `play`
+rejects a mask whose node count differs from the instance. Reuse a mask only with instances of the model whose indices
+it describes.
+
+![The mixamo example: a masked regular wave on the left character and an additive wave on the right](images/animation_layers.png)
 
 ### Weighted and feathered masks
 
-`PlayDesc.weighted_mask` borrows a caller-owned `WeightedJointMask` during play
-instead of a boolean mask. `create_weighted_joint_mask(allocator, assets, model, names,
-weights)` selects exact names with finite weights in `[0,1]`; every matching
-node participates, and repeated entries combine by maximum. An empty list
-selects no nodes. `NOT_FOUND` identifies a missing name.
+`PlayDesc.weighted_mask` borrows a caller-owned `WeightedJointMask` during `play` instead of a boolean mask. Supplying
+both mask types faults `INVALID_ARGUMENT`.
 
-`create_feathered_joint_mask` also takes one depth per named seed. At descendant
-distance `d`, seed weight `w` contributes
-`w * min(1, (d + 1) / (depth + 1))`. The seed participates: weight 0.8 and depth
-3 give 0.2, 0.4, 0.6 and 0.8 at distances 0 through 3, then remain at 0.8.
-Depth zero selects the whole subtree at `w`; overlapping seeds combine by
-maximum, independent of order.
+- `create_weighted_joint_mask(allocator, assets, model, names, weights)` selects exact names with finite weights in
+  `[0,1]`. Every matching node participates and repeated entries combine by maximum. An empty list selects no nodes.
+- `create_feathered_joint_mask(allocator, assets, model, names, weights, depths)` also takes one depth per named seed. At
+  descendant distance `d`, seed weight `w` contributes `w * min(1, (d + 1) / (depth + 1))`. Weight 0.8 and depth 3
+  give 0.2, 0.4, 0.6 and 0.8 at distances 0 through 3, then 0.8. Depth zero selects the whole subtree at `w`.
+  Overlapping seeds combine by maximum.
 
 ```c3
 String[1] names = { "DEF-spine.001" };
@@ -181,87 +194,45 @@ defer anim::destroy_weighted_joint_mask(&upper);
 animator.play(&assets, overlay_clip, { .layer = 1, .weighted_mask = &upper })!;
 ```
 
-Use the model's actual names. As with `JointMask`, reuse a weighted mask only
-with instances of the model whose node indices it describes. A wrong row
-width, a weight outside `[0,1]` or supplying both mask types faults
-`INVALID_ARGUMENT` before playback changes. Play copies the float row; editing
-or destroying the caller mask afterwards does not change existing actions.
-Each masked action owns `node_count * float::size` extra bytes until removal.
-
-The effective contribution is `action.weight * mask.nodes[node]` for every
-translation, rotation, scale and logical morph channel, including root motion.
-Masked and zero-weight advancing actions still emit events. Boolean masks keep
-their existing API and storage.
+The effective contribution is `action.weight * mask.nodes[node]` for every translation, rotation, scale and morph channel,
+including root motion. Masked and zero-weight advancing actions still emit events. Each masked action owns
+`node_count * float::size` extra bytes until removal.
 
 ### Regular blending
 
-Each channel (translation, rotation, scale, and each morph weight array) is
-blended separately against the lower layer's value (the authored baseline on
-layer zero):
+Each channel (translation, rotation, scale and each morph weight array) blends separately against the lower layer's
+value, which is the authored baseline on layer zero. Actions that animate a channel contribute by weight; the unspent
+part of weight one keeps the lower value. A rotation-only clip leaves translation and scale at their authored values.
+Two actions at weight 1 average. The formula is in [Blend formulas](animation_reference.md#blend-formulas).
 
-```plain text
-total    = sum of effective weights for actions animating this channel
-residual = max(0, 1 - total)
-value    = (sum of weight * sample + residual * below) / max(1, total)
-```
+### Additive actions
 
-A lone action at weight 0.25 sampling translation 8 over baseline 0 yields 2.
-A rotation-only clip leaves translation and scale at their authored values. Two
-actions at weight 1 average. Rotations are sign-aligned to the lower pose's
-hemisphere before summing and normalized afterwards.
+Set `PlayDesc.additive = true`. `play` captures each track's sample at time zero once, including the value rather than
+tangent fields of cubic keys. Each layer folds its regular actions first, then applies its additive actions in play order.
 
-## Additive actions
+- Translation, morph and (by default) scale add `weight * (sample - reference)`. A time-zero action adds nothing.
+- Rotation applies the delta from the reference rotation, scaled by weight, on top of the current rotation. Additive order
+  matters for noncommuting rotations.
+- `PlayDesc.additive_scale = AdditiveScaleMode.MULTIPLICATIVE` applies componentwise scale ratios instead. Only `STEP`
+  and `LINEAR` scale tracks are supported; every key and the reference must be finite and strictly positive, or `play`
+  faults `INVALID_ARGUMENT`. A `CUBIC_SPLINE` scale track faults `UNSUPPORTED`. Both checks run before any mutation.
+- Both mask types apply to every channel.
 
-Set `PlayDesc.additive = true`. Play captures each track's sample at time zero
-once, including the value rather than tangent fields of cubic keys. Each layer
-first folds regular actions, then applies its additive actions in play order.
-
-Translation and morphs add `weight * (sample - reference)`. Scale defaults to
-`AdditiveScaleMode.DIFFERENCE` and uses the same difference formula. Rotation
-uses `reference.conjugate() * sample`, aligns that delta to identity, interpolates
-from identity by weight, then postmultiplies the current rotation and normalizes.
-Additive order matters for noncommuting rotations. A time-zero action adds
-nothing; a half-weight 45-degree delta applies 22.5 degrees. Both mask types
-apply to every channel.
-
-Opt in to componentwise scale ratios with
-`PlayDesc.additive_scale = AdditiveScaleMode.MULTIPLICATIVE` on an additive
-action. After regular blending, each additive action applies:
-
-```plain text
-below *= (sample / reference) ^ effective_weight
-```
-
-A positive sampled ratio gives a positive factor at every weight, including
-weights above 1, and the factor is the plain ratio at weight 1. For below
-`(2,3,4)`, reference `(2,4,8)`, sample `(8,1,32)` and weight 0.5, the result is
-`(4,1.5,8)`. The scale mode and time-zero reference are captured at play. Only
-STEP and LINEAR scale tracks are supported. Admission checks their keys once:
-every key and the reference must be finite and strictly positive, positive
-subnormals included, or play returns `INVALID_ARGUMENT` before creating an
-action or group. Positive keys are the guarantee: between adjacent keys whose
-ratio exceeds 2^24, a sample can round to zero. A `CUBIC_SPLINE` scale track
-with valid keys returns `UNSUPPORTED` before mutation. Playback samples these
-tracks like any other and applies no clamp or repeated domain scan.
-
-An additive action keeps the reference pose it sampled at `play` until it is played again. After
-`replace_clip_owned`, running actions re-seek on the new tracks, but an additive action's reference pose and
-the root-motion state stay as sampled from the old clip until the action is played again.
-
-Animation owns the final pose until later physics/IK writers run. There is no
-scheduler or automatic motion consumption. Root motion and events are outputs for
-the application to consume. Per-frame
-scratch remains in the existing temporary allocator; captured masks, reference
-samples and cursors retain their resource lifetimes.
+An additive action keeps the reference pose it sampled at `play` until it is played again, including after
+`replace_clip_owned`. The formulas are in [Blend formulas](animation_reference.md#blend-formulas).
 
 ## Root motion
 
-`PlayDesc.root_motion` defaults to `RootMotion.KEEP`. Runtime `STRIP_XZ` pins
-root X/Z at the clip's first sample and retains vertical motion. `EXTRACT` pins
-the same channels and publishes `Animator.root_motion`; animation never moves
-the instance root. Import clips with `RootMotion.KEEP` to retain this data.
-The enum and `NO_ROOT_NODE` now belong to `c3d::anim`, including when used in
-`RetargetOptions`.
+`PlayDesc.root_motion` selects how an action treats the root's horizontal movement.
+
+| Mode | Effect |
+| --- | --- |
+| `RootMotion.KEEP` (default) | The root moves inside the pose. |
+| `RootMotion.STRIP_XZ` | Pins root X and Z at the clip's first sample; vertical motion stays. |
+| `RootMotion.EXTRACT` | Pins the same channels and publishes the movement in `Animator.root_motion`. |
+
+Animation never moves the instance root. Import clips with `RootMotion.KEEP` to retain the data. The enum and
+`NO_ROOT_NODE` live in `c3d::anim`, including when used in `RetargetOptions`.
 
 ```c3
 animator.play(&assets, walk, { .root_motion = RootMotion.EXTRACT })!;
@@ -270,50 +241,39 @@ anim::apply_root_motion(instance_root, animator.root_motion);
 scene.update_world();
 ```
 
-The selected root is the first skin's first joint whose parent is outside that
-skin. An unskinned model defaults to `NO_ROOT_NODE`; set `animator.root_node` to
-a model-local index before playing to override it. Keep the selection fixed
-while actions live. Root and intermediate ancestors use `PARENT` transform
-space. Ancestors between the joint and instance root must retain their authored
-transforms; their basis is captured at play. The instance root itself may use
-either transform space.
+The selected root is the first skin's first joint whose parent is outside that skin. An unskinned model defaults to
+`NO_ROOT_NODE`; set `animator.root_node` to a model-local index before playing to override it, and keep the selection
+fixed while actions live. The root joint and the ancestors between it and the instance root use `PARENT` transform space
+and keep their authored transforms; their basis is captured at `play`. The instance root itself may use either transform
+space.
 
-`root_yaw = true` additionally removes the root rotation's Y twist and emits
-the turn about the root node's reference position; tilt remains in the pose.
-The reference position includes static ancestors in the instance root's frame.
-Extraction requires upright, positive,
-uniform scale through the captured basis and instance root, retained throughout
-playback. This default planar path requires static ancestors and Y-up;
-use generalized extraction for other supported frames.
-Missing root configuration, unsupported yaw basis, yaw with KEEP, and non-KEEP
-additive actions fault `INVALID_ARGUMENT` before allocating an action.
+`root_yaw = true` also removes the root rotation's Y twist and emits the turn about the root node's reference position;
+tilt stays in the pose. This default planar path requires upright, positive, uniform scale through the captured basis
+and instance root, static ancestors and Y-up. Use generalized extraction for other supported frames. Missing root
+configuration, an unsupported yaw basis, yaw with `KEEP` and non-`KEEP` additive actions fault `INVALID_ARGUMENT` before
+an action is allocated.
 
-Deltas are planar transforms in the instance root's frame. The helper applies
-translation through the node's authored rotation/scale, then postmultiplies the
-turn. Apply each delta once; it resets to zero translation and identity rotation
-every update. Reverse and multi-loop updates compose cycle transforms. A single
-action's consumed path is invariant under subdivision within sampling tolerance.
-Repeated float32 motion application accumulates position drift as travelled
-distance grows; use the carrier's frame when comparing its controlled pose.
-Masks and regular layer weights apply to motion as to pose; KEEP/STRIP root
-channels contribute zero motion with their weight. A half-weight extractor
-therefore emits half displacement. Yaw contributions use signed shortest turns;
-mixing actions does not promise subdivision-invariant blended trajectories.
+- **Frame.** Deltas are planar transforms in the instance root's frame. `apply_root_motion` applies translation through
+  the node's authored rotation and scale, then postmultiplies the turn.
+- **Once per update.** Apply each delta once; it resets to zero translation and identity rotation every update. For
+  crowds, call `Scene.apply_crowd_root_motion` once after `anim::crowd_update`.
+- **Blending.** Masks and regular layer weights apply to motion as to pose. A half-weight extractor emits half the
+  displacement. Mixing actions does not promise subdivision-invariant trajectories.
+- **Clock.** `Action.time` edits seek to a new starting sample and emit no motion or events; the next clock step does.
+  `dt` is finite and nonnegative, speed may be negative, and clocks must stay finite. Paused, zero-step and
+  zero-duration actions emit no movement.
+- **Accuracy.** Repeated float32 application accumulates position drift as distance grows; compare a controlled pose in
+  its carrier's frame.
 
-`Action.time` edits seek to a new starting sample. The seek itself emits no
-motion or events; the subsequent clock step does. Internal double clocks retain
-subframe precision independently of the public float sampling time. `dt` is
-finite and nonnegative, speed may be negative, and clocks must remain finite
-and representable. Paused, zero-step and zero-duration actions emit no movement.
+![Extracted walk and run motion on the left, the in-place comparison on the right](images/animation_motion.png)
 
 ### Generalized extraction
 
-Set `PlayDesc.extraction.generalized = true` with `root_motion = EXTRACT` to
-consume motion from the final composed ancestor chain. `translation_axes`
-selects X, Y and Z in the instance-root frame; `up` is a finite unit vector in
-that frame, and `twist` selects turning about it. These captured fields replace
-the planar `root_yaw` selection for that action. Keep the motion node and frame
-fixed while its actions live.
+Set `PlayDesc.extraction.generalized = true` with `root_motion = EXTRACT` to consume motion from the final composed
+ancestor chain of the motion node. `translation_axes` selects X, Y and Z in the instance-root frame, `up` is a finite
+unit vector in that frame and `twist` selects turning about it. These captured fields replace `root_yaw` for that action,
+so combining generalized extraction with `root_yaw`, a mode other than `EXTRACT` or `additive` faults `INVALID_ARGUMENT`.
+Keep the motion node and frame fixed while its actions live.
 
 ```c3
 animator.root_node = motion_node;
@@ -328,137 +288,23 @@ animator.play(&assets, walk, {
 })!;
 ```
 
-The chain may contain animated proper rotations, translations and finite
-positive uniform scales. Nonuniform scale, reflection, a baseline rotation that
-is not unit length, a root outside the model, nonfinite values and zero
-quaternion keys fault `INVALID_ARGUMENT` at admission. Rotation and scale tracks are checked at their keys. A cubic
-rotation segment is not checked between its keys; where it crosses zero it
-samples as the identity rotation. A `CUBIC_SPLINE` scale track on the chain
-faults `UNSUPPORTED` before playback changes, after every `INVALID_ARGUMENT`
-check. No repeated domain scan runs at update. Under generalized extraction, a
-scale track with nonneutral keys on an additive action's consumed chain is
-invalid in either additive scale mode, including zero-weight or fully masked
+The chain may contain animated proper rotations, translations and finite positive uniform scales. Nonuniform scale,
+reflection, a non-unit baseline rotation, a root outside the model, nonfinite values and zero quaternion keys fault
+`INVALID_ARGUMENT` at `play`. Rotation and scale tracks are checked at their keys; a cubic rotation segment is not
+checked between keys and samples as the identity where it crosses zero. A `CUBIC_SPLINE` scale track on the chain faults
+`UNSUPPORTED`, after every `INVALID_ARGUMENT` check. Under generalized extraction, a scale track with nonneutral keys on
+an additive action's consumed chain is invalid in either additive scale mode, including zero-weight or fully masked
 actions.
 
-Each generalized action samples its own chain endpoint at its current time and
-removes the selected translation and twist relative to its reference. These
-offsets blend with the same weights as the motion, so KEEP actions, additive
-layers and the authored pose under partial weights stay in the pose. Twist
-offsets use each action's shortest turn from its reference. One instance-root
-compensation applies to every top-level branch, including branches outside the
-motion node, so the articulated pose stays attached to the carrier through
-fades, weight changes and inertial residuals. For a single action, applying the
-published deltas reproduces the corresponding KEEP pose.
-The root turns about its reference position in the instance-root frame.
-Consume the delta with `apply_root_motion` once after update; for crowds use
-`Scene.apply_crowd_root_motion`. The default planar path keeps its previous
-behavior. Float32 application still accumulates drift with distance; compare
-articulated poses in their carrier's frame.
+Each generalized action removes the selected translation and twist relative to its own reference. The offsets blend with
+the same weights as the motion, so `KEEP` actions, additive layers and the authored pose stay in the pose under partial
+weights. One instance-root compensation applies to every top-level branch, so the articulated pose stays attached to the
+carrier through fades, weight changes and inertial residuals. For a single action, applying the published deltas
+reproduces the corresponding `KEEP` pose.
 
-## Inertial transitions
+## Events
 
-`Animator.inertial_status()` returns a copied `AnimationInertialStatus` with
-enabled, active, elapsed and duration. Inspecting it exposes no writable history
-or residual storage.
-
-Reserve storage when creating an Animator:
-
-```c3
-Animator* animator = anim::add_animator(
-    &scene, instance_root, { .inertia_enabled = true });
-```
-
-For a crowd, set `AnimatedCrowd.inertia_enabled = true` after `attach_crowd`
-and before `prepare_crowd`. Preparation fixes this option; changing it on a
-prepared owner is invalid. A crowd reserves separate history/residual rows for
-its full capacity, including inactive placements, and shares evaluation scratch.
-Each row owns a previous node pose, double velocity/offset/offset-rate rows, one
-byte per node of consumed-scale membership and 28 bytes per logical morph
-component, plus controls and root-motion state.
-Disabled owners reserve none of this storage. Enabled updates allocate nothing.
-
-`Animator.inertialize` and `CrowdPlayer.inertialize` replace the owner's current
-actions and groups, preserving the current composed pose and its published
-velocity with a residual that decays over `duration` update seconds. Duration
-zero switches immediately. The action array and optional `AnimationTransitionSpaceDesc`
-array are borrowed during the request and copied; group membership names the
-target action ordinals.
-
-```c3
-AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
-targets[0].clip = run;
-targets[0].start_time = 0.25f;
-targets[0].speed = 1.25f;
-animator.inertialize(&assets, {
-    .duration = 0.35f,
-    .actions = targets[..],
-})!;
-```
-
-The request first validates every target and its eligibility, then allocates
-all target cursors, references and copied masks into temporary ownership.
-Failures free those resources and leave the current actions, IDs, order, pose
-and history unchanged. Source retirement and target installation follow only
-after that succeeds. Requests need no spare action slots: 16-to-16 replacement
-and a crowd's full configured action capacity are supported. Request-time
-allocations follow the ordinary play contract; the inertial history and
-residual storage was already reserved at preparation. Old source action IDs
-become stale after a successful request. Reacquire action and group pointers.
-
-A replacement while active captures the current corrected output and its
-published velocity. Pose translation, rotation and ordinary scale/morph
-residuals preserve value and velocity at onset and decay to the target. The
-target's onset velocity is a one-sided difference over 1/256 s of its playback:
-clocks advance by their speed or group rate and fades by their rate, while STEP
-tracks keep their onset key. A looping or group clock that would cross its clip
-end within that step contributes through a separate step backward, with the
-other clocks and fades held; non-looping clocks clamp to the clip, where they
-stop. Neither a key nor a loop seam adds a jump to the difference. Scale
-on a consumed motion chain uses `s_target * exp(residual)` in log space, keeping
-positive uniform scale positive and velocity-matched. Regular blending is
-convex, so admitted positive-uniform scales remain positive under runtime
-weights, masks, fades and group controls; the request faults `INVALID_ARGUMENT`
-when a consumed node's source or baseline scale is not positive. The corrected
-scale is clamped to the positive normal float range, `[2^-126, float::max]`, so
-a large residual saturates instead of overflowing. Cubic scale on a consumed
-chain is unsupported: such a request faults `UNSUPPORTED` unless its keys alone
-are out of range.
-
-For a consumed root, source and target use the same motion node, selected axes,
-up, twist and frame. Targets that do not extract are admitted against the
-consumed chain as actions played beside a generalized extractor are. Different
-clip reference positions are allowed; the pose residual carries the articulated
-pose from the source's pinned reference to the target's. Root output adds a decaying residual translation/twist velocity to the
-target delta, with one final pivot correction, and the compensated pose moves
-with the carrier.
-Events come from target actions only. The source's previous published delta
-divided by its positive update interval supplies velocity; invalid history
-starts with zero source velocity.
-
-At a STEP boundary, request onset takes the one-sided value in the target
-playback direction, including reverse starts at duration. It does
-not epsilon-seek the clock or emit events. A zero update freezes transition
-time. `cancel_inertial_transition` discards the residual while retaining target
-actions and clocks; the next pose is the target output. Inertial requests and
-cancellation require enabled storage (`@require`), rather than returning a fault
-for a disabled owner. A stale crowd player still faults `INVALID_ID`.
-
-Clips, model layout and captured references must remain live and compatible
-through playback. Recreate actions when changing captured motion settings or
-reference data. Removing an owner releases its history and target resources;
-replacing a crowd placement resets that slot's generation and history. Seeks,
-instant play, stop and group additions or removals without a fade, removed
-target nodes and clip/model revisions invalidate the owner's velocity history;
-an active residual keeps decaying. Fades and weight changes keep history, and no
-playback change cancels a residual. A rotation that cannot be normalized (zero or
-nonfinite) records no angular velocity and receives no rotation residual, so
-inertia admits the same clips as an owner without it. Consumed-scale membership
-is fixed when a transition starts. Captured references are not silently
-rebuilt. Saving keeps authored settings and target playback,
-while sampled clocks, source velocities, history and active/interrupted
-residuals restart empty on restore.
-
-## Clip events
+### Clip events
 
 ```c3
 ClipEvent[2] footsteps = {
@@ -468,81 +314,46 @@ ClipEvent[2] footsteps = {
 assets.set_clip_events(walk, footsteps[..])!;
 ```
 
-The setter copies and stably sorts events by time. IDs are application-defined;
-no callback is installed. Invalid times (nonfinite or outside `[0,duration]`)
-fault `INVALID_ARGUMENT`; a dead clip faults `INVALID_ID`. Failure leaves the
-old table intact. Replacing a table between updates is valid. `add_clip_owned`
-instead takes ownership of an already sorted valid table. Retargeting copies
-events into independent owned arrays.
+`set_clip_events` copies and stably sorts the events by time. IDs are application-defined and no callback is installed.
+A time that is nonfinite or outside `[0, duration]` faults `INVALID_ARGUMENT`, and a dead clip faults `INVALID_ID`;
+failure leaves the old table intact. Replacing a table between updates is valid. `add_clip_owned` instead takes
+ownership of an already sorted, valid table. Retargeting copies events into independent owned arrays.
 
-### Imported tables
-
-A glTF animation imports a versioned table from `animation.extras.c3d_events`:
-
-```json
-{"c3d_events":{"version":1,"events":[{"time":0.25,"id":7}]}}
-```
-
-For FBX, the animation stack's string property `c3d_events` contains the inner
-JSON object, `{"version":1,"events":[{"time":0.25,"id":7}]}`. Both importers
-read it whenever `LoadOptions.animations` is enabled, including store-free
-and asynchronous loading. Animation-only and profiled FBX loading read the
-same property. Disabled animation imports do not read event metadata.
-Absent metadata or an empty array produces an empty table. Replacing a clip
-replaces its table, so absent metadata clears previously imported events.
-
-Metadata is strict JSON, without comments or trailing commas. `version` and
-`id` are JSON numbers read as doubles, which hold every ID exactly. Integral
-spellings such as `1`, `1.0`, `1e0` and `10e-1` are equivalent; spellings finer
-than double precision, such as `1.0000000000000000001`, read as the nearest
-double. IDs range from 0 through 4294967295; repeated IDs and negative-zero
-spellings are valid. Fractional, negative nonzero or overflowing IDs fault
-`ASSET_FORMAT_ERROR`. A nonintegral version faults `ASSET_FORMAT_ERROR`; any
-other integral version the parser accepts faults `UNSUPPORTED`.
-
-`time` is finite decoded clip-local seconds in `[0,duration]`, read as double
-and stored as float. Events never extend the track-derived duration; a
-zero-duration clip permits only time-zero markers. FBX uses the decoded origin
-after baking with `trim_start_time = true`. Author markers against the resulting
-clip times, including when the source stack starts before or after zero.
-Do not use the stack's absolute scene times.
-
-Missing required fields, wrong types, malformed metadata and invalid values
-fault `ASSET_FORMAT_ERROR`. In both importers, metadata the JSON parser rejects
-also faults: `json::max_depth` (64) nested containers, numbers outside double
-range, integers outside the signed 64-bit range written without a fraction or
-exponent, and invalid escapes such as unpaired surrogates. glTF extras the
-parser rejects fault only when their text contains `"c3d_events"`; otherwise
-they import no events. Unknown fields, extras without `c3d_events`, non-object
-extras and unrelated properties are ignored. A repeated key keeps its last
-value. Import failure leaves shared assets unchanged and releases decoded event
-arrays.
-
-Imported events are stably sorted by time, retaining authored order at equal
-stored times. The table owns its explicit IDs and has no event names or payloads.
-[Serialization](serialization.md) saves keyed clip references rather than clip
-payloads or event tables; preload the imported assets before restoring playback.
+Importers read events from glTF and FBX animation metadata ([Event import schema](animation_reference.md#event-import-schema)).
+[Serialization](serialization.md) saves keyed clip references, not clip payloads or event tables, so preload the imported
+assets before restoring playback.
 
 ### Event delivery
 
-After update, read `animator.events[:animator.event_count]`. Each `FiredEvent`
-contains action ID, clip ID, authored ID and time. Every retained advancing
-action reports, including zero-weight blend-space members. Fully faded actions
-are removed before publication. Delivery follows action play order, then time
-crossing order within each action; equal-time markers keep their authored order.
-Applications can filter by current action weight, as the Mixamo example does.
+After `anim::update`, read `animator.events[:animator.event_count]`. Each `FiredEvent` holds the action ID, clip ID,
+authored ID and time. Applications can filter by current action weight.
 
-Forward intervals include the starting instant and exclude the ending instant;
-reverse intervals do the opposite. Terminal endpoints are included when a
-non-looping action stops. At a loop seam, the closing marker (duration forward,
-zero backward) fires on arrival; the opening marker fires on continuing into
-the next cycle. A step spanning both delivers closing before opening. Reverse
-playback from zero starts at the equivalent duration boundary. Pauses and seeks
-alone fire nothing. The fixed buffer retains the first 16 crossings per update;
-`events_dropped` counts the rest, saturating at `uint::max`. Both counts reset
-every update. Large time steps count crossings without iterating elapsed loops.
+- Every retained advancing action reports, including zero-weight blend-space members. Fully faded actions are removed
+  before publication.
+- Delivery follows action play order, then time-crossing order within each action; equal-time markers keep their
+  authored order.
+- Forward intervals include the starting instant and exclude the ending instant; reverse intervals do the opposite.
+  Terminal endpoints are included when a non-looping action stops.
+- At a loop seam, the closing marker (duration forward, zero backward) fires on arrival and the opening marker fires on
+  continuing into the next cycle. A step spanning both delivers closing before opening.
+- Pauses and seeks alone fire nothing.
+- The fixed buffer keeps the first 16 crossings per update. `events_dropped` counts the rest, saturating at `uint::max`.
+  Both counts reset every update.
 
-## One-dimensional blend spaces
+## Blend spaces
+
+An animator owns two blend-space slots shared by 1D and 2D groups. Each member also uses an action slot. A space owns its
+members' time, weight, loop, playing and fade fields: members loop with `playing = false`, and root motion and events use
+the shared clock. All members share a normalized phase advanced by `dt * speed / weighted_duration`; group weight does
+not affect speed. Set `playing = false` to pause the phase while still adjusting the blend.
+
+Independent `stop` or `cross_fade` on a member faults `INVALID_ARGUMENT`. Use `stop_blend_space(space, fade_out)` or
+`fade_blend_space(space, target_weight, duration)`; both group kinds embed a `BlendSpaceControl`. Fading to zero removes
+every member. A space pointer is a short-lived borrow: reacquire it through `animator.blend_spaces[slot]` or
+`animator.blend_spaces_2d[slot]` after structural changes and discard it after removal. Keep `parameter`, `speed` and
+`phase` finite, `phase` in `[0,1)` and `weight` in `[0,1]`. Creation rolls back every new action on failure.
+
+### One-dimensional blend spaces
 
 ```c3
 ClipId[2] locomotion = { walk, run };
@@ -556,30 +367,12 @@ BlendSpace1D* space = animator.add_blend_space(
 space.parameter = 0.5f;
 ```
 
-An animator owns two fixed space slots shared by 1D and 2D groups. A 1D group
-has 2–8 actions. Positions must be finite and strictly ascending, and clip
-durations finite and positive. Dead clips fault `INVALID_ID`, invalid inputs/configuration fault `INVALID_ARGUMENT`,
-and exhausted space/action slots fault `CAPACITY_EXCEEDED`. Creation rolls back
-all new actions on failure.
+A 1D group has 2 to 8 members. Positions must be finite and strictly ascending, and clip durations finite and positive.
+The parameter clamps to the authored range, and only its two neighbors receive weights, summing to `space.weight`.
 
-The parameter clamps to the authored range. Only its two neighbors receive
-weights, summing to `space.weight`. All members share a normalized double phase
-advanced by `dt * speed / weighted_duration`; group weight does not affect speed.
-Set `playing = false` to pause the phase while still adjusting the blend. Keep
-parameter/speed/phase finite, phase in `[0,1)`, and weight in `[0,1]`.
+### Two-dimensional blend spaces
 
-The space owns member time, weight, loop, playing and fade fields. Members are
-looping with `playing = false`; root motion and events use their shared clock.
-Independent stop/cross_fade faults `INVALID_ARGUMENT`. Use
-`stop_blend_space(space, fade_out)` or
-`fade_blend_space(space, target_weight, duration)` instead. Fade-to-zero removes
-every member. Pointers are short-lived borrows: reacquire through
-`animator.blend_spaces[slot]` after animator-store changes and discard after
-removal/reuse. The inspector exposes group controls and displays member state.
-
-## Two-dimensional blend spaces
-
-Supply explicit sample coordinates and their triangulation:
+Supply explicit sample coordinates and their triangulation.
 
 ```c3
 ClipId[3] clips = { idle, walk_left, walk_right };
@@ -594,783 +387,122 @@ BlendSpace2D* space = animator.add_blend_space_2d(
 space.parameter = { 0.5f, 0.5f };
 ```
 
-A group has 3–16 members on an Animator, or 3–`actions_per_instance` on a crowd.
-Every member consumes an ordinary action slot. Two 1D groups, two 2D groups or
-one of each fill the same two-slot budget. Crowd capacities below three cannot
-admit a 2D group.
+A group has 3 to 16 members on an `Animator`, or 3 to `actions_per_instance` on a crowd. Two 1D groups, two 2D groups or
+one of each fill the two slots.
 
-Coordinates must be distinct and finite. Triangles must form a connected,
-non-overlapping triangulation of the convex hull, include every sample and have
-valid distinct indices. Either winding is accepted and the authored triangles
-are kept as given; gaps, crossings, duplicate triangles, unused samples and
-non-convex boundaries fault `INVALID_ARGUMENT`. For maximum coordinate extent
-`S`, triangle double-area must exceed `1e-10 * S*S`. No automatic triangulation
-or degenerate fallback is performed. Clips must be live and have finite
-positive durations. Exhausted slots/actions or failed allocation return
-`CAPACITY_EXCEEDED`; dead IDs return `INVALID_ID`. Failure preserves existing
-actions, groups and output.
+- **Topology.** Coordinates must be distinct and finite. Triangles must form a connected, non-overlapping triangulation
+  of the convex hull, include every sample and use valid distinct indices. Either winding is accepted and the triangles
+  are kept as given. Gaps, crossings, duplicates, unused samples and non-convex boundaries fault `INVALID_ARGUMENT`.
+  For maximum coordinate extent `S`, a triangle's double area must exceed `1e-10 * S*S`. There is no automatic
+  triangulation.
+- **Selection.** An exact coordinate selects that sample. Otherwise the first authored triangle that contains the
+  parameter supplies up to three nonnegative barycentric weights. Outside every triangle, the nearest triangle supplies
+  weights clamped to zero and normalized (when its roundoff stays within `1e-7`); otherwise the parameter projects onto
+  the nearest hull boundary segment. Selection does not depend on the previous parameter.
+- **Phase.** Selected weights sum to `space.weight`. All members keep their shared clocks and event semantics, including
+  unselected and zero-weight members.
+- **Ownership.** Creation copies coordinates, triangles and captured masks, so caller arrays may change or be freed
+  afterwards. The group's arrays stay library-owned and read-only.
+- **Failure.** A failed creation preserves existing actions and groups.
 
-An exact coordinate selects that authored sample. Otherwise the first authored
-triangle that contains the parameter supplies up to three nonnegative
-barycentric weights. When no triangle contains it, the nearest triangle by
-edge distance supplies its weights, clamped to zero and normalized, if its
-barycentric roundoff stays within `1e-7`. Otherwise the parameter projects onto
-the nearest boundary segment of the hull. Selection does not depend on the
-previous parameter.
+Every playback owner prepares two 2D rows even when neither is active ([Prepared storage](animation_performance.md#prepared-storage)).
 
-Selected weights sum to `space.weight`; the selected durations advance the same
-normalized phase law as 1D. All members retain their shared clocks and event
-semantics, including unselected and zero-weight members. Pausing the phase still
-allows parameter edits to change the pose. Keep parameter, speed and phase
-finite, phase in `[0,1)`, and weight in `[0,1]`.
+## Inertial transitions
 
-Both group kinds embed one `BlendSpaceControl` (member count, weight,
-fade, phase, speed and playing), so `stop_blend_space(space, fade_out)` and
-`fade_blend_space(space, target_weight, duration)` serve 2D groups too.
-Independent member stop/cross-fade returns `INVALID_ARGUMENT`. Creation copies
-coordinates, triangles and captured masks; caller arrays may be changed or freed
-afterwards. Group arrays and member configuration stay library-owned and
-read-only. The returned pointer is a short-lived borrow; reacquire from the
-owner's 2D slot storage after structural changes and discard it after removal.
+An inertial transition replaces the current actions and groups while preserving the composed pose and its velocity. A
+residual decays over a duration in update seconds, so a cut between clips does not pop.
 
-### Prepared storage
-
-Every playback owner prepares two 2D rows even when neither is active. For action
-capacity `A`, each row holds `A` action IDs, `A` coordinates, up to
-`max(0, 2*A - 5)` three-byte triangles and `A` two-byte hull edges. On x64
-`BlendSpace2D` is 120 bytes, aligned to eight bytes. Both rows share one
-allocation; these totals include the two `BlendSpace2D` values and alignment
-padding:
-
-| Action capacity | Retained 2D bytes per playback owner |
-| ---: | ---: |
-| 1 | 288 |
-| 2 | 320 |
-| 3 | 368 |
-| 4 | 416 |
-| 8 | 608 |
-| 9 | 656 |
-| 15 | 944 |
-| 16 | 992 |
-
-An Animator pays 992 bytes. A crowd pays the table value for every slot of its
-fixed capacity, including inactive slots. These bytes exclude existing 1D rows,
-actions, cursors, additive references and weighted mask rows. Group updates
-allocate nothing; creation allocates only the members' captured action data.
-
-## Authoring example and inspector
-
-```bash
-python3 scripts/build.py --example animation_authoring
-```
-
-`animation_authoring` pairs a crowd with an ordinary Animator for the unmodified
-CC0 Quaternius animations and AnimatedMorphCube. Its panel controls a nine-sample
-2D direction, speed, pause, a feathered upper-body/morph overlay and a
-multiplicative head-scale overlay. Character buttons request layered playback,
-a generalized jog or the source's left/right 90-degree turning clips through
-inertial transitions. Transition duration, cancellation and extracted movement
-are explicit controls; each owner consumes its output once per update.
-The Animator inspector exposes 2D parameter,
-weight, speed, pause and stop controls, and shows copied weighted-mask membership
-and the additive scale mode. Captured mask/layout/scale settings change by
-recreating their actions or groups.
-
-Animator authoring version 3 and AnimatedCrowd version 4 retain these settings,
-generalized extraction and the inertia opt-in through `c3d_serial`. Earlier
-versions retain their authored groups, masks and scale mode, default to planar
-extraction and disabled inertia, and preserve the original 1D/boolean/DIFFERENCE
-defaults where those features were absent. Playback clocks, fades and transitions
-follow the authored restart rules ([Serialization](serialization.md)).
-
-## Layered example and CPU measurements
-
-`mixamo` shows a regular masked wave on the left and an additive wave on the
-right, both over locomotion. The wave is authored at setup from the loaded
-model's rest pose and `Spine1`/`LeftArm`/`LeftForeArm` names; missing joints disable
-that demonstration with a message. No extra animation download is required.
-`W`/`S` adjust the left walk/run blend; `R` toggles applying its extracted motion.
-`G` and `A` toggle the waves, `1`–`9` cross-fade the right in-place clip, `Q` changes
-the space weight and Space pauses. Authored footsteps from the dominant member
-print to the console. The Scene panel's animator inspector shows clip IDs, layer,
-mode, mask count and playback controls; stop is applied after traversal.
-
-The animation and Mixamo examples accept `--frames=100 --acceptance` for a
-bounded validation run that exercises playback changes. Mixamo additionally
-accepts `--capture=path` for a 1440x900 RGBA8 scene capture.
-
-```powershell
-c3c build mixamo --path examples -O3 --lib c3d_profile -D C3D_PROFILE_CPU -D C3D_PROFILE_INTERNAL
-examples/build/mixamo.exe --benchmark
-```
-
-The CPU-only benchmark reads the existing `anim.update` capture scope for one
-Mixamo instance. It warms 300 updates and measures 5,000 at a fixed 60 Hz step;
-loading, mask creation and reference sampling are outside the measured interval.
-
-The measurements below used a 152-byte Animator component before 2D authoring
-storage was added. They do not include its prepared 2D block or weighted action
-rows. Current retained costs follow the component and prepared-storage formulas
-above.
-
-Windows x64, i9-14900K, C3 0.8.3 `-O3`, CPU+INTERNAL profiling; medians of three
-run means:
-
-| Case | Nodes | Tracks | Actions | CPU mean |
-| --- | ---: | ---: | ---: | ---: |
-| Single action before runtime motion | 69 | 105 | 1 | 0.001157 ms |
-| Single action with runtime support | 69 | 105 | 1 | 0.001191 ms |
-| Base plus masked regular wave | 69 | 312 | 2 | 0.002727 ms |
-| Base, masked regular and additive waves | 69 | 519 | 3 | 0.006146 ms |
-| Two-clip space with extracted motion | 69 | 210 | 2 | 0.002320 ms |
-| Equivalent three base actions plus masked layer, before | 69 | 522 | 4 | 0.003476 ms |
-| Three-clip space with motion plus masked layer | 69 | 522 | 4 | 0.003745 ms |
-
-The comparison baseline is `b103615`. The three-clip workload uses walk, run and
-a repeated walk slot, parameter 0.5: neighbor weights 0.5/0.5 and an inactive
-third neighbor, plus the masked wave. The baseline uses the same clips/weights
-with independent clocks; it has no space or runtime extraction. This compares
-the equivalent pose workload before and after adding phase and motion work.
-Single-action run means ranged 0.001150–0.001180 ms before and
-0.001186–0.001346 ms after; four-action means ranged 0.003421–0.003558 ms before
-and 0.003631–0.003759 ms after. These measurements do not justify an executor.
-They do not establish performance at crowd scale. WSL verification is build/CPU
-only.
-
-The benchmark also consumes ten walk loops at 60 Hz (a shortened final step),
-then compares displacement with ten clip cycles. This rig travels 17.695213 m
-with 0.000017166 m drift, below the 0.001 m limit. This is a CPU motion check;
-no GPU timing is included. The default example separately runs with Vulkan
-validation on Windows.
-
-![Extracted walk/run motion on the left and the in-place comparison on the right](images/animation_motion.png)
-
-## Sampling
-
-`sample_track` clamps to the key range, steps forward from the previous key
-through the action's cursor and re-seeks by binary search after any backwards
-jump, so wraps, seeks and negative speeds cost one search. `STEP` holds the
-previous key; `LINEAR` interpolates per element, with rotations taking the
-short path and using slerp when the keys are more than 0.1 rad apart;
-`CUBIC_SPLINE` evaluates the glTF Hermite form with tangents scaled by the
-segment duration.
-
-`sample_pose(&assets, clip, time, cursors, &scratch, destination)` samples one clip
-at one time with no playback. The pose starts from the destination's base pose,
-every present track writes its channel at full weight, and `time` clamps to each
-track's key range. It reads the store and writes only the caller's cursors,
-scratch and destination, through the same track sampling as an action of
-weight 1 and the same rotation hemisphere and normalization, so its pose equals
-that of a single unmasked regular action that keeps its root motion in the pose,
-at that time, bit for bit. A clip with two tracks on one node and path is the
-exception: an action averages them, `sample_pose` keeps the later one. Cursors
-are hints: any value is valid, and keeping the array between calls only speeds
-forward sweeps.
-
-### Crowd playback on workers
-
-`CrowdPlaybackState.update` is `advance` followed by `sample_range` over every
-live instance.
-
-- `advance(&assets, dt)` runs on the owner thread. It steps each instance's
-  clocks, fades and groups and writes the crowd-wide event prefix in instance
-  order, so events keep their order, offsets and drop counts.
-- `sample_range(&assets, first, count, &scratch)` blends the poses and morph
-  weights of instances `[first, first + count)` into their own slices and
-  extracts their root motion, inertial correction and history, writing
-  `slot.root_motion`. Root motion is part of this step because the yaw pivot and
-  generalized extraction read or edit the sampled pose. Call it once per
-  instance after each `advance`: a repeat would step inertial history and root
-  motion again.
-- Calls on disjoint ranges may run concurrently on any threads, in any order,
-  each with its own scratch from `create_crowd_pose_scratch` (free it with
-  `destroy_crowd_pose_scratch`). Nothing structural may change in the store, the
-  crowd or its players until every call returns. A call allocates nothing and
-  writes nothing shared. The state's own scratch serves `update` and one serial
-  caller; a worker scratch holds no event bookmarks.
-- `crowd_update` stays serial and calls `publish_crowd_pose` on the owner thread
-  after sampling. An application that wants workers calls `advance`, runs
-  `sample_range` over its own pool, then `publish_crowd_pose`. Core never
-  imports `c3d::job`; `job_bench --crowd COUNT` runs that sequence.
-
-Each instance's output depends only on its own state, so range splits, order and
-thread count change no pose, morph weight, root motion or event, bit for bit.
-
-### Shared samples within a frame
-
-Crowd instances that play the same clip at the same time repeat the same track
-sampling. A scratch from `create_crowd_pose_scratch`, and the state's own, holds a
-`PoseCache` of `POSE_CACHE_CAPACITY` (64) entries that lets them share it.
-
-- **Entry.** An entry is keyed on the clip id, the clip revision and the exact bits of
-  the action's time. It lists, in ascending track order, the values `sample_track`
-  returns for the tracks the plain blend branch sampled, before the root pin copies and
-  edits them; a compressed clip records its decoded samples. A later action at the same key reads the
-  tracks it needs from the list, samples the ones the list lacks and appends them. A masked, weighted or differently
-  present action therefore never samples a track it would not sample alone, and every
-  value equals an uncached sample. A hit leaves the action's seek cursors unchanged;
-  they are hints.
-- **Uncached.** The first sighting of a key only claims its slot, so a frame without
-  repeats records nothing. An action also samples uncached when the probe window of its
-  key is full (four slots), on the onset and generalized-motion paths, and for additive
-  actions. A scratch from a single model's animator has no cache.
-- **Lifetime.** `advance` increments the crowd's sample generation and `sample_range`
-  empties a scratch whose stored generation differs. A scratch keeps its entries across
-  the ranges it serves between two advances, and the owner never touches worker scratches.
-  A cache is private to its scratch and takes no locks.
-- **Exactness.** Poses, morph weights, root motion and events equal an uncached
-  `update` bit for bit, for any range split, order and thread count. Time is assumed
-  finite, as crowd seeds require.
-- **Cost.** An entry is 28 B + 8 B * (3 * nodes + meshes) + 4 B * (10 * nodes + morph
-  weights); a scratch holds 64 of them, 236,288 B for the 57-node Quaternius character.
-  A lookup costs one hash and at most four key compares. `PoseCache.lookups` counts the
-  actions that consulted the cache and `PoseCache.hits` those that found samples an
-  earlier action recorded.
-- **Small ranges.** A scratch empties its table after each advance, and a key's first two
-  sightings sample uncached, so a scratch saves from its third action on a key. With ranges of
-  a few dozen instances, hits are rare and the lookups can cost more than they save; give each
-  scratch a few hundred instances.
-
-`skinned_crowd --shared-phases` (key `G`, or the panel checkbox) puts instances into
-twelve groups that share a clip and a time, interleaved by instance index, and shows the
-sample time and hit rate. `job_bench --crowd COUNT --shared-phases` times the same crowd
-on 0, 1 and 3 workers beside the unshared one.
-
-### Compressed clips
-
-`assets.compress_clip(clip, tolerance)` drops keys and quantizes a clip's key data once, at load or import time. `ClipTolerance`
-holds the largest accepted deviation per path: `translation` in metres, `rotation` in radians, `scale` as a ratio
-and `weight` in weight units. Translation, scale and morph weight tracks store 16-bit codes per component over the
-track's own range; rotation tracks store smallest-three codes in 48 bits. Before that, linear and step tracks drop
-every key that the kept keys reproduce within half of the tolerance, which leaves the other half for quantization and
-makes the reported error sit near half the tolerance. Cubic spline tracks keep every key and quantize their values
-and tangents the same way and report an analytic per-segment bound; cubic rotations and empty tracks stay raw.
-Times are never quantized, and tracks of one clip whose time arrays are identical share one.
-
-The call samples the source and the quantized track through `sample_track` at every source key time, and for
-rotations also at each segment's midpoint, and returns the largest error per path with the bytes before and after.
-A rotation error is the larger of those samples, not a true maximum. When an error exceeds its tolerance the call
-returns `TOLERANCE_EXCEEDED`; a failure of any kind leaves the clip, its arrays and its revision unchanged. On success
-the raw arrays are freed, one block holds the packed keys, and the revision moves once. A later `replace_clip_owned`
-installs raw tracks again, and compressing a compressed clip is a contract violation (`clip.data.is_compressed()`).
-
-Error is bounded per key, so a looping root-motion clip's per-cycle displacement can drift by up to twice the
-translation tolerance, and the drift accumulates over cycles.
-
-Compressed tracks sample with the same cursor contract, but they cost more CPU to sample than raw ones, because every
-key read is dequantized: compression trades sampling time for memory. Code that reads keys goes through `Track.key_count`,
-`key_time` and `read_key`, since `Track.values` holds floats only while `encoding` is `RAW`. The blends pick the
-raw or the dispatching sampler once per clip, so raw clips sample as before. `skinned_crowd --compress` and
-`job_bench --crowd COUNT --compress` compress the model's clips with a tolerance of 1e-3 on every path and print the
-bytes before and after and the largest errors.
-
-## What deforms
-
-The animation update writes node transforms and morph weights; the renderer
-turns them into deformed draws:
-
-- A mesh node with `SkinBinding` draws with a joint palette
-  `inverse_affine(mesh.world) * joint.world * inverse_bind[i]`, computed once
-  per renderer frame per binding and shared by the camera view and every
-  shadow layer of that frame. Joint indices pack as four bytes per vertex, or
-  four 16-bit values when a skin addresses more than 256 joints.
-- A mesh with morph targets and a non-empty `Mesh.morph_weights` draws with
-  its eight largest non-zero target weights by magnitude; the rest are dropped
-  for that frame while the CPU weights stay complete. Deltas apply before
-  skinning.
-- `Geometry.channels` groups consecutive targets under one named weight. When
-  the table is empty (glTF and procedural geometry), each weight drives the
-  target at the same index. Otherwise `Mesh.morph_weights`, default weights and
-  `MORPH_WEIGHTS` tracks hold one weight per channel, and a channel's
-  `full_weights` list the weight at which each of its targets applies fully.
-  A channel weight between two adjacent keys (with an implicit key at zero that
-  has no target) gives those two targets `1 - t` and `t`; past the first or
-  last key it extrapolates. This is the FBX in-between shape rule. Selection of
-  the eight largest targets happens after this mapping. CPU release of a
-  geometry keeps its channels, so a released morphed mesh still maps weights.
-- Skinned meshes are culled, included as shadow casters and picked through a
-  conservative bound: at insertion the store retains, per joint, the bound of
-  the vertices that joint influences and of their morph deltas per target
-  (`GeometryAsset.skin_bounds`, one allocation, kept through
-  `release_geometry_cpu`, rebuilt by `mark_geometry_dirty`, and by a stream
-  mark that names positions, joints or weights, while the streams are
-  present). Each frame every influencing joint's bound, widened by the
-  mesh's selected morph targets, is transformed by `joint.world *
-  inverse_bind[joint]` and merged; a `Mesh.local_bounds` override replaces it.
-  A binding that addresses none of the geometry's joints falls back to the
-  rest bound, and a skinned geometry drawn without a live binding draws
-  unskinned.
-
-Explicit [animated LOD groups](lod.md#animated-models-and-crowds) consume the same
-evaluated source pose and complete logical morph weights. Attach copied
-alternatives to a `ModelInstance` or `AnimatedCrowd` owner with
-`model::attach_animated_lod`; selection never replaces playback or changes the
-source meshes' base geometry/material IDs. Skinned alternatives use the
-template skin, while named morph channels map to level-zero logical
-weights/defaults. The renderer uses one model-space palette
-per owner/source across its parts, selected levels, views and shadows, rather
-than the ordinary mesh-local palette above. A crowd's palettes and morph blocks
-stay resident on the GPU, and a frame uploads only the instances whose pose
-revision advanced ([crowds](instancing.md#crowds)). Animated rigid/morph-only
-parts use their sampled mesh affine. Complete animation and world updates before
-the frame's view/shadow/velocity/trace preparation.
-
-Ordinary animated LOD bounds use retained posed skin/morph metadata or an authored
-override; crowds inherit their authored pose envelope. Pose changes retain LOD
-hysteresis. Each view retains compatible submitted deformation independently;
-incompatible representations use current-pose fallback and temporal rejection.
-Picking and opt-in posed tracing retain level-zero logical source/part identity.
-Creation, lifetime, bind/channel admission and replacement rules are in
-[Whole-object LOD](lod.md#animated-models-and-crowds).
-
-Generic skinned `InstancedMesh` bindings are not part of this.
-Animated crowds provide the supported shared-pose instanced path
-([crowds](instancing.md#crowds)). Traced effects see the raster
-pose of a skinned or morphed mesh through a posing pass ([scene trace](scene_trace.md#posed-instances)); the
-velocity pass reads the view's previous palettes, and a crowd's previous resident buffers. A view that skipped a
-submitted frame has none: a crowd part binds the current buffers and gets no deformation motion for that frame,
-while node and instance motion are unchanged, and an animated LOD part rejects the history instead.
-
-### Compute skinning
-
-`Renderer.set_compute_skinning(true)` poses skinned and morphed meshes and crowd parts once a frame in a
-compute pass instead of in the vertex stage of every draw. It is off by default and latched per frame, so it
-applies from the next frame. With it on, every view, depth prepass, shadow layer and velocity pass of the
-frame draws the posed positions, normals and tangents through the plain vertex form; a crowd part draws them
-through the posed instanced form, which reads the slot of the instance's source. Images match vertex
-skinning visually, not bit for bit. The pass runs the `trace_pose` shader, so the posed streams hold
-unnormalized normals that the vertex stage normalizes as before, and a tangent keeps its handedness. It
-replaces the vertex-stage skinning of every pass with one dispatch and one root upload per mesh or crowd part
-per frame, so it pays when a mesh is drawn by many passes, such as velocity, more views or cascades, or is
-heavy per vertex; with few passes it can cost more GPU and CPU time than vertex skinning.
-
-- **Scope.** Ordinary meshes and crowd parts that are skinned, morphed or both. Animated LOD parts, of a
-  crowd or of a single model, plain and LOD instanced groups and meshes with `Mesh.vertex_motion`, whose
-  previous positions the application supplies, keep vertex skinning. They are outside the scope, not
-  fallbacks, and `Stats.compute_skinning_fallbacks` does not count them. One binding that posed every source
-  at every level would undo the savings of the levels; limiting the dispatch to the instances drawn at each
-  level is not done. A mesh or crowd part drawn by a material with a custom vertex stage stays out too, since
-  that stage applies its own deformation from the draw's palette and morph block, which a posed draw leaves
-  empty, and a crowd part's stage reads its streams without the source's slot. A mesh or crowd part no view,
-  shadow layer or trace claims is not posed.
-- **Buffers.** Each drawn mesh node, and each drawn crowd part, owns a pair of posed blocks, allocated on
-  first use, reallocated when its geometry's layout or the crowd's capacity changes and released after
-  `INSTANCE_ABSENCE_FRAMES` frames without a draw. Positions are double buffered, current and previous;
-  normals and tangents are written in place each frame behind a barrier, since nothing reads their history.
-  A mesh costs 52 B per vertex plus two root blocks in one device allocation: the example character, two
-  meshes of about 5,900 vertices together, holds 0.31 MB. A crowd part is sized by the crowd's capacity,
-  whatever the live count, in the same single allocation: `capacity * vertex_count * 52 B`. Source `s` has
-  its copy of every stream at `s * vertex_count` vertices, and a draw reads the copy of the source in its
-  instance record (`InstanceGpu.normal_2.w`), so mirrored and culled draws, which reorder the records, move no
-  pose. The example crowd, 512 sources of the character, holds 157.5 MB in its two parts, and the 512 MiB
-  cap fits about 1,740 sources of it.
-- **Caps.** `MAX_COMPUTE_SKINNING_BYTES` (512 MiB) caps the resident posed bytes, and
-  `MAX_COMPUTE_SKINNING_MESHES` (2,048) caps the posed meshes and crowd parts, since each takes one of the
-  device's 4,096 allocation slots, which the rest of the renderer shares. A mesh or crowd part past either,
-  or a crowd with more sources than one dispatch can address, keeps vertex skinning as a whole. Every pass
-  claim of such a draw counts in `Stats.compute_skinning_fallbacks`, so a part drawn by three passes counts
-  three; this is never a fault, while a failed device allocation still is one. `Stats.compute_skinned`
-  counts the meshes and crowd parts posed this frame and `Stats.compute_skinning_bytes` the resident bytes.
-- **Recording.** One `trace_pose` dispatch per mesh or crowd part per frame under `Pass.COMPUTE_SKIN`,
-  recorded before the first raster pass of the view, depth prepass or shadow layer that draws it. A crowd
-  part's dispatch has one row per live source and poses all of them, the frozen, culled and off-screen
-  ones included, so a part costs the same whatever its draws show. Later passes and views of the frame reuse
-  the pose. A dispatch waits for the shaders of earlier frames that read the block it overwrites
-  (`consumer_stages` to compute), and its writes become visible to every reader of the posed streams
-  (compute to `consumer_stages`): the vertex stage of each raster pass, the compute and ray-tracing shaders and
-  refits of the trace, and the bottom-level builds that take the positions as input.
-- **History.** The previous positions are the pose of the last submitted frame that drew the mesh. The pair
-  swaps when a frame is submitted; an aborted frame neither swaps nor commits. A view gets deformation motion
-  only if its own previous submitted frame is the one that produced that pose. Turning the switch on, a new
-  mesh or crowd part, a reallocated block and a view that missed the previous submitted frame bind the
-  current pose as the previous one: node and instance motion remain and only deformation motion drops for that
-  frame. A view that renders every other frame therefore has no deformation motion, where vertex skinning
-  reuses the view's own older palette. A crowd binding also remembers the playback identity its previous
-  pose belongs to. Every `set_crowd` renews it, so a source spawned, replaced or regrown into a slot never
-  reads the pose of the slot's previous occupant: the crowd binds the current pose as the previous one for
-  that frame, as a crowd's resident palettes do.
-- **Pipelines.** With the switch on, `prepare_scene` creates the plain forms of deformed meshes, the posed
-  instanced forms (main, depth only and velocity, shared by the shadow and prepass draws) of crowd parts and
-  the `trace_pose` pipelines, plain and instanced. Turning it on afterwards compiles them on first use, in
-  the first frame that draws a deformed mesh or crowd part.
-- **Tracing.** A traced skinned or morphed mesh or crowd part claims its binding as a pass does, so a traced
-  mesh no view draws is posed once too, and its trace slot takes that pose instead of dispatching its own.
-  The slot's root is rewritten every frame to address the binding's current block, or for a crowd part the
-  source's copy of each stream, so it follows the swap and keeps no pointer into the binding; the tree refit
-  and the bottom-level build read the same streams. The slot's pose compare still decides whether to refit or
-  update: an unchanged pose does neither, and its root still follows the swap, because the block it addressed
-  is rewritten two frames later. `Stats.trace_poses` counts the dispatches the trace recorded and
-  `Stats.trace_poses_reused` the poses it took from a binding instead. The slot's own streams stay allocated
-  while it aliases and count in `Stats.trace_posed_bytes`. The trace keeps its own dispatch with the switch
-  off, for a mesh with `Mesh.vertex_motion`, for animated LOD parts, for a mesh or crowd part past a cap
-  (counted per claim, so a crowd part traced by instance counts once per row) and in a preparation outside a
-  frame; a slot that changes between the two re-poses once.
-
-## Retargeting
-
-Root-motion handling keeps the source interpolation. `STRIP_XZ` pins the hip x and z to the first
-key and zeroes the x and z tangents of a cubic track; `EXTRACT` copies the hip track onto the root
-with rest y, the first key's x and z as origin, zero y tangents and the source x and z tangents.
-
-`c3d::anim::retarget` rebinds a clip authored against one set of node names
-onto another model's template:
+Reserve the storage when creating the owner:
 
 ```c3
-RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
-options.root_motion = RootMotion.STRIP_XZ;
-AnimationClip walk = retarget::retarget_by_name(
-    allocator:    assets.allocator,
-    source:       &baked,
-    source_nodes: source_template.nodes,
-    target:       &assets.model(hero).data,
-    options:      options,
-)!;
+Animator* animator = anim::add_animator(&scene, instance_root, { .inertia_enabled = true });
 ```
 
-Every animated source node is matched to a destination template node by its
-canonical name: the text after the last `:` (so `mixamorig:Hips` and `Hips`
-agree), compared case-insensitively. `RetargetOptions.name_map` pairs exact
-source and destination names and takes precedence. A source node with tracks
-and no match fails with `ASSET_FORMAT_ERROR` unless `allow_partial` skips it; a
-destination name shared by two nodes is ambiguous and also fails.
-
-Rotation, scale and morph-weight tracks are copied for every matched node.
-Translation tracks are copied only for source roots (nodes without a parent,
-`Hips` on a Mixamo rig) so bone lengths come from the destination's rest pose;
-`copy_translations` keeps them all. Interpolation, key times and the clip
-duration are preserved.
-
-`RootMotion` acts on the root translation tracks: `KEEP` copies them,
-`STRIP_XZ` pins every key's horizontal position to the first key's (an
-in-place clip), and `EXTRACT` strips them and adds one linear translation track
-on `options.root_node`, a destination template node, holding that node's rest
-position plus the horizontal displacement since the first key. `EXTRACT`
-without a root node is `INVALID_ARGUMENT`; a Mixamo template has no node above
-`Hips`, so it offers `KEEP` and `STRIP_XZ` only.
-
-`fbx::load_animations(allocator, assets, path, model, options)` parses an FBX
-animation file privately, bakes every stack, retargets it onto the model and
-stores the clips under `<path>#anim/<k>#<model key>#<keep|strip_xz|extract>`,
-returning their ids in the caller's allocator; the file's own nodes never
-enter the store, and a fault removes every clip the call inserted
-([Models, glTF and FBX import](models.md)). With `rest_pose = CORRECT` the key
-gains `#rest`, so both variants of one file can live in one store.
-
-### Rest-pose correction
-
-`RetargetOptions.rest_pose` chooses how rotation keys reach the destination.
-`COPY` (the default) copies them verbatim, which is right only when both rigs
-share their rest orientations. `CORRECT` transfers motion in model space: for
-each source joint it takes the rotation the joint made away from its own rest,
-and applies that same model-space rotation to the destination joint's rest.
-At the source's rest pose the destination therefore shows its own rest pose
-exactly, whatever the two rigs' joint orientations are.
-
-A corrected clip is baked:
-
-- Every mapped destination joint gets a `LINEAR` rotation track on one shared
-  cadence of `bake_rate` keys per second (`BAKE_RATE_DEFAULT` is 30). The last
-  key lands on the clip duration. A source authored at another rate is
-  resampled, so pass the source rate when it is known. Cubic tangents are not
-  carried over.
-- Every source node that resolves by name is bound, animated or not, so a
-  joint without its own track still follows its parents. Unmapped destination
-  joints keep their rest locals.
-- The root translation is transferred in model space: the source root's
-  displacement from its rest, times `root_translation_scale`, is applied to the
-  destination root from its own rest, so the destination keeps its own standing
-  height. `STRIP_XZ` and `EXTRACT` split that displacement into horizontal and
-  vertical parts in model space before it is written into the destination's
-  local frames. This assumes the destination root's ancestors are not mapped.
-- Non-root translations are never emitted; scale and morph tracks are copied as
-  under `COPY`.
-- A corrected clip transfers one root: a source with more than one animated
-  root translation faults `ASSET_FORMAT_ERROR` in every root mode.
-
-`root_translation_scale` has two meanings. Under `COPY` it multiplies every
-root translation key. Under `CORRECT` it multiplies the displacement from the
-source rest. With the ratio of the two rigs' hip heights
-(`rest_world_position(nodes, hips).y`) both give the same standing height. A
-zero `root_translation_scale` or `bake_rate` stands for its default, so an
-options literal that omits them keeps the `COPY` behaviour.
-
-Correction transfers motion, not proportions or poses: both rigs must face the
-same model axis and rest in the same kind of pose (both T or both A). A
-T-pose source on an A-pose destination keeps the arms offset by the difference
-for the whole clip. Foot contact and sliding follow from the rigs' proportions.
-The `retarget` example plays a Mixamo walk on the Quaternius rig with both
-modes.
-
-### Calibrated profiles
-
-`create_retarget_profile(allocator, source_nodes, target, desc)` prepares an
-owned source/target pair. `RetargetProfileDesc` selects unique name mapping or
-authoritative `NodeIndexMapping` rows, required per-node source and target
-calibration rotations, motion nodes, a reserved carrier and a proper Y-up yaw
-facing matrix. Reflection, shear or scale in the facing matrix is invalid.
-The profile copies its inputs into one allocation; destroy it with
-`destroy_retarget_profile` after its last bake.
-
-`retarget_with_profile` borrows the current templates and profile and produces
-an independently owned `AnimationClip`. Node counts and per-index names,
-parents and authored locals must match the prepared pair. A mismatch returns
-`INVALID_ARGUMENT`.
-`RetargetProfile.validate_templates` checks that pair without baking a clip.
-Explicit mapping conflicts are format errors; ambiguous name matches are
-rejected rather than selecting an arbitrary node.
-
-The bake composes source motion through animated ancestors, applies calibration
-and facing, and solves destination locals through their actual parent frames.
-Target bone translations retain their proportions outside motion chains.
-Animated nonuniform scale or shear on a consumed ancestor is `UNSUPPORTED`.
-`RetargetBakeOptions` defaults to `KEEP`, a 60 Hz endpoint-inclusive linear
-cadence and root translation scale 1. Zero duration has one key; positive
-duration includes both endpoints. Copied non-motion scale, morph and event
-data retain independent ownership.
-
-`STRIP_XZ` removes the selected horizontal displacement from the branch that
-holds the motion node: the carrier's child on the motion node's path, or the
-motion node's root when there is no carrier. Other branches keep their
-placement. `EXTRACT` writes that displacement and the motion node's world Y
-twist on the reserved carrier and compensates that branch alone; the carrier's
-other children move and turn with it. The carrier turns in place about its
-authored reference position, stays upright and retains its authored scale. Its
-yaw is relative to time zero and unwrapped through the clip. Static parent
-transforms are removed when writing its local tracks.
-
-Select that carrier as `Animator.root_node` and consume its root motion once
-through `apply_root_motion`. With `root_yaw = true`, extraction removes both
-translation and yaw from the mesh. With `root_yaw = false`, the turn stays in
-the mesh. Destroying the profile does not invalidate clips already baked or
-published.
-
-The `retarget` example calibrates the Mixamo walk file against the Quaternius
-rig with both rest poses, maps the body by name and loads the walk through
-`fbx::load_animations_with_profile` with the rig's top node as carrier. `T`
-cycles the right character through `COPY`, `CORRECT`, profiled `STRIP_XZ` and
-profiled `EXTRACT`, which walks the instance forward through
-`apply_root_motion`; `R` toggles the rest pose. It needs the Mixamo files listed
-in `examples/assets/mixamo/README.md`.
-
-## Inverse kinematics
-
-`c3d::anim::ik` bends existing joint nodes toward targets after the animator
-has written its pose. Three types cover limbs, feet and looking:
-
-- `IkChain`: three joints (root, middle, end) solved analytically so the end
-  reaches `target`. `pole` picks the side the middle joint bends toward; without
-  one, the incoming bend is kept. `weight` blends from the incoming rotations
-  (0) to the solve (1). Only the root and middle local rotations are written, so
-  bone lengths never change. A target beyond reach straightens the limb toward
-  it.
-- `FootIk`: a leg `IkChain` whose target follows the ground under the ankle.
-- `LookAt`: turns the `forward` axis of the last of up to eight joints toward a
-  target, at most `max_angle` from the incoming pose, without adding roll. The
-  turn is split over the joints by `weights`; `look_at` fills shares that grow
-  toward the tip and sum to 1, so one joint takes the whole turn and a spine,
-  neck and head chain turns mostly at the head. A second internal pass corrects
-  the tip's own swing about the lower joints.
-
-`create_scene` registers the three as components so the inspector and
-`DebugDraw.ik` find them. Nothing solves them for you: the application calls
-`solve`, `place`, `release` and `align` in its own order. Joints, targets and
-poles are borrowed nodes and must outlive the component that names them.
-
-The first joint of an `IkChain` or `LookAt` may use `TransformSpace.WORLD`.
-Every later joint must use `PARENT`, because the solvers articulate descendants
-by rotating their ancestors. Their validity predicates reject a `WORLD`
-interior joint. Targets, poles and the pelvis may use either transform space;
-foot placement and pelvis lowering convert through their selected basis.
-See [scene transforms](scene.md#authored-and-published-transforms).
-
-Solvers read world matrices and write locals. A chain whose joints or target
-descend from a joint another solve writes needs an `update_world` between the
-two solves. On a humanoid the arms hang off the upper spine, so a spine look-at
-solves before them; legs and arms are then independent:
+For a crowd, set `AnimatedCrowd.inertia_enabled = true` after `attach_crowd` and before `prepare_crowd`; changing it on a
+prepared owner is invalid. Disabled owners reserve none of this storage, and enabled updates allocate nothing.
+`Animator.inertial_status()` returns a copied `AnimationInertialStatus` (enabled, active, elapsed, duration).
 
 ```c3
-anim::update(&assets, &scene, dt);
-scene.update_world();
-// physics.update(dt); physics.update_ragdolls(); scene.update_world();
-foreach (foot : feet) {
-    Ray ray = foot.ground_ray();
-    if (try hit = query_ground(ray, foot.ray_length)) {
-        foot.place(hit, floor_height);
-    } else {
-        foot.release();
-    }
-}
-ik::lower_pelvis(hips, feet[..]);
-scene.update_world();
-look.solve();
-scene.update_world();
-foreach (foot : feet) foot.leg.solve();
-arm.solve();
-scene.update_world();
-foreach (foot : feet) foot.align();
-scene.update_world();
+AnimationTargetDesc[1] targets = { anim::ANIMATION_TARGET_DEFAULT };
+targets[0].clip = run;
+targets[0].start_time = 0.25f;
+targets[0].speed = 1.25f;
+animator.inertialize(&assets, {
+    .duration = 0.35f,
+    .actions = targets[..],
+})!;
 ```
 
-### Feet
+`Animator.inertialize` and `CrowdPlayer.inertialize` take an `AnimationTransitionDesc`: a duration, the target actions
+(`AnimationTargetDesc`) and optional groups (`AnimationTransitionSpaceDesc`). The request borrows the arrays and copies
+them. Duration zero switches immediately.
 
-The application owns the ground query. `ground_ray` returns a downward ray from
-`ray_height` above the ankle; the application casts it through physics or reads
-a height field and calls `place(hit, floor_height)` on a hit or `release()` on a
-miss. `floor_height` is the world height the clip's feet were authored on,
-usually the character root's height.
+- **Result.** The call returns an `AnimationTransitionResult`. `actions[:count]` holds the installed IDs in target order
+  and `spaces[:space_count]` holds the typed group borrows in description order. Every source ID and borrow becomes
+  stale, so use the returned ones.
+- **Atomic.** The request validates every target first. A failure frees what it acquired and leaves actions, IDs, order,
+  pose and history unchanged. It needs no spare action slots: 16-to-16 replacement and a crowd's full action capacity
+  are supported.
+- **Groups.** `AnimationTransitionSpaceDesc.space` is a `CrowdSpaceAuthoring` description and `phase` is finite in
+  `[0,1)`. Each member starts at `phase * clip.duration`; group clocks override member `start_time`. The phase belongs
+  to the request and is not saved by serialization.
+- **Events.** Events come from target actions only.
+- **Onset.** A newly prepared owner exposes its authored baseline before its first update. An immediate request has zero
+  source velocity until a positive update establishes history. A zero update freezes transition time.
+- **Cancel.** `cancel_inertial_transition` discards the residual and keeps the target actions and clocks. A stale crowd
+  player faults `INVALID_ID`.
+- **Enabled storage.** Requests and cancellation on an owner without enabled storage are contract violations, not faults.
 
-The target keeps the clip's ankle motion and moves it by the ground's offset
-from the floor under the ankle. On flat ground at floor height the solve
-changes nothing, and a swinging foot keeps its arc. `align` tilts the ankle by
-the rotation from world up to the ground normal, faded out over `lift_fade` as
-the ankle rises above `foot_height`. `lower_pelvis` lowers the pelvis by the
-largest downhill offset of the grounded feet so the lower foot can reach its
-target. Stance feet are not locked: on a slope a planted foot follows the
-terrain height under it as the body moves.
+Pose translation, rotation, scale and morph residuals match value and velocity at onset and decay to the target. Positive
+uniform scale stays positive: the request faults `INVALID_ARGUMENT` when a consumed node's source or baseline scale is not
+positive, and a cubic scale track on a consumed chain faults `UNSUPPORTED`. For a consumed root, source and target use
+the same motion node, selected axes, up, twist and frame; the compensated pose moves with the carrier.
 
-### Retained foot contacts
+Velocity history is invalidated by seeks, instant play, stop and group changes without a fade, removed target nodes and
+clip or model revisions; an active residual keeps decaying. Fades and weight changes keep history, and no playback
+change cancels a residual. Serialization keeps authored settings and target playback; sampled clocks, source velocities,
+history and residuals restart empty on restore.
 
-Use `begin_contact(hit, support)` to capture a stance anchor and
-`update_contact(support, dt)` to follow it. The application chooses the hit,
-support identity and timing. `FootSupport` carries an opaque caller identity
-and a proper rotation, translation and finite positive uniform scale. Static
-ground is a support whose frame does not move; like any support, its owner
-passes the current frame, shifted after an origin rebase. An invalid support,
-hit, plant setting or incoming pose returns `INVALID_ARGUMENT` and leaves the
-contact unchanged. Changing the identity requires an explicit new capture.
+## Physics and IK
 
-`FootIk.plant` defaults to 0.12 seconds of acquisition, 0.20 seconds of release
-and ankle-local sole axes +Y/-Z. Set the axes for the rig's authored ankle
-orientation. Settings and `foot_height` are captured at each begin; the height
-remains in scene metres while the support-local sole point follows changing
-scale. The normal and heading follow the support's proper rotation.
+- **Ragdolls.** Recovery from a physical ragdoll (`recover_ragdoll`, `finish_ragdoll_recovery`) is a physics API. It
+  captures the fresh animation pose and runs around `PhysicsWorld.update`. The contract is in the
+  [physics add-on README](../addons/c3d_physics.c3l/README.md#ragdoll-recovery).
+- **IK.** `c3d::anim::ik` bends joints after the animator has written its pose ([Inverse kinematics](animation_ik.md)).
 
-Call `end_contact(support)` to blend into the fresh incoming swing pose, or
-`reset_contact()` for an immediate caller-authorized reset. Repeating
-`begin_contact` with the same support, hit, settings and height while acquiring
-or planted keeps the current acquisition; any other replant captures the
-currently requested correction. Zero `dt` freezes transition clocks while
-external support movement still carries the contact. Start each update from
-the fresh animation pose; choose either retained contact or `place/release`
-for that update.
-
-Order contact updates after animation and a world refresh, before optional
-`lower_pelvis`. Refresh worlds after pelvis movement, solve dependent IK and
-the legs, refresh, call `align_contact`, then refresh again. Reach clamps,
-limits and partial leg weight may leave the ankle short of the requested
-target; the anchor is retained without stretching or automatic release.
-
-Standalone `FootContact` uses the same lifecycle with an explicit incoming
-`Transform`. During rebasing, call `Scene.shift_foot_contacts` after the scene
-world refresh, or `FootContact.shift_origin` for standalone states. Each state
-has one shift owner. See [large_world.md](large_world.md) for the full order.
-
-### Limits
-
-`IkChain.limits[0]` and `limits[1]` bound the root and middle rotations
-relative to `reference`, a local rotation, usually the rest pose; `hinge_limit`
-and `cone_limit` build them.
-
-- `HINGE` keeps the rotation about `axis`, clamped to `[min_angle, max_angle]`,
-  and drops the rest. A knee or elbow has one degree of freedom, so a pole off
-  the hinge plane can leave the end short of the target.
-  Rigs whose clips twist a joint about its bone axis (Rigify `DEF-shin`) pass
-  that axis as `twist_axis`, unit and perpendicular to `axis`. The hinge then
-  splits the rotation into a swing and a twist about the bone, clamps the
-  swing's angle about `axis` and keeps the twist unbounded, so the limit stays
-  referenced to the rest pose and bounds the real joint angle. The kept twist is
-  the twist of the solved rotation; it equals the clip's twist when the solve's
-  correction turns about an axis perpendicular to the bone, as a planar knee
-  does. The `ik` example references both knees to the rest pose with the twist
-  on the shin's local Y; flexion on that rig is positive about X, so the range
-  is `[0, KNEE_FLEX_LIMIT]`.
-- `CONE` clamps the angle between the rotated `axis` and `axis` to `max_angle`
-  and keeps the twist.
-
-Any clamped joint may leave the end short of the target: the middle joint is
-solved against the unlimited root.
-
-## Example
+## Run the examples
 
 ```bash
 python3 scripts/build.py --example animation
-./examples/build/animation path/to/model.glb --gpu-timings
 ```
 
-`animation` loads the argument path, or the bundled Fox, instantiates it twice
-and plays a different clip on each instance; `AnimatedMorphCube.glb` shows
-morph targets. Keys `1` to `9` cross-fade the
-left instance to that clip, `Q` toggles the left action between full and
-quarter weight, `SPACE` pauses and resumes every action; drag orbits, the wheel
-zooms, Escape quits.
+| Example | Shows |
+| --- | --- |
+| `animation` | Two instances of a glTF model, each playing a different clip; cross-fade, quarter weight and pause. Takes a model path. |
+| `animation_authoring` | A crowd and an `Animator` with a 2D blend space, feathered and multiplicative overlays, generalized jog, inertial turns and the animator inspector. |
+| `mixamo` | A regular masked wave and an additive wave over locomotion, with blend-space extraction. Takes animation file paths. |
+| `retarget` | A Mixamo walk on the Quaternius rig with each retargeting mode ([Retargeting](animation_retargeting.md)). |
+| `ik` | Feet, look-at and a reaching hand ([Inverse kinematics](animation_ik.md)). |
+| `skinned_crowd` | A skinned crowd ([Performance](animation_performance.md), [Deformation](animation_deformation.md)). |
 
-`ik` shows two instances of the CC0 Quaternius mannequin on a moving support.
-Caller-authored cues acquire, plant, release and replant each foot while the
-support translates, yaws, tilts and changes uniform scale. The panel shows
-each foot's contact phase. The example poses the incoming legs above the
-support before contact updates, with a smooth caller-timed swing arc. It
-preserves local bone positions, scales and the fresh ankle orientation. Default
-contact mode uses unconstrained legs for the reachable retention demonstration;
-`L` or `--limits` enables the authored knee hinges, and the debug lines show
-the constrained misses. `--legacy` retains height-field placement with those
-hinges. The spine, neck and head follow the camera and the right hand reaches
-an orbiting sphere.
+`animation` and `mixamo` accept `--frames=N --acceptance` for a bounded run, and `--gpu-timings` with the profiler
+add-on. The Mixamo files the examples use are listed in `examples/assets/mixamo/README.md`.
 
-```bash
-python3 scripts/build.py --example ik
-```
+## Limits
 
-`C` switches contact/legacy placement, Space pauses contact and animation clocks
-while the support continues to move, and `R` shifts the origin explicitly.
-`W` switches walk/idle, `[`/`]` change IK weight, `I` toggles debug lines, and
-mouse drag/wheel orbit and zoom.
+- **Capacities.** 16 actions per owner (blend-space members use action slots), 4 layers, 2 blend-space groups, 16 fired
+  events per update. A crowd's `actions_per_instance` is fixed at preparation, in `[1,16]`.
+- **Clip data.** Clips must stay live and structurally unchanged while an action plays them. Cubic scale tracks are
+  unsupported for multiplicative additive actions, generalized extraction chains and inertial scale.
+- **Events.** An event holds an ID and a time; there are no names or payloads.
+- **Scheduling.** No scheduler runs animation, consumes root motion or reads events.
+- **Persistence.** `c3d_serial` keeps authored settings; clocks, fades and transitions restart
+  ([Serialization](serialization.md)).
 
-Inertial requests return an `AnimationTransitionResult`. Its `actions[:count]`
-contains the installed IDs in target-ordinal order; `spaces[:space_count]`
-contains the typed 1D or 2D group borrows in description order. All replaced
-source IDs and borrows become stale. Use the returned IDs with `Animator.action`
-or `CrowdPlayer.action`, and reacquire group borrows after playback changes
-structure.
+## See also
 
-Request groups use `AnimationTransitionSpaceDesc`: `space` is a
-`CrowdSpaceAuthoring` description and `phase` is finite in `[0,1)`. Each member
-starts at `phase * clip.duration`; group clocks override member `start_time`.
-This phase belongs to the event-time request and is not restartable serialized
-crowd authoring. Restored group clocks retain the existing zero-phase restart.
-
-A newly prepared owner exposes its authored baseline before its first update.
-An immediate request has zero source velocity until a positive update establishes
-history. STEP request onsets retain their directional side through zero updates
-and use that side for the first traveled root endpoint; clocks and event times
-are unchanged.
-
-## Physical ragdoll recovery
-
-The physics add-on's `recover_ragdoll` and `recover_bones` are fallible requests. Call them before sampling fresh animation, while the preceding final joint worlds are untouched. Entry checks every selected native body and the mapped joint's agreement with its current pose. Missing bodies return `physics::NO_BODY`; excessive disagreement returns `physics::RECOVERY_POSE_MISMATCH`; invalid settings or transforms return `INVALID_ARGUMENT`. Failed requests preserve placement, modes, the prior recovery and counters. Whole-body entry returns the physical facing and moves the character horizontally to the hips; partial entry preserves character placement.
-
-Participants remain SIMULATED/DYNAMIC. At the start of `PhysicsWorld.update`, recovery captures fresh animation and the live weights. Their effective target weight remains `min(ragdoll.weight, 1) * bone_weight`; authoring weights must be finite and nonnegative. Each performed fixed step drives the same desired target using fresh native feedback, capped COM force and torque. Anatomical limits and native contacts remain active. The ordinary animation springs are masked for participants; edits to authored springs and `drive_strength` are applied when recovery ends. Recovery strength is independent of `drive_strength`.
-
-The default request uses 4 Hz position and angular response, damping ratio 1, and per-bone caps of 200 N and 20 Nm. Custom `RagdollRecoverySettings` are copied at entry. Finite positive frequencies/caps and nonnegative finite damping/tolerances are required; derived arithmetic must remain finite. These domains do not guarantee stability or convergence for every rig or timestep. Unreachable targets remain physical and may report `BLOCKED`.
-
-```c3
-if (recover_requested) {
-    facing = physics.recover_ragdoll(skin_node, character)!;
-}
-anim::update(&assets, &scene, dt);
-scene.update_world();
-physics.update(dt);
-if (finish_requested) {
-    if (catch excuse = physics.finish_ragdoll_recovery(skin_node)) {
-        if (excuse != physics::RECOVERY_NOT_READY) return excuse~;
-    }
-}
-physics.update_ragdolls();
-scene.update_world();
-physics.update_cloths();
-```
-
-Completion uses this update's captured zero effective weights, mapped-joint position/orientation residuals and absolute native COM/angular speeds. Weight edits after capture apply on the next update. Zero weight alone does not finish recovery. A successful `finish_ragdoll_recovery` changes authoring to ANIMATED without replacing or snapping bodies. It retains native publication for the completing set through every ragdoll pass in that update; ordinary animation ownership resumes on the next physics update.
-
-After `update_ragdolls` and the final scene refresh, participating bone nodes match native CURRENT and mapped skin joints apply their `joint_in_bone` mapping to that same pose. They receive no interpolation or second visible blend. Zero-step updates hold their native pose; repeated publication is idempotent. Unmapped children retain their captured local targets relative to the published parent. Nonparticipants retain ordinary ragdoll blending. Later IK that moves a participating joint ends this equality guarantee for that final pose.
-
-Explicit bone mode changes, including the current enum value, cancel that bone's recovery. Explicit teleports cancel active or completing recovery before moving the addressed body and keep the ordinary teleport mode/velocity behavior. Body/joint replacement, removal and world teardown cancel affected transient ownership; horizontal origin shifts translate retained world targets. Serialization v1 saves authoring and restarts with no active recovery or saved velocities. The `ragdoll` example shares explicit supine and prone get-up data with the package's CPU tests and exposes recovery status, obstruction and movable-neighbour controls.
+- [Models, glTF and FBX import](models.md) for clips, skins and morph targets in the store.
+- [Asset store](assets.md) for clip replacement and keys.
+- [Instancing](instancing.md#crowds) for animated crowds.
+- [Whole-object LOD](lod.md#animated-models-and-crowds) for animated LOD groups.
+- [Scene](scene.md) for nodes, transforms and `update_world`.

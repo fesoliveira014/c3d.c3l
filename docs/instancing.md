@@ -393,7 +393,7 @@ while (window.poll()) {
   and publishes palettes, complete logical morph weights and affine part matrices. Mesh and bind
   transforms apply once. Part parity can differ for animated rigid meshes; sorted/visible lists
   and previous pose data retain logical source/part correspondence. Sampling can run on workers over
-  disjoint instance ranges ([crowd playback](animation.md#crowd-playback-on-workers)).
+  disjoint instance ranges ([crowd playback](animation_performance.md#crowd-playback-on-workers)).
 - Root motion is published in `crowd.playback.slots[index].root_motion`. Call
   `scene.apply_crowd_root_motion(crowd)` once after an update to consume each live delta; movement
   remains application-controlled. Root mode/yaw and offset-turn pivot match `Animator`.
@@ -409,7 +409,7 @@ while (window.poll()) {
   A prepared two-row 2D block adds storage per capacity slot: 416 bytes at default
   action capacity 4, 608 bytes at 8 and 992 bytes at 16, even with no active groups. At crowd
   capacity 4096 that is 1,703,936 bytes or 4,063,232 bytes for action capacities 4 or 16.
-  The [complete 2D table](animation.md#prepared-storage) includes smaller capacities.
+  The [complete 2D table](animation_performance.md#prepared-storage) includes smaller capacities.
   The owner also retains copied model baselines and one pose scratch block; each concurrent
   `sample_range` caller adds one from `create_crowd_pose_scratch`. Crowd-wide
   output and crossing scratch cost `event_capacity*(CrowdEvent::size + EventBookmark::size)`.
@@ -455,7 +455,7 @@ while (window.poll()) {
   transform history are unchanged. A view rendered less often than every frame therefore shows no crowd
   deformation motion. A part whose source, geometry or model checks fail draws with zero motion. An animated
   LOD part rejects its history instead ([lod](lod.md#animated-models-and-crowds)).
-- **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a skinned or morphed
+- **Compute skinning.** With [compute skinning](animation_deformation.md#compute-skinning) on, a skinned or morphed
   crowd part poses all its live sources in one compute dispatch per frame, into one posed binding sized by
   the crowd's capacity: `capacity * vertex_count * 52 B`, 157.5 MB for the 512 sources of the example, with
   about 1,740 fitting the 512 MiB cap before the part falls back to vertex skinning. Every draw of the
@@ -463,7 +463,7 @@ while (window.poll()) {
   frozen and culled instances are posed too, so the dispatch costs the same whatever the draws show. A
   replacement of the crowd's instances drops the binding's history for one frame, and a view that skipped a
   frame gets no deformation motion, as above. Animated LOD parts keep vertex skinning. A traced part's slots
-  take these poses instead of posing again ([tracing](animation.md#compute-skinning)).
+  take these poses instead of posing again ([tracing](animation_deformation.md#compute-skinning)).
 - `InstanceGpu.normal_2.w` of a crowd record holds the logical source index, the row of the draw's
   palette and morph block, and, under compute skinning, its posed slot, so a parity change reorders records
   without moving any pose.
@@ -486,7 +486,7 @@ while (window.poll()) {
 Example: `python3 scripts/build.py --example skinned_crowd` walks 512 instances of the committed Quaternius
 character through six of its clips; `B` switches to 512 `Animator` instances of the same model for
 comparison, `--baseline` starts there. `K` (or the panel checkbox, or `--compute-skinning`) turns on
-[compute skinning](animation.md#compute-skinning) for the crowd and for those instances; the flag also starts
+[compute skinning](animation_deformation.md#compute-skinning) for the crowd and for those instances; the flag also starts
 the example without animated LOD, whose parts keep vertex skinning and leave the switch no crowd draw to pose,
 and the panel shows the posed bindings, fallback draws, resident posed bytes and the GPU time of
 `Pass.COMPUTE_SKIN`, `Pass.TRACE_POSE`, `Pass.ACCELERATION_BUILD`, shadows, prepass, forward and velocity.
@@ -497,7 +497,7 @@ shows maximum local position, rotation, scale and morph differences. This mode i
 playback costs and the comparison loop; use the single-representation modes for measurements.
 `F` freezes every other instance by pausing its base action, `--frozen-percent=P` starts with `P` percent
 of the instances frozen, and the panel slider sets the share. `--compress` quantizes the model's clips before the
-crowd is built and prints their bytes and largest errors (see [Compressed clips](animation.md#compressed-clips)). Frozen instances stop changing, so the panel's
+crowd is built and prints their bytes and largest errors (see [Compressed clips](animation_performance.md#compressed-clips)). Frozen instances stop changing, so the panel's
 per-frame upload bytes fall in proportion; it also shows the resident crowd bytes. `Space` pauses/resumes
 the first source through its base-action controls. The panel displays published root displacement and event/drop counts; `R` applies each update's published root delta once. The
 example's default KEEP clips publish no extracted displacement; extraction configuration belongs to

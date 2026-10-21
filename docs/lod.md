@@ -357,7 +357,7 @@ sources consume posed slots; rigid-only parts use the rest-geometry path at thei
 sampled affine. Capacity/overflow, same-frame sharing, still-pose reuse and
 software/hardware behavior follow [posed instances](scene_trace.md#posed-instances).
 The raster-selected coarse level never changes the base trace representation.
-Untraced groups do no posed trace work. [Compute skinning](animation.md#compute-skinning) leaves animated
+Untraced groups do no posed trace work. [Compute skinning](animation_deformation.md#compute-skinning) leaves animated
 parts on vertex skinning at every level: one binding posing every source at every level would undo the
 savings of the levels.
 

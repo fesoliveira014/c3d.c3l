@@ -96,7 +96,7 @@ The `ragdoll` example uses the shared humanoid and supine/prone motions in
 obstruction, a movable neighbour and recovery status. `--acceptance <directory>`
 writes bounded visual captures and numeric checks to an existing directory;
 `--cpu-observation` runs a bounded CPU comparison. See
-[Animation](../../docs/animation.md) for the animation/ragdoll contract.
+[Animation](../../docs/animation.md#update-sequence) for the frame order around animation.
 
 | Prone get-up | Blocked recovery |
 | --- | --- |
