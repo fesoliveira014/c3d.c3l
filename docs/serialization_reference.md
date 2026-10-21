@@ -51,7 +51,7 @@ The defaults are `READ_OPTIONS_DEFAULT`, `TEXT_WRITE_OPTIONS_DEFAULT` and `TEXT_
 | `node_path` | `/nodes/<record>` of the failing record |
 | `type_name` | Portable component name |
 | `asset_key` | Key of the failing asset reference |
-| `model_key`, `template_index`, `has_template_index` | Model and first differing template node of an `INCOMPATIBLE_TEMPLATE` fault |
+| `model_key`, `template_index`, `has_template_index` | Model and template index of a failing model reference, including the first differing node of `INCOMPATIBLE_TEMPLATE` |
 | `bone_index`, `has_bone_index` | Failing ragdoll bone |
 | `pointer`, `byte_offset`, `line`, `byte_column`, `has_text_position` | JSON Pointer and source position of a text fault |
 
@@ -132,8 +132,14 @@ The writer discovers keys in traversal order and emits one group per used codec.
 | `has_component(Type)` | Whether the document restores that type on the current node |
 | `authored(Component, Authoring, node)` | Borrow another component's decoded authoring before attachment |
 | `read_value(Type, reader)` | Decode a registered described value inside a compatibility reader |
+| `authored_crowd_model(entity)` | Decoded `ModelId` of a pending `AnimatedCrowd` in this document, for another owner's preflight. Faults `INVALID_ARGUMENT` when the node has no crowd |
+| `read_owned` | Acquisition list for storage that a compatibility or `upgrade` reader retains. `read_owned.acquire(count, element_size, alignment)` returns zeroed, aligned storage that the reader releases when the subtree read ends, or faults `CAPACITY_EXCEEDED` |
 
 A missing custom-kind registration faults `INVALID_ID` for a nonzero reference. A zero reference needs no pool. Borrowed values from `authored` and `read_value` live until the subtree read ends; validate and copy retained data before returning.
+
+`read_value` keeps the normal version, layout, framing, depth and reference checks, including full payload consumption. It neither attaches a component nor runs owner validation.
+
+`serial::SkinAuthoring` (`skeleton` and the required `joints` as `NodeReference` values) is the decoded authoring of a `SkinBinding`. Another owner borrows it in its own preflight with `authored(SkinBinding, serial::SkinAuthoring, node)`; the cloth and ragdoll adapters do.
 
 ### Writer and Reader
 
@@ -169,9 +175,13 @@ The layout is an FNV-1a fingerprint of the schema events: field names, kinds, si
 | `binary_compatibility` | `BinaryCompatibility` entries, one per older version a reader supports |
 | `text_default_versions` | Older versions whose JSONC documents read absent fields as semantic defaults |
 
-A `BinaryCompatibility` entry holds a `version` below the current one, a `read` callback and an optional `upgrade`. A current payload needs its complete pinned layout and never fills a truncated field from a default. An older binary version reads only through its listed entry; other versions fault `UNSUPPORTED`. `ReadContext.authored` faults `UNSUPPORTED` for an older payload without an `upgrade`, so an owner that other owners inspect before attachment supplies one. `upgrade` decodes the older payload into the current authoring type, and `read` reuses it. Mesh, InstancedMesh, LodGroup and PhysicsBody supply one for every older version, so a Cloth or an Animator preflight sees the current value whatever version was stored.
+A `BinaryCompatibility` entry holds a `version` below the current one, a `read` callback and an optional `upgrade`. A current payload needs its complete pinned layout and never fills a truncated field from a default. An older binary version reads only through its listed entry; other versions fault `UNSUPPORTED`. `ReadContext.authored` faults `UNSUPPORTED` for an older payload without an `upgrade`, so an owner that other owners inspect before attachment supplies one. `upgrade` decodes the older payload into the current authoring type, and `read` reuses it. The value an `upgrade` returns lives until the subtree read finishes; storage it retains comes from `read_owned`. Mesh, InstancedMesh, LodGroup and PhysicsBody supply one for every older version, so a Cloth or an Animator preflight sees the current value whatever version was stored.
+
+A manual codec reads older layouts itself: its `read` callback switches on `ReadContext.version`.
 
 Binary encoding: a described value emits every field, with no default elision, as little-endian integers, raw floating-point bits, portable references and length-delimited struct, array and slice payloads. Struct payloads carry their version and layout fingerprint. Native pointers and padding never enter the payload. Reader-owned strings and slices use fallible, aligned acquisitions that release on success and on every fault.
+
+A described field of type `CustomId{T}` saves as its key in binary and JSONC, as the built-in id fields do. The description holds the address of the kind's process-wide slot and reads it when it writes or reads, so a description reflected before `AssetStore.register(T)` resolves afterwards. An unset id saves as none. A dead id faults `INVALID_ID` and an asset with an empty key `INVALID_ARGUMENT`. On read, a missing key or a key of another kind faults `INVALID_ID`. A kind with no slot yet, or with no pool in the store on write, faults `UNSUPPORTED`.
 
 Binding: attachment copies retained strings and slices into the component's ordinary ownership and removal hooks. A failed attachment leaves the component absent. Duplicate portable names fault `INVALID_ARGUMENT`. Validators run once per document, and unvalidated components restore sequentially, so a later failure still rolls back earlier owners.
 
@@ -229,7 +239,7 @@ The reader accepts line and block comments and rejects trailing commas, duplicat
 
 ## Schema export
 
-`write_schema(allocator, limits)` writes the process registry as owned JSON. `components` is sorted by portable name with each entry's version, a `binary_only` flag and its described `type`. Manual codecs carry `binary_only: true` and no fields. `types` is sorted by qualified name and lists versions, layout pins, field kinds and sizes, nested fields, array extents, enum labels, asset kinds, display names, units, numeric ranges and complete semantic defaults.
+`write_schema(allocator, limits)` writes the process registry as owned JSON. `components` is sorted by portable name with each entry's version, a `binary_only` flag and its described `type`. Manual codecs carry `binary_only: true` and `fields: null`. `types` is sorted by qualified name and lists versions, layout pins, field kinds and sizes, nested fields, array extents, enum labels, asset kinds, display names, units, numeric ranges and complete semantic defaults.
 
 Defaults come from the same callbacks as text import. The export never runs completion hooks. Output is deterministic for the same registry, obeys the text limits and faults `CAPACITY_EXCEEDED` when the output allocation fails.
 
@@ -238,10 +248,10 @@ Defaults come from the same callbacks as text import. The export never runs comp
 | Fault | Meaning |
 | --- | --- |
 | `ASSET_FORMAT_ERROR` | Malformed header, chunks, records or counts; duplicate entries; invalid bool, enum or UTF-8; truncation; bad reference index; unconsumed payload; a document naming more than 128 types |
-| `UNSUPPORTED` | Container or type version, unknown name, codec or destination store unavailable; binary-only codec in text export; a component with no policy |
+| `UNSUPPORTED` | Container or type version, unknown name, codec or destination store unavailable; binary-only codec in text export; a component with no policy; a described `CustomId{T}` field whose kind has no slot or no pool in the store |
 | `INCOMPATIBLE_TEMPLATE` | A referenced model differs from the saved structural signature |
 | `INVALID_ID` | Missing or wrong-kind asset reference, including a dead source asset |
-| `INVALID_ARGUMENT` | Unkeyed source asset; node reference outside the subtree, to an omitted node or to another scene; conflicting owner claims or codec name; invalid text limits |
+| `INVALID_ARGUMENT` | Unkeyed source asset; node reference outside the subtree, to an omitted node or to another scene; conflicting owner claims or codec name; invalid text limits; `omit_binary_only` without an `omissions` list |
 | `CAPACITY_EXCEEDED` | Authored nodes do not fit, the output or a count exceeds the format, or a fallible allocation fails |
 
 `INCOMPATIBLE_TEMPLATE` is `c3d::serial::INCOMPATIBLE_TEMPLATE`; the others are `c3d` faults. Owner codecs add their declared faults, and a codec classifies invalid stored descriptors before it calls an owner API with programming preconditions. Retained diagnostics add the JSON Pointer and source position for text and the component, node and asset or model details when known.
@@ -281,7 +291,7 @@ Every built-in authored component, with its portable name, current version and r
 | `Force` | `force` | 1 | `VALUE` | none |
 | `Buoyancy` | `buoyancy` | 2 | `VALUE` | 1: `drag_coefficient` reads 0 |
 | `Cloth` | `cloth` | 9 | `OWNER` | JSONC 1-8: absent fields read their `default_cloth_desc()` values. Binary older than 9 faults `UNSUPPORTED` |
-| `CrowdCloth` | `crowd_cloth` | 4 | `BINDINGS` | JSONC 1-3: absent fields read zero or empty. Binary older than 4 faults `UNSUPPORTED` |
+| `CrowdCloth` | `crowd_cloth` | 4 | `BINDINGS` | JSONC 1-3: an absent `parts` reads empty and absent part cloth fields read their `default_cloth_desc()` values. Binary older than 4 faults `UNSUPPORTED` |
 | `Ragdoll` | `ragdoll` | 1 | `OWNER` | none |
 | `Breakable` | `breakable` | 2 | `OWNER` | 1: recipe kind `LEGACY_CURRENT_POSE` |
 | `HeightFieldWindows` | `height_field_windows` | 2 | `OWNER` | 1: no neighbour maps |
@@ -297,11 +307,9 @@ Every built-in authored component, with its portable name, current version and r
 | `TerrainTile` | `terrain_tile` | 1 | `VALUE` | none |
 | `Foliage` | `foliage` | 3 | `OWNER` | 1: `rules.slope_normal` reads `FACE`. 1, 2: `trace_sway` off |
 | `Water` | `water` | 5 | `OWNER` | 1: one mirror slot, view texture slot 0. 1, 2: `trace` off. 1-3: a `BODY` with `DEFAULT_WATER_DEPTH`. 1-4: `GERSTNER` with the default `simulation` and `spectrum` and no `ground` |
-| `ParticleSystem` | `particle_system` | 9 | `VALUE` | 1: `saturation` reads `REFUSE`. 1, 2: no sub-emitters. 1-3: `collision` response `NONE`. 1-4: `flipbook` off. 1-5: `turbulence` off. 1-6: `trail` off. 1-7: `mesh_cast_shadow` and `mesh_trace` false. 1-8: `execution` reads `CPU` |
+| `ParticleSystem` | `particle_system` | 9 | `VALUE` | 1: `saturation` reads `REFUSE`. 1, 2: no sub-emitters and `max_events` reads its default. 1-3: `collision` response `NONE`. 1-4: `flipbook` off. 1-5: `turbulence` off. 1-6: `trail` off. 1-7: `mesh_cast_shadow` and `mesh_trace` false. 1-8: `execution` reads `CPU` |
 | `AudioEmitter` | `audio_emitter` | 1 | `VALUE` | none |
 | `AudioListener` | `audio_listener` | 1 | `VALUE` | none |
-
-The package inventory tests fail when a registered component has no classified policy, so this table covers every authored type.
 
 ### Transient components
 
@@ -329,7 +337,7 @@ A transient component is never written. Its package installs the policy, and som
 
 - `ModelInstance` keeps the model key, per-template-node signatures and mappings, absent slots, base poses, mesh slots, baseline morph arrays and clips. The reader validates signatures and unique node claims before any component attaches, then copies the owner arrays onto the saved graph. It does not instantiate the template or recreate removed nodes; application children and transform overrides remain. A selected template node needs its model owner in the subtree. A differing template (any ordered mesh or skin slot of a template node) faults `INCOMPATIBLE_TEMPLATE` with the model key and first differing index.
 - `SkinBinding`, `IkChain`, `FootIk` and `LookAt` resolve their joints and targets before any component attaches. A `NodeReference` names a document node, or a model owner plus a template index, so a removed model slot cannot bind to a reused scene slot. Ordinary node references capture the current live entity, including retargeting after slot reuse. Skin joints alone keep the captured template identity: deleting a required template joint rejects export even when its address is reused. Foot contact state, anchors, support frames, phases and clocks restart.
-- `Animator` restores in `OWNER`, after `ModelInstance` and the reference components. It keeps clips, speed, weight, layer, loop and playing flags, additive and scale mode, boolean and weighted masks, root-motion mode, root extraction, 1D and 2D space configuration and the inertia flag. Action times, space phases, events and fades restart. Export projects owned transforms and `Mesh` morph weights to the captured baselines without changing the source scene; the instance root keeps its current placement. Active fades settle at their targets, fading-out actions and spaces are omitted, and handles are newly allocated. An absent configured root slot keeps its mode and contributes zero root motion.
+- `Animator` restores in `OWNER`, after `ModelInstance` and the reference components. It keeps clips, speed, weight, layer, loop and playing flags, additive and scale mode, boolean and weighted masks, root-motion mode, root extraction, 1D and 2D space configuration and the inertia flag. Action times, space phases, events and fades restart. Export projects owned transforms and `Mesh` morph weights to the captured baselines without changing the source scene; an ordinary `Mesh` keeps its explicit weights. The instance root keeps its current placement. Active fades settle at their targets, fading-out actions and spaces are omitted, settled zero-weight actions remain, and handles are newly allocated. An absent configured root slot keeps its mode and contributes zero root motion.
 - `AnimatedCrowd` restores in `OWNER` as a pending crowd with no generated part nodes. It keeps the model, capacity, live placements and colors, action and event capacities, seed settings, pose bounds, trace flag, each instance's configured actions, masks and spaces, and the inertia flag. Pending and prepared crowds write the same authoring. Export omits fading-out actions and settles incoming fades without changing the live crowd. A retained standalone base action restarts at its captured start; other clocks restart. Explicitly empty playback stays empty. Sampled clocks, handles, root deltas, fired events, counters, palettes and cursors are not saved. Exporting a generated part without its owner, or adding authored components to an omitted part, faults `INVALID_ARGUMENT`. `prepare_crowd` builds the runtime; a failed preparation keeps the authoring for a retry.
 
 ### Physics
@@ -341,9 +349,9 @@ Select `c3d_physics` and `C3D_PHYSICS_SERIAL`, and call `physics::register_seria
 - `PhysicsJoint` needs a model-aware endpoint and keeps only its selected variant. `Wind`, `Force` and `Buoyancy` keep their complete values; `Buoyancy` resets the submerged fraction.
 - `Cloth` and `CrowdCloth` keep the complete `ClothDesc` settings, including pin order and duplicates, seams, collider references, attachments, bend settings, cuts, tear limits, sleep thresholds and wind coefficients. Rest and hold state is runtime-only, so a restored cloth starts awake. Export projects `Mesh` records to the retained source geometry and vertex motion without changing the source scene. A prepared skinned `Cloth` projects its source `Mesh` with `project_absent_component` and omits its generated output child; a prepared `CrowdCloth` omits its per-slot output children. `ClothOutput`'s collector rejects a generated output child exported without its owner. A read keeps the `Mesh` and attaches a pending owner with no geometry, cut or solve state. Synchronize physics bodies before cloth preparation.
 - `Ragdoll` restores after the model, skin, body and joint authoring. It keeps bone mappings, parents, bind frames, modes, per-bone weights and drives, the aggregate weight, the drive strength and current node placements. Weights and drive strength must be finite and nonnegative on export and import. Preflight checks references and mode, body and joint consistency before any component attaches; diagnostics carry the bone index. Body velocities persist; bone-body velocities restart at zero. Active recovery saves `SIMULATED` bone modes with `DYNAMIC` body authoring and completed recovery saves `ANIMATED` modes with `KINEMATIC` authoring. Recovery settings, captured sources and targets, observations, native identities and completion markers never reach the payload.
-- `Breakable` attaches pending through the public attachment path, with no world, cooked hulls or native bodies and joints. `prepare_breakable` and `prepare_breakable_subtree` create the runtime; a failed preparation keeps the recipe for a retry. `LEGACY_CURRENT_POSE` captures root-relative frames from the current pose and projects `WORLD` piece transforms to `PARENT`; preparation regenerates contact adjacency, so touching survivors can weld again. `AUTHORED_REST` comes from an explicit `BreakableRecipeDesc` and saves rest frames, internal and anchor edges, axes, strengths and the evaluation mode; a load calls `Scene.attach_breakable_recipe`, and preparation builds an intact representation with zero velocities. Native ids, damage, measured reactions and velocities are excluded.
-  - Survivors keep their relative order. Export omits edges to deleted pieces and anchors to deleted targets, then remaps piece indices. Fewer than two portable survivors faults `UNSUPPORTED`.
-  - Every live anchor target must lie in the subtree with ordinary `STATIC` body authoring; otherwise export faults `INVALID_ARGUMENT`. Only verified owned bodies are omitted. Modified or unrelated bodies, conflicting owners and joints are rejected.
+- `Breakable` attaches pending through the public attachment path, with no world, cooked hulls or native bodies and joints. `prepare_breakable` and `prepare_breakable_subtree` create the runtime; a failed preparation keeps the recipe for a retry. `LEGACY_CURRENT_POSE` captures root-relative frames from the current pose and projects `WORLD` piece transforms to `PARENT`; preparation regenerates contact adjacency, so touching survivors can weld again. `AUTHORED_REST` comes from an explicit `BreakableRecipeDesc` and saves rest frames, internal and anchor edges, axes, strengths and the evaluation mode; a load calls `Scene.attach_breakable_recipe`, and preparation builds an intact representation with zero velocities. Native ids, damage, measured reactions and velocities are excluded. A pending export keeps the exact recipe and placements, including a mismatch that preparation still reports. An explicitly empty graph stays empty.
+  - Survivors keep their relative order. Export omits edges to deleted pieces and anchors to deleted targets, then remaps piece indices. Runtime piece indices stay stable until removal, but they are not identities across a pruned save and load. Fewer than two portable survivors faults `UNSUPPORTED`.
+  - Every live anchor target must lie in the subtree with ordinary `STATIC` body authoring; otherwise export faults `INVALID_ARGUMENT`. A shared ancestor that holds the `Breakable` and its support siblings is valid. Only verified owned bodies are omitted. Modified or unrelated bodies, conflicting owners and joints are rejected.
 
 ### Navigation and character
 

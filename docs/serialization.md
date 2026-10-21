@@ -49,7 +49,7 @@ Two writes of unchanged authored state, and save-load-save, produce identical by
 
 A type with no policy makes export fail with `UNSUPPORTED`; nothing is dropped silently. `is_serializable(Type)` reports whether a type has a policy.
 
-An authored codec has a portable name, a version and a restore phase. The name and version are the wire identity. Module paths, type names and registration order never enter the stream. A codec reads older versions through explicit compatibility readers (binary) and listed default versions (JSONC), and rejects newer versions with `UNSUPPORTED`. The [versions table](serialization_reference.md#versions-and-older-payloads) lists the current version of every built-in component and what older payloads read as.
+An authored codec has a portable name, a version and a restore phase. The name and version are the wire identity. Module paths, type names and registration order never enter the stream. A described codec reads older versions through explicit compatibility readers (binary) and listed default versions (JSONC). A manual codec reads older layouts itself, by switching on `ReadContext.version`. Newer versions fault `UNSUPPORTED`. The [versions table](serialization_reference.md#versions-and-older-payloads) lists the current version of every built-in component and what older payloads read as.
 
 A transient policy marks runtime state that no document carries. An owner regenerates it when it prepares.
 
@@ -105,7 +105,7 @@ Each add-on installs its serialization policies behind a feature flag. Select `c
 | Particles | `C3D_PARTICLE_SERIAL` | `particle::register_serial_codecs()` |
 | Audio | `C3D_AUDIO_SERIAL` | `audio::register_serial_codecs()` |
 
-Every registration is idempotent and installs its description and default prerequisites. A component type takes a process-wide slot when it registers, and the process holds at most 128 ([components](scene.md#components)); a file that names more fails `ASSET_FORMAT_ERROR`. `describe::register_core_components()` alone registers field descriptions for inspection without selecting serialization.
+Every registration is idempotent and installs its description and default prerequisites. A component type takes a process-wide slot when it registers, and the process holds at most 128 ([components](scene.md#components)); a file that names more fails `ASSET_FORMAT_ERROR`. Registering a codec assigns the slot and allocates no scene store. `ecs::assigned_slot(Type)` reads a type's zero-based slot without assigning one and faults `NOT_FOUND` when the type has none. `describe::register_core_components()` alone registers field descriptions for inspection without selecting serialization.
 
 ### Save and load a subtree
 
@@ -125,7 +125,7 @@ if (catch excuse = restored) {
 }
 ```
 
-Start every options value from the default constant, as above. A struct literal such as `{ .diagnostic = &diagnostic }` zeroes the text limits, and the text calls then fault `INVALID_ARGUMENT`.
+Start every `ReadOptions` and `TextWriteOptions` value from its default constant (`READ_OPTIONS_DEFAULT`, `TEXT_WRITE_OPTIONS_DEFAULT`), as above. `WriteOptions` has no default constant; `{}` is its default. A struct literal for either text options type, such as `{ .diagnostic = &diagnostic }`, zeroes the text limits, and the text calls then fault `INVALID_ARGUMENT`.
 
 ### Export and import JSONC
 

@@ -33,4 +33,4 @@ c3c test particle_serial_test --path addons/c3d_particle.c3l
 c3c test particle_serial_policy_test --path addons/c3d_particle.c3l
 ```
 
-`particle_serial_test` covers both encodings, schema pins, older payloads, the sub-emitter target, pending and prepared export, generated-node rejection, allocation faults and preparation retry. `particle_serial_policy_test` checks that every particle component slot has its expected authored or transient policy. `particle_test` stays the feature-off check. `scripts/build.py --test` runs all three.
+`particle_serial_test` runs the adapter with the feature on. `particle_serial_policy_test` checks every particle component slot for its policy. `particle_test` is the feature-off check. `scripts/build.py --test` runs all three.

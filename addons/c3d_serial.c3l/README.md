@@ -35,7 +35,7 @@ A component with no codec or transient policy makes export fail with `c3d::UNSUP
 
 ## Targets
 
-Run a CPU target with `c3c test <target> --path addons/c3d_serial.c3l`. `scripts/build.py --test` runs all of them except the benchmarks.
+Run a test target with `c3c test <target> --path addons/c3d_serial.c3l`. `scripts/build.py --test` runs every test target below except `serial_lookup_bench`.
 
 | Target | Covers |
 | --- | --- |
@@ -45,8 +45,12 @@ Run a CPU target with `c3c test <target> --path addons/c3d_serial.c3l`. `scripts
 | `serial_described_test` | Described values, core codecs, text import and schema export |
 | `serial_core_policy_test` | Every assigned core component has exactly one expected policy |
 | `serial_all_test` | Every adapter together, without a GPU device: the policy inventory and a scene holding every authored type through binary and JSONC |
-| `serial_lookup_bench`, `serial_claims_bench` | CPU measurement targets, run on request |
 
-`serial_all_test` and `serial_claims_bench` select every serialization feature and add-on, including `C3D_CHARACTER_NAV`.
+`serial_all_test` selects every serialization feature and add-on, including `C3D_CHARACTER_NAV`.
+
+Two CPU measurement targets stay outside `scripts/build.py --test`:
+
+- `serial_lookup_bench` is a test target that times authored lookup on large JSONC documents. Print its timings with `c3c test serial_lookup_bench --path addons/c3d_serial.c3l -O3 --test-show-output`.
+- `serial_claims_bench` is an executable that times export with ownership claims. It selects the same features as `serial_all_test`. Build it with `c3c build serial_claims_bench --path addons/c3d_serial.c3l -O3`, then run `addons/c3d_serial.c3l/build/serial_claims_bench --copies=N --run=M`, with `N` of 1, 10 or 100 scene copies and `M` the run number. Each run prints one CSV row: copies, run, live nodes, live components, retained nodes, serialized records, claims, bytes, then preparation, collection, component-write and total binary-export times in milliseconds. Neither target asserts a time.
 
 The `serialize` example in the repository's `examples/` project round-trips a model scene through both encodings. See the [guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md#run-the-example) for its flags.

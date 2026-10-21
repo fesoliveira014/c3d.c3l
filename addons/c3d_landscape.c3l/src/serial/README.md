@@ -40,4 +40,4 @@ c3c test landscape_serial_test --path addons/c3d_landscape.c3l
 c3c test landscape_serial_policy_test --path addons/c3d_landscape.c3l
 ```
 
-`landscape_serial_test` covers both encodings, schema pins, older payloads, pending reads, export before and after preparation, generated-node rejection and rollback. `landscape_serial_policy_test` checks that every landscape component slot has its expected authored or transient policy. `landscape_test` stays the feature-off check. `scripts/build.py --test` runs all three.
+`landscape_serial_test` runs the adapter with the feature on. `landscape_serial_policy_test` checks every landscape component slot for its policy. `landscape_test` is the feature-off check. `scripts/build.py --test` runs all three.
