@@ -465,6 +465,6 @@ Measure the overhead of a configuration on an idle machine, per suite (`render` 
 - [Profiling](profiling.md): capture lifetimes, scopes and the GPU capture these options enable.
 - [Jobs](jobs.md): `job_bench`, the job pool benchmark.
 - [Development](development.md): building, and running on software Vulkan.
-- Example options that select a benchmark live with their feature: [lights](lights.md), [sky](sky.md), [fog](fog.md), [clouds](clouds.md),
-  [instancing](instancing.md), [post](post.md), [environments](environments.md), [reflection
+- Example options that select a benchmark live with their feature: [lights](lights.md), [sky](sky.md), [fog](fog.md),
+  [clouds](clouds.md), [instancing](instancing.md), [post](post.md), [environments](environments.md), [reflection
   probes](reflection_probes.md) and [shadows](shadows.md).
