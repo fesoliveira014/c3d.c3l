@@ -191,7 +191,7 @@ Existing custom shaders remain flat unless they opt into the
 [shared light selector](custom_shaders.md#light-selection).
 
 See [many lights](many_lights.md) for a controlled comparison and
-[GUI diagnostics](gui.md#cluster-diagnostics) for slice occupancy and completed counters.
+[GUI diagnostics](gui_panels.md#cluster-diagnostics) for slice occupancy and completed counters.
 
 ### Depth pruning
 
@@ -270,7 +270,7 @@ their keys match ([shadow sets](shadows.md#shadow-sets)). A `shadow_camera` with
 `INVALID_ARGUMENT` and aborts the frame.
 
 `set_view_overlay(view, list)` gives a view an overlay list of items anchored in the world for one frame; `finish_view`
-draws it over the view's output after post, tested against the view's depth ([World-space items](overlay.md#world-space-items)).
+draws it over the view's output after post, tested against the view's depth ([World-space overlay items](overlay_world.md)).
 
 `Renderer.render(scene, camera)` is the default-view convenience. `render_to(scene, camera, target,
 color = LINEAR_HDR, info = {})` renders and finishes one frame into a target through a view it
@@ -565,7 +565,7 @@ renderer.render_view(&scene, camera_node, main_view)!;
   composited reflection as part of its image. The target holds physical radiance: the surface's stage multiplies
   the sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
 - World-space overlay items draw in a mirror view when their layers match its camera, reflected as the view shows them
-  ([World-space items](overlay.md#world-space-items)).
+  ([World-space overlay items](overlay_world.md)).
 - Water from the landscape add-on places its mirror cameras and clip plane for you and reads each reflection from a
   view texture; see [water](water.md#the-mirror).
 - Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,

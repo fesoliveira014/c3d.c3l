@@ -165,7 +165,7 @@ GPU times require `--gpu-timings` and a [profiling-enabled build](profiling.md#c
 they are read after a frame slot's normal completion wait, with no synchronous readback
 inside `render_view`. With multiple views, they describe the slot's last recorded drawable
 view rather than an aggregate; a later flat view clears the cluster result. See
-[GUI diagnostics](gui.md#cluster-diagnostics).
+[GUI diagnostics](gui_panels.md#cluster-diagnostics).
 
 The example requests immediate presentation, but the **Presentation** label reports the
 mode actually obtained. FIFO fallback or compositor pacing can dominate wall intervals;
