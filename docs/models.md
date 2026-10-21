@@ -1,17 +1,24 @@
 # Models, glTF and FBX import
 
-A model is loaded once into shared assets plus a reusable template, then
-instantiated any number of times without reparsing. `c3d::asset::gltf` reads
-glTF 2.0 and GLB files through cgltf and `c3d::asset::fbx` reads FBX files through ufbx; `c3d::model::instantiate` turns a stored
-template into live scene nodes. The renderer sees meshes, LOD groups, cameras and
-lights afterwards and needs no model-specific path. Skeletons and animation
-clips are shared assets; `c3d::anim` plays clips onto instances
-([Animation](animation.md)). Asset kinds the store does not define are
-registered by their owners ([Custom asset kinds](custom_assets.md)).
+A model is loaded once into shared assets plus a reusable template, then instantiated any number of times without
+reparsing. `c3d::asset::gltf` reads glTF 2.0 and GLB files through cgltf, `c3d::asset::fbx` reads FBX files through ufbx,
+and `c3d::model::instantiate` turns a stored template into live scene nodes. The renderer sees meshes, LOD groups, cameras
+and lights afterwards and needs no model-specific path. Skeletons and animation clips are shared assets that `c3d::anim`
+plays onto instances ([Animation](animation.md)).
 
-## Load once, instantiate twice
+| Page | Contents |
+| --- | --- |
+| This page | Import, instantiate, keys, options, glTF and FBX mapping, faults. |
+| [Asset loading](asset_loading.md) | Store-free decode and publish, replacing a model, the background loader. |
+| [Asset store](assets.md) | Ids, keys, capacities, file sources and replacement rules. |
+| [glTF source inspection](gltf_source.md) | Source metadata for tools and exporters. |
+
+## Quick start
 
 ```c3
+import c3d::asset::gltf;
+import c3d::model;
+
 ModelId model = gltf::load_model(&assets, "models/helmet.glb")!;
 Node* left = model::instantiate(&assets, &scene, model, name: "left")!;
 Node* right = model::instantiate(&assets, &scene, model, name: "right")!;
@@ -19,125 +26,110 @@ right.local.position = { 2, 0, 0 };
 renderer.prepare_scene(&scene)!;
 ```
 
-`load_model` parses the file, converts every sampler, image, material and
-primitive into store assets, and stores a `ModelTemplate` under the path as
-its key. `load_model_memory` does the same from bytes, with a caller-supplied
-key and a base directory for external URIs. Loading never touches a scene:
-placing a model is always `model::instantiate`, and the caller sets the root
-transform.
+`load_model(&assets, path, options)` parses the file, converts every sampler, image, material and primitive into store
+assets and stores a `ModelTemplate` under the path as its key. `load_model_memory(&assets, bytes, base_dir, key, options)`
+does the same from bytes, with a caller-supplied key and a base directory for external URIs. Loading never touches a
+scene: placing a model is always `model::instantiate`, and the caller sets the root transform. `fbx::load_model` is the
+FBX equivalent ([FBX import](#fbx-import)).
 
-`LoadOptions.normal_encoding` selects `RGB` by default or explicit `RG` for
-imported normal textures. Their generated mips filter decoded vectors; normal
-roles and color roles use distinct texture variants. glTF masked base textures
-also get a variant for their effective alpha threshold, including the material
-factor. A mask that every texel passes or fails, such as a zero cutoff, shares
-the unmasked texture. Supplied container mips retain their authored bytes.
+## Concepts
 
-With `generate_tangents`, a missing tangent stream for a normal-mapped triangle
-primitive is generated from the map's raw UV0 or UV1 using pinned MikkTSpace.
-Lookup transforms are excluded. When the base and clearcoat normal maps use
-different UV sets, generated tangents follow the base map's set and the coat is
-shaded with that frame; a missing UV stream retains derivative fallback.
-Existing finite authored tangent XYZ, zero included, is preserved and its
-handedness is normalized to a sign.
-`regenerate_tangents` explicitly replaces authored tangents and splits geometry
-where needed. It can recover decoded non-finite or zero-W tangent values, but
-a structural TANGENT count or type mismatch still returns
-`ASSET_FORMAT_ERROR`.
+### Template and instance
 
-Instantiation creates one synthetic root under the parent and one live node per
-template node, parents before children. `ModelInstance.present_node(i)` resolves
-the original node of template index `i`, or null after its removal. The node
-table captures entity identities, so reusing a removed node's slot does not
-retarget the instance. Reparenting a live node keeps its template membership.
-Indices and authored arrays retain their original extents after node removal.
+A `ModelTemplate` holds parent-before-child `nodes`, `meshes`, `lod_groups`, `skins`, `lights`, `cameras` and the `clips`
+list, all by index and shared asset ID. It holds no payload, so releasing a geometry's CPU arrays with
+`release_geometry_cpu` after the renderer uploaded it does not affect instantiation. Removing the template leaves
+existing instances intact.
 
-Meshes, cameras and lights become the usual components. The root carries a
-`ModelInstance` component holding the node table, captured identities, authored
-local transforms and authored morph weights. The scene owns every node and
-array. Removing the root removes its remaining subtree and frees the component
-arrays through the removal hook; shared assets remain untouched. Removing the
-model template afterwards leaves existing instances intact. See the
-[animation lifetime rules](animation.md#removed-instance-nodes) for identity
-lifetimes, missing tracks and required skin joints.
+`model::instantiate` creates one synthetic root under the parent and one live node per template node, parents before
+children. An instantiation that runs out of nodes removes the partial subtree and leaves no instance behind.
 
-A subtree serialized with `c3d_serial` retains its model key, exact structural
-signature, captured template identities and authored overrides. Restore creates
-the saved graph directly, preserving deleted template slots and application
-children; it does not recreate removed components from the template. The source
-model and referenced keyed assets must be live in the destination store. A
-structural mismatch returns `INCOMPATIBLE_TEMPLATE` with the model key and first
-differing template index. See [serialization](serialization.md) for animation
-restart, required skin references and owner preparation.
+- Meshes, cameras and lights become the usual components.
+- The root carries a `ModelInstance` component:
 
-## Keys
+| `ModelInstance` field | Meaning |
+| --- | --- |
+| `source` | The `ModelId` it was created from. |
+| `nodes`, `node_entities` | Borrowed pointer table and the captured entity identity of each template node. |
+| `base_pose` | Authored local transforms. |
+| `mesh_nodes`, `base_morph_weights` | Template indices of mesh nodes and their authored morph weights. |
+| `clips` | The template's clip IDs, copied. |
 
-Every asset an import creates is keyed under the model key, which is the file
-path for `load_model` and the caller's key for `load_model_memory`:
+- `ModelInstance.present_node(i)` resolves the original node of template index `i`, or null after its removal. The
+  captured identity means a reused slot never retargets the instance, and reparenting a live node keeps its template
+  membership. Indices and authored arrays keep their original extents after node removal.
+- The scene owns every node and array. Removing the root removes its remaining subtree and frees the component arrays
+  through the removal hook; shared assets stay in the store.
+- Lifetime rules for removed nodes, missing tracks and required skin joints are in
+  [Animation](animation.md#removed-instance-nodes).
 
-| Asset | Key |
+A subtree serialized with `c3d_serial` keeps its model key, exact structural signature, captured template identities and
+authored overrides. Restore creates the saved graph directly, preserving deleted template slots and application children.
+The source model and the referenced keyed assets must be live in the destination store. A structural mismatch returns
+`INCOMPATIBLE_TEMPLATE` with the model key and the first differing template index ([Serialization](serialization.md)).
+
+### Node index contract
+
+Template nodes are ordered depth first from the default scene's roots, or from every parentless node when the file names
+no scene, with a parent always before its children. `NodeTemplate.parent` is the model-local index of the parent, or `-1`
+for a template root. A source node with a mesh keeps its transform and gains one generated child per primitive, named
+`<node name>/primitive/<j>`, placed before the node's authored children. Matrix nodes are decomposed into position,
+rotation and scale; shear is dropped.
+
+### Keys
+
+Every asset an import creates is keyed under the model key, which is the file path for `load_model` and the caller's key
+for `load_model_memory`.
+
+| Asset | glTF key |
 | --- | --- |
 | Model template | `<key>` |
 | Sampler `i` | `<key>#sampler/<i>` |
-| Image `i` decoded as sRGB color | `<key>#image/<i>/srgb` |
-| Image `i` decoded as linear data | `<key>#image/<i>/linear` |
+| Image `i` as sRGB color | `<key>#image/<i>/srgb` |
+| Image `i` as linear data | `<key>#image/<i>/linear` |
+| Image `i` as a normal map | `<key>#image/<i>/normal_rgb/<fmt>` or `<key>#image/<i>/normal_rg/<fmt>` |
+| Image `i` as a masked base color | `<key>#image/<i>/mask/<fmt>/<coverage>/<hex>` |
 | Material `i` | `<key>#material/<i>` |
 | Default material for primitives without one | `<key>#material/default` |
 | Primitive `j` of mesh `i` | `<key>#mesh/<i>/<j>` |
 | Skin `i` | `<key>#skeleton/<i>` |
 | Animation `i` | `<key>#anim/<i>` |
 
-A key already present in the store makes the load fail with `INVALID_ARGUMENT`
-before anything is parsed. An image referenced as base color, emissive, sheen
-color or specular color becomes an sRGB texture; every other reference becomes a
-linear texture; an image used both ways becomes two textures. Images nothing
-references are not decoded.
+In the image keys, `<fmt>` is the ordinal of the texture's pixel format, `<coverage>` is the alpha-coverage policy
+ordinal and `<hex>` is the bit pattern of the effective alpha threshold.
+
+A key already present in the store makes the load fail with `INVALID_ARGUMENT` before anything is parsed. An image
+referenced as base color, emissive, sheen color or specular color becomes an sRGB texture; every other reference becomes a
+linear texture; an image used both ways becomes two textures. Images nothing references are not decoded. Normal-map roles
+and color roles use distinct texture variants, and a glTF masked base texture gets a variant for its effective alpha
+threshold, including the material factor. A mask that every texel passes or fails, such as a zero cutoff, shares the
+unmasked texture.
 
 ## Options
 
-`LoadOptions` selects what the importer keeps. `LOAD_OPTIONS_DEFAULT` enables
-everything. Both live in `c3d::asset` and are shared by every model loader.
+`LoadOptions` selects what the importer keeps. It lives in `c3d::asset` and is shared by every model loader.
+`LOAD_OPTIONS_DEFAULT` enables `animations`, `lights`, `cameras` and `generate_tangents`; `regenerate_tangents` is off and
+`normal_encoding` is `RGB`.
 
 | Field | Effect |
 | --- | --- |
 | `animations` | Import animations as clip assets listed by the template; skins are imported either way. |
 | `lights` | Import `KHR_lights_punctual` lights as `ModelLight` entries. |
 | `cameras` | Import cameras as `ModelCamera` entries. |
-| `generate_tangents` | Compute tangents for triangle primitives that have a normal map and UV0 but no `TANGENT` stream. |
+| `generate_tangents` | Generate a missing tangent stream for a normal-mapped triangle primitive. |
+| `regenerate_tangents` | Replace authored tangents and split geometry where needed. |
+| `normal_encoding` | `RGB` (default) or `RG` for imported normal textures; their generated mips filter decoded vectors. |
 
-## Node index contract
+With `generate_tangents`, a missing tangent stream is generated from the normal map's raw UV0 or UV1 using the pinned
+MikkTSpace, and lookup transforms are excluded. When the base and clearcoat normal maps use different UV sets, generated
+tangents follow the base map's set and the coat is shaded with that frame; a missing UV stream keeps the derivative
+fallback. Existing finite authored tangent XYZ, zero included, is preserved and its handedness is normalized to a sign.
+`regenerate_tangents` can recover decoded non-finite or zero-W tangent values; a structural `TANGENT` count or type
+mismatch still returns `ASSET_FORMAT_ERROR`.
 
-Template nodes are ordered depth first from the default scene's roots, or from
-every parentless node when the file names no scene, with a parent always before
-its children. `NodeTemplate.parent` is the model-local index of the parent, or
-`-1` for a template root. A source node with a mesh keeps its transform and
-gains one generated child per primitive, named `<node name>/primitive/<j>`,
-placed before the node's authored children. Matrix nodes are decomposed into
-position, rotation and scale; shear is dropped.
+## glTF mapping
 
-## Node-level LOD
-
-Rigid node-level `MSFT_lod` becomes one [LodGroup](lod.md). Alternate subtrees
-flatten into group-relative parts while preserving the alternate root transform
-in the owner's parent space. Part counts and materials may differ. Absorbed
-primitive nodes remain named template nodes without duplicate Mesh components;
-unrelated cameras and lights remain. Each instantiation owns its descriptor copy.
-Eager and budgeted renderer preparation visit every level's dependencies.
-
-Whole-owner animation is retained. Skin/morph deformation or animation within
-member subtrees is unsupported: optional LOD falls back to the ordinary highest
-detail subtree; required LOD faults `UNSUPPORTED`. Required material-level LOD
-also faults `UNSUPPORTED`. Bad node IDs, cycles, conflicting ownership and
-malformed hints fault `ASSET_FORMAT_ERROR`.
-
-For N levels, `extras.MSFT_screencoverage` must contain N finite numeric values.
-The first N-1 are positive descending projected-height fractions; the final
-nonnegative cull hint is ignored. Missing hints use transitions
-`{0.2, 0.1, 0.05, 0.025}`. Five levels are supported. This projected-height
-interpretation is c3d's import policy. `ModelDocument` validates references before
-publication, then remaps all part geometry/material IDs atomically with the model.
-
-## Material mapping
+### Materials
 
 | glTF | c3d |
 | --- | --- |
@@ -158,206 +150,145 @@ publication, then remaps all part geometry/material IDs atomically with the mode
 | `KHR_materials_volume` | `thickness`, `attenuation_color`, `attenuation_distance` and the thickness map; an absent or unbounded attenuation distance becomes zero |
 | `KHR_texture_transform` | `TextureSlot.transform` offset, rotation and scale; the extension's `texCoord` overrides the view's |
 
-Every texture view becomes a `TextureSlot` carrying its texture, its sampler or
-the builtin linear repeat sampler, and its UV set. Sampler filters map
-nearest-or-linear per stage; the mip filter follows the minification filter's
-mipmap half and is linear when the source names none. Wrap modes map to the
-matching address modes; the W axis repeats. Every factor is validated against
-the constructor domains before the material is built; a value outside them is
-`ASSET_FORMAT_ERROR`.
+Every texture view becomes a `TextureSlot` carrying its texture, its sampler or the builtin linear repeat sampler, and its
+UV set. Sampler filters map nearest-or-linear per stage; the mip filter follows the minification filter's mipmap half and
+is linear when the source names none. Wrap modes map to the matching address modes; the W axis repeats. Every factor is
+validated against the constructor domains before the material is built; a value outside them is `ASSET_FORMAT_ERROR`.
+Material and sampler fidelity for tools is in [glTF source inspection](gltf_source.md#material-and-sampler-fidelity).
 
-## Geometry
+### Geometry
 
-Each primitive becomes one `Geometry` asset. `POSITION`, `NORMAL`, `TANGENT`,
-`TEXCOORD_0`, `TEXCOORD_1`, `COLOR_0`, `JOINTS_0` and `WEIGHTS_0` are read;
-normalized integer streams are expanded to floats, three-component colors gain
-an alpha of one, and a primitive with joints but no weights or the reverse is
-`ASSET_FORMAT_ERROR`. Point, line and triangle lists pass through; strips, fans and loops are rewritten into
-indexed lists. Triangle primitives without normals receive smooth normals.
-A primitive with morph targets but no node or mesh weights starts every target at zero, so a
-weights clip on the node plays; a supplied weights count that differs from the target count is an
-`ASSET_FORMAT_ERROR`. A `matrix` node decomposes with its sign: a reflection lands in the x scale,
-zero-scale columns complete an orthonormal frame, and shear or non-finite values are an
-`ASSET_FORMAT_ERROR`. An orthographic camera keeps both magnitudes: `ortho_height = 2 * ymag` and
-`aspect = xmag / ymag`. `COLOR_0` imports as RGBA (RGB gains alpha one) and tints the built-in
-shading.
-Morph targets keep position and normal deltas and their names; a target with
-only one delta kind gains a zero array for the other. Sparse accessors are
-expanded. A primitive whose `POSITION` accessor is missing or empty is
-`ASSET_FORMAT_ERROR`.
+Each primitive becomes one `Geometry` asset.
 
-## Skeletons and clips
+- `POSITION`, `NORMAL`, `TANGENT`, `TEXCOORD_0`, `TEXCOORD_1`, `COLOR_0`, `JOINTS_0` and `WEIGHTS_0` are read. Normalized
+  integer streams are expanded to floats. `COLOR_0` imports as RGBA (RGB gains alpha one) and tints the built-in shading.
+- A primitive with joints but no weights, or the reverse, is `ASSET_FORMAT_ERROR`, as is one whose `POSITION` accessor is
+  missing or empty.
+- Point, line and triangle lists pass through; strips, fans and loops are rewritten into indexed lists. Triangle
+  primitives without normals receive smooth normals.
+- Morph targets keep position and normal deltas and their names; a target with only one delta kind gains a zero array for
+  the other. Sparse accessors are expanded. A primitive with morph targets but no node or mesh weights starts every target
+  at zero, so a weights clip on the node plays. A supplied weights count that differs from the target count is
+  `ASSET_FORMAT_ERROR`. glTF geometries carry no `channels` table, so each morph weight drives the target at its index.
+- A `matrix` node decomposes with its sign: a reflection lands in the x scale and zero-scale columns complete an
+  orthonormal frame. Shear or non-finite values are `ASSET_FORMAT_ERROR`.
+- An orthographic camera keeps both magnitudes: `ortho_height = 2 * ymag` and `aspect = xmag / ymag`.
 
-Each skin becomes a `Skeleton` asset: joint names, parents as indices into the
-joint array (`-1` when the parent is not a joint), the rest pose from the
-joints' local transforms and the inverse-bind matrices from the accessor, or
-identity when the skin has none. Every primitive child of a skinned mesh node
-gets a `ModelSkin` entry naming the skeleton and the template indices of the
-joints in skeleton order. Instantiation turns each entry into a `SkinBinding`
-component on the live mesh node, with the joints mapped to live nodes. A joint
-outside the imported node set is `ASSET_FORMAT_ERROR`.
+### Skeletons and clips
 
-Each animation becomes an `AnimationClip` asset over model-local node indices.
-`targets` lists the distinct template nodes the channels address in first
-appearance order and each `Track.target` indexes that list. Translation,
-rotation and scale channels become one track on the authored node; a weights
-channel becomes one track per primitive child of the node, with the mesh's
-morph count as the value stride. Interpolation maps to `STEP`, `LINEAR` or
-`CUBIC_SPLINE`; cubic keys keep their in-tangent, value and out-tangent
-triples. `duration` is the largest key time. The template lists its clip ids
-and every instance copies them. Channels whose target nodes are outside the
-imported node set are omitted. This applies to every glTF import, including
-unselected scenes and alternate subtrees skipped during optional LOD fallback.
-Other imported channels remain intact; a clip with no imported channels has no
-tracks. `options.animations = false` skips clips.
+Each skin becomes a `Skeleton` asset: joint names, parents as indices into the joint array (`-1` when the parent is not a
+joint), the rest pose from the joints' local transforms and the inverse-bind matrices from the accessor, or identity when
+the skin has none. Every primitive child of a skinned mesh node gets a `ModelSkin` entry naming the skeleton and the
+template indices of the joints in skeleton order. Instantiation turns each entry into a `SkinBinding` component on the
+live mesh node, with the joints mapped to live nodes. A joint outside the imported node set is `ASSET_FORMAT_ERROR`.
 
-`c3d::anim` samples clips onto instance nodes and morph weights; the renderer
-builds joint palettes from `SkinBinding` and selects the skinned and morphed
-vertex variants ([Animation](animation.md)). glTF geometries carry no
-`channels` table, so each morph weight drives the target at its index.
+Each animation becomes an `AnimationClip` asset over model-local node indices. `targets` lists the distinct template nodes
+the channels address in first-appearance order, and each `Track.target` indexes that list.
 
-### Replacing geometry, skeletons and clips
+- Translation, rotation and scale channels become one track on the authored node. A weights channel becomes one track
+  per primitive child of the node, with the mesh's morph count as the value stride.
+- Interpolation maps to `STEP`, `LINEAR` or `CUBIC_SPLINE`; cubic keys keep their in-tangent, value and out-tangent triples.
+  `duration` is the largest key time.
+- The template lists its clip IDs and every instance copies them. Channels whose target nodes are outside the imported
+  node set are omitted, including for unselected scenes and alternate subtrees skipped during optional LOD fallback. A clip
+  with no imported channels has no tracks. `options.animations = false` skips clips.
+- Clip events import from animation metadata ([Event import schema](animation_reference.md#event-import-schema)).
 
-```c3
-assets.replace_geometry(geometry, &source)!;        // copies; replace_geometry_owned takes the arrays
-assets.replace_skeleton_owned(skeleton, &source)!;
-assets.replace_clip_owned(clip, &source)!;
-```
+The renderer builds joint palettes from `SkinBinding` and selects the skinned and morphed vertex variants
+([Animation deformation](animation_deformation.md)).
 
-Each call replaces the content under the same id and key, advances `revision` once and sets `replaced_revision`.
-It takes the inputs of the matching `add_*` form and rejects the same data with `c3d::INVALID_ARGUMENT`.
-A change that live components were sized against faults with `c3d::INCOMPATIBLE_STRUCTURE` and changes nothing.
+### Node-level LOD
 
-| Kind | May change | Faults `INCOMPATIBLE_STRUCTURE` |
-| --- | --- | --- |
-| Geometry | vertex and index counts, streams other than joints, weights and morph deltas, custom data, bounds, target and channel names | topology; presence of joints and weights; a positive-weight joint above the largest one at add; morph target count; per target, presence of position and normal deltas; channel count, `first_target` and weight count |
-| Skeleton | rest pose, inverse bind, names | joint count, parents |
-| Clip | name, interpolation, times, values, events, a positive duration's value | targets table, track count, each track's target, path and stride, a duration that is or is not positive |
+Rigid node-level `MSFT_lod` becomes one [LodGroup](lod.md). Alternate subtrees flatten into group-relative
+parts while preserving the alternate root transform in the owner's parent space. Part counts and materials may differ.
+Absorbed primitive nodes remain named template nodes without duplicate `Mesh` components; unrelated cameras and lights
+remain. Each instantiation owns its descriptor copy, and renderer preparation visits every level's dependencies.
 
-The joint bound is fixed when the geometry is added and survives `release_geometry_cpu`; a replacement may use any
-range up to it. Physics mesh colliders and the nav rasterizer read the triangle list, so a topology change is structural.
-Call replacements from the owner thread, outside frame recording. The renderer retires the old objects after
-their last submitted frame.
+- Whole-owner animation is retained. Skin or morph deformation or animation within member subtrees is unsupported:
+  optional LOD falls back to the ordinary highest-detail subtree; required LOD faults `UNSUPPORTED`. Required
+  material-level LOD also faults `UNSUPPORTED`.
+- Bad node IDs, cycles, conflicting ownership and malformed hints fault `ASSET_FORMAT_ERROR`.
+- For N levels, `extras.MSFT_screencoverage` must contain N finite numeric values. The first N-1 are positive descending
+  projected-height fractions; the final nonnegative cull hint is ignored. Missing hints use the transitions
+  `{0.2, 0.1, 0.05, 0.025}`. At most five levels (`MAX_LOD_LEVELS`) are supported. The projected-height reading is c3d's
+  import policy.
+- `ModelDocument` validates references before publication, then remaps all part geometry and material IDs atomically with
+  the model.
 
-Replacing a geometry rebuilds its skin and morph bounds and drops its triangle tree; both rebuild on next use.
+### Extensions
 
-## Replacing a model
+Supported: `KHR_materials_clearcoat`, `KHR_materials_sheen`, `KHR_materials_transmission`, `KHR_materials_volume`,
+`KHR_materials_ior`, `KHR_materials_specular`, `KHR_materials_anisotropy`, `KHR_materials_emissive_strength`,
+`KHR_materials_unlit`, `KHR_texture_transform`, `KHR_lights_punctual`, `KHR_mesh_quantization` and `MSFT_lod`.
+
+Any other extension listed in `extensionsRequired` makes the load fail with `UNSUPPORTED`, as does a primitive compressed
+with Draco or meshopt and a texture whose only image comes through `KHR_texture_basisu` or `EXT_texture_webp`.
+Unsupported extensions that are merely used are ignored: specular-glossiness, iridescence, diffuse transmission,
+dispersion, material variants and GPU instancing import as if absent.
+
+## FBX import
 
 ```c3
-ModelReplaceReport report = gltf::replace_model(&assets, model, "models/city.gltf", missing: missing[..])!;
+import c3d::asset::fbx;
+
+ModelId hero = fbx::load_model(&assets, "characters/hero.fbx")!;
+Node* first = model::instantiate(&assets, &scene, hero)!;
 ```
 
-`replace_document(model, &document, missing)` replaces a live model and its keyed parts from a decoded document.
-`gltf::replace_model` and `fbx::replace_model` decode a file and call it; `gltf::replace_model_memory` mirrors
-`load_model_memory`. The document key must equal the model's key (`INVALID_ARGUMENT` otherwise), and every entry key must
-be nonempty and unique.
+`fbx::load_model(assets, path, options)` converts an FBX file into the same store assets and `ModelTemplate` as glTF, and
+takes the same `LoadOptions`. ufbx loads the file with right-handed Y-up axes, meters and `MODIFY_GEOMETRY` space
+conversion: vertices, node translations and baked translation keys arrive in meters, authored node scales are kept and a
+centimeter Mixamo file ends at scale one. Cameras and lights are converted to look along -Z.
 
-Each entry key is one of:
-
-- a match: a live record of the same kind under that key. It is replaced in place by the kind's replace call, keeps its
-  id, and advances its revision once;
-- an addition: a key absent from the store. It is added as in `publish_document`;
-- a conflict: a key held by another kind, a builtin texture or sampler, or the model itself (`INVALID_ARGUMENT`).
-
-References inside the document and its template are remapped to the matched and added ids before each entry is replaced.
-A template reference that is unset, outside the document's entries or a dead store record faults `INVALID_ARGUMENT`, as in
-`publish_document`.
-The check phase decides every fault, so a fault leaves the store and the document as they were; on success the document is
-emptied.
-
-A replacement faults with `INCOMPATIBLE_STRUCTURE` when a matched geometry, texture, skeleton or clip breaks the
-structural rules of its kind (see Replacing geometry, skeletons and clips), a matched clip changes its name, or the new
-template differs in its structural signature from the current one. The signature is:
-
-- the node count and each node's parent;
-- the mesh list in order: node, geometry, material;
-- the skin list in order: mesh node, skeleton, joint nodes;
-- the LOD groups in order: node and the full description.
-
-Node names, local transforms, layers, visibility, lights, cameras and the clip list may change. This is the field set the
-serialization add-on compares, so a file saved before a compatible replacement still loads after it. The response to
-`INCOMPATIBLE_STRUCTURE` is to remove the model, add it again and instantiate again.
-
-`replace_model_owned(model, &template)` swaps the template alone, under the same signature rule.
-
-Existing `ModelInstance`s keep the nodes, base pose, morph baselines, lights, cameras and clip list they were created with.
-They show the new meshes, textures and clips because their ids are unchanged. Instances created afterwards use the new
-template. Prepared crowds keep their captured node and morph layout, while compatible clips allocate their own cursors
-at play or seed replacement. The number of tracks is not limited by the template's original clip list.
-
-Missing parts are records whose key is `<model key>#<suffix>`, where the suffix contains no further `#`, that the document
-does not name. This is the importers' sub-asset form (`#mesh`, `#material`, `#image`, `#sampler`, `#skeleton`, `#anim`).
-Derived records, such as the clips `fbx::retarget_clips` keys `<anim path>#anim/<i>#<target>#<mode>`, are never reported.
-`ModelReplaceReport.missing` counts them all; the optional `missing` slice receives the first `missing.len`, ordered by
-`AssetKind`, then by key bytes. The store keeps them, as `remove_model` does; removing one is the application's call.
-
-Call replacements from the owner thread, outside frame recording. The report holds `replaced`, `added` and `missing`.
-
-## Supported and unsupported extensions
-
-Supported: `KHR_materials_clearcoat`, `KHR_materials_sheen`,
-`KHR_materials_transmission`, `KHR_materials_volume`, `KHR_materials_ior`,
-`KHR_materials_specular`, `KHR_materials_anisotropy`,
-`KHR_materials_emissive_strength`, `KHR_materials_unlit`,
-`KHR_texture_transform`, `KHR_lights_punctual`, `KHR_mesh_quantization`.
-
-Any other extension listed in `extensionsRequired` makes the load fail with
-`UNSUPPORTED`, as does a primitive compressed with Draco or meshopt, and a
-texture whose only image comes through `KHR_texture_basisu` or
-`EXT_texture_webp`. Unsupported extensions that are merely used are ignored:
-specular-glossiness, iridescence, diffuse transmission, dispersion, material
-variants and GPU instancing import as if absent.
-
-## File sources
-
-Every file an importer or the asynchronous loader reads goes through the store's
-file source. With none set, files come from the file system.
-
-```c3
-fn char[]? read_pack(void* user, Allocator allocator, String path) {
-    Pack* pack = user;
-    return pack.read(allocator, path);
-}
-
-AssetStoreDesc desc = asset::default_asset_store_desc();
-desc.file_source = { .read = &read_pack, .user = &pack };
-AssetStore assets = asset::create_asset_store(mem, desc);
-```
-
-- `AssetStoreDesc.file_source` is copied at `create_asset_store` and has no setter.
-  The `user` pointer must outlive the store. A null `read` selects the file system.
-- A `ReadFileFn` returns the whole file in bytes allocated with the given allocator,
-  which the caller frees. Any fault it returns reaches the importer as
-  `ASSET_IO_ERROR`, so importer fault lists do not change.
-- The asynchronous loader copies the source at `create_async_loader` and calls it
-  from its worker thread, while the owner thread may call it for synchronous loads.
-  A source must be thread-safe and must not call into the store.
-- The decoders that take no store, `gltf::decode_model`, `gltf::decode_model_memory`,
-  their `_with_source` forms and `fbx::decode_model`, take a trailing
-  `FileSource file_source = {}`. The `_memory` entry points read external buffers
-  and images through it under `base_dir`.
-- `AssetStore.read_file(allocator, path)` reads through the store's source, and
-  `asset::read_file_system` is the default implementation, so a custom source can
-  fall back to loose files.
-
-A source sees one canonical form of every path. `asset::normalize_path` turns `\`
-into `/`, keeps an absolute prefix (`/`, `X:/` or `//server/share`), drops empty
-and `.` segments, and collapses `name/..` pairs. A `..` with nothing to remove
-stays. It never decodes `%`; glTF URIs are decoded as before, and application
-paths and FBX file names are used literally.
-
-| Importer forms | Source receives |
+| Asset | FBX key |
 | --- | --- |
-| `models/a.gltf` | `models/a.gltf` |
-| buffer `x.bin` and image `textures/a.png` of `model.gltf` | `x.bin` and `textures/a.png` |
-| image `./textures/a.png` of `models/a.gltf` | `models/textures/a.png` |
-| `C:\art\..\a.fbx` | `C:/a.fbx` |
-| FBX texture, relative then absolute | each in normalized form, in that order |
+| Model template | `<path>` |
+| Material part `j` of mesh `m` | `<path>#mesh/<m>/<j>` |
+| Material `i` | `<path>#material/<i>` |
+| Default material for parts without one | `<path>#material/default` |
+| Texture `t` as sRGB color or linear data | `<path>#image/<t>/srgb`, `<path>#image/<t>/linear` (normal maps use the `normal_rgb` and `normal_rg` forms above) |
+| Packed roughness `r` and metalness `m` | `<path>#image/<r>+<m>/metallic_roughness/<inverted\|direct>` |
+| Base color `b` with opacity `o` | `<path>#image/<b>+<o>/srgb` |
+| Sampler for mixed wrap modes | `<path>#sampler/repeat_clamp`, `<path>#sampler/clamp_repeat` |
+| Skin deformer `s` | `<path>#skeleton/<s>` |
+| Animation stack `k` | `<path>#anim/<k>` |
 
-Keys never change: a model key and its content keys keep the path exactly as
-given. With the default source the only difference from reading the path
-directly is that `..` collapses before the operating system sees it, which
-matters on POSIX only when the path crosses a symlinked directory.
+Indices are ufbx typed IDs; an absent source in a packed key is `-`. `inverted` marks a glossiness source converted to
+roughness.
+
+- **Nodes.** Template nodes are the file's nodes depth first below the root. A node with a mesh gains one child per
+  non-empty material part, named `<node name>/part/<j>`, before its authored children. The child's local transform is the
+  node's geometry transform, which FBX applies to the mesh and not to the node's children.
+- **Geometry.** Faces are triangulated and corners with identical attributes merged. Streams: positions, normals
+  (generated when absent), UV sets 0 and 1, the first color set, authored tangents when both tangents and bitangents
+  exist, joints and weights. UV v is flipped, because FBX places the UV origin at the bottom left and c3d decodes images
+  top row first; the authored tangent handedness follows the flip. Tangents are otherwise generated as for glTF.
+- **Materials.** Every material becomes `STANDARD` from ufbx's PBR maps, which ufbx also derives for Lambert and Phong
+  materials. A property connected to a texture takes its value from the texture; the base and emission factors still
+  multiply. Opacity below one or an opacity texture selects blending. Base color, emissive, normal and occlusion textures
+  map directly. Separate roughness and metalness textures are packed into one metallic-roughness map (roughness in green,
+  metalness in blue), and an opacity texture is multiplied into a copy of the base color's alpha; sources of different
+  sizes are resampled to the larger. Texture bytes come from embedded content, then the relative path next to the file,
+  then the absolute path.
+- **Skins.** Each skin deformer becomes a skeleton in cluster order, with the bone's local transform as rest pose and
+  ufbx's geometry-to-bone matrix as inverse bind. Vertices keep their four largest weights, renormalized. When a skinned
+  mesh has vertices without weights, the skeleton gains one last joint bound to the mesh part itself with an identity
+  inverse bind, so those vertices follow the mesh rigidly.
+- **Blend shapes.** Every blend channel becomes a `MorphChannel` and each of its keyframe shapes a `MorphTarget`, so
+  in-between shapes deform as authored ([Animation deformation](animation_deformation.md#what-deforms)). Default morph
+  weights are the channels' weights.
+- **Animation.** Each animation stack is baked at the file frame rate from time zero into one clip: linear translation,
+  rotation and scale tracks per animated node, and one morph-weight track per part child of a mesh with animated channels,
+  holding every channel's weight per key.
+- **Animation files.** A file that carries animation for another model, such as a Mixamo animation downloaded without
+  skin, loads through `fbx::load_animations`, which rebinds each stack onto the model's template by node name
+  ([Retargeting](animation_retargeting.md)).
+
+Unsupported: texture UV transforms (`UNSUPPORTED`), UV set selection by name (textures use UV set 0), a mesh with more than
+one skin deformer (`UNSUPPORTED`), dual-quaternion skinning (imported as linear), area and volume lights (skipped), NURBS,
+constraints and geometry caches. A texture that has neither embedded content nor a readable file fails with
+`ASSET_IO_ERROR`; any other ufbx load failure, a non-finite material value or invalid in-between weights fail with
+`ASSET_FORMAT_ERROR`. A fault rolls back as for glTF.
 
 ## Faults
 
@@ -369,313 +300,36 @@ matters on POSIX only when the path crosses a symlinked directory.
 | `CAPACITY_EXCEEDED` | A store pool has fewer free slots than the model needs. |
 | `INVALID_ARGUMENT` | The model key or a content key is already present, an image file is empty, a skin stream has invalid influences, or a storage texture has a non-storage format. |
 | `INVALID_ID` | `instantiate` received a dead model id. |
-| `INCOMPATIBLE_STRUCTURE` | A geometry, texture, skeleton, clip or model replacement changes a count or layout that live components were sized against. |
+| `INCOMPATIBLE_STRUCTURE` | A replacement changes a count or layout that live components were sized against ([Asset loading](asset_loading.md#replace-a-model)). |
 
-A loader decides every store fault before it inserts anything, so a fault
-leaves the store as it was. An instantiation that runs out of nodes removes
-the partial subtree and leaves no instance behind.
+A loader decides every store fault before it inserts anything, so a fault leaves the store as it was.
 
-## Decode and publish
-
-```c3
-ModelDocument document = gltf::decode_model(assets.allocator, "models/helmet.glb")!;
-defer asset::destroy_model_document(&document);
-ModelId helmet = assets.publish_document(&document)!;
-```
-
-Every loader is a decode followed by a publish. `gltf::decode_model`,
-`gltf::decode_model_memory` and `fbx::decode_model` read the file into a
-`ModelDocument` and touch no store, scene or renderer. The allocator owns
-everything in the document; it must be the allocator of the store the
-document is published into, and never `tmem`, because the decoder opens a
-temporary pool of its own.
-
-`AssetStore.publish_document` inserts the document's samplers, textures,
-materials, geometries, skeletons and clips, then its template as a model under
-the document key. Before the first insertion it checks every key against the
-store and against the other keys of the document, the free slots of every pool
-the document needs, and the content: no `CUSTOM` material, valid skin
-influences, storage formats on storage textures. A failed check returns its
-fault with the store and the document untouched. On success the store owns
-every payload and the document is empty. Call `destroy_model_document` after
-either outcome.
-
-Inside a document, a reference to one of its entries is a typed id holding
-the entry index plus one at generation zero; no pool ever issues generation
-zero, so a reference never resolves in a store. The zero id means none, as
-everywhere else. Publish maps each reference to the id the store issued; the
-builtin texture and sampler ids, which a converter may put in a material slot,
-pass through unchanged.
-
-An application can build a document by hand: `create_model_document` with a
-`ModelDocumentBounds`, then `push_sampler`, `push_texture`, `push_material`,
-`push_geometry`, `push_skeleton` and `push_clip`, each of which returns the
-reference to use in later entries and in the template. A bound is the most
-entries of that kind the document will hold. Every entry array is allocated at
-its bound up front, a push past a bound is a programming error, and unused
-capacity costs one entry record.
-
-| Function | Fault | Meaning |
-| --- | --- | --- |
-| `decode_model`, `decode_model_memory` | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED` | As for the loaders above. |
-| | `INVALID_ARGUMENT` | An image file has zero bytes. |
-| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, a clip has invalid or unsorted events, a storage texture has a non-storage format, or a template reference is unset, outside the document's entries or a dead store record. |
-| | `CAPACITY_EXCEEDED` | A pool has fewer free slots than the document has entries of that kind; the model pool needs one. |
-
-## Background loading
-
-`c3d::asset::loader` decodes files on one worker thread. The worker also validates store-independent content and
-builds geometry shape, skin bounds and morph bounds before the request becomes `DECODED`. It never reads or writes
-the live store, scene or renderer. Publication checks current keys, capacities, references and replacement structure
-on the owner thread, then transfers the private prepared payloads without rebuilding their derived data.
-
-Ordinary public `ModelDocument` values remain editable. `publish_document` and `replace_document` validate and prepare
-the document presented to each call, so edits after decoding cannot reuse stale derived data. A fault preserves the
-store and that public document. Invalid or unsorted clip events fault before any insertion.
-
-```c3
-AsyncLoader loader = loader::create_async_loader(mem, &assets)!;
-defer loader::destroy_async_loader(&loader);
-LoadId request = loader.request({
-    .path = "models/city.gltf",
-    .format = ModelFormat.GLTF,
-    .options = asset::LOAD_OPTIONS_DEFAULT,
-})!;
-
-PublishReport publication = loader.publish_within({ .items = 1024 });
-LoadStatus status = loader.status(request);
-if (status.phase == LoadPhase.PUBLISHED) {
-    prepare = renderer.begin_prepare_model(status.model)!;
-    loader.release(request)!;
-} else if (status.phase == LoadPhase.FAILED) {
-    io::eprintfn("Model loading failed: %s", status.failure);
-    loader.release(request)!;
-} else if (status.phase == LoadPhase.CANCELLED) {
-    loader.release(request)!;
-}
-```
-
-The publication/status fragment runs on the owner thread while this request is live. Handle a terminal result once,
-then stop querying its released id. Retain the preparation id and instantiate when it reaches `READY`
-([Views](views.md#budgeted-preparation)). `publish()` remains the unbounded alternative and returns the number of
-requests that this call moved to `PUBLISHED` or commit `FAILED`; earlier worker failures are not in that count.
-
-### Publication allowance and reports
-
-`PublishLimits.items` is a logical item allowance per call. Zero is unbounded. Decoded documents are admitted
-atomically in FIFO order; a head that cannot fit stops the call, and later smaller documents do not bypass it. An
-admitted commit failure consumes its charge and leaves existing assets unchanged.
-
-A document's charge is one item for the model and one per entry, template node, template mesh, skin joint node, LOD
-part, morph target, morph channel, skeleton joint and clip track. The worker computes it while decoding. A matched entry
-keeps its structure, so the incoming document also measures the payload a replacement frees. A replacement adds one
-item per store key in its model's part namespace (`<model key>#<suffix>`, as for missing parts), which it visits to
-collect missing parts; admission reads that count with one lookup. Items do not count key or name bytes and promise no
-CPU instruction or wall-clock limit.
-
-The store indexes keys by part namespace as they are registered, so collecting missing parts never scans the key map.
-The key map and the namespace index are sized for built-in pools at store creation and extended when a custom pool is
-first registered; publication does not trigger a table rehash.
-
-| `PublishReport` field | Meaning |
-| --- | --- |
-| `published` | Requests this call published. |
-| `failed` | Commit failures in this call, excluding earlier decode failures. |
-| `items_used` | Charges of the requests this call admitted. |
-| `deferred` | A decoded head could not fit. |
-| `required_items` | The deferred head's charge; zero when none. |
-
-A deferred head spends nothing. The caller can raise the allowance to `required_items` or select unbounded
-publication. A depleted finite allowance stays finite; its zero remainder does not become unbounded.
-
-### Cancellation and request lifetime
-
-`cancel(id)` abandons loading; it does not interrupt a parser or `FileSource` operation.
-
-| Phase at cancellation | Result |
-| --- | --- |
-| `QUEUED` | Becomes terminal `CANCELLED`; no decode starts. |
-| `DECODING` | Becomes pending `CANCELLING`; the worker finishes, discards its result, then acknowledges `CANCELLED`. |
-| `DECODED` | The owner destroys raw and derived data before terminal `CANCELLED`. This explicit cleanup is outside the publication allowance. |
-| `PUBLISHED`, `FAILED`, `CANCELLING`, `CANCELLED` | No-op; completed results and published assets stay intact. |
-
-A `CANCELLING` request retains its path and slot. Pending duplicate paths are rejected, and pending requests cannot be
-released. Release a terminal request explicitly; the generation advances and old status/cancel/release operations
-cannot succeed against a reused slot. A stale or released id faults `INVALID_ID` on `cancel`/`release`; `status` reports
-`FAILED` with `failure == INVALID_ID` for stale, released or zero ids.
-
-One thread calls `request`, `status`, `publish`, `publish_within`, `cancel`, `counters`, `release` and destruction. It is
-the only thread that mutates the store. Both allocators must support concurrent worker use; neither can be `tmem` or an
-unlocked arena. The worker owns its temporary pool. The copied `FileSource` callback/context keeps its existing
-thread-safety and lifetime contract and outlives the store. Active cancellation keeps parser-owned source bytes alive
-until the decoder releases them.
-
-`LoadRequest.replace` selects a live model instead of adding one. Its path must equal the model key. A removed target
-fails `INVALID_ID` at publication; incompatible replacement fails `INCOMPATIBLE_STRUCTURE` with the old content intact.
-`LoadStatus.model` and `report` retain the replaced id and counts. `LoadRequest.missing` is borrowed until the request
-reaches a terminal phase; publication alone writes it, and cancellation never does.
-
-Capacity defaults to eight slots and bounds requests, not payload bytes. A decoded slot can retain a complete document
-and derived metadata until publication or cancellation. Releasing a request does not unload published assets.
-`destroy_async_loader` stops new selection, joins the current decode, and disposes every unpublished request. Destroy
-it before the store; shutdown and active abandonment can wait for a source/parser call to finish.
-
-### Counters
-
-`counters()` snapshots pending phase counts (`queued`, `decoding`, `decoded`, `cancelling`) and cumulative
-`publications`, `decode_failures`, `commit_failures`, `cancellations`, `publication_items` and `decode_ns`. Each terminal
-transition counts once. Decode time includes independent preparation and is kept in nanoseconds. A publication report
-contains only its current call and has no cancellation field or event cursor.
-
-| Function | Fault | Meaning |
-| --- | --- | --- |
-| `create_async_loader` | `thread::INIT_FAILED` | Mutex, condition variable or worker initialization failed; owned resources are released. |
-| `request` | `INVALID_ARGUMENT` | The add path is already a model key, a pending request owns the path, or a replacement path differs from its model key. |
-| | `CAPACITY_EXCEEDED` | Every slot has an unreleased request. |
-| | `INVALID_ID` | The replacement model is dead. |
-| `cancel`, `release` | `INVALID_ID` | Stale, released or never-issued id. Pending release is a programming error. |
-| `status` (`FAILED.failure`) | `INVALID_ID` | Stale, released or zero request id. |
-| | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ARGUMENT` | Worker decode or independent preparation failed. |
-| | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED`, `INCOMPATIBLE_STRUCTURE`, `INVALID_ID` | Owner publication failed without changing existing assets. |
-
-## CPU release
-
-Templates hold only ids, names and transforms. Releasing a geometry's CPU
-arrays with `release_geometry_cpu` after the renderer uploaded it does not
-affect instantiation, which copies nothing from the geometry.
-
-## FBX import
-
-```c3
-ModelId hero = fbx::load_model(&assets, "characters/hero.fbx")!;
-Node* first = model::instantiate(&assets, &scene, hero)!;
-```
-
-`fbx::load_model(assets, path, options)` converts an FBX file into the same
-store assets and `ModelTemplate` as glTF, and takes the same `LoadOptions`.
-ufbx loads the file with right-handed Y-up axes, meters and
-`MODIFY_GEOMETRY` space conversion: vertices, node translations and baked
-translation keys arrive in meters, authored node scales are kept, and a
-centimeter Mixamo file ends at scale one. Cameras and lights are converted to
-look along -Z.
-
-| Asset | Key |
-| --- | --- |
-| Model template | `<path>` |
-| Material part `j` of mesh `m` | `<path>#mesh/<m>/<j>` |
-| Material `i` | `<path>#material/<i>` |
-| Default material for parts without one | `<path>#material/default` |
-| Texture `t` decoded as sRGB color or linear data | `<path>#image/<t>/srgb`, `<path>#image/<t>/linear` |
-| Packed roughness `r` and metalness `m` | `<path>#image/<r>+<m>/metallic_roughness` |
-| Base color `b` with opacity `o` | `<path>#image/<b>+<o>/srgb` |
-| Sampler for mixed wrap modes | `<path>#sampler/repeat_clamp`, `<path>#sampler/clamp_repeat` |
-| Skin deformer `s` | `<path>#skeleton/<s>` |
-| Animation stack `k` | `<path>#anim/<k>` |
-
-Indices are ufbx typed ids; an absent source in a packed key is `-`.
-
-**Nodes.** Template nodes are the file's nodes depth first below the root. A
-node with a mesh gains one child per non-empty material part, named
-`<node name>/part/<j>`, before its authored children; the child's local
-transform is the node's geometry transform, which FBX applies to the mesh and
-not to the node's children.
-
-**Geometry.** Faces are triangulated and corners with identical attributes
-merged. Streams: positions, normals (generated when absent), UV sets 0 and 1,
-the first color set, authored tangents when both tangents and bitangents
-exist, joints and weights. UV v is flipped, because FBX places the UV origin
-at the bottom left and c3d decodes images top row first; the authored tangent
-handedness follows the flip. Tangents are otherwise generated as for glTF.
-
-**Materials.** Every material becomes `STANDARD` from ufbx's PBR maps, which
-ufbx also derives for Lambert and Phong materials. A property connected to a
-texture takes its value from the texture; the base and emission factors still
-multiply. Opacity below one or an opacity texture selects blending. Base
-color, emissive, normal and occlusion textures map directly. Separate
-roughness and metalness textures are packed into one metallic-roughness map
-(roughness in green, metalness in blue), and an opacity texture is multiplied
-into a copy of the base color's alpha; sources of different sizes are resampled
-to the larger. Texture bytes come from embedded content, then the relative
-path next to the file, then the absolute path.
-
-**Skins.** Each skin deformer becomes a skeleton in cluster order, with the
-bone's local transform as rest pose and ufbx's geometry-to-bone matrix as
-inverse bind. Vertices keep their four largest weights, renormalized. When a
-skinned mesh has vertices without weights, the skeleton gains one last joint
-bound to the mesh part itself with an identity inverse bind, so those vertices
-follow the mesh rigidly.
-
-**Blend shapes.** Every blend channel becomes a `MorphChannel` and each of its
-keyframe shapes a `MorphTarget`, so in-between shapes deform as authored
-([Animation](animation.md)). Default morph weights are the channels' weights.
-
-**Animation.** Each animation stack is baked at the file frame rate from time
-zero into one clip: linear translation, rotation and scale tracks per animated
-node, and one morph-weight track per part child of a mesh with animated
-channels, holding every channel's weight per key.
-
-**Animation files.** `fbx::load_animations(allocator, assets, path, model,
-options)` loads a file that carries animation for another model, such as a
-Mixamo animation downloaded without skin: the file is parsed and baked without
-inserting anything of its own, each stack is rebound onto the model's template
-nodes by name through `c3d::anim::retarget` ([Animation](animation.md)), and
-the clips are stored under `<path>#anim/<k>#<model key>#<keep|strip_xz|extract>`
-so one file can serve several characters and root-motion modes. The returned
-ids live in the caller's allocator. A dead model id is `INVALID_ID`; an
-unmatched animated node is `ASSET_FORMAT_ERROR` unless `allow_partial`.
-
-Unsupported: texture UV transforms (`UNSUPPORTED`), UV set selection by name
-(textures use UV set 0), a mesh with more than one skin deformer
-(`UNSUPPORTED`), dual-quaternion skinning (imported as linear), area and
-volume lights (skipped), NURBS, constraints and geometry caches. A texture
-that has neither embedded content nor a readable file fails with
-`ASSET_IO_ERROR`; any other ufbx load failure, a non-finite material value or
-invalid in-between weights fail with `ASSET_FORMAT_ERROR`. Rollback on a fault
-matches glTF.
-
-`fbx::load_animations_with_profile` borrows a prepared retarget profile,
-a target model and an explicit nonempty variant name. It validates the
-animation file's actual imported template against the profile, including
-files with no animation stacks. The returned clip-id array uses the caller
-allocator; clip data belongs to the asset store.
-
-Profiled keys append `#profile/<byte length>:<variant>` to the existing animation
-key. Distinct names keep calibration variants separate. Reusing a name faults
-before publication, and failure while baking or inserting any stack removes
-all clips inserted by that call. The existing animation loader keeps its keys
-and behavior. See [calibrated profiles](animation.md#calibrated-profiles) for
-profile ownership, mapping and root-motion setup.
-
-## Example
+## Run the examples
 
 ```bash
 python3 scripts/build.py --example gltf_viewer
-./examples/build/gltf_viewer path/to/model.glb --gpu-timings
+./examples/build/gltf_viewer path/to/model.glb
 ```
 
-`streaming` renders a small scene while a glTF or GLB file decodes on the loader's
-worker (`./examples/build/streaming path/to/model.gltf`, the bundled BoxTextured
-by default; FBX paths end `FAILED` with `ASSET_FORMAT_ERROR` because the example
-requests the glTF importer). The panel shows phases, worker/observed decode time, publication items and counters,
-and the existing budgeted preparation progress. Loading can be cancelled before publication. A deferred document
-stays queued until the caller selects the reported item allowance; publication never silently bypasses it.
-Terminal request slots are released, and visible instantiation waits for preparation to become ready.
+| Example | Shows |
+| --- | --- |
+| `gltf_viewer` | Loads a model (default: the bundled BoxTextured), instantiates it twice side by side, prints the template's counts and spins the right instance. The bundled `RiggedSimple.glb` and `AnimatedMorphCube.glb` exercise skins and morphs. `--benchmark` runs the headless scene benchmark ([Benchmarking](benchmarking.md#scene-benchmark)); `--texture-budget <MiB>` starts it under a texture budget ([Residency and memory budgets](textures.md#residency-and-memory-budgets)). |
+| `streaming` | Renders a small scene while a glTF or GLB file decodes on the loader's worker ([Asset loading](asset_loading.md#background-loading)). |
 
-`gltf_viewer` loads the argument path, or the bundled
-[BoxTextured](../examples/assets/gltf/README.md) sample, instantiates it twice
-side by side under a studio environment and one directional light, and spins
-the right instance. It prints the template's node, mesh, camera, light,
-skeleton, skin and clip counts on load; the bundled `RiggedSimple.glb` and
-`AnimatedMorphCube.glb` exercise the skin and morph paths. Drag to orbit, scroll to zoom, release Escape to quit.
-The Camera panel, or `F`, switches to a free camera that starts from the orbit pose:
-right-drag looks, `W A S D` move along the view, `Q`/`E` move down and up, Shift is
-four times faster, and the wheel scales the speed. `--benchmark` runs the headless
-scene benchmark instead; see [Benchmarking](benchmarking.md#scene-benchmark).
-Imported cameras and lights are instantiated, but the example renders through
-its own orbit camera. The Textures panel sets the texture budget and shows the
-resident bytes, raises, evictions, bias and starved count, with one row per
-texture: extent, resident and total mips, resident KiB, required mip, last used
-frame, and whether it is streamed or pinned. `--texture-budget <MiB>` (or
-`--texture-budget=<MiB>`) starts the viewer, and the benchmark, under a budget; zero or
-absent leaves textures unbudgeted. See
-[Residency and memory budgets](textures.md#residency-and-memory-budgets).
+The bundled sample assets are described in [examples/assets/gltf/README.md](../examples/assets/gltf/README.md).
+
+## Limits
+
+- glTF: Draco, meshopt, basisu and WebP images and unsupported required extensions fail the load.
+- glTF `MSFT_lod`: rigid whole-owner levels only, at most five levels.
+- FBX: no UV transforms, one skin deformer per mesh, linear skinning only.
+- Every key must be new: re-importing a path needs `replace_model` or a removed model ([Asset loading](asset_loading.md)).
+- Loading is synchronous on the calling thread; use the background loader to avoid stalls.
+
+## See also
+
+- [Asset store](assets.md) for ids, keys and capacities.
+- [Asset loading](asset_loading.md) for decode and publish, replacement and background loading.
+- [Animation](animation.md) and [Animation retargeting](animation_retargeting.md) for clips.
+- [Whole-object LOD](lod.md) for `LodGroup`.
+- [Textures](textures.md) and [Materials](materials.md) for the imported texture and material assets.
