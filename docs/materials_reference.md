@@ -238,9 +238,11 @@ or UV derivatives, keep the geometry normal. A decoded zero-length map normal us
 `AssetStore.replace_material` and `mark_material_dirty` return no fault. A pairing fault from the cases above can still
 appear at draw time, as with `add_material`, because a material cannot see which geometries draw it.
 
-## Storage layout
+## Capacity and storage
 
-Renderer material slots are `render::MATERIAL_STRIDE` bytes in a material heap. Applications edit asset material slots
-and let the renderer resolve the bindings. The generated twins in `c3d::shader` (`StandardMaterialGpu`,
+The asset store holds at most `AssetStoreDesc.max_materials` materials (default 4096). `add_material` faults
+`CAPACITY_EXCEEDED` past that. The renderer allocates a device heap of one `render::MATERIAL_STRIDE`-byte block for each
+possible material when it is created, so the heap size follows that capacity. Applications edit asset material slots and
+let the renderer resolve the bindings. The generated twins in `c3d::shader` (`StandardMaterialGpu`,
 `PhysicalMaterialGpu`, `ToonMaterialGpu`, `BasicMaterialGpu`, `CustomMaterialGpu`) define the shader-visible layout, and
 `abi/c3d.abi` is the source of truth ([Architecture](architecture.md)).
