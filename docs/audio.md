@@ -91,7 +91,7 @@ Under `C3D_AUDIO_SERIAL`, `audio::register_serial_codecs()` makes `AudioEmitter`
 register the clip kind and hold a clip under that key. The bus index is meaningful only against the reading system's
 `AudioDesc.buses`; an index past the table fails the voice start and counts in `AudioStats.start_failures`. Playback
 position is not saved: a loaded playing emitter starts from the beginning at the next `update`. See
-[serialization](serialization.md).
+[serialization](serialization_reference.md#audio).
 
 ## Null device and `mix`
 

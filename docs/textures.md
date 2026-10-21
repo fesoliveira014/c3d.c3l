@@ -764,7 +764,7 @@ fixtures are project-authored; see [fixture provenance](../test/fixtures/README.
 
 ## Bounded initial preparation
 
-Model [preparation steps](views.md#budgeted-preparation) split supplied or generated
+Model [preparation steps](preparation.md#budgeted-preparation) split supplied or generated
 texture uploads into format-aligned mip/layer row bands. Single-mip RGBA8 UNORM and
 sRGB volumes split by slice; unsupported volume formats and generation remain
 unsupported. Generated 2D/cube mips use the synchronous filter and rounding, with

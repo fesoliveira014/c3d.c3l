@@ -681,7 +681,7 @@ generalized extraction and the inertia opt-in through `c3d_serial`. Earlier
 versions retain their authored groups, masks and scale mode, default to planar
 extraction and disabled inertia, and preserve the original 1D/boolean/DIFFERENCE
 defaults where those features were absent. Playback clocks, fades and transitions
-follow the authored restart rules ([Serialization](serialization.md)).
+follow the authored restart rules ([Serialization](serialization_reference.md#models-rigs-and-animation)).
 
 ## Layered example and CPU measurements
 

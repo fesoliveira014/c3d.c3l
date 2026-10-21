@@ -221,7 +221,7 @@ height of 0 or above 8,192, `--ssgi-steps` outside 4 to 64 with screen-space GI 
 | `--shading forward\|deferred\|path-traced` | `path-traced`: a ray-tracing-pipeline adapter | `many_lights` and `gltf_viewer`: shading path of the measured view; path tracing uses the default settings and forces the flat light mode. Reported as `gpu_path_trace_ms`. |
 
 `many_lights` also takes `--mode flat|clustered`, `--lights N`, `--capacity N`, `--range R` and `--depth-pruning on|off`
-([depth pruning](many_lights.md#depth-pruning)). Keep extent, camera, range, capacity and material fixed when comparing
+([depth pruning](lights.md#depth-pruning)). Keep extent, camera, range, capacity and material fixed when comparing
 flat and clustered modes or the shading paths. Report overflow counts: an overflow falls back to the complete flat light
 list instead of dropping contributions. A correctness stress:
 
@@ -465,6 +465,6 @@ Measure the overhead of a configuration on an idle machine, per suite (`render` 
 - [Profiling](profiling.md): capture lifetimes, scopes and the GPU capture these options enable.
 - [Jobs](jobs.md): `job_bench`, the job pool benchmark.
 - [Development](development.md): building, and running on software Vulkan.
-- Example options that select a benchmark live with their feature: [many lights](many_lights.md), [sky](sky.md),
+- Example options that select a benchmark live with their feature: [lights](lights.md), [sky](sky.md),
   [instancing](instancing.md), [post](post.md), [environments](environments.md), [reflection
   probes](reflection_probes.md) and [shadows](shadows.md).
