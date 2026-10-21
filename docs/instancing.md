@@ -155,7 +155,7 @@ scene.set_instance_device(
 | Attach | `set_instance_device`, `InstanceDevice` | `set_billboard_device`, `BillboardDevice` | `set_ribbon_device`, `RibbonDevice` |
 
 Records of an instance batch are packed by `pack_instance_record` from the public `instance_record.glsl` ([public
-includes](custom_shaders.md#public-includes)): an affine model, a color and a seed in [0, 1). They must not mirror
+includes](custom_shaders_reference.md#public-includes)): an affine model, a color and a seed in [0, 1). They must not mirror
 space. Records draw as one range, so a negative scale draws with the wrong winding. Motion vectors follow the node
 alone, because a device batch keeps no per-instance history.
 
@@ -230,7 +230,7 @@ and picking still walk every instance.
 - **Index space.** A culled range draws `gl_InstanceIndex` over its visible list. On a blended range it is the draw
   rank, 0 farthest. Built-in stages and `write_mesh_outputs` map it back with `instance_source(draw)`. A custom
   instanced vertex stage that reads per-instance data itself must do the same ([Vertex
-  contract](custom_shaders.md#vertex-contract)).
+  contract](custom_shaders_reference.md#vertex-contract)).
 - **Memory.** Each frame slot owns one device-local arena of `RendererDesc.instance_cull_bytes` (default
   `INSTANCE_CULL_ARENA_BYTES`, 16 MiB), so culling reserves `FRAMES_IN_FLIGHT * instance_cull_bytes` of device memory
   once the first range is listed, which a blended batch does with culling off too. A culling pass places one 32-byte
@@ -260,7 +260,7 @@ rewrites the visible list far to near. Equal depths keep storage order, which ho
 - **Overflow.** A range above `MAX_SORTED_INSTANCES` (2,097,152), or whose list and keys do not fit the arena, draws
   unsorted and unculled from CPU arguments and counts in `Stats.sort_overflows`.
 - **Weighted views.** In a view with `transparency = WEIGHTED`, a batch whose material joins the [weighted
-  pass](materials.md#weighted-transparency) does not sort. Its ranges list and cull like an opaque batch's and have no
+  pass](transparency.md#weighted-transparency) does not sort. Its ranges list and cull like an opaque batch's and have no
   instance limit. A batch with an `ADDITIVE` material keeps the sort in every view. The sorted order applies again when
   the view switches back to `SORTED`.
 
@@ -306,7 +306,7 @@ scene-wide wind is the application's value, copied into its batches. Extraction 
   takes the vertex color's alpha as the weight and consumes it: shading, masking, the depth prepass and shadows see
   vertex alpha 1, so the alpha does not cut a masked material. A geometry without colors then weighs 1 everywhere and
   sways rigidly. A custom vertex stage supplies any weight by writing `vertex.color.a` and selecting `VERTEX_ALPHA`
-  ([Vertex contract](custom_shaders.md#vertex-contract)).
+  ([Vertex contract](custom_shaders_reference.md#vertex-contract)).
 - **Fade.** Each instance collapses toward the base center of its local bound once the view camera's distance to that
   point crosses the instance's vanish distance, hashed from its seed across the band. An instance takes a quarter of the
   band (`FADE_COLLAPSE_SHARE`) to collapse, and one before the band draws exactly as without fade. The cull pass drops

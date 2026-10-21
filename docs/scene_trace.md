@@ -59,7 +59,7 @@ bool blocked = trace_scene_any(scene, origin, direction, distance_to_light, TRAC
   hardware data.
 - The built-in shaders that serve both kinds compile twice through the `SCENE_TRACE_BVH` flag of
   `shaders/variants.json`. A custom stage's traced forms follow the same rule; see
-  [custom shaders](custom_shaders.md#traced-shadows).
+  [custom shaders](custom_shaders_reference.md#traced-shadows).
 
 ### What traces
 
@@ -228,7 +228,7 @@ instance mask, for `trace_scene_any`). A hit on a proxy nearer than it is ignore
   centimetres, rounded up and clamped at 655.35 m, and the lighting resolve, [ray-traced ambient
   occlusion](ambient_occlusion.md#ray-traced) and [ray-traced reflections](reflections.md) read it back. A forward view
   with ray-traced ambient occlusion writes the same word from its depth prepass into an `R32_UINT` `proxy_skip` image;
-  the core fragments write zero, and a shader's [prepass stage](custom_shaders.md#prepass-stage) writes its own height.
+  the core fragments write zero, and a shader's [prepass stage](custom_shaders_reference.md#prepass-stage) writes its own height.
   A multisampled view reads sample 0 of the word: a deferred view's flags and a forward view's multisample `proxy_skip`
   are copied to a single-sample image after the pass that writes them. A forward view's reflections read none, because only Standard and Physical pixels trace and they raise no height.
 - A material that never sets the height writes zero. The path tracer starts its rays at trace hits and is unaffected.

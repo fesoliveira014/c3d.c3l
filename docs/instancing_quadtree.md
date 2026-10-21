@@ -132,7 +132,7 @@ R_d = max(e_d s / T, (R_{d+1} (1 + h) + g_{d+1}) / (1 - b))    for d < D
   `e_d s >= T / (1 + h)`. Every node of a depth takes the same decision, so the drawn nodes of a view share one depth
   (leaves above it aside) and the morph is 0. A stage tells with `FRAME_SELECTION_ORTHOGRAPHIC`, which a shadow layer of
   the view carries as well ([selection camera](views_reference.md#selection-camera)).
-- **Vertex stages.** Under `BOX_RANGES` a [custom vertex stage](custom_shaders.md#quadtree-morph) reads the same
+- **Vertex stages.** Under `BOX_RANGES` a [custom vertex stage](custom_shaders_reference.md#quadtree-morph) reads the same
   `QuadtreeGpu` block through the draw's instance-effects block and calls `quadtree_morph`.
 
 ## Vertex access
@@ -177,5 +177,5 @@ use stays the union of every instance, because the renderer draws non-leaf nodes
 
 - [Explicit instancing](instancing.md) for batches, culling and the culling arena.
 - [Views](views_reference.md#selection-camera) for the selection camera.
-- [Custom shaders](custom_shaders.md#quadtree-morph) for `quadtree_morph`.
+- [Custom shaders](custom_shaders_reference.md#quadtree-morph) for `quadtree_morph`.
 - [Terrain](terrain.md) and [water](water.md) for the trees the landscape add-on builds.
