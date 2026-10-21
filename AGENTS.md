@@ -9,7 +9,6 @@ Entry point for every agent session in this repository. Read it once at task sta
 - **Shading language:** GLSL, Vulkan 1.3 semantics through gpu.c3l. Files are `<name>.<stage>.glsl`; shared includes are plain `.glsl`. The includes listed under `public_includes` in `shaders/variants.json` are the stable contract for custom and package stages. SPIR-V is built offline by `scripts/build_shaders.py`, for core and for every shader package (a directory with `shaders/shaders.json`), and embedded with `$embed`.
 - **Module root:** `c3d`. Every module is `c3d` or a submodule of it (`c3d::render`, `c3d::asset::gltf`). The repository directory name never appears in source.
 - **Build tooling:** `scripts/build.py` is the entry point; it drives ABI codegen, shader compilation, `c3c build`, and optionally `c3c test` and `c3c run`. Python 3.10+ standard library only, under `scripts/`, only for build orchestration and code generation.
-- **Layout and detail:** [docs/architecture.md](docs/architecture.md) holds the module map, the feature flags and the directory map; [docs/development.md](docs/development.md) holds the build, the shader pipeline and the test targets.
 
 ## 1.2 Dependencies
 
@@ -40,26 +39,26 @@ Each add-on is a package under `addons/<name>.c3l/`. `std` is the standard libra
 | --- | --- | --- | --- | --- | --- |
 | `c3d_profile` | `c3d::profile`; private `c3d::render::profile_gpu` under `src/gpu/` | `std` | core types, in either module | `gpu` and neutral profile values, in `profile_gpu` only, under `C3D_PROFILE_GPU` | [profiling](docs/profiling.md) |
 | `c3d_profile_gui` | profiler additions to `c3d::gui` | `std`, `c3d::profile`, `imgui` | core | none | [profiling](docs/profiling.md) |
-| `c3d_physics` | `c3d::physics`, `c3d::physics::collide`, `c3d::physics::cloth` | `std`, core, `b3`; `physics::cloth` imports `c3d::physics` and not `b3`, and `physics::collide` imports `c3d::maths` and `b3` only | `gpu`, `sdl`, `imgui`, `c3d::job` | `c3d::serial` under `C3D_PHYSICS_SERIAL` | [README](addons/c3d_physics.c3l/README.md) |
+| `c3d_physics` | `c3d::physics`, `c3d::physics::collide`, `c3d::physics::cloth` | `std`, core, `b3`; `physics::cloth` imports `c3d::physics` and not `b3`, and `physics::collide` imports `std`, `c3d::maths` and `b3` only | `gpu`, `sdl`, `imgui`, `c3d::job` | `c3d::serial` under `C3D_PHYSICS_SERIAL` | [README](addons/c3d_physics.c3l/README.md) |
 | `c3d_nav` | `c3d::nav`, a port of Recast/Detour | `std`, core | `gpu`, `sdl`, `imgui`, `b3`, `c3d::physics` | `c3d::serial` under `C3D_NAV_SERIAL` | [README](addons/c3d_nav.c3l/README.md) |
 | `c3d_character` | `c3d::character` | `std`, core, `c3d::physics` | `b3`, `gpu`, `sdl`, `imgui` | `c3d::nav` under `C3D_CHARACTER_NAV`; `c3d::serial` under `C3D_CHARACTER_SERIAL` | [README](addons/c3d_character.c3l/README.md) |
 | `c3d_physics_gui` | physics additions to `c3d::gui` | `std`, core, `c3d::physics`, `imgui` | `b3`, `gpu`, `sdl` | `c3d::character`, in `src/character/` alone, under `C3D_PHYSICS_GUI_CHARACTER` | [physics inspector](docs/physics_inspector.md) |
 | `c3d_job` | `c3d::job` | `std`, core | `gpu`, `sdl`, `imgui`, `b3`, another add-on | `c3d::profile`, in `src/profile.c3` alone, under `C3D_PROFILE_CPU` | [jobs](docs/jobs.md) |
-| `c3d_landscape` | `c3d::landscape`, `::terrain`, `::foliage`, `::water`, `::water_gpu` | `std`, core, its lower modules | `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, another add-on | `c3d::serial` under `C3D_LANDSCAPE_SERIAL`; `c3d::render`, in `water_gpu` alone, under `C3D_LANDSCAPE_GPU` | [README](addons/c3d_landscape.c3l/README.md) |
-| `c3d_particle` | `c3d::particle`, `c3d::particle::gpu` | `std`, core | `gpu`, `sdl`, `imgui`, `c3d::physics`, `c3d::job`, `c3d::shader` | `c3d::serial` under `C3D_PARTICLE_SERIAL`; `c3d::render`, in `particle::gpu` alone, under `C3D_PARTICLE_GPU` | [particles](docs/particles.md) |
+| `c3d_landscape` | `c3d::landscape`, `::terrain`, `::foliage`, `::water`, `::water_gpu` | `std`, core, and the landscape modules named in the rule below | `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` outside `water_gpu`, another add-on | `c3d::serial` under `C3D_LANDSCAPE_SERIAL`; `c3d::render`, in `water_gpu` alone, under `C3D_LANDSCAPE_GPU` | [README](addons/c3d_landscape.c3l/README.md) |
+| `c3d_particle` | `c3d::particle`, `c3d::particle::gpu` | `std`, core | `gpu`, `sdl`, `imgui`, `c3d::physics`, `c3d::job`, `c3d::profile`, `c3d::shader`, `c3d::render` outside `particle::gpu` | `c3d::serial` under `C3D_PARTICLE_SERIAL`; `c3d::render`, in `particle::gpu` alone, under `C3D_PARTICLE_GPU` | [particles](docs/particles.md) |
 | `c3d_serial` | `c3d::serial` | `std`, core | renderer and platform dependencies; GPU resources and native systems are never created | none | [README](addons/c3d_serial.c3l/README.md) |
 | `c3d_ui` | `c3d::ui` | `std`, core (including `c3d::render` for the overlay list and `c3d::platform` for input), `clay` | `gpu`, `sdl`, `imgui`, another add-on | none | [README](addons/c3d_ui.c3l/README.md) |
 | `c3d_audio` | `c3d::audio` | `std`, core, `ma` | `gpu`, `sdl`, `imgui`, another add-on | `c3d::serial` under `C3D_AUDIO_SERIAL` | [README](addons/c3d_audio.c3l/README.md) |
 
 Rules for every package:
 
-- **Selection.** Applications select an add-on explicitly in `project.json`; selecting the library is the gate. Core never imports an add-on and carries no feature flag for one. The only core bridges to an add-on are the profiler's: `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency.
+- **Selection.** Applications select an add-on explicitly in `project.json`; selecting the library is the gate. Core never imports an add-on and carries no feature flag for one, with one exception: the profiler. Core imports `c3d::profile` and `c3d::render::profile_gpu` only through two gated bridges, `c3d::instrumentation` under `C3D_PROFILE_CPU` with `C3D_PROFILE_INTERNAL` and `render/profile.c3` under `C3D_PROFILE_GPU`. Core has no unconditional profiler dependency.
 - **Manifest.** An add-on's manifest owns its sources and dependencies; core never compiles add-on sources through its source glob. The manifests of `c3d_physics_gui` and `c3d_profile_gui` name no dependency; consumers select the packages they display, ImGui and the rest.
-- **Features.** A module that needs an optional library, add-on or backend is gated by a `C3D_*` feature and is absent without it. A consumer that enables the feature also selects the dependency it names. The flags are listed in [docs/architecture.md](docs/architecture.md#feature-flags).
-- **Presentation adapters.** `c3d_profile_gui` and `c3d_physics_gui` extend `c3d::gui` under their features. Core and the packages they present never import them.
-- **Serial adapters.** Each of physics, nav, character, landscape, particle and audio keeps `src/serial/`, which imports `c3d::serial` only under `C3D_<PACKAGE>_SERIAL`; consumers select `c3d_serial`. A package's `<package>_serial_test` and the isolated `<package>_serial_policy_test` run beside its feature-off test in `scripts/build.py --test`. `C3D_CHARACTER_SERIAL` requires `C3D_PHYSICS_SERIAL`, and with `C3D_CHARACTER_NAV` also `C3D_NAV_SERIAL`. A new core component needs a classified serialization policy, or `serial_core_policy_test` fails.
+- **Features.** A module that needs an optional library, add-on or backend is gated by a `C3D_*` feature and is absent without it. A consumer that enables the feature also selects the dependency it names, and targets without the feature build without it. The flags are listed in [docs/architecture.md](docs/architecture.md#feature-flags).
+- **Landscape modules.** Within `c3d_landscape`, the root `c3d::landscape` imports `std` and `c3d::asset` only; `terrain` imports the root; `foliage` imports the root and `terrain`; `water` imports the root and `terrain`; `water_gpu` imports the root and `water` and, under `C3D_LANDSCAPE_GPU`, `c3d::render`. No other landscape module imports `c3d::render`. The serial adapter, a root-module file under `C3D_LANDSCAPE_SERIAL`, also imports the submodules and `c3d::serial`.
+- **Presentation adapters.** `c3d_profile_gui` and `c3d_physics_gui` extend `c3d::gui`. Every module of each exists only under its feature (`C3D_PROFILE_GUI` with a capture feature, `C3D_PHYSICS_GUI`), so the imports in their rows apply only while the feature is selected. Core and the packages they present never import them or reference their public types and functions.
+- **Serial adapters.** Each of physics, nav, character, landscape, particle and audio keeps `src/serial/`, which imports `c3d::serial` only under `C3D_<PACKAGE>_SERIAL`; consumers select `c3d_serial` explicitly. A package's `<package>_serial_test` and the isolated `<package>_serial_policy_test` run beside its feature-off test in `scripts/build.py --test`; the character targets run with and without `C3D_CHARACTER_NAV`. `C3D_CHARACTER_SERIAL` requires `C3D_PHYSICS_SERIAL`, and with `C3D_CHARACTER_NAV` also `C3D_NAV_SERIAL`. A new core component needs a classified serialization policy, or `serial_core_policy_test` fails.
 - **Profiler.** The collector's CPU builds need no native or shader setup. GUI consumers select ImGui and the Vulkan bindings explicitly, and GPU data tests also select the backend dependencies; neither data-test project creates a device.
-- **Contracts.** Each subsystem's contract is stated once, in its own page; [docs/architecture.md](docs/architecture.md#package-contracts) indexes them.
 
 # 2. Where truth lives
 
@@ -67,10 +66,10 @@ Rules for every package:
 - Architecture (master and per subsystem): [Architecture](https://app.notion.com/p/3cfcb7903a58819dacdfdcf2492a7879), start at `00 Master Architecture`
 - Milestones and tasks: [Milestones](https://app.notion.com/p/3cfcb7903a58810e9424f58b86397eda) under Development
 - Style baseline (mandatory): [docs/style.md](docs/style.md), the single home of the code-style rules, ported from gpu.c3l's `docs/contributing/style.md` and extended with the allocator, initializer, contract, and docstring rules of the [Style Guide (docs/style.md)](https://app.notion.com/p/3bccb7903a5881089469c7001fa88d7c). Section 6 of this file refines it; nothing here relaxes it.
-- Repository guides: [docs/architecture.md](docs/architecture.md), [docs/development.md](docs/development.md), [docs/release.md](docs/release.md).
+- Repository guides: [docs/architecture.md](docs/architecture.md) (module map, feature flags, directory map, and the index of subsystem contracts), [docs/development.md](docs/development.md) (build, shader pipeline, test targets), [docs/release.md](docs/release.md).
 - Change records (OpenSpec mirrors, one page per change): [Changes](https://app.notion.com/p/3cfcb7903a5881da8d4cdc33909a6a24) under Development
 
-Work items name the architecture sections to read. Read those and follow additional references only when the task requires them. Product documentation describes current behavior, contracts and usage. Proposals, test plans, validation results, review history and review receipts belong in the change artifacts described in section 13, never in `docs/`; the section 8 exemption for development terminology does not make `docs/` a destination for them.
+Work items name the architecture sections to read. Read those and follow additional references only when the task requires them. Product documentation (`docs/`, the root README and the package READMEs) explains current behavior, contracts, limitations and usage. Proposals, test plans, validation results, review history and review receipts belong in the change artifacts described in section 13, never in product documentation; the exemption for development terminology in `docs/` ([docs/style.md](docs/style.md) section 14) does not make product documentation a destination for them.
 
 # 3. Skills, mandatory
 
@@ -121,7 +120,7 @@ Record the tested commit, compiler/options, commands, fixtures and results in ch
 
 Before committing, review the diff and pass the applicable local checks. Do not commit known build failures.
 
-GPU examples run manually; every development GPU run enables Vulkan validation through gpu.c3l. CI runs the full `--test` sequence; cancel obsolete PR runs when supported. Real Vulkan acceptance projects are invoked separately, run manually and never in CI. An acceptance project run directly with `c3c test <target> --path <project>` gets no runtime copy from `build.py`: when it enables `C3D_SHADER_COMPILER` (it links shaderc), copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` or `lib/shaderc.c3l/windows/shaderc_shared.dll` next to its executable first.
+GPU examples run manually; every development GPU run enables Vulkan validation through gpu.c3l. CI runs the full `--test` sequence; cancel obsolete PR runs when supported. Real Vulkan acceptance projects are invoked separately, run manually and never in CI. An acceptance project run directly with `c3c test <target> --path <project>` gets no runtime copy from `build.py`, with one exception: a build of the default set or of the `profile_gpu` example places the library for `test/gpu/profile`. Every acceptance project lists shaderc as a dependency, but only an executable with code under `C3D_SHADER_COMPILER` needs the shared library at run time. When the project enables that feature, copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` or `lib/shaderc.c3l/windows/shaderc_shared.dll` next to its executable first.
 
 # 6. Style
 
@@ -132,11 +131,11 @@ The baseline is [docs/style.md](docs/style.md), the single home of the code-styl
 
 # 7. Docstrings
 
-Every public function, method, macro, constant, and type carries a `<* ... *>` docstring. Nothing else does. The rules, the directive set and the examples are in [docs/style.md](docs/style.md) section 12.
+The docstring rules, the directive set and the examples are in [docs/style.md](docs/style.md) section 12.
 
 # 8. Comments and self-documentation
 
-Code is self-documenting; a comment states a non-obvious why. The comment rules and the ban on development terminology in code (`AGENTS.md`, `docs/` and `scripts/` are exempt) are in [docs/style.md](docs/style.md) sections 13 and 14.
+The comment rules and the ban on development terminology in code are in [docs/style.md](docs/style.md) sections 13 and 14.
 
 # 9. KISS, checks, and tests
 
@@ -162,7 +161,7 @@ Code is self-documenting; a comment states a non-obvious why. The comment rules 
 
 ```
 c3d.c3l/
-├── AGENTS.md  CONTRIBUTING.md  README.md  manifest.json    (.claude/CLAUDE.md is a gitignored symlink to AGENTS.md)
+├── AGENTS.md  CONTRIBUTING.md  README.md  manifest.json
 ├── abi/        c3d.abi: shared C3 and GLSL layouts
 ├── addons/     one <name>.c3l package per add-on (section 1.3)
 ├── csrc/       stb_image and stb_truetype sources
@@ -175,7 +174,7 @@ c3d.c3l/
 └── test/       CPU tests, fixtures, and the manual acceptance projects under test/gpu/
 ```
 
-The full map, with the add-on layout, is in [docs/architecture.md](docs/architecture.md#directory-map).
+The full map, with the add-on layout, is in [docs/architecture.md](docs/architecture.md#directory-map). `.claude/` is gitignored; the bootstrap in section 13 creates `.claude/skills/` and the link `.claude/CLAUDE.md` to this file.
 
 # 12. Anti-patterns, rejected on sight
 
@@ -206,6 +205,7 @@ On a fresh checkout or a new machine, before the first session:
 ```bash
 openspec init --tools none          # then add openspec/ to .gitignore
 mkdir -p .claude/skills             # .claude/ is gitignored
+ln -s ../AGENTS.md .claude/CLAUDE.md   # the harness reads this file through the link
 cp -r <claude-skills>/c3-expert <claude-skills>/c3-style <claude-skills>/c3-bindings .claude/skills/
 cp -r <minimax-skills>/skills/shader-dev .claude/skills/    # optional, GLSL technique
 git submodule update --init --recursive
@@ -243,7 +243,7 @@ Trivial corrections with already agreed scope may collapse to apply, review and 
 
 ## Reviewing
 
-The reviewer uses `docs/style.md` and the applicable section 3 skills, reusing already loaded guidance. Review against the approved proposal/tasks/specs, milestone exit criteria, affected architecture and sections 6 to 9. Flag concrete correctness, contract and style violations. Review fixes against the finding and affected behavior; broaden the review when a fix changes the contract or exposes another problem.
+The reviewer uses `docs/style.md` and the applicable section 3 skills, reusing already loaded guidance. Review against the approved proposal/tasks/specs, milestone exit criteria, affected architecture and sections 6 to 9. Flag concrete correctness, contract and style violations; a missing defensive check is not automatically a defect (section 9). Review fixes against the finding and affected behavior; broaden the review when a fix changes the contract or exposes another problem. The review procedure (inputs, checkout, checks, runs, findings, verdict, authority) is in [REVIEW.md](REVIEW.md).
 
 ## Coordination
 
