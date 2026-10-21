@@ -257,5 +257,5 @@ The manual GPU acceptance cases live in `test/gpu/render`:
 
 - [Animated LOD](lod_animated.md) and [impostors](impostors.md).
 - [Explicit instancing](instancing.md) for sway, fade and culling.
-- [Views](views.md) for `lod_bias`.
+- [Views reference](views_reference.md#viewdesc) for `lod_bias`.
 - [Vegetation](vegetation.md#whole-object-lod) for scattered LOD groups.

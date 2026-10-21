@@ -47,7 +47,7 @@ world transforms.
 - **Submission.** The bake submits and waits for each direction. Frame indices and renderer statistics advance.
 - **Stale atlases.** Source asset edits do not update an existing atlas. Rebake after changing the captured geometry or
   material.
-- **Multisampling.** An installed impostor draws at the view's [multisample count](views.md#multisample-anti-aliasing)
+- **Multisampling.** An installed impostor draws at the view's [multisample count](msaa.md)
   in the multisample pass, but its alpha cut is evaluated once per pixel, so the cut edge is not antialiased. The bake
   renders through an internal single-sample view.
 
@@ -161,5 +161,5 @@ An application that supplies its own atlas builds it to this layout.
 ## See also
 
 - [Whole-object LOD](lod.md) for groups, selection and the fallback.
-- [Views](views.md#multisample-anti-aliasing) for multisampling.
+- [Multisample anti-aliasing](msaa.md) for the multisample pass.
 - [Vegetation](vegetation.md#whole-object-lod) for scattered LOD groups.

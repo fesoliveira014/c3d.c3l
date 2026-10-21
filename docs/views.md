@@ -1,308 +1,164 @@
 # Views and render targets
 
-A view is a renderer-owned record that renders the scene from one camera into one output: the
-window or an application-owned render target. The default view (`renderer.default_view`) writes
-the window; further views are created by the application. One frame renders any number of views
-in application order and submits them together.
+A view is a renderer-owned record that renders the scene from one camera into one output: the window or an
+application-owned render target. The default view (`renderer.default_view`) writes the window; the application creates
+further views. One frame renders any number of views in application order and submits them together. Everything here
+lives in `c3d::render`; every `ViewDesc` field, fault and capacity is in the [views reference](views_reference.md).
 
-Set `FrameInfo.reference_position` to the current absolute camera position when
-rendering far from the origin. `begin_frame` selects one shared origin before
-any view or trace work; producer and mirror views use it too. The default
-reference is zero. Clip planes stay absolute at the API boundary. See
-[camera-relative rendering](large_world.md) for coordinate and history rules.
+## Quick start
 
-```bash
-python3 scripts/build.py --example views
-c3c build views --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
-./examples/build/views --gpu-timings
-```
-
-## Render targets
+A producer view renders into a target and the window view shows the scene, using a live `Renderer renderer`, `Scene
+scene` and two camera nodes. Import `c3d::material`, `c3d::render` and `c3d::render::post`.
 
 ```c3
 RenderTargetId capture = render::create_render_target(&renderer,
     render::render_target_desc(512, 512, PixelFormat.RGBA8_SRGB))!;
 defer (void)render::destroy_render_target(&renderer, capture);
-```
 
-`render_target_desc(width, height, format = RGBA16_FLOAT)` accepts `RGBA16_FLOAT`, `RGBA32_FLOAT`,
-`RGBA8_UNORM` and `RGBA8_SRGB`; other formats fault `UNSUPPORTED`. Every target is a color
-attachment and sampled. `resize_render_target` keeps the id, recreates the image after outstanding
-frames complete, increments the target revision, and resizes every view that writes the target. It
-allocates the new image and every view's new images before it releases an old one, so a fault leaves
-the target, its revision and its views as they were.
-`destroy_render_target` faults `RESOURCE_IN_USE` while a live view selects the target: destroy the
-views first. A full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_render_targets`, 8 by default; see
-[Capacities](#capacities)). Renderer teardown releases remaining views, then targets.
-
-## Views
-
-```c3
 ViewDesc desc = render::texture_view_desc(capture, OutputMode.DISPLAY_LDR);
 desc.post.anti_aliasing = AntiAliasing.NONE;
 ViewId capture_view = render::create_view(&renderer, desc)!;
 defer (void)render::destroy_view(&renderer, capture_view);
-```
 
-`ViewDesc`:
-
-| Field | Meaning |
-| --- | --- |
-| `output` | `WINDOW` or `TEXTURE` |
-| `target` | The `RenderTargetId` a `TEXTURE` view writes; ignored for `WINDOW` |
-| `viewport` | `PixelRect` in output pixels; a zero extent covers the whole output |
-| `render_scale` | Working resolution relative to the viewport, in `(0, MAX_RENDER_SCALE]` |
-| `lod_bias` | Finite log2 bias for [whole-object LOD](lod.md); zero by default, positive adds detail |
-| `color` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color, in physical units whatever the view's [pre-exposure](post.md#pre-exposure) |
-| `post` | The view's `PostStack` (see [display processing](post.md)) |
-| `shading` | `FORWARD`, `DEFERRED` (see [Shading path](#shading-path)) or `PATH_TRACED` (see [path tracing](path_tracing.md)) |
-| `depth_prepass` | A `FORWARD` view draws its opaque set into depth first and shades it once; on in both constructors |
-| `instance_culling` | Batch instances are culled per instance on the GPU in this view, its depth prepass and its shadow layers (see [instancing](instancing.md#instance-culling)); on in both constructors |
-| `lights` | `FLAT` or `CLUSTERED` candidate light selection |
-| `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
-| `ray_tracing` | `RayTracingDesc`: `shadows` and `shadow_samples`, 1 to `MAX_SHADOW_SAMPLES` (16) with zero reading as 1 (see [shadows](shadows.md#soft-shadows)), `reflections` and `max_reflection_roughness`, `reflection_rays`, 1 to `RT_REFLECTION_RAYS_MAX` (4) with zero reading as 1, `reflection_resolution`, `FULL` or `HALF`, and `reflection_history` (see [reflections](reflections.md)); zero disables all |
-| `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
-| `screen_space_gi` | `ScreenSpaceGiDesc`; zero is off (see [screen-space GI](screen_space_gi.md)) |
-| `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
-| `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
-| `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
-| `fog_quality` | `FogQuality`, the froxel size and slice count of the fog volume: `LOW`, `MEDIUM` or `HIGH` (see [volumetric fog](sky.md#volumetric-fog)); `MEDIUM` is the zero value, so an unset desc keeps its grid; a change reallocates the volume |
-| `fog_temporal` | Accumulates the fog volume over frames with a jittered sample and the previous frame's reprojected value (see [temporal accumulation](sky.md#temporal-accumulation)); off in both constructors; needs `volumetric_fog` and keeps a second volume |
-| `cloud_temporal` | Accumulates the view's cloud layer over frames with a jittered march and the previous frame's reprojected radiance (see [cloud temporal accumulation](sky.md#cloud-temporal-accumulation)); off in both constructors; keeps a second pair of cloud images |
-| `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
-| `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
-| `pre_exposure_override` | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a power of two from 2^-16 to 2^16; zero, the default, follows the camera exposure. Any other value faults `INVALID_ARGUMENT` |
-| `transmission_layers` | Snapshots the scene-read list samples, so glass can see glass behind it (see [transmission layers](materials.md#transmission-layers)); 1 to `MAX_TRANSMISSION_LAYERS` (4), zero reads as 1 and both constructors leave it zero |
-| `msaa` | `MsaaSamples`: samples per pixel of the opaque scene passes, `ONE`, `TWO`, `FOUR` or `EIGHT` (see [Multisample anti-aliasing](#multisample-anti-aliasing)); `ONE`, the zero value and the value of both constructors, is off |
-
-An installed [static impostor](impostors.md) participates in the same
-per-view LOD selection and hysteresis. Forward and deferred views share its
-reconstructed surface depth. Shadow passes retain the main choice and select
-atlas directions from the light. LOD or direction-triplet changes reject the
-affected temporal pixels; stable placements retain velocity.
-
-`default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading and a depth
-prepass and `ray_tracing.max_reflection_roughness` at `RT_REFLECTION_ROUGHNESS_DEFAULT`;
-`texture_view_desc(target, color = LINEAR_HDR)` covers a target with the same defaults. `create_view` and `configure_view`
-validate between frames: a dead target faults `INVALID_ID`; `LINEAR_HDR` on a window view or on an
-RGBA8 target, a viewport outside the output, a render scale outside its range and an invalid post
-stack fault `INVALID_ARGUMENT`; a `clip_plane` other than the zero plane with a normal that is not
-unit length or a `d` that is not finite, and any non-zero `clip_plane` on a `PATH_TRACED` view, fault
-`INVALID_ARGUMENT`; `volumetric_fog` on a `PATH_TRACED` view and a `transmission_layers` above `MAX_TRANSMISSION_LAYERS` and a `ray_tracing.shadow_samples` above `MAX_SHADOW_SAMPLES` fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
-`AoKind.RAY_TRACED` faults `UNSUPPORTED`; an `msaa` above `ONE` with `TAA` or on a `PATH_TRACED` view faults
-`INVALID_ARGUMENT`, and at a count the device cannot create the view's multisample images at, or on a `DEFERRED` view
-whose device lacks sample-rate shading, faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED`
-(`RendererDesc.max_views`, 8 by default; see [Capacities](#capacities)).
-`destroy_view` on the default view faults `INVALID_ARGUMENT`.
-
-The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
-[weighted transparency](materials.md#weighted-transparency) accumulation and revealage images, the
-[sky](sky.md)'s 192 × 108 sky-view table and 32³ aerial perspective volume (418 KiB) on raster views, its
-[fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (`ceil(w / px) × ceil(h / px) × slices × 8` bytes, set by `fog_quality`, twice that with `fog_temporal`), post and
-effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
-per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
-reallocates them; every configuration resets the view's history except its
-[adapted exposure](post.md#auto-exposure) and [adapted focus](post.md#auto-focus), which a resize or parameter edit
-keeps. The history is otherwise keyed
-by scene identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
-Window resize resizes every window view; target resize resizes every view on that target. A headless renderer's window views
-hold no images and record nothing. `configure_view` and both resizes allocate the new images before they release the old
-ones: a fault leaves every affected view with its configuration, images and history.
-
-## Light selection
-
-Both view constructors choose `FORWARD` / `FLAT` and initialize `clusters` with
-`default_cluster_desc()`: 16 horizontal tiles, 9 vertical tiles, 24 depth slices,
-64 finite lights per cell and a clustering far distance of 100 camera-view depth units. To enable it:
-
-```c3
-ViewDesc desc = render::default_view_desc();
-desc.lights = LightSelection.CLUSTERED;
-render::configure_view(&renderer, renderer.default_view, desc)!;
-```
-
-Create and configure views only between frames. The cluster fields are mutable:
-`tiles_x`, `tiles_y`, `depth_slices`, `lights_per_cluster`, `far_distance` and `depth_pruning`
-(false by default; see [depth pruning](#depth-pruning)).
-`CLUSTERED` requires nonzero dimensions/capacity, a positive finite far distance and
-representable storage sizes (`INVALID_ARGUMENT`); a valid grid beyond the device's
-compute dispatch limits faults `UNSUPPORTED`.
-`FLAT` neither validates nor allocates from `clusters`, even if its fields are zero or
-invalid. A zero-initialized descriptor does not acquire cluster defaults merely by
-setting `lights = CLUSTERED`: start from a constructor or assign `default_cluster_desc()`.
-GPU allocation, recording and wait faults propagate from the existing view operations.
-
-Each drawable clustered view owns one private GPU buffer containing its complete
-selected light and decal arrays, separate cell ranges and fixed-capacity index
-segments, and a shared overflow counter record.
-It uses no application `BufferId` slot and is not part of the texture-only `view_targets`.
-Grid/capacity changes replace this storage; changing only far distance or `depth_pruning` does not.
-Switching to flat retires the old allocation after submitted users complete; resizing,
-destroying a view and renderer teardown likewise preserve in-flight ownership.
-
-Decals use the same grid and `LIGHT_CULL` dispatch. The per-view limit is
-`MAX_DECALS = 256`; each cell stores at most `MAX_CLUSTER_DECALS = 8` indices.
-Cell indices preserve the complete decal array's `(order, entity)` ordering.
-When the per-view budget is exceeded, selection keeps the lowest-order base
-layers and drops higher-order overlays first.
-An overflowing decal cell, inactive coverage or a position outside the grid uses
-the complete ordered decal list. Decal and light overflow are independent.
-`FLAT` views upload the selected decal records through the frame ring and allocate
-no cluster regions. See [decal materials and receivers](materials.md#decals).
-
-The default 16 × 9 × 24 grid has 3,456 cells. Its additional decal storage is:
-
-| Region | Bytes per clustered view |
-| --- | ---: |
-| 256 records × 160 bytes | 40,960 |
-| 3,456 ranges × 8 bytes | 27,648 |
-| 3,456 cells × 8 indices × 4 bytes | 110,592 |
-| Total | 179,200 (175 KiB) |
-
-`DecalGpu` holds frame-relative inverse and forward affine rows, projection/fade
-data, tangent/handedness, weights and material/layer fields. Transform rebasing
-precedes inverse and bound construction. `FrameRoot` is 640 bytes with `decals`
-at offset 528, `decal_count` at 536, the optional `light_spatial` address at 576, the four
-[view textures](#view-textures) at 584 and the [selection cameras](#selection-camera) at 608 and 624. `ClusterGpu` is 160 bytes;
-`ClusterCounterGpu` remains 16 bytes with separate light and decal overflow counts and a
-skipped-cell count. The buffer ends with one `float` per tile (576 bytes at the default grid)
-for the pruning bound; it is reserved whether pruning is on or off.
-These are storage costs; no decal timing delta is established by them.
-
-Selection uses the view's unjittered camera projection and each shaded position, not
-the opaque depth buffer; only [depth pruning](#depth-pruning) reads the depth buffer, to skip cells.
-Perspective depth slices are logarithmic; orthographic slices
-are linear. Coverage ends at the lesser of the clustering far distance and the camera's
-finite far plane. Perspective camera far zero means infinity; orthographic far zero
-does not. An empty depth interval disables clustering for that rendering.
-
-Finite point and spot lights are conservatively admitted by their range spheres.
-Directional lights and range-zero point/spot lights are globals, evaluated once beside
-the cell's finite list. Indices refer to the original selected light array, preserving
-receiver layers and shadow mappings. The existing selection budget and dropped-light
-policy are unchanged. A cell exceeding capacity, a position outside the grid/depth
-interval, or inactive coverage uses the **complete flat list**, not a truncated list
-or a clamped edge cell; globals are not appended again on fallback.
-
-Standard, Toon and non-transmitting Physical materials use this selector, including
-ordinary alpha-blended surfaces. Physical materials with nonzero prepared transmission
-use the flat list for their entire direct-light loop, preserving exit-point lighting.
-Existing custom shaders remain flat unless they opt into the
-[shared light selector](custom_shaders.md#light-selection).
-
-See [many lights](many_lights.md) for a controlled comparison and
-[GUI diagnostics](gui.md#cluster-diagnostics) for slice occupancy and completed counters.
-
-### Depth pruning
-
-With `ClusterDesc.depth_pruning` set, the view reduces its depth image to the farthest view
-depth of each tile (unbounded when any pixel of the tile has no geometry) before the cull. A cell
-whose near boundary lies beyond that depth holds no opaque point, so the cull skips it: it
-writes an overflowing, empty range for lights and decals and runs neither loop. Readers that
-reach such a cell, such as fog froxels behind the farthest surface, take the complete flat
-list. Cells in front of the nearest surface are never skipped, so blended surfaces keep
-their lists. No light is dropped. On a view with [`msaa`](#multisample-anti-aliasing) above `ONE` the reduction reads
-the depth the prepass resolved from sample 0, and a sample farther than its tile's resolved depth reaches a skipped
-cell and takes the flat list.
-
-The reduction needs depth before any pass reads the cell lists, so on a pruned view the
-reduction, the cull and the [volumetric fog](sky.md#volumetric-fog) volume run right after the
-depth prepass. On a deferred view that is between the prepass and the G-buffer pass, whose
-stages read the decal lists. Views without pruning keep the cull before every other pass of
-the view. A forward view with no depth prepass (`depth_prepass` false, and no AO or SSGI, which
-imply one) has no depth before shading, and a forward view with traced reflections shades
-decals in the thin reflection prepass that produces its depth. Both ignore `depth_pruning`;
-this is not a fault. `LIGHT_CULL` includes the reduction. `Stats.cluster_skipped` and
-`ViewStats.cluster_skipped` count the skipped cells and
-are not part of `cluster_overflows`. See [many lights](many_lights.md#depth-pruning).
-
-## Frames
-
-```c3
+// Each frame:
 renderer.begin_frame(info)!;
+defer catch render::abort_frame(&renderer);
 renderer.render_view(&scene, producer_camera, capture_view)!;
 renderer.finish_view(capture_view)!;
-if (renderer.has_output) {
-    renderer.render_view(&scene, main_camera, renderer.default_view)!;
-    renderer.finish_view(renderer.default_view)!;
-    OverlayContext overlay = renderer.begin_overlay()!;
-    gui.record(&overlay)!;
-    renderer.end_overlay(&overlay)!;
-}
+renderer.render_view(&scene, camera, renderer.default_view)!;
+renderer.finish_view(renderer.default_view)!;
 renderer.end_frame()!;
 ```
 
-`render_view` extracts, uploads and records the scene passes, debug lines, velocity and motion
-blur; `finish_view` records depth of field and writes the view's output: `DISPLAY_LDR` grades, tone
-maps and optionally anti-aliases into the output rectangle; `LINEAR_HDR` copies the scene-linear
-image into the target, divided by the view's [pre-exposure](post.md#pre-exposure). Between the two calls a compute dispatch may read the view's depth and read
-or write its scene image (see [custom shaders](custom_shaders.md#views)); `end_frame` faults
-`INVALID_ARGUMENT` when a rendered view was not finished. A window view records nothing while
-the window is dormant (`has_output` false); a texture view always records. When the window output
-changed, `begin_frame` resizes the swapchain and then every window view. If the views' new images
-fault, `begin_frame` returns the fault, the window views keep their previous size, and the next
-`begin_frame` retries; render nothing until a `begin_frame` succeeds. A swapchain rebuilt at a zero
-extent (a minimized window) leaves the window views as they are, so their images stay in memory
-while the window is minimized. `end_frame` records
-pending uploads and environment preparations, then submits when the frame recorded a clear, draw,
-dispatch, upload or preparation, presents only when a window image was acquired, and discards a
-frame that recorded none. Neither call advances animation or flushes scene removals.
+Create and configure views and targets between frames. Destroy views before the targets they write.
 
-`Renderer.frame_was_submitted(frame)` reports whether the frame that had the index `frame` (a value of `frame_index`
-read while it was open) was submitted. `end_frame` advances `frame_index` before it submits, so the index alone cannot
-tell a submitted frame from one that faulted or recorded nothing. The answer is false for the open frame, for a frame
-that faulted or was discarded, and for a frame more than `FRAMES_IN_FLIGHT` indices behind `frame_index`. CPU state that
-mirrors GPU work should commit only when this is true.
+Run `python3 scripts/build.py --example views`. Its panel resizes the capture target, switches it between display and
+linear output, and shows a mirror floor built with the [planar reflection](#planar-reflections) recipe. For
+`--gpu-timings`, build the example with the profiler add-on:
 
-`Renderer.view_depth_frame(view)` returns the index of the last submitted frame whose rendering of the view wrote its depth
-image. `end_frame` publishes it for every view that `render_view` recorded as a raster view in a submitted frame, so a
-frame that faults or is discarded leaves the previous answer. It faults `render::NOT_READY` before the first such frame,
-after a `configure_view` that recreates the images (a changed output or working extent); `INVALID_ID` for a dead view. A
-path-traced rendering never sets it, so a path-traced view reports `NOT_READY`, except one that `configure_view`
-switched from raster in place, which keeps its depth image and reports its last raster rendering. A dispatch that names `read_view_depth(view)` before the
-view's `render_view` of the open frame reads the depth of the frame this reports, so a reader that kept the camera of
-that frame knows the two belong together. A view that the application does not render every frame reports an older
-frame, and the reader decides whether that depth still serves.
+```bash
+c3c build views --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
+./examples/build/views --gpu-timings
+```
 
-`render_view(scene, camera_node, view, debug = null, shadow_camera = null)`: `shadow_camera` is the camera the view's
-shadow set is fitted to; null uses `camera_node`. A view binds an earlier view's set instead of recording one when
-their keys match ([shadow sets](shadows.md#shadow-sets)). A `shadow_camera` without a `Camera` faults
-`INVALID_ARGUMENT` and aborts the frame.
+## Concepts
 
-`set_view_overlay(view, list)` gives a view an overlay list of items anchored in the world for one frame; `finish_view`
-draws it over the view's output after post, tested against the view's depth ([World-space items](overlay.md#world-space-items)).
+- **Output.** A `WINDOW` view writes the swapchain image; a `TEXTURE` view writes a render target. A headless
+  renderer's window views hold no images and record nothing.
+- **Working extent.** A view renders at `working_extent(viewport, output_width, output_height, render_scale)`, at least
+  one pixel per dimension. `render_scale` below 1 renders cheaper than the viewport and above 1 supersamples, up to
+  `MAX_RENDER_SCALE` (2.0). The view owns its working images at that extent: `hdr_color`, `depth`, scene snapshots,
+  post and effect images. A raster view also owns fixed-size sky tables ([sky](sky.md)).
+  [Images per setting](views_reference.md#images-per-setting) lists them.
+- **History.** A view keeps the camera, poses and accumulated state of its last rendering for temporal effects. The
+  history is keyed by scene identity, so replacing a scene needs no reset. `render::reset_view_history(&renderer,
+  view)`, called with no frame open, is the camera cut: it forgets the previous pose, adapted exposure and focus, and
+  the fog and cloud history. Every `configure_view` and every resize resets the history except the [adapted
+  exposure](post.md#auto-exposure) and [adapted focus](post.md#auto-focus), which a resize or a parameter edit keeps.
+- **Frame order.** The application orders the views inside a frame. A producer view renders before the view that
+  samples its target. There is no render graph.
+- **Frame origin.** Set `FrameInfo.reference_position` to the current absolute camera position when rendering far from
+  the origin. `begin_frame` selects one shared origin before any view or trace work, and producer and mirror views use
+  it too. The default reference is zero. Clip planes stay absolute at the API boundary. See
+  [camera-relative rendering](large_world.md).
 
-`Renderer.render(scene, camera)` is the default-view convenience. `render_to(scene, camera, target,
-color = LINEAR_HDR, info = {})` renders and finishes one frame into a target through a view it
-creates and destroys, without touching the window; it waits for completion and is a bake path, not
-a per-frame one.
+## Create a render target
 
-Pass timings (`Stats.gpu_pass_ms`) sum all measured view/pass instances in the completed
-`Stats.gpu_frame_index`. Shadow timings retain all measured layers with their original view
-ids. These delayed GPU results may lag the draw, dispatch and light counters; absent pass
-measurements display N/A and truncated summaries are partial. See [profiling](profiling.md)
-for the required build features and capture configuration.
+```c3
+RenderTargetId target = render::create_render_target(&renderer,
+    render::render_target_desc(1024, 1024, PixelFormat.RGBA16_FLOAT))!;
+```
 
-`Stats.decals` and `decals_dropped` sum current CPU selection results across recorded
-views and reset at `begin_frame`. Hidden, culled and collapsed decals are not
-budget drops. `ViewStats.decals` and `decals_dropped` describe one view's selection.
+`render_target_desc(width, height, format = RGBA16_FLOAT)` accepts `RGBA16_FLOAT`, `RGBA32_FLOAT`, `RGBA8_UNORM` and
+`RGBA8_SRGB`; other formats fault `c3d::UNSUPPORTED`. Every target is a color attachment, sampled, and a transfer
+source.
 
-`Stats.media_dropped` counts, per view, the visible [medium volumes](sky.md#medium-volumes) past the nearest four
-(`shader::MAX_VIEW_MEDIA`) and resets at `begin_frame`. A view that keeps a medium is fogged like one with an
-atmosphere or a fog: it records the fog pass and the split, takes the depth snapshot with every colour snapshot
-and draws blended items after the split. A view that keeps none costs what it did before.
+- `resize_render_target(&renderer, target, width, height)` keeps the id, recreates the image once outstanding frames
+  complete, increments the target's revision and resizes every view that writes it. It allocates the new image and
+  every view's new images before it releases an old one, so a fault leaves the target, its revision and its views
+  unchanged.
+- `destroy_render_target` faults `c3d::RESOURCE_IN_USE` while a live view writes the target; destroy the views first.
+- A full pool faults `c3d::CAPACITY_EXCEEDED`; see [capacities](views_reference.md#capacities).
+- Renderer teardown releases the remaining views, then the targets.
 
-`Stats.cluster_view`, `cluster_count`, `cluster_overflows`, `cluster_skipped` and `decal_overflows` are delayed results read
-only after the reused frame slot has completed, independently of GPU timestamp enablement.
-They describe that slot's last recorded drawable view, not a sum across views: a later
-flat view clears its cluster result, while a dormant/non-recorded view does not replace
-it. `cluster_count` is the grid's total cells; `cluster_overflows` and
-`decal_overflows` count overflowing light and decal cells, not budget drops;
-`cluster_skipped` counts cells depth pruning skipped.
-Each view also retains its own completed counters. The readback adds no
-synchronous wait inside `render_view`.
+## Create a view
 
-## Sampling a target
+`create_view(&renderer, desc)` allocates the view's images and returns a `ViewId`; `configure_view(&renderer, view,
+desc)` replaces its configuration; `destroy_view(&renderer, view)` releases it after submitted work completes.
+
+```c3
+ViewDesc desc = render::default_view_desc();
+desc.msaa = MsaaSamples.FOUR;
+render::configure_view(&renderer, renderer.default_view, desc)!;
+```
+
+- Start from `default_view_desc()` (a full-window `DISPLAY_LDR` view) or `texture_view_desc(target, color =
+  LINEAR_HDR)`, then change fields. The [reference](views_reference.md#viewdesc) lists every field and default.
+- `LINEAR_HDR` keeps scene-linear color in physical units and needs a float target. `DISPLAY_LDR` grades, tone maps
+  and optionally anti-aliases.
+- `configure_view` waits for outstanding frames and reallocates when the extent or output changes; otherwise it
+  allocates what the new settings need and retires what they drop. It allocates before it releases, so a fault leaves
+  the view's configuration, images and history as they were. Near capacity it needs room for the old and the new
+  images at once.
+- Validation faults are listed under [faults](views_reference.md#faults). `destroy_view` on the default view faults
+  `c3d::INVALID_ARGUMENT`.
+- A window resize resizes every window view; a target resize resizes every view on that target.
+
+## Render a frame
+
+```c3
+renderer.begin_frame(info)!;
+defer catch render::abort_frame(&renderer);
+renderer.render_view(&scene, camera, view)!;
+renderer.finish_view(view)!;
+renderer.end_frame()!;
+```
+
+- `render_view` extracts, uploads and records the scene passes, debug lines, velocity and motion blur.
+  `finish_view` records depth of field and writes the view's output: `DISPLAY_LDR` grades, tone maps and optionally
+  anti-aliases into the output rectangle; `LINEAR_HDR` copies the scene-linear image into the target, divided by the
+  view's [pre-exposure](post.md#pre-exposure).
+- `render_view(scene, camera_node, view, debug = null, shadow_camera = null)`. `debug` is a `DebugDraw` sink drawn
+  after transparency. `shadow_camera` is the camera the view's [shadow set](shadows.md#shadow-sets) is fitted to; null
+  uses `camera_node`. A `shadow_camera` without a `Camera` faults `c3d::INVALID_ARGUMENT` and aborts the frame.
+- Between `render_view` and `finish_view`, a compute dispatch may read the view's depth and read or write its scene
+  image ([custom shaders](custom_shaders.md#views)).
+- `end_frame` faults `c3d::INVALID_ARGUMENT` when a rendered view was not finished. It records pending uploads and
+  environment preparations, submits when the frame recorded a clear, draw, dispatch, upload or preparation, presents
+  only when a window image was acquired, and discards a frame that recorded nothing. Neither `begin_frame` nor
+  `end_frame` advances animation or flushes scene removals.
+- A window view records nothing while the window is dormant (`renderer.has_output` is false); a texture view always
+  records. Draw overlays only when `has_output` is true ([overlay](overlay.md), [GUI](gui.md)).
+- When the window output changed, `begin_frame` resizes the swapchain and then every window view. If the new images
+  fault, `begin_frame` returns the fault, the window views keep their previous size, and the next `begin_frame`
+  retries; render nothing until a `begin_frame` succeeds. A swapchain rebuilt at a zero extent (a minimized window)
+  leaves the window views as they are, so their images stay allocated while the window is minimized.
+- `Renderer.render(scene, camera)` is the default-view convenience for one frame.
+- `set_view_overlay(view, list)` gives a view an overlay list of items anchored in the world for one frame;
+  `finish_view` draws it over the view's output after post, tested against the view's depth ([world-space
+  items](overlay.md#world-space-items)).
+
+### Frame queries
+
+- `Renderer.frame_was_submitted(frame)` reports whether the frame that had the index `frame` (a value of `frame_index`
+  read while it was open) was submitted. It is false for the open frame, for a frame that faulted or was discarded,
+  and for a frame more than `FRAMES_IN_FLIGHT` indices behind `frame_index`. Commit CPU state that mirrors GPU work
+  only when it is true.
+- `Renderer.view_depth_frame(view)` returns the index of the last submitted frame whose rendering of the view wrote its
+  depth image. It faults `render::NOT_READY` before the first such frame and after a resize or a `configure_view` that
+  recreates the images, and `c3d::INVALID_ID` for a dead view. A path-traced rendering never sets it; a view switched
+  to `PATH_TRACED` in place keeps reporting its last raster frame. A dispatch that names
+  `read_view_depth(view)` before the view's `render_view` of the open frame reads the depth of the frame this reports,
+  so a reader that kept that frame's camera knows the two belong together. A view the application does not render
+  every frame reports an older frame; the reader decides whether that depth still serves.
+
+### Render once
+
+`render_to(scene, camera, target, color = LINEAR_HDR, info = {})` renders and finishes one frame into a target through
+a view it creates and destroys, without touching the window. It waits for completion, so it is a bake path, not a
+per-frame one. It takes a view slot and must run with no frame open.
+
+## Sample a target in a material
 
 ```c3
 Material* monitor = &assets.material(monitor_material).data;
@@ -310,14 +166,16 @@ monitor.basic.map.texture = { .kind = RENDER_TARGET, .target = capture };
 assets.mark_material_dirty(monitor_material);
 ```
 
-A `TextureRef` of kind `RENDER_TARGET` resolves to the target's current sampled view when the
-material is packed; the packed binding carries the target revision, so a resize repacks the
-material without an edit. A dead target resolves to the builtin white texture. Before a view's
-first pass the renderer transitions every target its materials reference to fragment read, except
-the view's own output. The application orders the producer view before the consumer view in the
-frame and keeps the consumer's surfaces out of the producer camera's layers, so no view samples the
-image it is writing. Use `DISPLAY_LDR` output on an sRGB target for an unlit "monitor" surface and
-`LINEAR_HDR` on a float target for reflection or composition inputs.
+A `TextureRef` of kind `RENDER_TARGET` resolves to the target's current sampled view when the material is packed. The
+packed binding carries the target revision, so a resize repacks the material without an edit. A dead target resolves
+to the built-in white texture.
+
+- Before a view's first pass, the renderer transitions every target its materials reference to fragment read, except
+  the view's own output.
+- The application orders the producer view before the consumer and keeps the consumer's surfaces out of the producer
+  camera's layers, so no view samples the image it is writing.
+- Use `DISPLAY_LDR` output on an sRGB target for an unlit "monitor" surface, and `LINEAR_HDR` on a float target for
+  reflection or composition inputs.
 
 ## View textures
 
@@ -330,164 +188,50 @@ renderer.set_view_texture(first_view, 0, first_capture)!;
 renderer.set_view_texture(second_view, 0, second_capture)!;
 ```
 
-A custom-material slot of kind `VIEW` names a texture the drawing view supplies, so one material shows
-a different target in each view. `Renderer.set_view_texture(view, slot, target)` binds a render target
-to the view's `slot`, below `MAX_VIEW_TEXTURES` (4); a zero target clears the slot. The stage reads the
-slot through the frame ([view-provided slots](custom_shaders.md#view-provided-slots)); a view that
-provides nothing for it reads it as absent, and the stage's own fallback runs.
+A custom-material slot of kind `VIEW` names a texture the drawing view supplies, so one material shows a different
+target in each view. `set_view_texture(view, slot, target)` binds a render target to the view's `slot`, below
+`MAX_VIEW_TEXTURES` (4); a zero target clears the slot. The stage reads the slot through the frame
+([view-provided slots](custom_shaders.md#view-provided-slots)); a view that provides nothing for it reads the slot as
+absent, and the stage's own fallback runs.
 
-- **Faults.** A dead view or a dead target faults `INVALID_ID`. A view's own output target faults
-  `INVALID_ARGUMENT`, as does a `configure_view` that would make a provided target the view's output.
-- **Lifetime.** Bindings belong to the view. An ordinary `configure_view`, a resize included, keeps them;
-  `destroy_view` drops them. A target destroyed after it was provided reads as absent.
-- **Ordering.** Before the view records, the renderer transitions each live provided target to the
-  sampled state, as for a target in a material slot. The application renders the producer view before
-  the consumer view in the frame; there is no render graph.
-- **Frame roots.** The view's depth prepass, G-buffer, velocity and scene-read passes share its frame
-  root and see its textures. Shadow layers, probe updates and the path tracer write none: a shadow layer
-  is rendered from the light and shared by the views that borrow its set, so a view-provided slot reads
-  as absent there.
-- **Scope.** Only custom-material slots take a `VIEW` reference. A built-in material, or slot 0 of a
-  masked custom material, faults `UNSUPPORTED` when uploaded; a `view_slot` of `MAX_VIEW_TEXTURES` or
-  above faults `INVALID_ARGUMENT`; an [overlay](overlay.md#coordinates-colors-textures) rectangle
-  faults `INVALID_ARGUMENT`.
-- **Cost.** 16 bytes of `FrameRoot` per view per frame. The material block is unchanged and is written
-  once per revision.
-- **Use.** A [water](water.md#the-mirror) body samples its planar reflection at the view texture slot of its
-  `reflection_view_slot`, so each viewing view is given the target of its own mirror view: the application renders
-  each mirror, calls `set_view_texture(viewing_view, slot, mirror_target)`, then renders the viewing view.
+- **Faults.** A dead view or target faults `c3d::INVALID_ID`. A view's own output target faults
+  `c3d::INVALID_ARGUMENT`, as does a `configure_view` that would make a provided target the view's output.
+- **Lifetime.** Bindings belong to the view. `configure_view`, a resize included, keeps them; `destroy_view` drops
+  them. A target destroyed after it was provided reads as absent.
+- **Ordering.** Before the view records, the renderer transitions each live provided target to the sampled state, as
+  for a target in a material slot. Render the producer view before the consumer view.
+- **Frame roots.** The view's depth prepass, G-buffer, velocity and scene-read passes share its frame root and see its
+  textures. Shadow layers, probe updates and the path tracer provide none, so a view-provided slot reads as absent
+  there: a shadow layer is rendered from the light and shared by the views that borrow its set.
+- **Scope.** Only custom-material slots take a `VIEW` reference. A built-in material, or slot 0 of a masked custom
+  material, faults `c3d::UNSUPPORTED` when uploaded. A `view_slot` of `MAX_VIEW_TEXTURES` or above faults
+  `c3d::INVALID_ARGUMENT`, as does an [overlay](overlay.md#coordinates-colors-textures) rectangle with a `VIEW`
+  reference.
+- **Cost.** 16 bytes of `FrameRoot` per view per frame. The material block is written once per revision.
+- **Use.** A [water](water.md#the-mirror) body samples its planar reflection at the view texture slot named by its
+  `reflection_view_slot`. The application renders each mirror, calls `set_view_texture(viewing_view, slot,
+  mirror_target)`, then renders the viewing view.
 
-## Selection camera
+## Read a target back
 
-`FrameRoot.selection_camera` holds the camera that selected the pass's [quadtree](instancing_quadtree.md) levels: `xyz` is its position relative to the frame origin and `w` its pixel scale, `working_height / (2 tan(fov_y / 2))` for a perspective camera and `working_height / ortho_height` for an orthographic one. The working height includes `render_scale`. `FrameRoot.previous_selection_camera` is the same camera one rendering earlier. A vertex stage that morphs a quadtree batch reads both, so the surface it draws agrees with the selection, and with the previous rendering's surface for motion vectors.
+`renderer.read_render_target(target, pixels)` copies a render target into caller memory. It runs with no frame open,
+waits for every submitted frame and then for its own copy, so it is for stills, tests and captures rather than every
+frame.
 
-`FRAME_SELECTION_ORTHOGRAPHIC` (bit 11 of `FrameRoot.flags`, 2048) is set when the selecting camera is orthographic, which selects by size and gives no morph. It describes the selecting camera, not the root's own `proj`: a shadow layer's `proj` is the light's, orthographic for every directional cascade. `quadtree_selection_orthographic(frame)` in `quadtree_morph.glsl` reads it. It is clear in a probe update.
-
-- **Main view.** It writes its own camera. Its depth prepass, G-buffer, velocity and scene-read passes share its frame root.
-- **Shadow layers.** A layer is drawn for a view, so it writes the owning view's camera and flag, not the light's: the casters it draws are the nodes the view selected. A layer shared by several views carries the camera of the view that recorded it.
-- **Mirror views.** A mirror view is a view that selects for itself and writes its own camera.
-- **Closed frames.** The path tracer writes its own camera. A probe update has no camera and writes zero in both fields and leaves the flag clear; it draws no quadtree batch.
-- **Previous camera.** A temporal view keeps the camera of its last published rendering and moves it to the current frame origin. Without a valid history, which a camera cut or `reset_view_history` leaves, and for a view that keeps none, it equals the current camera.
-
-## Reading a target back
-
-`renderer.read_render_target(target, pixels)` copies a render target into caller memory. It runs
-with no frame open, waits for every submitted frame and then for its own copy, so it is for stills,
-tests and captures rather than every frame. `pixels.len` must equal width x height x the texel size
-(`render_target_texel_bytes`: 4 for `RGBA8_UNORM` and `RGBA8_SRGB`, 8 for `RGBA16_FLOAT`, 16 for
-`RGBA32_FLOAT`), otherwise it faults `INVALID_ARGUMENT`; a dead target faults `INVALID_ID`. Rows
-are tight and top row first, and the bytes come back as stored: sRGB-encoded for `RGBA8_SRGB`,
-half floats for `RGBA16_FLOAT`. A `DISPLAY_LDR` view writes linear values and relies on an sRGB
-format to encode them, so capture display output for an image file on an `RGBA8_SRGB` target and
-write it with `image::write_png`. Every render target carries transfer-source usage for this.
-
-## Capacities
-
-| `RendererDesc` field | Zero selects | Bound |
-| --- | --- | --- |
-| `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 9 KiB |
-| `max_render_targets` | `DEFAULT_MAX_RENDER_TARGETS`, 8 | at most the resolved `texture_capacity`, else `create_renderer` faults `c3d::INVALID_ARGUMENT` |
-| `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | `2 × max_posed_trace_instances + 32 + 16 × max_views` must fit the device's 4,096-entry allocation table and, with ray queries or ray-tracing pipelines, `max_posed_trace_instances + 32` its 4,096-entry acceleration structure table, else `create_renderer` faults `c3d::INVALID_ARGUMENT`; at most 1,968 at the default 8 views. Content shares both tables uncounted and can still fault `gpu::SLOT_TABLE_FULL` mid-frame ([scene trace](scene_trace.md#posed-instances)). A slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams; on the RTX 4090 one mannequin of two posed meshes holds 483,032 B of posed data in software and 1,088,920 B in hardware, about 242 KB and 544 KB per slot, and bottom-level sizes are driver-specific |
-| `texture_capacity` | `gpu::DEFAULT_TEXTURE_CAPACITY`, 1,024 | 65,536 (`gpu::MAX_SHADER_HEAP_CAPACITY`), else `gpu::INVALID_ARGUMENT` |
-| `texture_heap_capacity` | `gpu::DEFAULT_TEXTURE_HEAP_CAPACITY`, 4,096 | 65,536, else `gpu::INVALID_ARGUMENT`; past the device's descriptor limits no adapter qualifies and `create_renderer` faults `c3d::UNSUPPORTED` |
-
-The pools are fixed at creation. A full pool faults `c3d::CAPACITY_EXCEEDED`. These take a view slot:
-
-- the default view, from creation to teardown;
-- every `create_view`;
-- `render_to`, for the length of the call;
-- `bake_impostor`, `capture_reflection_probe` and `recapture_reflection_probe`, for the length of the call. Each also
-  takes one render-target slot.
-
-An editor with a game view, two viewports and live thumbnails drawn through `render_to` needs `max_views` of at least
-1 + 1 + 2 + 1.
-
-Every working image of a view and every render target holds one texture-table entry and one heap slot, except a
-view's attachment-only multisample images, `msaa_color` and a forward view's `msaa_depth`, which hold no heap slot.
-A hierarchical GI depth pyramid also holds one single-level view and heap slot per mip, in addition to
-its full-chain view. A render target also holds one attachment view. So do a view's `hdr_color`, `depth`,
-scene snapshots, weighted accumulation and revealage, velocity, G-buffer and SSGI color, at most 13 per view,
-and each multisample image, sample-0 copy or edge mask, at most 7 more. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
-three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
-table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
-default, so a store filled past about 1,000 uploaded textures faults on upload unless `texture_capacity` is raised.
-
-Images a view allocates at creation, by setting:
-
-| Setting | Images |
-| --- | --- |
-| Raster view: `hdr_color`, `depth`, sky-view table, aerial perspective volume | 4 |
-| `FXAA` | +1 |
-| `TAA` | +6 history, +1 debug image with `TaaDebug` |
-| `bloom` | +`bloom_params.levels` (5 by default, 8 at most) |
-| `depth_of_field` | +4, plus the 2 tile images |
-| `motion_blur` | +1, plus the 2 tile images |
-| Velocity, under `TAA`, `motion_blur`, `screen_space_gi`, `ambient_occlusion.temporal` or `ray_tracing.reflection_history` | +1 |
-| `DEFERRED` G-buffer | +5 |
-| `msaa` above `ONE` | +2 (`msaa_color`, `msaa_depth`), +1 `msaa_velocity` where velocity is used; a `FORWARD` view adds +1 `msaa_reflection_gbuffer` with `ray_tracing.reflections` and +1 `msaa_proxy_skip` with ray-traced ambient occlusion; a `DEFERRED` view also holds its G-buffer at that count, adds +1 `msaa_edges`, +1 `normal_sample_zero` with ambient occlusion, screen-space GI or `ray_tracing.reflections`, +1 `specular_sample_zero` with `ray_tracing.reflections`, +1 `flags_sample_zero` with ray-traced ambient occlusion or `ray_tracing.reflections` |
-| `ambient_occlusion` | +2: `ao_raw` and `ao`, `R8_UNORM`, or `RGBA8_UNORM` with `ambient_occlusion.bent_normals` |
-| `ambient_occlusion` of kind `RAY_TRACED`, on a `FORWARD` view | +1: `proxy_skip`, `R32_UINT` |
-| `ambient_occlusion.temporal` | +4: two history images, `R16_FLOAT` or `RGBA16_FLOAT` with `bent_normals`, and two depth images |
-| `screen_space_gi` | +7 |
-| Enabled `screen_space_gi` with `trace = HIERARCHICAL` | +1 full-resolution depth pyramid |
-| `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
-| `ray_tracing.reflection_resolution` `HALF`, with `reflections` | +1 (`reflection_half`) |
-| `ray_tracing.reflection_history`, with `reflections` | +4: two history and two depth images |
-| `volumetric_fog` | +1 |
-| `PATH_TRACED`: accumulation, no sky images | 3 in all |
-
-`texture_view_desc` and `default_view_desc` hold 5 images. A raster view with `TAA`, eight bloom levels and every
-other row except the debug image, temporal ambient occlusion, reflections and path tracing holds 42. Up to three
-images are allocated during a frame: the scene color and depth snapshots inside `render_view` when a material reads
-the scene, and the FXAA fallback output inside `finish_view` when FXAA cannot write the output rectangle directly.
-A headless renderer's default view holds none.
-
-Exhaustion faults come unchanged from gpu.c3l: a full texture, attachment, allocation or acceleration structure
-table faults `gpu::SLOT_TABLE_FULL`, a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resource: `create_view`,
-`create_render_target`, `render_to`, `bake_impostor` and the captures release what they acquired. `render_view` and
-`finish_view` can fault for the images they allocate; the frame aborts like any other fault. `resize_render_target`,
-`configure_view` and the window resize in `begin_frame` allocate every new image before they release an old one, so a
-fault changes nothing. They need room for the old and the new images at once: near capacity they fault where releasing
-first would have fit.
-
-To size the four fields, render representative frames until the next reading, at most `TEXTURE_STATS_INTERVAL` frames,
-then read `Stats` and `ViewStats`; `ViewStats.images` is current every frame:
-
-- `Stats.textures` and `texture_views` count live table entries and heap slots at frame start, and `texture_capacity`
-  and `texture_heap_capacity` the resolved sizes. They are read every `TEXTURE_STATS_INTERVAL` (16) frames, because a
-  reading walks the texture table: on an RTX 4090, 0.13 to 0.24 µs at 21 to 27 entries and 5.26 to 5.59 µs at 4,019
-  (about 0.33 µs a frame over the interval).
-  Images created inside a frame show at the next reading.
-- `ViewStats.images` counts one view's live images at frame start, every frame.
-- `gui::stats_panel` shows the four `Stats` fields, `gui::view_stats_table` the images per view.
-
-Worked example, from the image table: a game view with `DEFERRED`, `TAA`, five bloom levels and `ambient_occlusion`
-holds 23 images (4 + 6 + 1 + 5 + 5 + 2). The window view holds 5. Two editor viewports from `texture_view_desc` hold 5
-each. A `render_to` thumbnail holds 5 while it renders. The game view, the viewports and 64 thumbnails write 67
-targets. That is 110 entries and 110 heap slots. Add the uploaded asset textures, and the renderer's own images: the
-shadow atlas, environment maps, atmosphere tables, built-in textures, probe volumes, reflection probes and the
-swapchain images.
-`Stats.textures` minus the views' and targets' share is that last amount, measured. With 2,000 asset textures the
-table needs about 2,150 entries, so `texture_capacity = 2560` leaves headroom. A mipmapped or storage asset texture
-can hold several heap slots, so size `texture_heap_capacity` from `Stats.texture_views`, not from the texture count.
-The views need `max_views = 5` and the targets `max_render_targets = 67` or more.
-
-Leave room for the largest single resize on top of that count, in the table, the heap and the attachment table: a target
-plus the images of every view on it for `resize_render_target`, the images of every window view for a window resize,
-or one view's full image set for `configure_view`. In the example the game target and its view take 24 more entries
-and heap slots while they resize, which `texture_capacity = 2560` covers for the table; size
-`texture_heap_capacity` the same way.
-
-Per-frame cost grows with `max_render_targets`: `begin_frame` and each view's preparation visit every target slot, and
-`begin_frame` also visits every view slot to snapshot and count its images. On an RTX 4090 an empty frame took a median
-of 44 µs at 8 target slots and 54 µs at 4,000 (three runs; 49 µs at both with the pool full).
+- `pixels.len` must equal width x height x the texel size (`render_target_texel_bytes`: 4 for `RGBA8_UNORM` and
+  `RGBA8_SRGB`, 8 for `RGBA16_FLOAT`, 16 for `RGBA32_FLOAT`), otherwise it faults `c3d::INVALID_ARGUMENT`. A dead
+  target faults `c3d::INVALID_ID`.
+- Rows are tight and top row first, and the bytes come back as stored: sRGB-encoded for `RGBA8_SRGB`, half floats for
+  `RGBA16_FLOAT`.
+- A `DISPLAY_LDR` view writes linear values and relies on an sRGB format to encode them. Capture display output for
+  an image file on an `RGBA8_SRGB` target and write it with `image::write_png`. An `RGBA8_UNORM` target would
+  write a dark PNG.
 
 ## Clip plane
 
-`ViewDesc.clip_plane` drops the geometry on one side of a world plane, for planar reflections
-(water, floor and wall mirrors) and section views. A point stays when
-`dot(normal, point) + d >= 0`, the rule `maths::Plane` states; the normal is unit length. The zero
-plane (`{}`) clips nothing, and both constructors produce it.
+`ViewDesc.clip_plane` drops the geometry on one side of a world plane, for planar reflections (water, floor and wall
+mirrors) and section views. A point stays when `dot(normal, point) + d >= 0`, the rule `maths::Plane` states; the
+normal is unit length. The zero plane (`{}`) clips nothing, and both constructors produce it.
 
 ```c3
 ViewDesc desc = render::texture_view_desc(mirror_target);
@@ -506,26 +250,26 @@ ViewId mirror_view = render::create_view(&renderer, desc)!;
 | Ray-traced shadows, ambient occlusion and reflections | No; secondary rays trace the whole scene |
 | Probe updates, light extraction, picking | No |
 
-Every mesh vertex stage writes `gl_ClipDistance[0]` from the world position that feeds
-`gl_Position`, so the depth prepass, the G-buffer, `EQUAL` shading and velocity agree along the cut.
-Custom vertex stages clip through `write_mesh_outputs` or `view_clip.glsl` (see
-[custom shaders](custom_shaders.md#vertex-contract)). `FrameRoot.clip_plane` holds `(normal, d)`
-when `FRAME_CLIP_PLANE` is set in `FrameRoot.flags`, and zero otherwise; any stage may read it. A
-`PATH_TRACED` view rejects a non-zero plane with `INVALID_ARGUMENT`, like the other raster-only
-settings.
-
-Extraction also drops a mesh or batch whose world bounds lie wholly behind the plane and counts it
-in `Stats.culled`. A batch that straddles the plane is drawn whole: GPU instance culling ignores
-the plane, so its instances behind it are clipped, not culled.
-
-Changing only the plane through `configure_view` allocates and retires nothing, but like every
-configuration it resets the view's history. Set the plane once for a water level or a wall mirror;
-the mirror camera moves every frame, the world-space plane does not.
+- Every mesh vertex stage writes `gl_ClipDistance[0]` from the world position that feeds `gl_Position`, so the depth
+  prepass, the G-buffer, `EQUAL` shading and velocity agree along the cut. Custom vertex stages clip through
+  `write_mesh_outputs` or `view_clip.glsl` ([custom shaders](custom_shaders.md#vertex-contract)).
+- `FrameRoot.clip_plane` holds `(normal, d)` when `FRAME_CLIP_PLANE` is set in `FrameRoot.flags`, and zero otherwise;
+  any stage may read it.
+- A `PATH_TRACED` view rejects a non-zero plane with `c3d::INVALID_ARGUMENT`, like the other raster-only settings.
+- Extraction drops a mesh or batch whose world bounds lie wholly behind the plane and counts it in `Stats.culled`. A
+  batch that straddles the plane is drawn whole: GPU instance culling ignores the plane, so its instances behind it
+  are clipped, not culled.
+- Changing only the plane through `configure_view` allocates and retires nothing, but like every configuration it
+  resets the view's history. Set the plane once for a water level or a wall mirror; the mirror camera moves every
+  frame, the world-space plane does not.
+- Every mesh vertex stage declares `ClipDistance`, so the device must support `shaderClipDistance`; `create_renderer`
+  faults `c3d::UNSUPPORTED` without it. Adapter selection prefers a discrete adapter without checking the feature, so
+  on a machine whose discrete adapter lacks it, `create_renderer` faults even when another adapter has it.
 
 ### Planar reflections
 
-A mirror view renders the scene from the main camera reflected across the plane, clipped to the
-plane's front side, into a target that the reflective surface samples:
+A mirror view renders the scene from the main camera reflected across the plane, clipped to the plane's front side,
+into a target that the reflective surface samples.
 
 ```c3
 Plane floor_plane = { .normal = { 0, 1, 0 }, .d = -floor_level };
@@ -545,442 +289,46 @@ renderer.finish_view(mirror_view)!;
 renderer.render_view(&scene, camera_node, main_view)!;
 ```
 
-- `reflection_matrix(plane)` maps `p` to `p - 2 (n·p + d) n`; `transform_from_affine` stores the
-  reflection as a negative x scale. The mirror camera's world matrix then has a negative
-  determinant, and the renderer flips the view's front face for it, so single-sided surfaces keep
-  their faces.
-- The recipe reads `local` before `update_world`, so the reflection has no frame of lag, and
-  assumes both camera nodes are roots. For a parented node, reflect the main camera's world matrix
-  and express the result relative to the mirror node's parent.
-- Exclude the reflective surface's layer from the mirror camera's `Camera.layers`, so the view
-  never draws the surface that samples its target (see [Sampling a target](#sampling-a-target)).
+- `reflection_matrix(plane)` maps `p` to `p - 2 (n·p + d) n`; `transform_from_affine` stores the reflection as a
+  negative x scale. The mirror camera's world matrix then has a negative determinant, and the renderer flips the
+  view's front face for it, so single-sided surfaces keep their faces.
+- The recipe reads `local` before `update_world`, so the reflection has no frame of lag, and assumes both camera nodes
+  are roots. For a parented node, reflect the main camera's world matrix and express the result relative to the mirror
+  node's parent.
+- Exclude the reflective surface's layer from the mirror camera's `Camera.layers`, so the view never draws the surface
+  that samples its target.
 - Set both cameras' `Camera.aspect` to the main view's. The mirror records the main camera's
-  [shadow set](shadows.md#shadow-sets) at its own working extent; with an explicit aspect the projections match at
-  any mirror size, and the main view binds that set instead of recording one.
-- The surface's fragment stage samples the target at `gl_FragCoord.xy / frame.camera_params.zw`:
-  the mirror view projects a point on the plane where the main view does.
-- Render the mirror view first and the view that shows the surface right after it. The renderer holds one shadow
-  set at a time: a view with another camera between them records over the mirror's set.
+  [shadow set](shadows.md#shadow-sets) at its own working extent; with an explicit aspect the projections match at any
+  mirror size, and the main view binds that set instead of recording one.
+- The surface's fragment stage samples the target at `gl_FragCoord.xy / frame.camera_params.zw`: the mirror view
+  projects a point on the plane where the main view does.
+- Render the mirror view first and the view that shows the surface right after it. The renderer holds one shadow set
+  at a time, so a view with another camera between them records over the mirror's set.
 - A mirror view stays `LINEAR_HDR`, so it ignores auto exposure; the view that shows the surface meters the
-  composited reflection as part of its image. The target holds physical radiance: the surface's stage multiplies
-  the sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
+  composited reflection as part of its image. The target holds physical radiance: the surface's stage multiplies the
+  sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
 - World-space overlay items draw in a mirror view when their layers match its camera, reflected as the view shows them
-  ([World-space items](overlay.md#world-space-items)).
+  ([world-space items](overlay.md#world-space-items)).
+- Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane, from the
+  plane to the reflected surface. The view that shows the surface fogs the path to it, so the reflection carries the
+  reflected path's fog once. Its [medium volumes](sky.md#medium-volumes) follow the same cut. The mirror view owns its
+  own sky tables.
 - Water from the landscape add-on places its mirror cameras and clip plane for you and reads each reflection from a
   view texture; see [water](water.md#the-mirror).
-- Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
-  from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
-  reflection carries the reflected path's fog once. Its [medium volumes](sky.md#medium-volumes) follow the same cut.
-  The mirror view owns its own sky tables.
 
-Every mesh vertex stage declares `ClipDistance`, so the device must support `shaderClipDistance`;
-`create_renderer` faults `UNSUPPORTED` without it. Adapter selection prefers a discrete adapter
-without checking the feature: on a machine whose discrete adapter lacks it, `create_renderer`
-faults even when another adapter has it.
+## Limits
 
-Cost, measured on an RTX 4090 (driver 610.88). Writing the clip distance costs nothing measurable:
-Sponza, forward, 64 lights, shadows on, means of six alternated runs before and after the clip write
-(ms):
+- Views and targets are created and configured between frames only.
+- There is no render graph: the application orders views, and a view must not sample a target it writes.
+- A full view or target pool faults `c3d::CAPACITY_EXCEEDED`; `render_to`, `bake_impostor` and the reflection captures
+  borrow a view slot for the length of the call.
+- `LINEAR_HDR` needs a float target.
+- A `PATH_TRACED` view rejects raster-only settings such as a clip plane, TAA and clustered lights.
 
-| 2560 × 1440 | Depth prepass | Opaque | Shadow atlas | GPU frame |
-| --- | --- | --- | --- | --- |
-| Flat lights, before | 0.0420 | 1.0812 | 0.0975 | 1.2825 |
-| Flat lights, after | 0.0432 | 1.0827 | 0.0992 | 1.2857 |
-| Clustered lights, before | 0.0464 | 0.2768 | 0.1000 | 0.5034 |
-| Clustered lights, after | 0.0461 | 0.2751 | 0.1014 | 0.4985 |
+## See also
 
-At 1920 × 1080 the frames run under 1 ms and the differences are inside the noise (flat: opaque
-0.7008 against 0.6898 ms). The `views` example's mirror view sums 0.065 to 0.074 ms of GPU passes at
-render scale 0.5 and 1.0, with and without the plane, about 0.045 ms of it the shadow atlas; on that
-small scene neither the plane nor the render scale moves the time beyond the run-to-run spread. The
-plane culls the buried crate (`Stats.culled` 1 with it, 0 without).
-
-With the mirror fitted to the main camera the frame records one shadow atlas, the mirror's, and the window view binds
-it. In the `views` example's View stats window (single-frame readings) the mirror's visible passes sum to about
-0.10 ms (depth 0.010, shadow atlas 0.073, forward 0.014); its atlas went from 0.068 to 0.073 ms because it now fits
-the main camera. The window's atlas is the one that is gone.
-
-## Preparation
-
-`prepare_scene(scene)` uploads every asset the scene references, creates its mesh, shadow and
-snapshot pipelines, and the display and effect pipelines of every live view, then waits.
-`prepare_model(model)` does the same for a `ModelTemplate` before it is instantiated, preparing
-depth-only variants unconditionally. Views created afterwards prepare their pipelines on first
-render.
-
-A mesh's pipelines follow the live views: the `RT_SHADOWS` forms (with `SCENE_TRACE_BVH` on the
-software path) of a view with traced shadows, hard-only unless the scene has a traced light with a
-[source extent](shadows.md#soft-shadows), for each draw the view shades in the forward pass; the
-`WEIGHTED_BLEND` forms and the composite of a `WEIGHTED` view; and the thin reflection prepass pair, written
-and masked, of a forward view with traced reflections. Configure the views before preparing.
-`Stats.pipelines_created` counts the pipelines the cache built in a frame, prepared ones included; a
-first frame that draws only prepared configurations reports zero.
-
-### Budgeted preparation
-
-```c3
-PrepareId prepare = renderer.begin_prepare_model(model)!;
-renderer.begin_frame()!;
-PrepareReport report = renderer.advance_prepares_within({
-    .staged_bytes = 1 << 20,
-    .generated_texels = 1 << 20,
-    .pipelines = 1,
-    .time_ns = 2_000_000,
-})!;
-renderer.end_frame()!;
-PrepareProgress progress = renderer.prepare_progress(prepare);
-if (progress.state == PrepareState.READY) {
-    model::instantiate(&assets, &scene, model)!;
-    renderer.end_prepare(prepare)!;
-}
-```
-
-`begin_prepare_model` synchronously lists the model's dependencies in
-O(meshes + LOD parts + material/texture references), with constant-time deduplication
-per reference. Joint packing width is retained asset metadata. Enumeration records
-fixed byte, texel and unit totals; a revision restart recomputes and resets them.
-Referenced STANDARD layers, samplers, custom shader data and full-reader texture
-demand are dependencies of their parent material.
-
-`advance_prepares_within` requires an open frame. Its four axes are actual GPU-bound
-staged bytes, generated mip texels, pipeline creation calls and a cooperative
-nanosecond target. A zero configured axis is unbounded; all-zero limits
-drain pending work. Pause by omitting the call. Every call has a fresh allowance,
-shared across records in begin order. A depleted finite remainder never becomes
-unbounded. A blocked step reports its reason and required bytes, texels or
-pipeline calls; callers can raise that allowance for a later call.
-
-Uploads split into legal texture row/block bands and aligned geometry or payload
-ranges. Mip filtering splits into destination row bands, preserving the synchronous
-filter and rounding. Threshold coverage adds a second, correction pass over each
-level. Each band costs its output texels once per pass, so a complete chain costs its
-generated texel count, twice with threshold coverage; a level that needs no correction
-counts that pass as done without a charge. CPU-only shader copies are reported
-separately as `copied_bytes`. Pipeline and finish work never upload a stale
-dependency outside the accounting. Normal pipeline misses create one pipeline per step. Atomic custom
-shader adoption can require several cached keys; a bounded call defers until its true
-creation count fits, while an unbounded call admits the atomic operation.
-
-The time target is checked between bounded spans and indivisible steps, after the
-first step of each call, so a target below a call's fixed overhead still advances one
-step per call. A span, an allocation or a texture's creation (its image and every
-view, in one step) can overrun it; elapsed time, overrun, generation time and pipeline
-driver time are reported separately, with pipeline creation calls. `Stats` sums each
-frame's staged bytes, generated texels, pipeline calls and times. View targets and
-unrelated view resources are outside model preparation. Ordinary residency raises
-keep their separate pacing.
-
-`PREPARE_FRAME_BUDGET_BYTES` is a 1 MiB staged-byte allowance suited to one call per
-frame. A byte allowance below the minimum legal step blocks that step until a later
-call raises it.
-
-`PrepareProgress` reports phase, state, fixed totals, completed bytes/texels/units,
-restarts and failure. CURRENT or removed dependencies advance their recorded byte progress without
-staging; generated-texel progress counts only generation performed or skipped, so
-it can remain below the fixed total when units become current or are removed.
-Removed dependencies count as dangling. `SUBMITTED`
-means final work was submitted, and `READY` means its covering submission completed.
-Continue advancing to observe readiness. Views created or reconfigured afterward
-can still prepare their own pipelines on first use.
-
-Partial candidates stay private. The frame recording the final copy installs the
-complete mirror, usable later on the same queue; abort restores the previous usable
-mirror and last committed staging cursor. One active mip chain is retained per
-record and freed at final-copy recording. Abort keeps the in-progress unit's chain;
-units finalized in that aborted frame regenerate identical bytes on retry, retaining
-previously submitted candidate bands. Released source then gives
-`ASSET_DATA_UNAVAILABLE`. Advancing never submits a frame itself. A successful
-submission stays committed after a later presentation failure.
-
-Each step reacquires source by identity and revision. Relevant changes restart the
-record; repeated mutation can prevent completion. A removed model fails with
-`INVALID_ID`. Released required data fails with `ASSET_DATA_UNAVAILABLE` unless the
-job already owns everything still needed. Ordinary draws or synchronous uploads
-can make a mirror current and supersede a private candidate. Record-local asset
-and shader faults fail that record; GPU/device/capacity faults propagate, and the
-caller aborts the frame.
-
-`end_prepare` cancels and releases any state outside a frame. It frees CPU job data
-and retires unpublished candidates after their last actual submission completes;
-published mirrors stay cached. Stale ids report `FAILED`/`INVALID_ID` and fault
-`INVALID_ID` at release. Four records may be open; a dead model faults `INVALID_ID`
-and an exhausted record pool faults `CAPACITY_EXCEEDED`.
-
-## Example
-
-`examples/views` renders a rolled textured cube, three spheres, a crate and a ground plane three
-times per frame: a producer camera orbiting the scene writes a 512x512 capture target, and a monitor
-slab on its own layer samples that target through a Basic material while the window camera shows the
-whole scene. The panel resizes the capture target (256, 512, 1024), switches the capture between
-`DISPLAY_LDR` on an sRGB target and `LINEAR_HDR` on a float target (recreating the target and view
-and rebinding the material), toggles FXAA and bloom on the capture view, and scales the window
-view's working resolution.
-
-The ground is a mirror floor. A third view renders a mirror camera, placed each frame with the
-[planar reflection](#planar-reflections) recipe, into a half-size float target, clipped to the
-ground plane; the ground's custom material (`examples/shaders/custom/mirror.frag.glsl`, compiled at
-startup) shades the concrete through `shade_standard_surface` and mixes in the target. The ground
-sits on its own layer, so only the window camera draws it and the capture shows no floor. A chrome
-sphere sits half sunk into the ground and a crate lies wholly under it: with "Clip plane" off, the
-reflection shows the sphere's buried half and the crate as if they rose out of the floor. The panel
-also sets the mirror view's render scale and the floor's reflectance, and a "View stats" window
-compares the window, capture and mirror views.
-
-## Multisample anti-aliasing
-
-`ViewDesc.msaa` selects 1, 2, 4 or 8 samples per pixel for the opaque scene passes of a `FORWARD` or `DEFERRED` view.
-`ONE` is off: the view records the passes, images and pipelines of a view without the field.
-
-```c3
-ViewDesc desc = render::default_view_desc();
-desc.msaa = MsaaSamples.FOUR;
-render::configure_view(&renderer, renderer.default_view, desc)!;
-```
-
-An MSAA view draws its depth prepass, its forward pass and the sky into multisample twins of `hdr_color` and `depth`
-(`msaa_color` and `msaa_depth`). On a `FORWARD` view each of the two passes ends with a render-pass resolve:
-
-- `DEPTH_PREPASS` writes `msaa_depth` and resolves sample 0 into `depth`, so ambient occlusion, screen-space GI and
-  traced reflections read a single-sample depth. With traced reflections its thin surface image is multisample too, and
-  a copy of sample 0 fills `reflection_gbuffer`. With ray-traced ambient occlusion it also writes the multisample
-  `msaa_proxy_skip` word, and a copy of sample 0 fills `proxy_skip`.
-- `FORWARD_OPAQUE` writes `msaa_color` and `msaa_depth` and resolves into `hdr_color` and `depth`: color is the average
-  of the samples, depth is sample 0. Opaque items, Toon outlines, installed impostors and the sky draw here.
-
-A fragment shades once per pixel and primitive and the covered samples share its color: the sample count does not
-multiply shading cost, and a `MASK` material's alpha test is evaluated once as well, so its cut-out edges are not
-antialiased. There is no alpha-to-coverage. The position that lighting and traced shadow rays use is interpolated at the
-pixel's centroid (`v_shading_pos`), which lies inside the triangle; every other term interpolates at the pixel centre.
-
-Every later pass reads single-sample images, as on a view without the field: clouds, fog and the atmosphere's aerial
-perspective, scene-read and transmission draws, weighted and sorted transparency, the screen-space GI color copy,
-exposure, debug lines, motion blur, depth of field, bloom, grading, FXAA and the output. An MSAA view therefore always
-takes the split a fogged view takes: blended draws and scene readers draw after the resolve, single-sample, against the
-resolved `depth`. Those passes test pixel-centre fragments against sample 0's depth, so a blended or
-scene-reading surface meeting an opaque silhouette shows a slight fringe where the resolved color and the sample-0
-depth disagree.
-
-Velocity is not averaged. Camera velocity runs at the view's count from the resolved `depth`, and moved opaque items
-redraw at the view's count against `msaa_depth`; both write `msaa_velocity`, and a copy of sample 0 fills `velocity`.
-Moved depth writers among the scene-read draws were drawn single-sample, so they redraw last into `velocity` against
-the resolved `depth`.
-
-### Deferred views
-
-A `DEFERRED` view holds its G-buffer at the view's count and lights a pixel once where all its samples come from one
-surface, and once per sample where they do not. Its pass order is:
-
-- `DEPTH_PREPASS` fills `msaa_depth` and resolves sample 0 into `depth`, so the pruned cluster reduction and every
-  later single-sample reader find a depth before the G-buffer exists.
-- `GBUFFER` draws the five channels at the view's count with depth `EQUAL` against `msaa_depth`. Copies of sample 0 of
-  the normal, specular and flags channels follow: `normal_sample_zero` with ambient occlusion, screen-space GI or traced
-  reflections, `specular_sample_zero` with traced reflections, and `flags_sample_zero` with ray-traced ambient occlusion
-  or traced reflections. Those effects read `depth` and the copies, as a forward view's effects read its resolved
-  images.
-- `MSAA_EDGES` is a fullscreen pass at pixel rate that writes `msaa_edges`, a single-sample `R8_UINT` mask. A pixel is
-  an edge when any sample differs from sample 0: in depth by more than a fraction of the larger reverse-Z depth, in the
-  layer mask or the flag bits at all, or in a color, normal, roughness, occlusion, emissive or specular channel by
-  more than a small tolerance. The G-buffer is shaded once per pixel and primitive, so the samples of one primitive
-  agree and only a boundary between surfaces makes an edge. A seam between a shadow receiver and a non-receiver is an
-  edge because the receive-shadow bit differs. The tolerances are `MSAA_EDGE_DEPTH_TOLERANCE` and
-  `MSAA_EDGE_COLOR_TOLERANCE` in `abi/c3d.abi`.
-- `LIGHTING` is a fullscreen pass at the view's count into `msaa_color` with two draws. The first runs at pixel rate:
-  it skips edge pixels, lights the others once from sample 0, and the result reaches every covered sample. The second
-  shades each sample of an edge pixel in its own invocation (sample-rate shading), which reads that sample of the five
-  channels and of `msaa_depth`, and skips the other pixels. The layer mask and the receive-shadow bit are never
-  averaged, so a sample at an edge takes the shadow decision of the surface it covers. The face normal used for shadow
-  offsets is rebuilt from the same sample of neighboring texels. A sample with no geometry keeps the clear color.
-  Ambient occlusion, screen-space GI and traced reflection results are per pixel.
-- `FORWARD_OPAQUE` loads `msaa_color` and `msaa_depth`, draws the forward remainder and the sky at the view's count,
-  then resolves color (the average of the lit samples) into `hdr_color` and depth sample 0 into `depth`.
-
-Everything after the resolve is single-sample, as on a forward view. A traced shadow is cast once per pixel away from
-edges and once per sample at edges. A shadow edge inside one triangle is therefore shaded once per pixel and is not
-antialiased by the samples, the quality of forward multisampling, where the fragment shader also runs once per pixel;
-silhouettes, seams and creases between surfaces are antialiased. The G-buffer writes and the classification scale
-with `N` on every pixel, and the lighting cost scales with `N` only on edge pixels. Previews of a multisample
-G-buffer channel show sample 0.
-
-| Combination with `msaa` above `ONE` | Behavior |
-| --- | --- |
-| `TAA` | Faults `INVALID_ARGUMENT` |
-| `PATH_TRACED` | Faults `INVALID_ARGUMENT` |
-| `DEFERRED` | Lights edge pixels per sample and the rest once; faults `UNSUPPORTED` without sample-rate shading |
-| A count an image cannot be created at on the device | Faults `UNSUPPORTED`; adapters differ in the counts they accept |
-| `FXAA`, `NONE` | Allowed; FXAA filters the resolved image |
-| Motion blur, screen-space GI | Velocity from sample 0 |
-| Ambient occlusion, screen-space GI, traced reflections | Read the resolved depth and the sample-0 thin surface (forward) or sample-0 copies of the G-buffer channels (deferred); ray-traced ambient occlusion also reads sample 0 of the proxy skip word |
-| Traced shadows | Evaluated per fragment on a forward view; on a deferred view per pixel, and per sample at edges |
-| Depth of field, auto focus, bloom, grading, LUT, auto exposure | Read the resolved images |
-| Decals | Unchanged: applied in the receiving draw's stage |
-| Installed impostors | Draw in the multisample pass; their alpha cut is not antialiased |
-| `render_scale`, `clip_plane`, mirror views, `share_shadows`, clustered lights, instance culling, LOD | Allowed |
-| Shadow maps, overlays, reflection captures, probe updates, `bake_impostor` | Single-sample |
-
-`create_view` and `configure_view` check every image the view needs at the working extent, and a fault changes nothing.
-Changing `msaa`, velocity use, traced reflections or the ambient occlusion kind reallocates only the multisample images. `ViewStats.images` counts
-them. Bytes per working pixel at `N` samples:
-
-| Image | Bytes per pixel |
-| --- | --- |
-| `msaa_color`, `msaa_depth` | `12 · N` (8 and 4) |
-| `msaa_velocity` | `4 · N` with motion blur alone, `8 · N` with screen-space GI, temporal ambient occlusion or reflection history |
-| `msaa_reflection_gbuffer` | `8 · N`, on a forward view |
-| `msaa_proxy_skip` | `4 · N`, on a forward view with ray-traced ambient occlusion |
-| G-buffer, deferred | `28 · N`, in place of the 28 of a single-sample G-buffer |
-| `normal_sample_zero`, `specular_sample_zero` | 8 each, single-sample |
-| `proxy_skip`, `flags_sample_zero` | 4 each, single-sample |
-| `msaa_edges`, deferred | 1, single-sample |
-
-The single-sample images keep their formats and usages and are the resolve and copy targets.
-
-## Shading path
-
-`shading = DEFERRED` renders the view's encodable opaque materials through a G-buffer and one
-fullscreen lighting resolve; every other material keeps its forward pass on the same view, and
-a Toon material draws its [outline](materials.md#toon-outline) in that pass. A
-`FORWARD` view allocates no G-buffer image. With `depth_prepass` (the constructors' default) it runs
-`DEPTH_PREPASS` over its opaque set, then [`AMBIENT_OCCLUSION`](ambient_occlusion.md) when enabled,
-then `FORWARD_OPAQUE` with depth `EQUAL` and no depth write, so every opaque pixel is shaded once.
-Without it, `FORWARD_OPAQUE` writes depth itself and shades every fragment that passes the depth
-test at the time it is drawn; ambient occlusion, screen-space GI and ray-traced reflections force the prepass on. With
-ray-traced ambient occlusion the prepass also writes the [proxy skip word](scene_trace.md#trace-proxies), one `R32_UINT`
-output per fragment. The prepass pays one more
-geometry pass with depth-only shaders and wins wherever opaque overdraw would be shaded more than
-once. Measured on an RTX 4090 at 1080p with flat lights: Sponza with 64 lights, forward opaque
-1.70 to 1.89 ms without it against 0.85 to 0.98 ms plus a 0.04 ms prepass with it; the
-`many_lights` hall with 1024 lights, 4.82 to 5.07 ms against 4.07 to 4.08 ms plus 0.007 ms.
-A `DEFERRED` view always runs it and ignores the flag.
-
-A `FORWARD` view accepts `ray_tracing.reflections`; `PATH_TRACED` views fault `UNSUPPORTED` as before. Its pass
-order is `DEPTH_PREPASS`, which also writes the thin reflection G-buffer, then [`RT_REFLECTIONS`](reflections.md#forward-views)
-(after ambient occlusion and screen-space GI when enabled), then `FORWARD_OPAQUE`, whose Standard and Physical
-fragments read the blurred reflection image. Transparent and scene-reading draws do not read it.
-
-```bash
-python3 scripts/build.py --example deferred
-```
-
-`examples/deferred` renders one scene twice, the left half forward and the right half deferred,
-switches either half at runtime and lists the G-buffer channels of the deferred view in the targets
-panel. Key `M` and the panel's MSAA row cycle both views through 1, 2, 4 and 8 samples, and
-`--msaa <1|2|4|8>` starts with a count. A view whose configuration faults keeps the count it had and the panel
-names the fault: a count the adapter cannot create the images at faults `UNSUPPORTED` on both halves.
-Two touching boxes in the foreground sit under a canopy's sun shadow; the left one receives shadows and the right one
-does not (`Mesh.receive_shadow`), so their seam shows the per-sample receive-shadow bit of the deferred half at
-`FOUR` samples. It includes 64 bullet-hole decals on the floor and opaque boxes plus a
-road-paint stripe parented to the orbiting lamp: 65 decals in total. The Decals
-checkbox changes their node visibility, and the panel prints packed, dropped and
-overflow counts for each view. `--clustered` starts both views with clustered
-selection; `--dense-decals` uses 255 bullet holes plus the stripe, totaling 256.
-The stripe has lower order than the holes. For the 256-decal measurement, frame
-the scene until both packed counts reach 256. Pause the lamp and keep the camera
-fixed when comparing decals on and off.
-
-For active CPU capture and GPU timings, build and run:
-
-```bash
-c3c build deferred --path examples --lib c3d_profile -D C3D_PROFILE_CPU -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
-./examples/build/deferred --gpu-timings --clustered --dense-decals
-```
-
-With CPU and internal profiling enabled, the example owns a bounded CPU recorder
-and captures each `draw_frame`. The Deferred panel shows the preceding complete
-capture's `view.decals` milliseconds separately for the left and right views.
-It displays N/A for incomplete captures and identifies builds without CPU capture.
-GPU pass timings remain delayed completed-frame values in Stats. The window starts
-at 1280 × 720; for a 1080p comparison, resize its client area until the Deferred
-panel reports `Output: 1920 x 1080`, then keep that extent fixed. The two viewports
-each occupy half that output width.
-
-Routing is a pure function of the material record, `render::gbuffer_encodable`, evaluated with
-`render::view_draw_list` where the draw lists are split. A draw writes the G-buffer when the material
-is `STANDARD`, or `PHYSICAL` with zero clearcoat, sheen, anisotropy and transmission factors,
-`ior == 1.5`, white `specular_color` and no `specular_color_map`, and its alpha mode is `OPAQUE` or
-`MASK`. `BASIC`, `TOON`, `CUSTOM`, every other `PHYSICAL` value, `BLEND` and transmissive draws stay
-forward. The specular weight and its map are encoded. No material field selects the path and a
-`FORWARD` view ignores the rule.
-
-The deferred view owns five images at its working extent, allocated by `create_view` or
-`configure_view` and retired when the view returns to `FORWARD`:
-
-| Channel | Format | Contents |
-| --- | --- | --- |
-| `gbuffer_base_color_metallic` | `RGBA8_UNORM` | base color, metallic |
-| `gbuffer_normal_roughness` | `RGBA16_FLOAT` | octahedral normal, roughness, occlusion |
-| `gbuffer_emissive_specular` | `RGBA16_FLOAT` | emissive, specular weight |
-| `gbuffer_layers` | `R32_UINT` | receiver layer mask |
-| `gbuffer_flags` | `R32_UINT` | receive-shadow bit; the [proxy skip height](scene_trace.md#trace-proxies) in centimetres in bits 16 to 31 |
-
-Pass order on a deferred view: uploads, shadow atlas (with [colored shadows](shadows.md#colored-shadows), a layer that holds
-translucent casters adds a translucent depth and a transmittance pass), light culling, `DEPTH_PREPASS` over both opaque
-lists, `GBUFFER` (depth `EQUAL`, no write), `AMBIENT_OCCLUSION` when the view has ambient
-occlusion, `LIGHTING` (a fullscreen fragment pass that clears
-`hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
-`FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, `SCENE_SNAPSHOT` and `SCENE_READ` when the view
-draws scene readers (`SCENE_MIPS` between them when the list holds rough glass; the three repeat for
-each non-empty [transmission layer](materials.md#transmission-layers)), `SCENE_SNAPSHOT`
-again when a blended draw reads the scene, transparency (a `WEIGHTED` view with participating draws
-records `FORWARD_TRANSPARENT` into its accumulation images, then `TRANSPARENT_COMPOSITE` into
-`hdr_color`, then the sorted blended draws: additive and every custom blended material),
-velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A view with
-[fog, an atmosphere or a medium](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
-depth prepass when its scene has an atmosphere, and splits before the transparent draws: the snapshot for
-blended readers, the SSGI colour copy, then `FOG`, then transparency. With `volumetric_fog` the view also
-records `FOG_SCATTERING` and `FOG_INTEGRATION` after the sky tables. Dielectric F0 in the resolve is
-`0.04 · specular` for IOR 1.5, which is why other IORs and tinted specular colors route forward. On a view with
-[`msaa`](#multisample-anti-aliasing) above `ONE`, `DEPTH_PREPASS` also resolves sample 0 of the depth, `MSAA_EDGES`
-marks the pixels whose samples differ, `LIGHTING` lights the others once and the marked ones per sample into
-`msaa_color`, and `FORWARD_OPAQUE` resolves color into `hdr_color` and depth into `depth` (see
-[deferred views](#deferred-views)).
-
-Light selection follows `lights` on both paths: the resolve calls the same clustered or flat
-selection as the forward shaders, so `DEFERRED` with `CLUSTERED` needs no extra configuration.
-`render::cluster_cell` and `render::cluster_index` are the C3 twins of that selection.
-
-Eligible Standard and Physical receivers apply decals to their material sample
-before forward lighting or `write_gbuffer`. The deferred resolve reads the sample and
-does not apply decals again. The same ordered selection and blend rules serve both
-paths, including eligible Physical draws routed through the forward remainder.
-Decals leave coverage unchanged, so depth prepass and shadow alpha tests retain
-their original material inputs. Impostor receivers and traced-hit shading do not
-apply decals; Physical extension parameters are unchanged. Custom G-buffer stages
-opt in through the same [public decal helper](materials.md#decals).
-
-Custom materials take part through their shader: a `ShaderDesc` with a `gbuffer` stage routes
-like `STANDARD` on a deferred view, one without stays forward; see
-[custom shaders](custom_shaders.md#g-buffer-stage).
-
-Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the view's live working images
-at frame start (`images`), its selected and dropped light and decal counts, whether it bound another view's shadow set
-(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and light/decal overflow counts, its completed GPU pass
-timings (`C3D_PROFILE_GPU`), its applied exposure (`exposure`, delayed under auto exposure), the radiance scale of its
-last rendering (`pre_exposure`, 1 is physical) and its depth-of-field focus in meters (`focus_distance`, delayed under
-[auto focus](post.md#auto-focus)), while `Stats` keeps
-renderer-wide selection sums and the last completed cluster result described above.
-`gui::view_stats_table(renderer, views, labels)` prints several views side by side.
-
-```bash
-python3 scripts/build.py --example shading_paths
-```
-
-`examples/shading_paths` renders one scene with 48 point lights, a custom material with a
-G-buffer stage and one without, through all four `ShadingPath` and `LightSelection`
-combinations in a 2x2 grid, switches each view at runtime, shows the targets panel for a selected
-view and the view stats table for all four.
-Motion blur, depth of field, bloom, grading and FXAA read `hdr_color`, depth and velocity only and
-run unchanged.
-
-Measured once on an RTX 4090 with `scripts/benchmark.py --shadings forward deferred --gpu-timings`:
-Sponza at 2560x1440 with 256 clustered lights renders in 0.674 ms deferred against 1.346 ms
-forward (prepass, G-buffer and resolve 0.483 ms against 1.161 ms of forward opaque shading);
-the low-overdraw `many_lights` hall costs 6 to 8 % more deferred than forward. Deferred pays
-for overdraw and light count and charges the G-buffer round trip without them.
-
-Known difference: the resolve offsets shadow lookups along a face normal rebuilt from depth, the
-forward shaders along the face-corrected vertex normal; neither reads the normal map, and on curved
-surfaces the two directions differ slightly.
-
-Ambient occlusion, screen-space GI and traced reflections on a deferred view read the G-buffer's normal channel, and
-traced reflections its specular weight; on an MSAA view they read the sample-0 copies. Ray-traced ambient occlusion and
-traced reflections also read its flags channel for the proxy skip height.
+- [Views reference](views_reference.md) for `ViewDesc`, faults, capacities and counters.
+- [Shading paths](shading_paths.md), [MSAA](msaa.md) and [preparation](preparation.md).
+- [Lights](lights.md) and [shadows](shadows.md) for per-view light selection and shadow sets.
+- [Post-processing](post.md) for the display route and temporal effects.
+- [Camera-relative rendering](large_world.md) for the frame origin.

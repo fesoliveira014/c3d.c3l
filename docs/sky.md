@@ -930,7 +930,7 @@ main camera's set and the main view binds it.
 Before and after were measured in one session. Twilight records no atlas in either build (the sun is below the
 horizon), so its sets are empty and nothing is shared. It is slower by 0.014 ms of `FORWARD_OPAQUE` because the
 forward shader's coarser-cascade lookup compiles larger for every view; see the
-[lookup cost](shadows.md#lookup-cost).
+[cascade lookup](shadows.md#tune-cascades).
 
 ### WSL, llvmpipe
 

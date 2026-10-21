@@ -105,7 +105,7 @@ add-on](serialization.md) carries the metric, band and levels.
 
 ### Ranges
 
-Notation: `s` is the view's pixel scale (see [selection camera](views.md#selection-camera)), `T` is `split_pixels`, `h`
+Notation: `s` is the view's pixel scale (see [selection camera](views_reference.md#selection-camera)), `T` is `split_pixels`, `h`
 the hysteresis, `b` the morph band, and `D` the finest depth. `e` and `g` are the extent and diagonal of a depth scaled
 by the largest axis scale of the node's world matrix. The range of a depth is
 
@@ -128,7 +128,7 @@ R_d = max(e_d s / T, (R_{d+1} (1 + h) + g_{d+1}) / (1 - b))    for d < D
   `s = working_height / ortho_height`: a node of depth `d` splits when `e_d s > T`, and stays split while
   `e_d s >= T / (1 + h)`. Every node of a depth takes the same decision, so the drawn nodes of a view share one depth
   (leaves above it aside) and the morph is 0. A stage tells with `FRAME_SELECTION_ORTHOGRAPHIC`, which a shadow layer of
-  the view carries as well ([selection camera](views.md#selection-camera)).
+  the view carries as well ([selection camera](views_reference.md#selection-camera)).
 - **Vertex stages.** Under `BOX_RANGES` a [custom vertex stage](custom_shaders.md#quadtree-morph) reads the same
   `QuadtreeGpu` block through the draw's instance-effects block and calls `quadtree_morph`.
 
@@ -173,6 +173,6 @@ use stays the union of every instance, because the renderer draws non-leaf nodes
 ## See also
 
 - [Explicit instancing](instancing.md) for batches, culling and the culling arena.
-- [Views](views.md#selection-camera) for the selection camera.
+- [Views](views_reference.md#selection-camera) for the selection camera.
 - [Custom shaders](custom_shaders.md#quadtree-morph) for `quadtree_morph`.
 - [Terrain](terrain.md) and [water](water.md) for the trees the landscape add-on builds.
