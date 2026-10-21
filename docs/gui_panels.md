@@ -59,7 +59,7 @@ change keeps a custom inspector. See [type descriptions](type_descriptions.md).
 The `LodGroup` inspector is read-only: placement mode and count, bounds mode, sway, fade, each level's minimum height and
 parts, and an installed impostor's atlas and capture radius. See [whole-object LOD](lod.md). The `Decal` inspector shows the
 material id and edits the four weights in [0, 1], `Fade angle (deg)`, `Receiver layers` and `Order`; component edits need no
-material dirty call. See [decals](materials.md#decals).
+material dirty call. See [decals](decals.md).
 
 ## Material panel
 

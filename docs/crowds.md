@@ -135,7 +135,7 @@ unchanged.
   same whatever the draws show. Animated LOD parts keep vertex skinning.
 - **Custom materials.** A fragment-only custom material draws with the built-in skinned instanced stage. A custom
   instanced vertex pair skins a crowd when compiled with the deformation defines ([Vertex
-  contract](custom_shaders.md#vertex-contract)). Compiled without them, the crowd draws at the bind pose. Under compute
+  contract](custom_shaders_reference.md#vertex-contract)). Compiled without them, the crowd draws at the bind pose. Under compute
   skinning such a part keeps that vertex skinning.
 
 ## Ray tracing

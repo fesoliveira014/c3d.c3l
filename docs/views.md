@@ -122,7 +122,7 @@ renderer.end_frame()!;
   after transparency. `shadow_camera` is the camera the view's [shadow set](shadows.md#shadow-sets) is fitted to; null
   uses `camera_node`. A `shadow_camera` without a `Camera` faults `c3d::INVALID_ARGUMENT` and aborts the frame.
 - Between `render_view` and `finish_view`, a compute dispatch may read the view's depth and read or write its scene
-  image ([custom shaders](custom_shaders.md#views)).
+  image ([custom shaders](compute.md#dispatch-around-views)).
 - `end_frame` faults `c3d::INVALID_ARGUMENT` when a rendered view was not finished. It records pending uploads and
   environment preparations, submits when the frame recorded a clear, draw, dispatch, upload or preparation, presents
   only when a window image was acquired, and discards a frame that recorded nothing. Neither `begin_frame` nor
@@ -252,7 +252,7 @@ ViewId mirror_view = render::create_view(&renderer, desc)!;
 
 - Every mesh vertex stage writes `gl_ClipDistance[0]` from the world position that feeds `gl_Position`, so the depth
   prepass, the G-buffer, `EQUAL` shading and velocity agree along the cut. Custom vertex stages clip through
-  `write_mesh_outputs` or `view_clip.glsl` ([custom shaders](custom_shaders.md#vertex-contract)).
+  `write_mesh_outputs` or `view_clip.glsl` ([custom shaders](custom_shaders_reference.md#vertex-contract)).
 - `FrameRoot.clip_plane` holds `(normal, d)` when `FRAME_CLIP_PLANE` is set in `FrameRoot.flags`, and zero otherwise;
   any stage may read it.
 - A `PATH_TRACED` view rejects a non-zero plane with `c3d::INVALID_ARGUMENT`, like the other raster-only settings.
