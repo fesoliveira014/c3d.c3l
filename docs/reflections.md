@@ -84,7 +84,7 @@ surfaces, which more rays reduce.
   scene nothing prepared, shades without its sheen lobe on the frame that first resolves it.
 - **Fog.** A hit takes the view's height fog and, behind it, the scene's atmosphere over the path from the
   reflecting surface to the hit, and a miss takes the height fog to infinity; the camera's own fog pass fogs the
-  rest ([fog at hits](sky.md#where-fog-applies)).
+  rest ([fog at hits](fog.md#where-fog-applies)).
 - **Back face.** A reflection ray passes the back of a single-sided surface, as raster culls it,
   and reflects what lies behind; double-sided materials shade both sides
   ([facing](scene_trace.md#facing)).

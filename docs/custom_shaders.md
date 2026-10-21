@@ -267,13 +267,13 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `gbuffer.glsl` | `reconstruct_world_position`, `view_distance`, `BACKGROUND_VIEW_DISTANCE`, `encode_octahedral`, `decode_octahedral` |
 | `brdf.glsl` | `StandardSurface`, `prepare_surface`, `prepare_standard_surface`, `apply_anisotropy`, `apply_surface_anisotropy`, `evaluate_standard_lobes`, `evaluate_standard_brdf`, `fresnel_schlick` |
 | `lights.glsl` | `LightArray`, `LightList`, `LightSample`, `select_lights`, `flat_lights`, `selected_light_index`, `sample_light`, `light_casts_shadow`, `standard_view_direction`, `evaluate_standard_light` |
-| `shadows.glsl` | `shadow_visibility`, `shadow_transmittance`; both include the [cloud layer's shadow](sky.md#cloud-shadows) and the [media's sun column](sky.md#medium-volumes) for the sun, and a sun without shadow layers gets both through the `light_casts_shadow` gate. `shadow_transmittance` keeps the column's channels; `shadow_visibility` takes their mean |
+| `shadows.glsl` | `shadow_visibility`, `shadow_transmittance`; both include the [cloud layer's shadow](clouds.md#cloud-shadows) and the [media's sun column](fog.md#medium-volumes) for the sun, and a sun without shadow layers gets both through the `light_casts_shadow` gate. `shadow_transmittance` keeps the column's channels; `shadow_visibility` takes their mean |
 | `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance` (with or without an `irradiance_direction`), `evaluate_environment` (both), `evaluate_environment_lobes` (with or without an `irradiance_direction` and a `ReflectionSelection`), `environment_lobe_radiance`, `environment_tables` |
 | `probe_classification.glsl` | `probe_classification(ProbeVolumeGpu, uvec3)` reads a valid probe's live provisional/eligible/excluded state; compiled in fragment and compute stages |
 | `reflection_probe.glsl` | `ReflectionSelection`, `reflection_probe_select`, `reflection_probe_weight`, `reflection_box_direction`, `reflection_probe_radiance`, `ENVIRONMENT_GGX_CUBE`, `ENVIRONMENT_CHARLIE_CUBE`; compiled in fragment and compute stages |
 | `ambient_occlusion.glsl` | `draw_ambient_occlusion`, `frame_ambient_occlusion`, `draw_bent_normal`, `frame_bent_normal` ([bent normals](ambient_occlusion.md#bent-normals)), `specular_occlusion` |
 | `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
-| `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) and [medium volumes](sky.md#medium-volumes) ([sky](sky.md#custom-stages)) |
+| `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](fog.md#volumetric-fog) and [medium volumes](fog.md#medium-volumes) ([fog](fog.md#custom-stages)) |
 | `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](#scene-reads)) |
 | `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material`, `MaterialUvGrad`, `sample_standard_material_grad` ([explicit gradients](#explicit-gradients-and-tangents)) |
 | `decals.glsl` | `apply_decals` ([decals](materials.md#decals)) |
@@ -539,7 +539,7 @@ matrices, so render scale and TAA need nothing from the shader. Like transparent
 no screen-space terms: `draw_ambient_occlusion` returns 1, `draw_bent_normal` returns the normal it is
 given and `draw_screen_space_indirect` returns zero.
 
-On a view with fog or an atmosphere ([sky](sky.md#where-fog-applies)) the snapshots are taken before the
+On a view with fog or an atmosphere ([fog](fog.md#where-fog-applies)) the snapshots are taken before the
 view's fog pass, so readers see unfogged radiance, and a colour read also takes a depth snapshot. The pass
 fogs a depth-writing reader at its own depth; a refracting one returns `apply_fog_refracted(...)` so its
 refracted sample is fogged to its own depth. A blended reader draws after the pass and composes
@@ -669,7 +669,7 @@ Motion blur, TAA, screen-space GI, temporal ambient occlusion and the reflection
 
 ## Trace pose
 
-A custom vertex stage displaces vertices that [scene traces](scene_trace.md) never see. `ShaderDesc.trace_pose` supplies the same displacement as a compute stage: for each traced row it writes the posed positions, normals and tangents of the row's geometry into a renderer-owned slot, and every trace consumer reads hits through that slot. `trace_pose.single` poses a mesh and needs `vertex.shaded`; `trace_pose.instanced`, the same source compiled with `INSTANCED`, poses one instance of a batch and needs `vertex.instanced_shaded`. Rows are posed by the revision the renderer published, so a replacement the backend rejected keeps posing with the previous forms. The cost, capacity, `Mesh.local_bounds` rule and BLAS policy are on the [scene trace](scene_trace.md#custom-trace-poses) page.
+A custom vertex stage displaces vertices that [scene traces](scene_trace.md) never see. `ShaderDesc.trace_pose` supplies the same displacement as a compute stage: for each traced row it writes the posed positions, normals and tangents of the row's geometry into a renderer-owned slot, and every trace consumer reads hits through that slot. `trace_pose.single` poses a mesh and needs `vertex.shaded`; `trace_pose.instanced`, the same source compiled with `INSTANCED`, poses one instance of a batch and needs `vertex.instanced_shaded`. Rows are posed by the revision the renderer published, so a replacement the backend rejected keeps posing with the previous forms. The cost, capacity, `Mesh.local_bounds` rule and BLAS policy are on the [scene trace](scene_trace_reference.md#custom-trace-poses) page.
 
 The stage includes `trace_pose.glsl`, which declares the compute push block, one `uint64_t root_gpu`, a 64-lane group and these helpers:
 

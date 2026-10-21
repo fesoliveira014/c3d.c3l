@@ -370,9 +370,9 @@ check the regeneration policy: the time-lapse expects `floor(sweep / period)` re
 | `--gpu-timings`, `--validation`, `--width N`, `--height N` | As in the many-light section. |
 | `--shading forward\|deferred`, `--shadows atlas\|traced`, `--ssgi`, `--path-traced`, `--reflections on\|off`, `--taa`, `--auto-exposure`, `--pre-exposure V\|off` | Renderer configuration of the measured views. `--reflections on` needs `--shading deferred`. |
 | `--fog on\|off`, `--atmosphere off\|on\|dense\|empty` | Fog and atmosphere; `--fog off --atmosphere off` is the baseline. See [the sky example](sky.md#example). |
-| `--volumetric-fog`, `--fog-quality low\|medium\|high`, `--fog-temporal` | A froxel fog volume on the main and mirror views, its grid, and its temporal accumulation. The `FOG_SCATTERING` and `FOG_INTEGRATION` lines report it. |
+| `--volumetric-fog`, `--fog-quality low\|medium\|high`, `--fog-temporal` | A froxel fog volume on the main and mirror views, its grid, and its [temporal accumulation](fog.md#temporal-accumulation). The `FOG_SCATTERING` and `FOG_INTEGRATION` lines report it. |
 | `--local-lights N`, `--lamp-range METRES`, `--lamps-in-fog on\|off` | Lamps that `FOG_SCATTERING` scatters. |
-| `--clouds`, `--cloud-temporal` | A cloud layer and its temporal accumulation. The `CLOUDS` and `CLOUD_SHADOWS` lines report it. |
+| `--clouds`, `--cloud-temporal` | A [cloud layer](clouds.md) and its [temporal accumulation](clouds.md#cloud-temporal-accumulation). The `CLOUDS` and `CLOUD_SHADOWS` lines report it. |
 
 ## Post-processing benchmark
 
@@ -465,6 +465,6 @@ Measure the overhead of a configuration on an idle machine, per suite (`render` 
 - [Profiling](profiling.md): capture lifetimes, scopes and the GPU capture these options enable.
 - [Jobs](jobs.md): `job_bench`, the job pool benchmark.
 - [Development](development.md): building, and running on software Vulkan.
-- Example options that select a benchmark live with their feature: [lights](lights.md), [sky](sky.md),
+- Example options that select a benchmark live with their feature: [lights](lights.md), [sky](sky.md), [fog](fog.md), [clouds](clouds.md),
   [instancing](instancing.md), [post](post.md), [environments](environments.md), [reflection
   probes](reflection_probes.md) and [shadows](shadows.md).
