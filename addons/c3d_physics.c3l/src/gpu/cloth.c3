@@ -19,8 +19,8 @@ const uint DEVICE_SINGLE_PASS_PARTICLES = 1_500; // one 128-thread group beats f
 *>
 struct GpuClothsDesc {
     uint max_cloths;    // cloths stepped at once; the workgroups of the one dispatch the small ones share
-    uint max_particles; // across every cloth; 96 B of device state each, 16 B of it copied out every frame, and 32 B of host staging
-    usz  table_bytes;   // topology, rest, color and routing tables of every cloth; about 280 B per particle of a bent sheet, so tables bound before particles do
+    uint max_particles; // across every cloth; 48 B of device state each, 16 B of it copied out every frame
+    usz  table_bytes;   // topology, rest, color and routing tables of every cloth
 }
 
 <*
@@ -31,7 +31,7 @@ const uint MAX_GPU_CLOTHS = 65_535;
 <*
  Budgets that fit a handful of flags or capes.
 *>
-const GpuClothsDesc GPU_CLOTHS_DEFAULT = { .max_cloths = 64, .max_particles = 65_536, .table_bytes = 4 * 1024 * 1024 }; // 6 MiB of device state, 4 MiB of tables, 3 MiB of host copies of the positions and 2 MiB of staging; three of the renderer's 64 buffers
+const GpuClothsDesc GPU_CLOTHS_DEFAULT = { .max_cloths = 64, .max_particles = 65_536, .table_bytes = 4 * 1024 * 1024 }; // 3 MiB of device state and 4 MiB of tables, 3 MiB of host copies of the positions; three of the renderer's 64 buffers
 
 <*
  How a step lays its passes over dispatches.
@@ -41,18 +41,12 @@ enum ClothStepShape {
     FUSED,  // one dispatch per color pass, then the output
 }
 
-const usz WORK_SECTIONS @private = 5; // vec4 per particle for predicted positions, velocities and lambdas, then two for the reference pair
-
 const String FUSED_KEY @private = "c3d_physics/cloth_fused";
 const String SINGLE_KEY @private = "c3d_physics/cloth_single";
-const String FUSED_LEAN_KEY @private = "c3d_physics/cloth_fused_lean";
-const String SINGLE_LEAN_KEY @private = "c3d_physics/cloth_single_lean";
 
 struct ClothStages @private {
     ComputeShaderId fused;
     ComputeShaderId single;
-    ComputeShaderId fused_lean;  // the same steps without soft attachments, transport, wind or skinned references
-    ComputeShaderId single_lean;
 }
 
 <*
@@ -65,7 +59,7 @@ struct GpuCloths {
     ClothSlot[]   slots;
     StepBatch     batch;        // scratch of the update in progress
     BufferId      positions;    // READBACK; the world positions of every cloth, inverse mass in w
-    BufferId      work;         // predicted positions, velocities, soft attachment lambdas, then reference pairs
+    BufferId      work;         // predicted positions, then velocities
     BufferId      tables;       // UPLOAD; topology, rest and routing tables
     char[]        tables_cpu;   // the tables buffer as the CPU keeps it
     bool          tables_dirty; // the buffer lacks a cloth's tables
@@ -96,15 +90,13 @@ fn GpuCloths? create_gpu_cloths(
     ClothStages stages = {
         .fused = stage(assets, FUSED_KEY, physics::CLOTH_FUSED_SPIRV[..])!,
         .single = stage(assets, SINGLE_KEY, physics::CLOTH_SINGLE_SPIRV[..])!,
-        .fused_lean = stage(assets, FUSED_LEAN_KEY, physics::CLOTH_FUSED_CLOTH_LEAN_SPIRV[..])!,
-        .single_lean = stage(assets, SINGLE_LEAN_KEY, physics::CLOTH_SINGLE_CLOTH_LEAN_SPIRV[..])!,
     };
     return {
         .allocator = allocator,
         .desc = desc,
         .stages = stages,
         .slots = alloc::new_array(allocator, ClothSlot, (sz)desc.max_cloths),
-        .batch = create_step_batch(allocator, (sz)desc.max_cloths, (sz)desc.max_particles),
+        .batch = create_step_batch(allocator, (sz)desc.max_cloths),
         .tables_cpu = alloc::new_array(allocator, char, (sz)desc.table_bytes),
     };
 }
@@ -167,14 +159,20 @@ fn void? update(GpuCloths* cloths, Renderer* renderer, AssetStore* assets, Scene
     if (catch upload_failure = send_tables(cloths, renderer)) {
         if (!failure) failure = upload_failure;
     } else {
-        // The fused cloths record first: they borrow the start of the block the batch assembles its roots in.
-        if (catch excuse = step_cloths(cloths, renderer, scene, ClothStepShape.FUSED)) {
-            if (!failure) failure = excuse;
+        foreach (&slot : cloths.slots) {
+            if (!renderer.frame_open) break; // a dispatch fault closed the frame; the first fault is returned below
+            if (!slot.cloth.generation || slot.stamp != cloths.stamp) continue;
+
+            if (catch excuse = step_cloth(
+                cloths:   cloths,
+                renderer: renderer,
+                scene:    scene,
+                slot:     slot,
+            )) {
+                if (!failure) failure = excuse;
+            }
         }
-        if (catch excuse = step_cloths(cloths, renderer, scene, ClothStepShape.SINGLE)) {
-            if (!failure) failure = excuse;
-        }
-        if (catch excuse = record_batch(cloths, renderer, scene)) {
+        if (catch excuse = record_batch(cloths, renderer)) {
             if (!failure) failure = excuse;
         }
     }
@@ -199,24 +197,6 @@ fn Vec4[]? read_positions(GpuCloths* cloths, Renderer* renderer, Entity cloth) {
 
     char[] bytes = renderer.read_buffer(cloths.positions)!;
     return ((Vec4*)&bytes[slot.first_particle * Vec4::size])[:slot.particle_count];
-}
-
-fn void? step_cloths(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothStepShape shape) @private {
-    fault failure;
-    foreach (&slot : cloths.slots) {
-        if (!renderer.frame_open) break; // a dispatch fault closed the frame; the first fault is returned below
-        if (!slot.cloth.generation || slot.stamp != cloths.stamp || slot.shape != shape) continue;
-
-        if (catch excuse = step_cloth(
-            cloths:   cloths,
-            renderer: renderer,
-            scene:    scene,
-            slot:     slot,
-        )) {
-            if (!failure) failure = excuse;
-        }
-    }
-    if (failure) return failure~;
 }
 
 fn bool runs_on_device(Cloth* cloth) @private {
@@ -251,7 +231,7 @@ fn void? create_buffers(GpuCloths* cloths, Renderer* renderer) @private {
     })!;
     defer catch (void)renderer.destroy_buffer(positions);
     BufferId work = renderer.create_buffer({
-        .size       = WORK_SECTIONS * particles * Vec4::size,
+        .size       = 2 * particles * Vec4::size,
         .debug_name = "cloth_work",
     })!;
     defer catch (void)renderer.destroy_buffer(work);

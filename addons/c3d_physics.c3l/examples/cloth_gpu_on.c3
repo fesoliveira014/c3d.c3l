@@ -15,15 +15,8 @@ struct State {
     bool      attached;
 }
 
-const usz TABLE_BYTES_PER_PARTICLE = 320; // a bent sheet needs about 280 B; the rest is margin
-
-// The default budgets hold a few small flags; a large flag or many copies outgrow them.
-fn void? attach(State* state, AssetStore* assets, uint cloths, uint particles_each) {
-    GpuClothsDesc budget = cloth_gpu::GPU_CLOTHS_DEFAULT;
-    budget.max_cloths = math::max(budget.max_cloths, cloths);
-    budget.max_particles = math::max(budget.max_particles, cloths * particles_each);
-    budget.table_bytes = math::max(budget.table_bytes, (usz)cloths * particles_each * TABLE_BYTES_PER_PARTICLE);
-    state.cloths = cloth_gpu::create_gpu_cloths(mem, assets, budget)!;
+fn void? attach(State* state, AssetStore* assets) {
+    state.cloths = cloth_gpu::create_gpu_cloths(mem, assets)!;
     state.attached = true;
 }
 
@@ -55,7 +48,7 @@ fn void report(
     );
     io::printfn(
         "gpu_cloth,memory,device_bytes,%d,host_readback_bytes,%d,host_tables_bytes,%d,particles_used,%d,table_bytes_used,%d",
-        positions + 5 * positions + budget.table_bytes,
+        positions + 2 * positions + budget.table_bytes,
         (render::FRAMES_IN_FLIGHT + 1) * positions,
         budget.table_bytes,
         state.cloths.particles_used(),
