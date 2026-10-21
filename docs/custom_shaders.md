@@ -644,7 +644,7 @@ still takes SPIR-V bytes from any other producer.
 - Scene readers get no screen-space terms and have no G-buffer stage.
 - A shader without the instanced pair draws no instanced batch.
 
-Run `python3 scripts/build.py --example custom_shader` for the tint and pulse materials with live reload. The
+Run `custom_shader` from `examples/build` (see the [examples](../examples/README.md#run-an-example)) for the tint and pulse materials with live reload. The
 `shading_paths` example compares a `standard_twin` sphere with the Standard material. `custom_compute` and
 `compute_textures` cover [compute dispatch](compute.md).
 

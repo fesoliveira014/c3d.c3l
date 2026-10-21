@@ -296,8 +296,8 @@ revision that is rejected skips its dispatches until the shader is replaced. See
 - Indirect dispatch is not supported, and `read_buffer` works on `READBACK` buffers only.
 - A stage that reads the view image sees pre-exposed values.
 
-Run `python3 scripts/build.py --example custom_compute` for a particle simulation and
-`python3 scripts/build.py --example compute_textures` for a storage texture and a view-image pass.
+Run `custom_compute` for a particle simulation and `compute_textures` for a storage texture and a view-image pass, from
+`examples/build` (see the [examples](../examples/README.md#run-an-example)).
 
 ## See also
 
