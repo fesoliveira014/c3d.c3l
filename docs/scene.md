@@ -30,7 +30,7 @@ scene.update_world();
   matrix, `layers` mask, `visible` flag and the links to its parent and children.
 - `SceneDesc.max_nodes` fixes the node count at creation, excluding the root; `default_scene_desc()` sets 16,384, about
   2.6 MiB. `add_node` and the helpers built on it fault `CAPACITY_EXCEEDED` when the scene is full.
-- The synthetic root has an identity transform. A node added without a parent hangs from it.
+- The synthetic root has an identity transform; a node added without a parent hangs from it.
 - A node pointer stays valid until the node is removed. The entity `id` stays valid across structural changes; resolve it
   with `Scene.node(entity)`.
 - The application calls `update_world` itself. No scheduler runs it.
@@ -114,20 +114,11 @@ visibility and subtree-lifetime rules as other draw components.
 
 ## Components
 
-A component is any C3 struct registered with the scene.
-
-| Call | Effect |
-| --- | --- |
-| `Scene.register(Type)` | Gives the type a process-wide slot and this scene a store for it. |
-| `Scene.add(node, value)` | Attaches a component and returns its short-lived address. |
-| `Scene.get(node, Type)` | Component address, null when absent. |
-| `Scene.has(node, Type)` | Whether the node carries the type. |
-| `Scene.remove_component(node, Type)` | Detaches the component through its hook. |
-| `Scene.set_remove_hook(Type, hook, user)` | Installs the hook every later removal of the type runs. |
-| `Scene.@each(Type; entity, component)` | Visits every component of the type in dense order. |
-| `Scene.@each2(TypeA, TypeB; entity, a, b)` | Visits every node carrying both types. |
-
-`create_scene` registers the built-in types. One process registers at most 128 component types, built-in and add-on types
+A component is any C3 struct registered with the scene. `create_scene` registers the built-in types; `Scene.register(Type)`
+registers another. `Scene.add(node, value)` attaches a component and returns its short-lived address, `get` returns it or null,
+`has` tests for it, `remove_component` detaches it through its hook, and `set_remove_hook` installs the hook every later removal
+of the type runs. `Scene.@each(Type; entity, component)` visits every component of a type in dense order, and
+`Scene.@each2` every node carrying two types. One process registers at most 128 component types, built-in and add-on types
 included (`ecs::MAX_COMPONENT_TYPES`); one more returns `CAPACITY_EXCEEDED`. A type takes a process-wide slot on first
 registration, and each world allocates a store for the types it registers. Every entity of a world's capacity carries a
 16-byte mask, one bit per slot.
@@ -143,14 +134,8 @@ component. `Scene.world` exposes the `World`.
 
 ## Limits
 
-| Limit | Value |
-| --- | --- |
-| Component types per process | 128 (`ecs::MAX_COMPONENT_TYPES`) |
-| Nodes per scene | `SceneDesc.max_nodes`, fixed at creation |
-| Component mask per entity | 16 bytes |
-
-- `WORLD`-space operations ignore ancestor scale and shear.
-- `reparent` with `keep_world` does not preserve shear.
+- At most 128 component types per process (`ecs::MAX_COMPONENT_TYPES`), and `SceneDesc.max_nodes` nodes per scene.
+- `WORLD`-space operations ignore ancestor scale and shear, and `reparent` with `keep_world` does not preserve shear.
 - The scene holds no renderer state. GPU mirrors live in the renderer and follow the scene when it renders.
 
 ## See also

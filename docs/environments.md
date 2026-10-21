@@ -152,15 +152,14 @@ required pipelines, including hidden mesh nodes. If any referenced material has 
 sheen LUT and the selected lighting environment's Charlie cube. A background-only environment prepares its source and sky
 pipeline without allocating unused GGX, SH or sheen resources; selecting it for lighting later adds the missing resources.
 
-Rendering also prepares lazily from visible candidates. A Standard, Toon, zero-sheen Physical or clearcoat-only scene requests
-no sheen resources. Active sheen without a lighting environment creates the shared LUT but no Charlie cube; with one, both are
-created as needed. This one-time allocation and filtering can stall the first frame, so `prepare_scene` is the loading-screen
-path for complete material-dependent preparation. Prepared LUTs and cubes are retained and shared on later frames.
+Rendering also prepares lazily from visible candidates. Only active sheen requests the shared LUT and, with a lighting
+environment, the Charlie cube. That one-time allocation and filtering can stall the first frame, so `prepare_scene` is the
+loading-screen path for complete material-dependent preparation. Prepared LUTs and cubes are retained and shared on later
+frames.
 
-Sheen demand does not depend on environment intensity. Changing intensity, rotation, sheen color or sheen roughness reuses
-prepared filtering. Changing the environment source or `specular_size` invalidates the Charlie cube as well as the base
-filtered results; the Charlie cube is rebuilt only when active sheen next needs that environment. Disabling sheen keeps a
-still-current Charlie cube for later reuse.
+Changing intensity, rotation, sheen color or sheen roughness reuses prepared filtering. Changing the environment source or
+`specular_size` invalidates the Charlie cube as well as the base filtered results; it is rebuilt only when active sheen next
+needs that environment.
 
 Edit a borrowed environment record and mark its description dirty:
 

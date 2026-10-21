@@ -79,21 +79,13 @@ its own. See [Display processing](post.md).
 
 ## Stats panel
 
-`stats_panel` shows the previous frame's counters and the latest completed GPU timings, in these groups:
-
-| Group | Contents |
-| --- | --- |
-| Frame | Frame time, CPU record time. |
-| Work | Draws, indirect draws, post dispatches, dispatches, scene snapshots, triangles, instances. |
-| Culling | Visible of tested instances, cull and sort dispatches and overflows, culled and faded batches. |
-| LOD | Impostor fallbacks; the completed LOD frame's tested, fallback, selected and visible counts; ordinary-object selection. |
-| Lights and probes | Lights, decals and probes with dropped counts, probe rays and updates, debug lines and drops. |
-| Uploads and preparation | Uploads, upload bytes, preparation units, bytes, texels, pipeline calls and timings. |
-| Resources | Dangling references, shader rejections, textures and texture views against their capacities. |
-| Trace | Trace instances, nodes, skipped, build time, writes, BLAS and TLAS builds, path-trace samples. |
-| Cluster | The completed cluster view, cell, overflow and skipped-cell counts, decal overflows. |
-| Upload ring | The previous frame slot's used and total bytes and overflow allocations. |
-| GPU timings, Memory, Diagnostics | Per-pass milliseconds of the completed GPU frame; per-heap usage and budget; validation state and recent debug messages. |
+`stats_panel` shows the previous frame's counters and the latest completed GPU timings. The groups, in order: frame and CPU
+record time; draw work (draws, indirect draws, dispatches, scene snapshots, triangles, instances); culling (visible of tested
+instances, cull and sort dispatches and overflows, culled and faded batches); LOD; lights, decals and probes with their dropped
+counts, probe rays and updates, and debug lines; uploads and preparation; resources (dangling references, shader rejections,
+textures and texture views against their capacities); trace instances, nodes, builds and samples; the completed cluster
+figures; the previous frame slot's upload ring use; the completed GPU frame's per-pass milliseconds; per-heap memory usage and
+budget; and a Diagnostics section with the validation state and recent debug messages.
 
 - Draw totals include composition and GUI. Indirect draws count batch draws issued through indirect commands, every pass
   included. Triangle totals include mesh and GUI geometry. Each scene snapshot is one image copy and one draw; snapshots serve

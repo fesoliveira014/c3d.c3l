@@ -92,8 +92,8 @@ Keys are named by `platform::Scancode`, SDL's scancode names and numbers with th
 | `Input.wheel` | Vertical wheel movement of the frame, as SDL reports it. |
 | `Input.modifiers` | `Keymod` of the last key event: `shift`, `ctrl`, `alt`, `gui`, `caps`, `num`. |
 
-The arrays behind these calls stay public and use the same indices. Keys held when a window gains focus count as held, not
-pressed.
+The arrays behind these calls stay public and use the same indices: `Input.keys` holds `KEY_COUNT` (512) entries and
+`mouse_buttons` `MOUSE_BUTTON_COUNT` (8). Keys held when a window gains focus count as held, not pressed.
 
 ## Events
 
@@ -166,15 +166,6 @@ completion. An unexpected cleanup wait failure exits the process without running
 teardown.
 
 ## Reference
-
-| Constant | Value |
-| --- | --- |
-| `EVENT_CAPACITY` | 256 events per window per frame |
-| `EVENT_TEXT_CAPACITY` | 1,024 bytes of event text per window per frame |
-| `KEY_COUNT` | 512 scancodes |
-| `MOUSE_BUTTON_COUNT` | 8 button slots |
-| `GAMEPAD_COUNT` | 4 slots |
-| `GAMEPAD_BUTTON_COUNT`, `GAMEPAD_AXIS_COUNT` | 26 buttons, 6 axes |
 
 | Fault | Raised by |
 | --- | --- |
