@@ -25,7 +25,11 @@ void main() {
         root.phases,
         root.member_bit,
         root.progress,
+#ifdef CLOTH_LEAN
+        0.0,
+#else
         root.previous_progress,
+#endif
         root.stiffness
     );
     if (item < step_item_count(root, step)) step_item(root, item, step);

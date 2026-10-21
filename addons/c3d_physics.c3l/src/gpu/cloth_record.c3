@@ -21,13 +21,11 @@ const uint PASS_SOFT_AFTER @private = 128; // mirrored in cloth_step.glsl
 const uint PASS_STAGE @private = 256; // mirrored in cloth_step.glsl
 const float NO_GROUND @private = -1e30f; // below every particle; disables the ground contact
 
-// Mirrors ClothRoot in cloth_root.glsl.
+// Mirrors ClothRoot in cloth_root.glsl. The fields before lambdas are all a plain cloth's passes read, in one run.
 struct ClothRoot @private {
     ulong     positions;
     ulong     predicted;
     ulong     velocities;
-    ulong     lambdas;
-    ulong     reference;
     ulong     constraints;
     ulong     initial;
     ulong     rest;
@@ -37,53 +35,67 @@ struct ClothRoot @private {
     ulong     triangles;
     ulong     geometry_positions;
     ulong     geometry_normals;
-    ulong     soft;
-    ulong     transport;
     float[16] anchor_frame;
     float[16] target_frame;
     float[16] inverse_world;
     float[4]  gravity_step;
     float[4]  sphere;
-    float[4]  wind;
-    float[4]  aero;
     uint      particle_count;
-    float     stretch_stiffness;
-    float     bend_stiffness;
+    float     stiffness;
     float     damping;
     float     ground;
     uint      substeps;
     uint      iterations;
     uint      color_count;
-    uint      edge_colors;
-    uint      features;
     uint      first;
     uint      count;
     uint      phases;
     uint      member_bit;
     float     progress;
+    ulong     lambdas;
+    ulong     reference;
+    ulong     soft;
+    ulong     transport;
+    float[4]  wind;
+    float[4]  aero;
+    uint      edge_colors;
+    uint      features;
     float     previous_progress;
-    float     stiffness;
     uint      payload_offset;
+    float     bend_stiffness;
+    float     stretch_stiffness;
     uint[2]   padding;
 }
 
 $assert ClothRoot::size == 464;
 $assert ClothRoot::size % render::STREAM_ALIGNMENT == 0; // the roots of a batch sit at this stride and are read as 16-byte aligned
-$assert $reflect(ClothRoot.anchor_frame).offset == 128;
-$assert $reflect(ClothRoot.target_frame).offset == 192;
-$assert $reflect(ClothRoot.inverse_world).offset == 256;
-$assert $reflect(ClothRoot.gravity_step).offset == 320;
-$assert $reflect(ClothRoot.sphere).offset == 336;
-$assert $reflect(ClothRoot.wind).offset == 352;
-$assert $reflect(ClothRoot.aero).offset == 368;
-$assert $reflect(ClothRoot.particle_count).offset == 384;
-$assert $reflect(ClothRoot.features).offset == 420;
-$assert $reflect(ClothRoot.stiffness).offset == 448;
-$assert $reflect(ClothRoot.payload_offset).offset == 452;
+$assert $reflect(ClothRoot.anchor_frame).offset == 96;
+$assert $reflect(ClothRoot.target_frame).offset == 160;
+$assert $reflect(ClothRoot.inverse_world).offset == 224;
+$assert $reflect(ClothRoot.gravity_step).offset == 288;
+$assert $reflect(ClothRoot.sphere).offset == 304;
+$assert $reflect(ClothRoot.particle_count).offset == 320;
+$assert $reflect(ClothRoot.progress).offset == 364;
+$assert $reflect(ClothRoot.lambdas).offset == 368;
+$assert $reflect(ClothRoot.wind).offset == 400;
+$assert $reflect(ClothRoot.aero).offset == 416;
+$assert $reflect(ClothRoot.features).offset == 436;
+$assert $reflect(ClothRoot.payload_offset).offset == 444;
+
+const usz LEAN_ROOT_BYTES @private = $reflect(ClothRoot.progress).offset + float::size; // the lean stages read no root field past this
+
+$assert $reflect(ClothRoot.lambdas).offset == LEAN_ROOT_BYTES; // the feature fields start where the lean copy ends
+$assert $reflect(ClothRoot.edge_colors).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.features).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.previous_progress).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.payload_offset).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.bend_stiffness).offset >= LEAN_ROOT_BYTES;
+$assert $reflect(ClothRoot.stretch_stiffness).offset >= LEAN_ROOT_BYTES;
 
 struct StepRecorder @private {
     Renderer*       renderer;
     ClothRoot       root;
+    bool            lean;          // the stage is a lean one, so only the first LEAN_ROOT_BYTES of the root travel
     ComputeShaderId stage;
     BufferId[2]     state_writes;
     GeometryWrite[] output;
@@ -111,6 +123,8 @@ fn void StepBatch.add(&self, ClothSlot* slot, ClothRoot root) {
 }
 
 fn char[] StepRecorder.root_bytes(&self, bool with_payload) {
+    if (self.lean) return material::@as_bytes(self.root)[:LEAN_ROOT_BYTES];
+
     if (!with_payload || !self.payload_bytes) return material::@as_bytes(self.root);
 
     self.staging[:ClothRoot::size] = material::@as_bytes(self.root)[..];
@@ -256,6 +270,7 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
     GeometryWrite[1] output = { output_of(slot) };
     StepRecorder recorder = {
         .renderer      = renderer,
+        .lean          = root.features == 0,
         .stage         = root.features == 0 ? cloths.stages.fused_lean : cloths.stages.fused,
         .state_writes  = { cloths.positions, cloths.work },
         .output        = output[..],
