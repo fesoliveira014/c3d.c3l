@@ -139,7 +139,7 @@ The manual Vulkan acceptance runs with
 
 Under the `C3D_PHYSICS_GPU` feature, a cloth prepared with `ClothDesc.execution = GPU` is solved by
 `c3d::render::cloth_gpu` (`GpuCloths`, `create_gpu_cloths`, `update`, `read_positions`) as compute dispatches over
-three shared buffers; it handles the subset of pins, soft attachments, distance edges and bends, rigid and skinned transport, wind, gravity, damping, the ground and one sphere,
+three shared buffers; it handles the subset of pins, soft attachments, distance edges and bends, rigid and skinned transport, wind, gravity, damping, the ground and the moving spheres and capsules of listed bodies (at most `MAX_DEVICE_SHAPES`),
 and `prepare` refuses the rest with `UNSUPPORTED`. The small cloths of a context step together in one dispatch, a large one in fused
 passes. It writes the cloth's geometry through a geometry write. The `cloth_gpu` example runs it
 (`--gpu --scene flag33`), `physics_gpu_test` checks the selection and `cloth_gpu_acceptance` runs it on a Vulkan device
