@@ -29,10 +29,10 @@ zero-initialized `ViewDesc` has none of them: start from a constructor.
 | `screen_space_gi` | zero (off) | `ScreenSpaceGiDesc` ([screen-space GI](screen_space_gi.md)) |
 | `path_trace` | `PATH_TRACE_DEFAULT` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view |
 | `clip_plane` | zero plane | World-space `maths::Plane`; geometry on its negative side is not drawn ([clip plane](views.md#clip-plane)) |
-| `volumetric_fog` | false | A froxel volume for the view's `HeightFog`, allocated with the view ([volumetric fog](sky.md#volumetric-fog)) |
+| `volumetric_fog` | false | A froxel volume for the view's `HeightFog`, allocated with the view ([volumetric fog](fog.md#volumetric-fog)) |
 | `fog_quality` | `MEDIUM` (the zero value) | `FogQuality` of the fog volume: `LOW`, `MEDIUM` or `HIGH`; a change reallocates the volume |
-| `fog_temporal` | false | Accumulates the fog volume over frames ([temporal accumulation](sky.md#temporal-accumulation)); needs `volumetric_fog`; keeps a second volume |
-| `cloud_temporal` | false | Accumulates the cloud layer over frames ([cloud temporal accumulation](sky.md#cloud-temporal-accumulation)); keeps a second pair of cloud images |
+| `fog_temporal` | false | Accumulates the fog volume over frames ([temporal accumulation](fog.md#temporal-accumulation)); needs `volumetric_fog`; keeps a second volume |
+| `cloud_temporal` | false | Accumulates the cloud layer over frames ([cloud temporal accumulation](clouds.md#cloud-temporal-accumulation)); keeps a second pair of cloud images |
 | `share_shadows` | true | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own |
 | `transmission_layers` | 0 (reads 1) | Scene-read snapshots, so glass can see glass behind it ([transmission layers](materials.md#transmission-layers)); up to `MAX_TRANSMISSION_LAYERS` (4) |
 | `transparency` | `SORTED` | `SORTED` orders blended surfaces by object; `WEIGHTED` accumulates them without ordering ([weighted transparency](materials.md#weighted-transparency)) |
@@ -94,7 +94,7 @@ allocate, and the frame aborts.
 table (4,096 entries) and, with ray queries or ray-tracing pipelines, `max_posed_trace_instances + 32` its
 acceleration structure table (4,096 entries), else `create_renderer` faults `c3d::INVALID_ARGUMENT`. The limit is
 1,968 at the default 8 views. Content shares both tables uncounted and can still fault `gpu::SLOT_TABLE_FULL`
-mid-frame ([scene trace](scene_trace.md#posed-instances)). A slot holds a mesh's posed streams, a node copy and a
+mid-frame ([scene trace](scene_trace_reference.md#posed-instances)). A slot holds a mesh's posed streams, a node copy and a
 bottom level.
 
 The pools are fixed at creation. A full pool faults `c3d::CAPACITY_EXCEEDED`. These take a view slot:
@@ -158,7 +158,7 @@ Images a view allocates at creation, by setting:
 | `ray_tracing.reflections` | +2, and +1 on a `FORWARD` view |
 | `ray_tracing.reflection_resolution` `HALF`, with `reflections` | +1 (`reflection_half`) |
 | `ray_tracing.reflection_history`, with `reflections` | +4: two history and two depth images |
-| `volumetric_fog` | +1, and +1 more with `fog_temporal`; the volume's size is in [volumetric fog](sky.md#volumetric-fog) |
+| `volumetric_fog` | +1, and +1 more with `fog_temporal`; the volume's size is in [volumetric fog](fog.md#volumetric-fog) |
 | `PATH_TRACED`: accumulation, no sky images | 3 in all |
 
 Other images allocate on the first frame that needs them: the weighted transparency accumulation and revealage
@@ -211,7 +211,7 @@ about 2,150 entries, so `texture_capacity = 2560` leaves headroom. The views nee
 | --- | --- |
 | `lights`, `lights_dropped`, `decals`, `decals_dropped` | Sums over the frame's recorded views; reset at `begin_frame`. Hidden, culled and collapsed decals are not budget drops |
 | `culled` | Meshes, batches and LOD groups outside a view's frustum or wholly behind its `clip_plane`, summed over views |
-| `media_dropped` | Per view, the visible [medium volumes](sky.md#medium-volumes) past the nearest `MAX_VIEW_MEDIA` (4); reset at `begin_frame` |
+| `media_dropped` | Per view, the visible [medium volumes](fog.md#medium-volumes) past the nearest `MAX_VIEW_MEDIA` (4); reset at `begin_frame` |
 | `cluster_view`, `cluster_count`, `cluster_overflows`, `cluster_skipped`, `decal_overflows` | Delayed cluster results ([lights](lights.md#diagnostics)) |
 | `shadow_layers`, `shadow_requests_dropped`, `shadow_sets_recorded`, `shadow_sets_shared`, `shadow_lights_unshared`, `shadow_timings` | Shadow counters ([shadows](shadows.md#shadow-counters)) |
 | `pipelines_created` | Pipelines the cache built this frame, prepared ones included |

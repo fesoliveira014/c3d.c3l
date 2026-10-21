@@ -96,7 +96,7 @@ After `terrain::update`, compare `height_range` with the range of the navigation
 
 **Removal.** Remove the navigation cache first, because its sampler borrows the views and the views borrow the texels; then the collider; then the terrain.
 
-**Origin rebasing.** Call `scene.shift_origin(offset)`, `scene.update_world()` and `physics.shift_origin(&scene, offset)`. Retake the views, because their world matrices predate the shift. Then shift navigation with `NavMesh.shift_origin`, `NavQuery.shift_origin`, `Crowd.shift_origin` and `GridCache.shift_origin(offset)`, which rebuilds no tile. Subtract the offset from `sampler.origin`; a later `set_source` takes `GridCache.source_origin()` as its origin. [Large worlds](large_world.md#navigation-grid-caches) states the order.
+**Origin rebasing.** Call `scene.shift_origin(offset)`, `scene.update_world()` and `physics.shift_origin(&scene, offset)`. Retake the views, because their world matrices predate the shift. Then shift navigation with `NavMesh.shift_origin`, `NavQuery.shift_origin`, `Crowd.shift_origin` and `GridCache.shift_origin(offset)`, which rebuilds no tile. Subtract the offset from `sampler.origin`; a later `set_source` takes `GridCache.source_origin()` as its origin. [Large worlds](origin_rebasing.md#navigation-grid-caches) states the order.
 
 ## See also
 

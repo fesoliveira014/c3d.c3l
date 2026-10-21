@@ -1,6 +1,6 @@
 # Water
 
-The `c3d::landscape::water` module of the `c3d_landscape` add-on draws water. A `Water` component on a node is a lake (`BODY`) or an ocean that reaches the horizon (`OCEAN`). Its wave heights come from up to four Gerstner waves, a damped wave simulation stepped on the CPU, or a wind-sea spectrum evolved on the GPU ([wave models](water_wave_models.md)). The library owns the draw material, the child node that carries the water's [medium volume](sky.md#medium-volumes) and the mirror camera nodes. The application renders the mirror views and installs the buoyancy sampler.
+The `c3d::landscape::water` module of the `c3d_landscape` add-on draws water. A `Water` component on a node is a lake (`BODY`) or an ocean that reaches the horizon (`OCEAN`). Its wave heights come from up to four Gerstner waves, a damped wave simulation stepped on the CPU, or a wind-sea spectrum evolved on the GPU ([wave models](water_wave_models.md)). The library owns the draw material, the child node that carries the water's [medium volume](fog.md#medium-volumes) and the mirror camera nodes. The application renders the mirror views and installs the buoyancy sampler.
 
 The water surface refracts the scene behind it, reflects from a planar mirror, a screen-space march or the environment, shades foam and sun glints with the Standard shading parts, and shows Snell's window from below. A CPU twin of the wave sum answers height, normal and velocity queries.
 
@@ -227,14 +227,14 @@ scene.update_world();
 - **Extent.** A chunk is `cell_size * OCEAN_CHUNK_CELLS` metres wide at the finest level and doubles at each level above. The tree has the next power of two of chunks per side at or above `extent / chunk`, at most `MAX_OCEAN_CHUNKS` (256), so it covers up to twice the requested extent, centred on the node. `WaterRuntime.rest_min` and `rest_max` hold what it covers; queries outside answer `NOT_FOUND`. At the default 1.25 m cell, 256 chunks cover 20 km and need 87,381 nodes.
 - **Levels.** Each view selects its own levels with the terrain's defaults (split at 512 px, hysteresis 0.25, morph band 0.25). Tune the split threshold in place on the node's `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing.md#quadtree-selection)); `set_desc` keeps it. Vertices morph toward the coarser level, so level changes show no crack or pop.
 - **Filtering.** Far levels draw a surface filtered of waves shorter than their lattice shows; CPU queries return the unfiltered surface. Where every wave is at least four cells of a level long, drawn and queried surfaces agree within 1 cm. Validation asks for four cells of the finest level, so the finest level draws every wave whole.
-- **Anchoring.** An ocean's waves are anchored to the world: crests stay in place when the node moves, and queries read the same offsets. Move the node by multiples of `ocean_snap_step(&desc)`, so each level's vertices keep their world positions and the surface does not swim. `Scene.shift_origin` moves the node and `world_shift` together and uploads nothing.
+- **Anchoring.** An ocean's waves are anchored to the world: crests stay in place when the node moves, and queries read the same offsets. Move the node by multiples of `ocean_snap_step(&desc)`, so each level's vertices keep their world positions and the surface does not swim. `Scene.shift_origin` moves the node and `world_shift` together and uploads nothing ([origin rebasing](origin_rebasing.md)).
 - **Far-field regularity.** A four-wave sea shows a regular pattern in the far levels where its crests cross, faint at 6 m/s and visible from 12 m/s. A `SPECTRAL` ocean shows none; use it for an ocean seen at high wind.
 - **No tracing.** An ocean casts no shadow and `trace` faults `INVALID_ARGUMENT`.
 - **Several oceans.** Two oceans with different anchors drift apart during a sea-state blend and keep the difference. Use one ocean per scene.
 
 ## Underwater
 
-A body owns one child node, `WaterRuntime.medium_node` (named `water_medium`), that carries a core [`MediumVolume`](sky.md#medium-volumes). The view's fog pass absorbs and scatters through the water, and a camera can stand in it. The desc maps to the medium per colour channel:
+A body owns one child node, `WaterRuntime.medium_node` (named `water_medium`), that carries a core [`MediumVolume`](fog.md#medium-volumes). The view's fog pass absorbs and scatters through the water, and a camera can stand in it. The desc maps to the medium per colour channel:
 
 - `absorption = -ln(absorption_color) / absorption_distance`, per metre;
 - `scattering = absorption · a / (1 - a)` with `a = min(scatter_color, MAX_SCATTER_ALBEDO)` as the single-scattering albedo;
@@ -253,7 +253,7 @@ The fog pass cannot tell water from a submerged rock, so the box's top hangs `to
 `WaterDesc.trace` puts the displaced grid of a `BODY` in [scene traces](scene_trace.md); an ocean is not traced. Ray-traced reflections and ambient occlusion, path-traced views, probe updates and global illumination then see the water surface, not the bed under it. Without `trace`, the water is absent from every trace.
 
 - The mesh is the drawn one, not a [trace proxy](scene_trace.md#trace-proxies). The shader's `trace_pose.single` form ([trace pose](custom_shaders.md#trace-pose)) poses the grid every frame the time moves, so the traced surface is the one drawn in the same frame. A frame at an unchanged time poses nothing. A built grid carries a normals stream; application geometry without one traces with face normals.
-- Cost: one posed slot, one dispatch with a thread per vertex and one refit or bottom-level update per traced body per frame. The cost follows the vertex count, so `cell_size` is its lever. A body that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace.md#custom-trace-poses)).
+- Cost: one posed slot, one dispatch with a thread per vertex and one refit or bottom-level update per traced body per frame. The cost follows the vertex count, so `cell_size` is its lever. A body that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace_reference.md#custom-trace-poses)).
 - A hit on the water shades as any custom-material hit does: grey under Lambert lighting, with no foam, refraction, reflection or ripples.
 - The water casts no shadow, so traced sun shadows ignore it. Traced shadows on the water work.
 - Traced rows have front faces only (`Mesh.trace_facing` is `FRONT`), so a ray from under the surface passes through it. A [probe](probe_volumes.md) under the rest plane hits the back face and is excluded when more than a quarter of its rays do.
@@ -291,5 +291,5 @@ Each frame, after `water::update` and `set_desc`, take the view again, set the t
 - [Wave models](water_wave_models.md): Gerstner waves, the simulated surface and the spectral surface.
 - [Reference](water_reference.md): `WaterDesc`, constants and faults.
 - [Terrain](terrain.md) and [vegetation](vegetation.md): the rest of the landscape package.
-- [Buoyancy](buoyancy.md), [sky](sky.md#medium-volumes), [views](views.md#view-textures), [scene tracing](scene_trace.md), [large worlds](large_world.md).
+- [Buoyancy](buoyancy.md), [sky](fog.md#medium-volumes), [views](views.md#view-textures), [scene tracing](scene_trace.md), [large worlds](large_world.md).
 - The `water` example (`python3 scripts/build.py --example water`) builds a lake, an ocean and floating crates; `water_gpu` adds the spectral model.

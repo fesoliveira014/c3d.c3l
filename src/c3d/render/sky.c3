@@ -15,7 +15,7 @@ $assert MediumSetGpu::size == 32 + MediumGpu::size * shader::MAX_VIEW_MEDIA;
 <*
  Atmospheres of rendered scenes whose tables and lighting the renderer keeps at once.
 *>
-const uint ATMOSPHERE_CAPACITY = 4; // one per scene rendered in a frame; each holds about 0.6 MiB and 46 heap slots
+const uint ATMOSPHERE_CAPACITY = 4; // one per scene rendered in a frame; each holds about 0.6 MiB and 82 heap slots
 
 <*
  Face size of an atmosphere's source and specular cubes.

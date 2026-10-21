@@ -720,7 +720,7 @@ them. For very narrow cones, the renderer floors the inner-to-outer cosine
 difference at 0.001 to keep the calculation bounded. This approximation can
 reduce the angular weight inside the authored inner cone.
 
-`Light.volumetric` makes a light scatter in the [volumetric fog](sky.md#volumetric-fog) of a view that has
+`Light.volumetric` makes a light scatter in the [volumetric fog](fog.md#volumetric-fog) of a view that has
 one, and nothing else. The three constructors set it; set it to false to opt a light out. A zero-initialized
 `Light` has it false and does not scatter.
 
