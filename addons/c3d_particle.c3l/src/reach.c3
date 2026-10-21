@@ -145,7 +145,17 @@ fn Aabb ParticleReach.bound(&self, ParticleSystemDesc* desc, float mesh_radius =
     }
     float half_extent = desc.render_mode == ParticleRenderMode.MESH
       ? width * mesh_radius : 0.5f * math::sqrt(width * width + height * height);
-    float travel = (desc.speed.max + self.inherited_speed + turbulence) * lifetime + half_extent;
+    float speed = desc.speed.max + self.inherited_speed + turbulence;
+    // A bounce off a sloped surface turns the fall sideways and never speeds a particle up, so its travel stays
+    // within the speed bound times the lifetime in every direction.
+    if (collision.response == CollisionResponse.BOUNCE) {
+        speed = particle_speed_bound(
+            desc: desc,
+            inherited_speed: self.inherited_speed,
+            wind_speed: wind_speed,
+        );
+    }
+    float travel = speed * lifetime + half_extent;
     Vec3 margin = { travel, travel, travel };
     bound.min -= margin;
     bound.max += margin;

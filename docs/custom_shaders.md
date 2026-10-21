@@ -934,6 +934,14 @@ store_storage_texture(textures.slots[1].texture_index, ivec2(coord), mix(color, 
 
 A `read_texture` entry for an `R16_UINT` texture is read with `gpu_fetch_uint(textures.slots[i].texture_index, texel, 0)`, never sampled.
 
+A `read_view_depth` entry before the view's `render_view` of the open frame reads the depth of the view's previous
+rendering: the prepass of this frame clears it later. `Renderer.view_depth_frame(view)` says which frame that rendering
+was, and faults `NOT_READY` when the image holds none (a first frame, a `configure_view` that recreated it, a
+path-traced view). The depth is `D32_FLOAT`, reverse-Z, with 0 for background; a multisample view holds sample 0 of its
+resolve. Read it with `texelFetch` through `asset::SAMPLER_NEAREST`, because a filtered read blends a foreground
+surface into the background at silhouettes. Each dispatch that names the depth records one barrier into the sampled
+compute state, including when an earlier dispatch left it there, and the view's next pass moves it back.
+
 A store texture is writable when its `TextureDesc.storage` is set; block-compressed, sRGB and `R16_UINT` formats reject the flag with `INVALID_ARGUMENT`. `add_texture_empty(desc, key)` creates a storage texture with no pixels, contents undefined until a dispatch writes them; it may be bound by a material before that. A dispatch writes one mip of one layer per declaration; levels it does not write keep their previous contents, and `Renderer.upload(texture)` writes the CPU pixels back over the GPU contents.
 
 ### Geometry writes

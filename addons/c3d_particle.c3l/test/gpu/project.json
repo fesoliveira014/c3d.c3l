@@ -8,7 +8,7 @@
     "particle_acceptance": {"type": "test", "sources": ["particle_acceptance.c3"]},
     "particle_gpu_acceptance": {
       "type": "test",
-      "sources": ["gpu_acceptance.c3", "sub_emitter_acceptance.c3", "debris_acceptance.c3", "eviction_acceptance.c3"],
+      "sources": ["gpu_acceptance.c3", "sub_emitter_acceptance.c3", "debris_acceptance.c3", "eviction_acceptance.c3", "depth_acceptance.c3"],
       "features": ["C3D_SHADER_COMPILER", "C3D_PARTICLE_GPU"]
     }
   }

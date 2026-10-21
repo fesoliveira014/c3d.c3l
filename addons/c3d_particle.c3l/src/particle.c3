@@ -657,10 +657,6 @@ fn void? check_particle_execution(ParticleSystemDesc* desc) @private {
 
     $if !$feat(C3D_PARTICLE_GPU):
         return c3d::UNSUPPORTED~;
-    $else
-        ParticleCollision* collision = &desc.collision;
-        bool needs_depth = collision.response != CollisionResponse.NONE && !collision.ground_plane;
-        if (needs_depth) return c3d::UNSUPPORTED~;
     $endif
 }
 

@@ -177,8 +177,7 @@ it hands to each range lives until it returns.
 
 `ParticleSystemDesc.execution` selects the processor that steps a system: `CPU`, the default, or `GPU`. It is
 immutable after `prepare`. The GPU path exists in builds that enable `C3D_PARTICLE_GPU`, which adds the module
-`c3d::particle::gpu`; without the feature, preparing a GPU system faults `c3d::UNSUPPORTED`, and so does a refused
-feature below. The module imports `c3d::render` and records through `Renderer.dispatch`; it creates buffers only through
+`c3d::particle::gpu`; without the feature, preparing a GPU system faults `c3d::UNSUPPORTED`. The module imports `c3d::render` and records through `Renderer.dispatch`; it creates buffers only through
 `Renderer.create_buffer` and never imports `gpu`. The `particles_gpu` example builds with the feature, and
 `particles --gpu` selects GPU execution for every system the subset below supports.
 
@@ -215,9 +214,10 @@ no record is uploaded or copied by the CPU.
 
 - Supported: every emitter shape, rate and bursts; gravity, drag, wind and turbulence; lifetime tables, colour and
   flipbooks; BILLBOARD, STRETCHED and MESH draw modes; trails; sub-emitters between GPU systems; REFUSE and DROP_OLDEST
-  saturation; and `CollisionResponse` BOUNCE, STICK or DIE against `ground_plane`.
-- Refused with `UNSUPPORTED` at prepare: a collision response without `ground_plane`.
-  `ParticleSystem.set_collision` requires a CPU system, because the callback is application code.
+  saturation; and `CollisionResponse` BOUNCE, STICK or DIE against `ground_plane` and against a view's
+  [depth](#gpu-depth-collision).
+- `ParticleSystem.set_collision` requires a CPU system, because the callback is application code. A GPU system
+  collides with a view's depth instead.
 
 ### GPU trails
 
@@ -305,6 +305,81 @@ A delivery to a target that saturates does not evict, which differs from the CPU
 are counted in the target's `dropped`, as with `REFUSE`. The target's next step can evict the children it did take like
 any other survivor.
 
+### GPU depth collision
+
+`update` takes a `DepthCollision { view, camera }` as its last argument. A GPU system with a collision response other
+than `NONE` then also collides with the depth that `view` last rendered, in the same step as its `ground_plane` and
+under the same `BOUNCE`, `STICK` or `DIE` response; when both offer a hit, the nearer along the move answers. A zero
+`view` disables it. `camera` is the node the application passes to `render_view` for that view. The recommended view is
+the main camera: one view serves every GPU system of the update, and the other views never affect the simulation.
+A GPU system uses no `max_queries`, but a response with no `ground_plane` still needs it non-zero, because
+`check_particle_collision` faults `INVALID_ARGUMENT` otherwise; the default is non-zero.
+
+```c3
+gpu::update(
+    particles: &gpu,
+    renderer: &renderer,
+    scene: &scene,
+    dt: delta_seconds,
+    depth: { .view = main_view, .camera = camera_node.id },
+)!;
+renderer.render_view(&scene, camera_node, main_view)!;
+```
+
+A dead `view` or `camera` faults `c3d::INVALID_ID`, and a `camera` node without a `Camera` faults
+`c3d::INVALID_ARGUMENT`, both before any dispatch is recorded.
+
+**Which depth.** `update` records before `render_view`, so a dispatch that names `read_view_depth(view)` reads the view's
+previous rendering, one frame old (see [dispatch textures](custom_shaders.md#textures)). The package derives the
+camera's matrices with `camera::derive_matrices` from the camera node's world matrix relative to the frame origin and
+the view's working extent, the same inputs the view renders with, and keeps them with the frame index. The matrices
+commit once `Renderer.frame_was_submitted` confirms the frame, so an aborted frame never replaces the camera of an
+earlier rendering. The step collides only when `Renderer.view_depth_frame(view)` equals the frame of the committed
+matrices; it skips depth collision otherwise:
+
+- on the first frame, and after a `configure_view` that recreated the view's images;
+- when the view was not rendered in the previous frame, or the frame was aborted;
+- for a path-traced view, which writes no depth;
+- in a step that applies a queued origin shift, because the committed camera predates it.
+
+The camera node must not move between `update` and `render_view`. TAA jitter is ignored; the error is sub-pixel.
+
+**The test.** A particle collides with the move from its previous position (`position - velocity * dt`) to its
+position. The end is projected to the view. A point behind the camera, outside the image, or over a background texel
+(depth 0) has no surface. Otherwise the stage reads the texel with `texelFetch` through `SAMPLER_NEAREST`, sample 0 for
+a multisample view, and rebuilds the surface point from it. A hit needs all three:
+
+- the end lies behind the sampled surface, along the view's forward axis;
+- the start lies in front of it, or on it;
+- the end is no deeper behind the surface than the length of the move plus the collision radius. A deeper point counts as
+  occluded, as when a particle passes behind a wall, and is left alone.
+
+**The normal.** The stage rebuilds the position of the hit texel and of its four neighbours. On each screen axis it takes
+the neighbour whose distance along the view differs least, so a silhouette edge does not tilt the normal; a background
+or off-image neighbour yields to the opposite side. The cross product of the two tangents, turned to face the camera, is
+the normal. A texel with no usable neighbour on either axis answers with the direction toward the camera.
+
+**The response.** As on the ground plane: the contact point is the closest approach of the sphere to the surface plane,
+the particle ends `radius` along the normal from it, `IMPACT` events follow `impact_speed`, and `DIE` raises `DEATH`.
+Blended particles write no depth, so a system never hits itself.
+
+**Cost.** Each system that collides names the depth in its advance dispatch, and each such dispatch records one
+barrier to the sampled compute state, so an update with N colliding systems records N barriers, N - 1 of them from
+sampled to sampled. A system or step that skips records none. The step's root grows from 896 to 1,088 bytes in the
+upload ring for every dispatch of every GPU system.
+
+**Limits.** The view's depth is all the stage knows:
+
+- geometry off-screen, hidden behind other surfaces, or drawn by a view other than the named one is missed;
+- the result depends on the view: a surface the named camera cannot see does not stop a particle;
+- contact lags one frame: a surface that moved since the depth was rendered is still where it was;
+- the view must render every frame that should collide, because a stale depth is not used;
+- mesh particles write depth, so a mesh particle can meet another one's previous rendering when its move away from the
+  camera is longer than that particle's half-depth and no nearer surface covers the texel; a fast diagonal stream can
+  show it;
+- a particle that starts a step behind a surface is not pulled out of it, so one that rises through the underside of a
+  surface the camera sees from above passes through.
+
 ### Counters and latency
 
 The simulation state lives on the device. `alive`, `dropped`, `evicted`, `dropped_events` and `skipped_events` are read
@@ -351,6 +426,10 @@ sets the draw child's bounds override to that union grown by:
 
 - `speed.max` times `lifetime.max`;
 - the fall `½·|g|·T·(T + 0.1 s)` along gravity, one-sided;
+- for a `BOUNCE` response, the speed bound times `T` on every axis in place of the first term, where the bound adds the
+  inherited speed, `|g|·T`, the winds and the turbulence to `speed.max`: a bounce off a sloped surface in a depth turns
+  the fall sideways and never speeds a particle up, and the plane's own bounces are widened too because the reach cannot
+  know whether `update` receives a depth;
 - with non-zero drag, the winds of the last lifetime times `T`, one-sided, and the turbulence speed bound times `T`,
   where the bound is the curl supremum 8.5 times the octave amplitudes;
 - the largest drawn half-extent, from the size tables and the stretch, or for MESH the largest size times the distance
@@ -464,7 +543,9 @@ serialized data. A descriptor with more than `MAX_SUB_EMITTERS` sub-emitters, an
 
 ## Collision
 
-`ParticleSystemDesc.collision` makes a system's particles meet surfaces. The default response is `NONE`. A
+`ParticleSystemDesc.collision` makes a system's particles meet surfaces. The default response is `NONE`. A GPU system has
+no callback: it meets the ground plane and, when `gpu::update` receives a `DepthCollision`, a view's
+[depth](#gpu-depth-collision). A
 `ParticleCollision` has these fields:
 
 | Field | Meaning |
@@ -852,8 +933,10 @@ enabled. `--frames N` closes an interactive smoke test after N frames.
 450 per second at the default 4,096 sparks. It needs the
 `particles_gpu` build, which enables `C3D_PARTICLE_GPU`, and applies to the window and to `--benchmark`, which then
 prints `execution,gpu`, the `gpu_particle_ms` of the custom compute pass, and `not_applicable` for the CPU-only
-`sparks_bounds_ms` and `sparks_copy_ms`. With `--collide` the sparks collide with the ground plane only. The flag
-does not combine with `--stress`.
+`sparks_bounds_ms` and `sparks_copy_ms`. With `--collide` the GPU sparks collide with the ground plane and with the
+[depth](#gpu-depth-collision) of the main camera's view, so they meet the canopy and the crates where that camera sees
+them. The CPU sparks meet them from every side through the physics ray cast: sparks that rise from below the canopy pass
+through its underside on the GPU. The flag does not combine with `--stress`.
 
 `--sparks` adds a smoke system that each dying spark feeds through a `DEATH`
 sub-emitter, and shows its live count with the event counters. It applies to the

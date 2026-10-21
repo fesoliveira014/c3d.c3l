@@ -731,6 +731,79 @@ fn void test_frame_submission_is_reported_per_frame() @test {
     check_validation(renderer);
 }
 
+fn void test_view_depth_frame_names_the_last_submitted_rendering() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    assert(@catch(renderer.view_depth_frame(fixture.view)) == render::NOT_READY);
+    assert(@catch(renderer.view_depth_frame({})) == c3d::INVALID_ID);
+
+    renderer.begin_frame()!!;
+    ulong first = renderer.frame_index;
+    render_view_and_finish(&fixture)!!;
+    renderer.end_frame()!!;
+    assert(renderer.view_depth_frame(fixture.view)!! == first);
+    assert(@catch(renderer.view_depth_frame(fixture.second_view)) == render::NOT_READY);
+
+    renderer.begin_frame()!!;
+    ulong second = renderer.frame_index;
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.second_view)!!;
+    renderer.finish_view(fixture.second_view)!!;
+    renderer.end_frame()!!;
+    assert(renderer.view_depth_frame(fixture.view)!! == first);
+    assert(renderer.view_depth_frame(fixture.second_view)!! == second);
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!!;
+    assert(@catch(renderer.end_frame()) == c3d::INVALID_ARGUMENT);
+    assert(renderer.view_depth_frame(fixture.view)!! == first);
+
+    renderer.begin_frame()!!;
+    ulong unrelated = renderer.frame_index;
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.second_view)!!;
+    renderer.finish_view(fixture.second_view)!!;
+    renderer.end_frame()!!;
+    assert(renderer.view_depth_frame(fixture.view)!! == first);
+    assert(renderer.view_depth_frame(fixture.second_view)!! == unrelated);
+
+    renderer.begin_frame()!!;
+    ulong last = renderer.frame_index;
+    render_view_and_finish(&fixture)!!;
+    renderer.end_frame()!!;
+    assert(renderer.view_depth_frame(fixture.view)!! == last);
+    check_validation(renderer);
+}
+
+fn void test_view_depth_frame_clears_when_the_depth_image_is_recreated() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+
+    renderer.begin_frame()!!;
+    ulong first = renderer.frame_index;
+    render_view_and_finish(&fixture)!!;
+    renderer.end_frame()!!;
+
+    ViewDesc retuned = renderer.views.get(fixture.view).desc;
+    retuned.lod_bias = 0.5f;
+    render::configure_view(renderer, fixture.view, retuned)!!;
+    assert(renderer.view_depth_frame(fixture.view)!! == first);
+
+    ViewDesc scaled = retuned;
+    scaled.render_scale = 0.5f;
+    render::configure_view(renderer, fixture.view, scaled)!!;
+    assert(@catch(renderer.view_depth_frame(fixture.view)) == render::NOT_READY);
+
+    renderer.begin_frame()!!;
+    ulong next = renderer.frame_index;
+    render_view_and_finish(&fixture)!!;
+    renderer.end_frame()!!;
+    assert(renderer.view_depth_frame(fixture.view)!! == next);
+    check_validation(renderer);
+}
+
 fn void test_storage_texture_upload_write_sample_and_abort_keep_layouts_valid() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
