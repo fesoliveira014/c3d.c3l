@@ -1,200 +1,78 @@
-# Materials and lighting
+# Materials
 
-A geometry with per-vertex colors multiplies them into the base color of every built-in kind after the
-factor and map, before alpha masking and lighting; a masked material also applies the vertex alpha
-in the shadow pass. Custom shaders read `v_color` themselves.
+A material describes how a mesh surface looks and how it draws: its color, how light shades it, and its alpha, depth and
+raster state. Materials are asset-store records (`c3d::asset`) built with the constructors of `c3d::material`. Meshes
+refer to them by `MaterialId`.
 
-`Basic` renders an unlit color with an optional texture map. `Standard` adds
-metallic-roughness shading from directional, point and spot lights, scene ambient,
-image-based lighting, and five independent texture slots. `Physical` embeds that
-Standard surface and adds clearcoat and sheen layers. `Toon` adds quantized direct
-diffuse lighting, smooth indirect fill and an optional surface rim. All four
-families use the asset store's shared material ids.
+| Family | Shading | Constructor |
+| --- | --- | --- |
+| Basic | Unlit color with an optional base map | `material::basic` |
+| Standard | Metallic-roughness shading with direct lights, scene ambient, environment lighting and five texture maps | `material::standard` |
+| Toon | Banded direct diffuse, smooth indirect fill, optional rim and outline | `material::toon` |
+| Physical | The Standard surface plus clearcoat, sheen, specular and IOR, anisotropy and transmission | `material::physical` |
+| Custom | User SPIR-V ([Custom shaders](custom_shaders.md)) | `material::custom` |
 
-## Basic defaults
+All parameters, defaults and ranges are in the [Materials reference](materials_reference.md).
 
-`material::basic()` creates an unlit white material with no base map.
-`BASIC_PARAMS_DEFAULT` supplies white RGBA and an identity base-map transform;
-start from it when changing selected Basic factors or switching a material's kind.
-
-## Standard factors
+## Quick start
 
 ```c3
+import c3d::asset;
+import c3d::geometry;
+import c3d::light;
+import c3d::material;
+import c3d::scene;
+
 StandardParams params = material::STANDARD_PARAMS_DEFAULT;
 params.base_color = { 0.7f, 0.25f, 0.1f, 1 };
 params.metallic = 0;
 params.roughness = 0.5f;
-MaterialId material_id = assets.add_material(material::standard(params))!;
+MaterialId paint = assets.add_material(material::standard(params), "demo/paint")!;
+
+GeometryId ball;
+@pool() {
+    Geometry sphere = geometry::sphere(tmem, 0.6f);
+    ball = assets.add_geometry(&sphere, "demo/ball")!;
+};
+Node* ball_node = scene.add_mesh(ball, paint, name: "ball")!;
+Node* sun = scene.add_light(light::directional({ 1, 1, 1 }, 1))!;
+renderer.prepare_scene(&scene)!;
 ```
 
-`STANDARD_PARAMS_DEFAULT` uses white base RGBA, metallic 1, roughness 1, black
-emissive RGB, emissive strength 1, normal scale 1 and occlusion strength 1.
-All five maps start absent with identity UV transforms. A zero-initialized
-`StandardParams` keeps literal zeros, including zero UV scale; use the named
-default when you want those defaults.
+## Concepts
 
-Base RGBA, metallic and roughness are in [0, 1]. Emissive RGB and strength are
-finite and nonnegative; values above 1 preserve HDR emission. Normal scale is
-finite and may be negative; occlusion strength is in [0, 1]. The renderer floors
-perceptual roughness at 0.045 for shading while preserving the authored value.
+- **Shared ids.** The store owns materials. Any number of meshes can use one `MaterialId`, and an edit to the record
+  shows on all of them. A mesh switches material by assigning another id to `Mesh.material`.
+- **Factors, maps and common state.** Each family has constant factors (color, metallic, roughness, ...) and texture
+  slots that multiply them. `MaterialCommon` carries the alpha mode, blend mode, cutoff, sidedness, depth test and
+  write, and wireframe flag for every family.
+- **Defaults.** Start from the family's `*_PARAMS_DEFAULT` constant. A zero-initialized params struct keeps literal
+  zeros.
+- **Color space.** Factors are scene-linear. The color space of a map belongs to its texture asset
+  ([Textures](textures.md)); the renderer does not infer it from the slot.
+- **Vertex colors.** A geometry with per-vertex colors multiplies them into the base color of every built-in family,
+  after the factor and map and before alpha masking and lighting. A masked material also applies the vertex alpha in the
+  shadow pass. Custom shaders read `v_color` themselves.
+- **Contracts.** Constructors reject out-of-range values as programming errors. They do not return faults.
 
-## Alpha, depth and raster state
+## Create a material
 
-`MaterialCommon` controls alpha mode, blend mode, cutoff, sidedness, depth testing, authored
-depth writes and wireframe drawing for every family. Base factor alpha and sampled
-base-texture alpha are straight-alpha inputs. `OPAQUE` ignores the resulting
-coverage and writes output alpha 1. `MASK` discards values below `alpha_cutoff`
-and writes output alpha 1 for surviving fragments. `BLEND` clamps coverage to
-[0, 1], multiplies the complete shaded RGB by it once, and writes premultiplied
-RGBA. Its `blend_mode` selects composition: `PREMULTIPLIED_ALPHA` is the default
-source-over mode; `ADDITIVE` adds RGB and preserves destination alpha. The setting
-is ignored for `OPAQUE` and `MASK`.
-
-For straight source RGB `C`, coverage `a` and destination `(D, A)`:
-
-| Blend mode | Output RGB | Output alpha |
-| --- | --- | --- |
-| `PREMULTIPLIED_ALPHA` | `C*a + D*(1-a)` | `a + A*(1-a)` |
-| `ADDITIVE` | `C*a + D` | `A` |
-
-Texture, vertex and material alpha scale additive brightness; they do not reduce
-the destination colour. HDR RGB may grow above one. Additive materials retain the
-ordinary blended routing, per-view instance sorting and depth rules below.
+### Basic
 
 ```c3
-MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
-common.alpha_mode = AlphaMode.BLEND;
-common.blend_mode = BlendMode.ADDITIVE;
-Material sparks = material::basic({ .color = { 1, 0.5f, 0.2f, 0.25f } }, common);
+Material flat = material::basic({ .color = { 0.9f, 0.2f, 0.2f, 1 } });
 ```
 
-Additive surfaces receive fog attenuation without another fog in-scatter
-contribution. Custom stages use `apply_material_fog` from `fog.glsl` with their
-packed material flags ([Custom shaders](custom_shaders.md)). Physical transmission
-retains its existing scene-read routing and fog composition.
+`BASIC_PARAMS_DEFAULT` is white with no base map and an identity map transform. Start from it when you change selected
+factors or switch a material to Basic.
 
-Blended objects draw back to front after opaque/masked objects and the sky. The
-order uses each object's world-bounds center in the current camera view, with a
-stable entity-id tie break. Instances of a blended batch order inside the batch
-by their own box centers ([Instancing](instancing.md#blended-batches)); the
-batch orders among blended objects by its bound center. It does not sort
-triangles or fragments, so intersecting transparent geometry and large objects
-whose centers do not match their visible depth can compose incorrectly;
-[weighted transparency](#weighted-transparency) removes that dependence on
-order. Record each view with its own camera; ordering is recalculated per view.
+### Standard
 
-`BLEND` honors `depth_test` but always disables effective depth writes. The
-authored `depth_write` value remains stored, so switching back to `OPAQUE` or
-`MASK` restores it. Double-sided Standard, Physical and Toon flip their shading
-normal on back faces. Wireframe still falls back to filled triangles when the
-device lacks line polygon mode.
+The Quick start shows the Standard factors. `STANDARD_PARAMS_DEFAULT` gives white base color, metallic 1, roughness 1,
+black emissive with strength 1, normal scale 1, occlusion strength 1 and five absent maps with identity transforms.
+Emissive values above 1 keep HDR emission.
 
-Blended meshes cast no atlas shadow unless [colored shadows](shadows.md#colored-shadows) are
-on, and then they cast a tinted one. Opaque and masked Basic, Standard,
-Physical and Toon meshes can cast, with masked coverage coming only from their
-base factor, base texture and cutoff. Standard, Physical and Toon blended meshes
-can still receive direct shadows when their mesh enables `receive_shadow`; Basic
-remains unlit.
-
-### Weighted transparency
-
-`ViewDesc.transparency` selects how a view composes blended surfaces. `SORTED`, the
-default, is the object order above. `WEIGHTED` composes the view's
-`PREMULTIPLIED_ALPHA` blended draws without ordering them, so intersecting surfaces,
-interleaved surfaces and a mesh passing between two instances of a blended batch
-compose without ordering errors. It is an approximation: coverage is exact, `1 - Π(1 - a)`,
-but colors are a weighted average, so a nearer surface dominates only through the
-depth weight below and two surfaces of similar weight blend evenly whichever is in front.
-
-Participants, in a `WEIGHTED` view:
-
-- Basic, Standard, Physical (without transmission) and Toon `BLEND` meshes with `PREMULTIPLIED_ALPHA`;
-- blended instanced batches, and the blended parts of a [LOD group](lod.md);
-- [billboard batches](billboards.md) and [ribbon batches](ribbons.md), which are always blended, with a built-in material;
-- custom `BLEND` stages with `PREMULTIPLIED_ALPHA`, including billboard and ribbon batches with a custom fragment
-  and the [particle](particles.md) effects, when their shader supplies the weighted form the view needs
-  ([custom shaders](custom_shaders.md#weighted-transparency)).
-
-Not participants:
-
-- `ADDITIVE` draws record after the composite, in `hdr_color`, with the state and order of a
-  `SORTED` view. Their order does not matter, but weighted surfaces in front of them do not dim
-  them, because the composite is already in `hdr_color` when they draw.
-- Transmissive Physical draws and custom scene readers stay in the sorted scene-read list in both
-  modes, drawn before any weighted surface; a blended draw that reads the scene sees it
-  without any blended surface.
-- Custom `BLEND` materials whose shader lacks the weighted form the view needs stay on the sorted
-  path after the composite.
-
-A `WEIGHTED` view with no participating draw records exactly the commands of a `SORTED` one and
-allocates nothing.
-
-Passes of a `WEIGHTED` view with at least one participating draw, after the scene-read list and
-the fog pass:
-
-1. `Pass.FORWARD_TRANSPARENT` accumulates into two view-owned images. `weighted_accum`
-   (`RGBA16_FLOAT`) is cleared to 0 and sums weighted color and coverage with `ONE`/`ONE`.
-   `weighted_revealage` (`R16_FLOAT`) is cleared to 1 and multiplies the uncovered fraction with
-   `ZERO`/`ONE_MINUS_SRC_COLOR`. Depth is loaded and tested `GREATER` against the opaque
-   depth, with no depth write, so a surface behind opaque geometry is hidden and `depth_test` off
-   still draws over everything.
-2. `Pass.TRANSPARENT_COMPOSITE` is one fullscreen pass into `hdr_color` under the
-   premultiplied blend: with `r` the revealage and `average` the accumulated color divided by the accumulated
-   weighted coverage, it writes `(average * (1 - r), 1 - r)`.
-3. Sorted blended draws, `ADDITIVE` among them, then record into `hdr_color` as in a `SORTED` view.
-
-The weight of a fragment with coverage `a` and positive view-space depth `z` is equation (7) of
-McGuire and Bavoil, "Weighted Blended Order-Independent Transparency" (2013), scaled:
-
-```
-w = a * clamp(10 / (1e-5 + (z / 5)^2 + (z / 200)^6), 1e-2, 3e3) * WEIGHT_SCALE
-```
-
-`z` is `-(view * position).z`, never the reverse-Z depth. A fragment adds `w * premultiplied`
-to the accumulation. Three constants keep that inside `RGBA16_FLOAT`; they live in
-`shaders/common/weighted_blend.glsl`:
-
-| Constant | Value | Role |
-| --- | --- | --- |
-| `WEIGHTED_COLOR_MAX` | 64 | The straight color is clamped to it before weighting, so one fragment adds at most about 3,000 to a channel against the format's 65,504. |
-| `WEIGHT_SCALE` | 1/64 | Brings the weights into range. The least weight, `1e-2 * WEIGHT_SCALE`, is the floor of a layer's contribution; a smaller scale pushes faint far layers into the subnormal range sooner. |
-| `WEIGHTED_EPSILON` | 1e-8 | Guards the division where the alpha sum is zero. It is below the smallest nonzero `RGBA16_FLOAT` value, 5.96e-8, so it never changes a stored sum. |
-
-The composite also clamps the accumulation to 65,504 before dividing and the average to
-`WEIGHTED_COLOR_MAX`, so the output is always finite, never infinite or NaN.
-
-Limits of `WEIGHTED` that follow from the format:
-
-- **Color cap.** The straight HDR color of a weighted surface is clamped to 64 per channel before
-  tone mapping and bloom, so a glint or an emissive highlight brighter than that flattens at 64.
-  A `SORTED` view keeps the full range.
-- **Saturation.** About 21 layers of full weight (coverage 1, color at the cap, view depth under
-  about 0.3) fill the `RGBA16_FLOAT` sum. Past that the sum clamps, the weighted average is no
-  longer right and drifts toward the cap, and the result stays finite.
-- **Faint surfaces.** A surface whose coverage times weight is below about 3e-8, half the smallest
-  `RGBA16_FLOAT` value, rounds to zero in the alpha sum. That is a coverage under about 0.014 at a
-  view depth of 200 or more, and less nearer. It adds no reliable color, because the division then
-  falls back to the epsilon; it still dims what lies behind it by its coverage, which the revealage
-  image holds separately.
-- **Custom stages.** A custom stage composes correctly only if its weighted form writes through
-  `write_blend_output`; nothing checks it at runtime. One without a weighted form is sorted, after
-  the composite.
-
-Fog applies per fragment before accumulation, as in `SORTED`. Blended batches skip the
-per-instance sort in a `WEIGHTED` view, because order no longer matters; `ADDITIVE` batches
-keep it ([instancing](instancing.md#blended-batches)). `WEIGHTED` has no capacity, so it cannot
-overflow, and `Stats.sort_overflows` does not count its batches.
-
-Cost: the two images are 10 bytes per pixel at the view's working extent, allocated once, on the
-first frame with a participating draw. They are released with the view, dropped on a resize and
-re-created lazily, and kept by a reconfiguration at the same extent, as `scene_color` is. Nothing
-is allocated per frame. Each `WEIGHTED` frame with participating draws adds one render pass and one
-fullscreen draw, counted in `Stats.draws`. A participating draw uses the `WEIGHTED_BLEND` form of its
-stage, one more compiled stage for each plain, `RT_SHADOWS` and `RT_SHADOWS` with
-`SCENE_TRACE_BVH` form, and a pipeline keyed by the two attachment formats. `prepare_scene` and model
-preparation create them for each live `WEIGHTED` view. `SORTED` pipelines are unchanged.
-
-## Toon factors
+### Toon
 
 ```c3
 ToonParams toon = material::TOON_PARAMS_DEFAULT;
@@ -206,31 +84,13 @@ toon.rim_power = 2;
 MaterialId toon_id = assets.add_material(material::toon(toon))!;
 ```
 
-`TOON_PARAMS_DEFAULT` uses white RGBA, four uniform direct-light steps, no base
-or gradient map, white rim color, rim strength 0, rim power 2 and no outline.
-Color channels are in [0, 1], steps is at least 2, rim color and strength are
-finite and nonnegative, and rim power is finite and positive. A zero rim strength
-leaves the surface unchanged. The outline width, color and depth offset are
-finite and nonnegative.
+Toon quantizes the normal-light cosine separately for each directional, point or spot light into `steps` bands. Light
+intensity, attenuation and shadow visibility, scene ambient and the environment's diffuse fill stay smooth. Toon has no
+specular environment reflection and no normal-map slot. `gradient_map` replaces uniform steps with an intensity ramp
+texture; load the ramp as linear data. The rim adds a view-dependent edge term that ignores lights and shadows. Ranges
+and the ramp rules are in the [reference](materials_reference.md#toon).
 
-Toon quantizes the clamped normal-light cosine separately for each directional,
-point or spot light. Light color, intensity, range/cone attenuation and shadow
-visibility remain smooth, and the quantized contributions are then added. Scene
-ambient and environment SH diffuse fill also remain smooth. Toon has no specular
-environment reflection or normal-map slot.
-
-`gradient_map` optionally replaces uniform steps with a 2D, single-layer
-intensity ramp. The renderer samples red only at `(NdotL, 0.5)`, explicitly from
-mip zero, using a fixed nearest/clamp sampler; green, blue and alpha are ignored.
-Load ramp data as linear, not sRGB. A zero, missing or stale id falls back to
-uniform steps. A live cube, array, 3D or `R16_UINT` source returns `c3d::UNSUPPORTED`.
-
-The rim adds `rim_color * rim_strength * (1 - NdotV)^rim_power` after diffuse and
-indirect lighting. It is independent of base texture color, lights and shadows,
-and final blend alpha scales it with the rest of the shaded result. It is a
-surface-lighting term; the outline below is geometry.
-
-### Toon outline
+#### Toon outline
 
 ```c3
 toon.outline_width = 3;           // pixels of the view's image; 0 draws no outline
@@ -238,122 +98,32 @@ toon.outline_color = { 0, 0, 0 }; // linear
 toon.outline_depth_offset = 0;    // view-space units
 ```
 
-An inverted hull draws the outline: the mesh is drawn a second time, right after
-itself in the forward pass, with its front faces culled and each vertex moved along
-its normal. The move is in clip space and scales with `w`, so the width is constant
-on screen whatever the distance or the object scale. The hull is flat
-`outline_color`, linear radiance exposed with the rest of the view, and cut out by
-the same coverage as the surface under `MASK`. `outline_depth_offset` pushes the
-hull away from the eye by that many view-space units, which hides the hull where it
-intersects other geometry. A width of 0, the default, adds no draw and no pipeline
-and leaves the frame as it was.
+An inverted hull draws the outline: the renderer draws the mesh a second time right after itself, with front faces
+culled and each vertex moved along its normal in clip space. The width is constant on screen whatever the distance or
+object scale. The hull is flat `outline_color`, exposed with the rest of the view and cut out by the same coverage as
+the surface under `MASK`. `outline_depth_offset` pushes the hull away from the eye, which hides it where it intersects
+other geometry. A width of 0, the default, adds no draw and no pipeline.
 
-- **Which draws.** `OPAQUE` and `MASK` Toon meshes, batches and crowds that test
-  and write depth, in every vertex form: static, skinned, morphed, instanced and
-  posed. `BLEND`, `WEIGHTED`, billboards, impostors and non-triangle meshes ignore
-  `outline_width`. Under `MASK` the far side of the hull shows through the
-  cutouts of the near side.
-- **Where.** Forward views draw it in `FORWARD_OPAQUE`, deferred views in the
-  forward draws that follow the lighting resolve, where Toon already draws. The
-  hull is not drawn in shadow layers, the depth prepass or the G-buffer pass, and
-  it is not part of the trace structures: ray-traced effects and the path tracer
-  do not see outlines.
-- **Depth.** The hull always tests `GREATER` and writes depth, also in a pass that
-  shades with `EQUAL`, so outline pixels stay in the depth the later passes read.
-- **Winding.** The hull culls the faces that are front-facing in its view, so a
-  mirror view, whose camera matrix reflects, culls the right side.
-- **Motion.** Under TAA, motion blur or screen-space GI, a moved outlined draw
-  redraws its hull in the velocity pass from the extruded current and previous
-  vertices, so a moving outline does not trail. The previous vertex takes the
-  current frame's extrusion direction.
+- **Draws.** `OPAQUE` and `MASK` Toon meshes, batches and crowds that test and write depth outline, in every vertex form
+  (static, skinned, morphed, instanced and posed). `BLEND`, `WEIGHTED`, billboards, impostors and non-triangle meshes
+  ignore `outline_width`. Under `MASK` the far side of the hull shows through the cutouts of the near side.
+- **Passes.** Forward views draw the hull in `Pass.FORWARD_OPAQUE`. Deferred views draw it in the forward draws after
+  the lighting resolve. Shadow layers, the depth prepass and the G-buffer pass skip it, and it is not part of the trace
+  structures, so ray-traced effects and the path tracer do not see outlines.
+- **Motion.** Under TAA, motion blur or screen-space GI, a moved outlined draw redraws its hull in the velocity pass, so
+  a moving outline does not trail.
 - **Counts.** The hull is a second draw: `Stats.draws` and `Stats.triangles` count it.
+- **Geometry.** A mesh with hard edges has split vertices that each move along their own face normal, so its outline
+  opens at those edges. Smooth normals keep it continuous. An open surface has no back faces to extrude and shows no
+  outline from the front.
 
-A mesh with hard edges has split vertices, each moving along its own face normal,
-so its outline opens at those edges; smooth normals keep it continuous. An open
-surface has no back faces to extrude and shows no outline from the front.
+### Physical
 
-## Standard maps
+`material::physical` embeds a complete Standard surface in `PhysicalParams.standard` and layers extra lobes over it.
+`PHYSICAL_PARAMS_DEFAULT` embeds `STANDARD_PARAMS_DEFAULT` with every layer off, so it shades like the Standard surface
+until you set a layer.
 
-Each slot is a `TextureSlot` with its own texture, sampler, UV0/UV1 selection,
-and scale/rotation/offset. The slots can share one `TextureId` while using
-different coordinates and samplers. Color-space selection belongs to the texture
-asset; the renderer does not infer it from the slot.
-
-| Slot | Channels | Load color space | Effect |
-| --- | --- | --- | --- |
-| `base_color_map` | RGBA | sRGB RGB, linear alpha | Multiplies base RGBA |
-| `metallic_roughness_map` | G roughness, B metallic | Linear | Multiplies the two scalar factors; R and A are ignored |
-| `normal_map` | RGB tangent-space XYZ, or explicit RG XY | Linear | Decodes the asset semantic, reconstructs RG positive Z, scales XY, then normalizes |
-| `occlusion_map` | R | Linear | Multiplies constant/environment diffuse by `mix(1, R, occlusion_strength)` |
-| `emissive_map` | RGB | sRGB | Multiplies emissive RGB and strength |
-
-```c3
-params.base_color_map = material::texture_slot(base_color_texture);
-params.metallic_roughness_map = material::texture_slot(material_data_texture);
-params.occlusion_map = material::texture_slot(material_data_texture, uv_set: 1);
-params.normal_map = material::texture_slot(normal_texture);
-params.emissive_map = material::texture_slot(emissive_texture);
-```
-
-Zero or stale texture ids make that slot absent. Absent color, metallic/roughness,
-occlusion and emissive maps retain their scalar behavior; an absent normal map
-retains the geometry normal. Occlusion never changes direct lighting or emission,
-and strength zero removes its effect. A black emissive factor keeps emission
-black even with a populated map. Normal scale zero disables normal perturbation.
-Normal encoding belongs to the texture asset's `TextureDesc.semantic`: `COLOR`
-and `NORMAL_RGB` use RGB, while `NORMAL_RG` reconstructs positive Z from RG.
-Both base and clearcoat slots follow the matching committed or candidate resource.
-`TextureSlot` has no encoding override. Render-target normal maps always use RGB.
-Live cube and `R16_UINT` references return `c3d::UNSUPPORTED`; comparison
-samplers and UV sets above 1 return `c3d::INVALID_ARGUMENT`.
-
-## Tangent frames
-
-A supplied tangent stream is authoritative. Tangent XYZ follows the model's
-linear transform, while the normal follows its inverse transpose. The normal
-mapping path preserves their interpolated basis before normalizing the mapped
-result. Tangent W supplies bitangent handedness; authored signs are normalized
-to +1 or -1 at publication. Reflected model transforms reverse that handedness.
-Reflected model and camera transforms also preserve front-face classification;
-double-sided shading flips the final normal on back faces.
-
-Without a tangent stream, filled triangles derive a frame from world-position
-and transformed normal-map UV derivatives. Mirrored or rotated lookup coordinates
-therefore change this derived frame. A supplied frame keeps its authored basis:
-changing the lookup UV set or transform does not rotate or rebuild it. A zero or
-degenerate supplied tangent keeps the geometry normal without trying derivatives;
-degenerate position or UV derivatives likewise keep the geometry normal. A decoded
-zero-length map normal uses neutral tangent-space `(0, 0, 1)`.
-
-`geometry::create_tangent_geometry(allocator, source, uv_set)` generates pinned
-MikkTSpace tangents from raw UV0 or UV1 and returns a complete geometry whose
-arrays the allocator owns. Conflicting corner tangents split vertices and remap
-every vertex stream, including skin influences and morph deltas. Lookup
-transforms do not affect generation. `AssetStore.add_geometry_owned` transfers
-the result; `regenerate_geometry_tangents` explicitly regenerates a stored
-geometry. The renderer never generates tangents implicitly.
-`Geometry.transform` updates tangent handedness when
-baking a reflection, while retaining its existing winding contract: call
-`flip_winding` explicitly when the reflected geometry needs its winding
-reversed. Explicit `NORMAL_RG` textures reconstruct positive Z from RG; RGB
-textures retain authored XYZ. Normal mip generation decodes, averages and
-normalizes vectors before encoding them again.
-
-The compatibility claim covers generated constant-sign triangles. Derivative
-fallback, mixed-sign authored interpolation and morphed base tangents have no
-MikkTSpace guarantee. Changing a slot's selected UV or editing geometry does
-not regenerate tangents; only explicit regeneration does.
-
-An active normal map without supplied tangents requires filled triangle
-rasterization. Lines, points and effective wireframe triangles return
-`c3d::UNSUPPORTED` during preparation or rendering. Supplied tangents, a missing
-normal map, or normal scale zero preserve those geometry paths. A requested
-wireframe on a device without line polygon mode still uses filled triangles.
-
-## Physical clearcoat and sheen
-
-`material::physical()` embeds a complete Standard surface, then layers clearcoat
-and sheen over it:
+#### Physical clearcoat and sheen
 
 ```c3
 PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
@@ -364,124 +134,39 @@ params.clearcoat = 0.8f;
 params.clearcoat_roughness = 0.2f;
 params.sheen_color = { 0.3f, 0.08f, 0.12f };
 params.sheen_roughness = 0.65f;
-MaterialId material_id = assets.add_material(material::physical(params))!;
+MaterialId coated = assets.add_material(material::physical(params))!;
 ```
 
-`PHYSICAL_PARAMS_DEFAULT` embeds `STANDARD_PARAMS_DEFAULT`. Clearcoat and sheen
-color start at zero, both layer roughness factors start at zero, clearcoat normal
-scale starts at 1, and every optional map starts absent with an identity
-transform. With both layers disabled, Physical reproduces its embedded Standard
-surface.
+Clearcoat adds a glossy dielectric layer with its own roughness and optional normal map. Sheen adds a soft fabric lobe.
+Both read the same [reflection probes](reflection_probes.md) and the global environment as the base layer
+([Environments](environments.md)). Composition rules are in the [reference](materials_reference.md#composition-rules).
 
-Clearcoat, clearcoat roughness, sheen RGB and sheen roughness are finite values in
-[0, 1]. Clearcoat normal scale is finite and may be negative. Shading applies the
-same 0.045 perceptual-roughness floor used by Standard while preserving authored
-zero values.
-
-Each layer slot keeps its own sampler, UV set and transform:
-
-| Slot | Channels | Load color space | Effect |
-| --- | --- | --- | --- |
-| `clearcoat_map` | R | Linear | Multiplies clearcoat strength |
-| `clearcoat_roughness_map` | G | Linear | Multiplies clearcoat roughness |
-| `clearcoat_normal_map` | RGB XYZ or explicit RG XY | Linear | Supplies an independently scaled coat normal using its texture semantic |
-| `sheen_color_map` | RGB | sRGB | Multiplies sheen color after sRGB decoding |
-| `sheen_roughness_map` | A | Linear alpha | Multiplies sheen roughness |
-
-The sheen color and roughness slots may share one sRGB texture because its alpha
-channel remains linear. Missing or stale layer textures retain factor-only
-behavior. Clearcoat maps are ignored when clearcoat is zero, and sheen maps are
-ignored when every sheen-color component is zero.
-
-Clearcoat, sheen and the transmission fallback read the same [reflection probes](reflection_probes.md)
-as the base layer: each lobe aims its own direction through the selected probes and the global
-environment. Ray-traced reflection hits shade the specular, IOR, clearcoat, sheen, anisotropy and
-transmission lobes the same way ([reflections](reflections.md#what-traces)).
-
-The Standard `normal_map` orients the base and sheen response. The clearcoat
-normal map creates a separate tangent-space normal and falls back to the geometry
-normal when absent; it never inherits the mapped base normal. Both paths follow
-the tangent-frame rules above.
-
-Direct clearcoat uses a fixed dielectric F0 of 0.04 and attenuates the underlying
-Standard and sheen response with its view Fresnel. Sheen uses a Charlie lobe with
-directional-albedo attenuation. Environment lighting uses the usual GGX-filtered
-cube for Standard and clearcoat plus a separately Charlie-filtered cube for
-sheen. Constant ambient has no added reflected layer lobes. Material occlusion
-continues to affect only the underlying diffuse ambient and environment terms.
-
-Sheen does not attenuate emission. Clearcoat attenuates emission and the underlying
-ambient by the same view-dependent layer weight used for reflected lighting. The
-renderer sums all active lobes before applying the common alpha mode once, so
-Physical `BLEND` remains premultiplied source-over and `MASK` coverage still comes
-only from the embedded Standard base alpha.
-
-## Physical specular and IOR
-
-Physical exposes the dielectric reflectance of its embedded Standard surface:
+#### Physical specular and IOR
 
 ```c3
-PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
-params.standard.base_color = { 0.55f, 0.1f, 0.08f, 1 };
-params.standard.metallic = 0;
 params.ior = 2.4f;
 params.specular = 0.8f;
 params.specular_color = { 1, 0.6f, 0.2f };
 ```
 
-`ior` is finite and at least 1 (default 1.5). `specular` lies in [0, 1] (default
-1). `specular_color` components are finite and non-negative (default white).
-Normal-incidence reflectance is `((ior - 1) / (ior + 1))^2 * specular_color`,
-clamped per channel to 1, then multiplied by `specular`; the grazing reflectance
-is `specular`. Metallic surfaces still use their base color as reflectance. The
-defaults reproduce the Standard reflectance of 0.04, so a Physical material with
-every lobe disabled shades like its embedded Standard surface. Clearcoat keeps its
-own fixed reflectance.
+`ior` sets the dielectric reflectance, `specular` weights it and `specular_color` tints it. The defaults reproduce the
+Standard reflectance of 0.04.
 
-| Slot | Channels | Load color space | Effect |
-| --- | --- | --- | --- |
-| `specular_map` | A | Linear alpha | Multiplies `specular` |
-| `specular_color_map` | RGB | sRGB | Multiplies `specular_color` after sRGB decoding |
-
-Both slots keep their own sampler, UV set and transform, and both are ignored
-when `specular` is zero. A zero specular weight removes the dielectric specular
-lobe under direct and environment lighting and leaves the diffuse lobe unweighted.
-
-## Physical anisotropy
-
-Anisotropy stretches the metallic-roughness specular lobe along a tangent-space
-direction:
+#### Physical anisotropy
 
 ```c3
-PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
 params.standard.metallic = 1;
 params.standard.roughness = 0.35f;
 params.anisotropy = 0.8f;
 params.anisotropy_rotation = (float)math::PI / 4;
 ```
 
-`anisotropy` lies in [0, 1] (default 0) and `anisotropy_rotation` is a finite angle
-in radians measured from the tangent toward the bitangent. The optional
-`anisotropy_map` stores a direction in RG (`rg * 2 - 1`, rotated by the factor
-angle) and multiplies the strength by B; it is linear data and keeps its own
-sampler, UV set and transform. The map is ignored when `anisotropy` is zero, and
-zero strength reproduces the isotropic lobe exactly.
+Anisotropy stretches the specular lobe along a tangent-space direction, as on brushed metal. The direction uses the
+frame of the normal map ([Tangent frames](materials_reference.md#tangent-frames)). Clearcoat and sheen stay isotropic.
 
-The direction lives in the same frame the normal map uses: supplied tangents are
-authoritative, and filled triangles without tangents derive a frame from
-world-position and anisotropy-map UV derivatives (UV0 when unmapped). A degenerate
-frame renders isotropic. Active anisotropy without supplied tangents on lines,
-points or effective wireframe triangles returns `c3d::UNSUPPORTED`, like an active
-normal map. Direct lighting uses the anisotropic GGX distribution and visibility;
-environment reflections bend the reflection normal toward the stretch direction
-as a documented approximation. Clearcoat and sheen stay isotropic.
-
-## Physical transmission
-
-Transmission shows the opaque scene through a Physical surface:
+#### Physical transmission
 
 ```c3
-PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
 params.standard.metallic = 0;
 params.standard.roughness = 0.05f;
 params.ior = 1.5f;
@@ -491,161 +176,67 @@ params.attenuation_distance = 1;
 params.attenuation_color = { 0.9f, 0.5f, 0.3f };
 ```
 
-`transmission` lies in [0, 1] (default 0). `thickness` is a finite non-negative
-object-space distance scaled by the model matrix columns; zero means a thin
-surface. `attenuation_distance` is finite and non-negative, where zero disables
-volume attenuation; `attenuation_color` components lie in [0, 1]. With
-`attenuation_distance` above zero, radiance crossing the volume is multiplied by
-`attenuation_color ^ (distance / attenuation_distance)`.
+Transmission shows the opaque scene through the surface. `thickness` is an object-space distance and `attenuation_color`
+tints radiance over `attenuation_distance`. A transmissive draw joins the scene-read list, refracts a snapshot of the
+opaque color and, by default, never sees other glass. The view setting `transmission_layers` lets a front pane see the
+glass behind it. [Transparency](transparency.md#physical-transmission) describes the rendering, the cost and the layer
+rules.
 
-| Slot | Channels | Load color space | Effect |
-| --- | --- | --- | --- |
-| `transmission_map` | R | Linear | Multiplies `transmission` |
-| `thickness_map` | G | Linear | Multiplies `thickness` |
+## Standard maps
 
-Both slots are ignored when `transmission` is zero. A transmissive material's
-draws join the scene-read list, which they share with opaque and masked
-[custom scene readers](custom_shaders.md#scene-reads): rendered after opaque
-geometry and the sky and before ordinary blends, sorted back to front by bounds
-center. Any alpha mode is allowed: OPAQUE and MASK glass keeps its depth write
-setting; with colored shadows off, OPAQUE and MASK glass casts opaque shadows and BLEND
-glass follows the ordinary blend rules and never casts; with them on, glass of every
-alpha mode casts a [tinted shadow](shadows.md#colored-shadows).
+Each slot is a `TextureSlot` with its own texture, sampler, UV set (0 or 1) and scale, rotation and offset. Slots can
+share one `TextureId` while using different coordinates and samplers.
 
-Before that list the renderer copies the finished opaque color into the
-view's own `scene_color` image, allocated on first use at the view size with its
-full mip chain; `Pass.SCENE_SNAPSHOT` times the copy and `Pass.SCENE_READ` the
-list. Each transmissive fragment refracts the view direction by `1 / ior`, walks
-the thickness through the volume, projects the exit point and samples
-`scene_color` at
-
-```
-lod = log2(max(width, height)) * roughness * clamp(2 * ior - 2, 0, 1)
+```c3
+params.base_color_map = material::texture_slot(base_color_texture);
+params.metallic_roughness_map = material::texture_slot(material_data_texture);
+params.occlusion_map = material::texture_slot(material_data_texture, uv_set: 1);
+params.normal_map = material::texture_slot(normal_texture);
+params.emissive_map = material::texture_slot(emissive_texture);
 ```
 
-where `roughness` is the roughness factor times its map, before decals and
-before the roughness floor of the lighting model. Roughness 0, or an `ior` of 1,
-samples mip zero.
+The channels each slot reads and the color space to load it in are in the [reference](materials_reference.md#standard).
+Physical adds ten more slots for its layers ([Physical](materials_reference.md#physical)).
 
-The chain is written only when the list holds a draw that can sample above mip
-zero: a Physical material with `transmission` above zero, `roughness` above zero
-and `ior` above one. Then `Pass.SCENE_MIPS`, placed after `Pass.SCENE_SNAPSHOT`,
-times one fullscreen pass per level, each a 2x2 box filter of the level above
-that counts one `Stats.draws`. Other frames record nothing extra, and the
-levels stay unread. The box filter has no wider kernel, so strong blur steps
-visibly between levels on high-contrast content. The chain adds a third of
-`scene_color` to the view's memory (5.5 MB on top of 16.6 MB at 1920 × 1080),
-a sampled texture view per level and an attachment view per level below the
-first. Custom readers keep mip zero.
+- Basic has one base map (`BasicParams.map`). Toon has a base map (`ToonParams.map`) and a gradient ramp
+  (`gradient_map`, a `TextureId`).
+- A zero or stale texture id makes the slot absent. Absent maps keep the scalar factor, and an absent normal map keeps
+  the geometry normal.
+- Normal encoding belongs to the texture asset (`TextureDesc.semantic`), not the slot.
+- A built-in slot can reference a render target with `{ .kind = RENDER_TARGET, .target = id }`. A custom material slot
+  can take a texture the drawing view supplies, `{ .kind = VIEW, .view_slot = n }`
+  ([Custom shaders](custom_shaders.md#view-provided-slots)).
+- Without a tangent stream, filled triangles derive the normal-map frame from UV derivatives. Supply tangents, or
+  generate them with `geometry::create_tangent_geometry`, for an authored basis
+  ([Tangent frames](materials_reference.md#tangent-frames)).
 
-An exit point outside the screen falls back to the environment's specular cube
-along the refracted direction, or to black without an environment. The
-transmitted radiance replaces
-the dielectric diffuse response by the transmission factor, is scaled by base
-color and the non-metallic fraction, and is weighted by the surface's own
-Fresnel; direct lights add a mirrored-light transmission lobe. Draws of one
-layer, by default all of them, never see each other, the custom readers of the
-same list or ordinary blends: glass behind glass shows the opaque scene through
-both. [Transmission layers](#transmission-layers) lets a front pane see the
-glass behind it.
+## Alpha, blending and depth state
 
-### Transmission layers
+`MaterialCommon` sets the state for every family.
 
-`ViewDesc.transmission_layers` sets how many snapshots the scene-read list
-samples, from 1 to `MAX_TRANSMISSION_LAYERS` (4). Zero reads as 1, so a
-zero-initialized desc keeps the default output; a value above 4 faults
-`INVALID_ARGUMENT` in `create_view` and `configure_view`.
-
-Above 1, the renderer walks the scene-read list back to front and gives each
-draw a layer from the screen rectangle of its world bounds:
-
-```
-layer(d) = min(layers - 1, 1 + max(layer(e)))   over earlier draws e whose rectangle overlaps d's
-layer(d) = 0                                    when none overlaps
+```c3
+MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+common.alpha_mode = AlphaMode.BLEND;
+common.blend_mode = BlendMode.ADDITIVE;
+Material sparks = material::basic({ .color = { 1, 0.5f, 0.2f, 0.25f } }, common);
 ```
 
-Rectangles that only touch do not overlap. A bound with any corner at or behind
-the near plane covers the whole screen, so every later draw overlaps it. The
-rule compares bounding rectangles, not silhouettes, and may place two panes in
-separate layers where their shapes do not touch.
+| `alpha_mode` | Use it for | Notes |
+| --- | --- | --- |
+| `OPAQUE` | Solid surfaces | Ignores coverage |
+| `MASK` | Cutouts | Discards below `alpha_cutoff` (default 0.5); the shadow pass uses the same coverage |
+| `BLEND` | Translucent surfaces | Premultiplied output; `blend_mode` selects `PREMULTIPLIED_ALPHA` (source-over) or `ADDITIVE` |
 
-Layers record in order, back to front inside each. Before every non-empty layer
-the renderer copies `hdr_color` into `scene_color` again, and regenerates its
-mips when that layer holds a draw that can sample above mip zero, so a draw in
-layer n sees the opaque scene and the glass of layers below n. Custom color
-readers in the list are layered the same way. At the default of 1 no
-rectangle is projected, no draw is reordered and the commands are those of a
-single snapshot.
+- `BLEND` honors `depth_test` and never writes depth. The authored `depth_write` stays stored, so switching back to
+  `OPAQUE` or `MASK` restores it.
+- Double-sided Standard, Physical and Toon flip their shading normal on back faces.
+- `wireframe` falls back to filled triangles on a device without line polygon mode.
+- Opaque and masked Basic, Standard, Physical and Toon meshes cast shadows. Masked coverage comes from the base factor,
+  base texture and cutoff.
 
-Cost, per non-empty layer past the first: one `scene_color` copy, counted in
-`Stats.scene_snapshots` and `Stats.draws`; one mip chain when the layer needs it;
-and, on a view with fog or an atmosphere, one `scene_depth` copy, because a color
-snapshot always brings its depth. Assignment is O(n²) in the scene-read draws and
-runs only above 1; the default view pays none of it.
+How blended surfaces order, compose and cast shadows is in [Transparency](transparency.md).
 
-Limits:
-
-- Deeper overlaps than the setting share the last layer and do not see each
-  other; no draw is dropped.
-- On a view with fog or an atmosphere, a front pane fogs only the gap to the
-  depth-writing pane behind it, because `scene_depth` is re-copied with each
-  color snapshot. BLEND glass in an earlier layer writes no depth, so a pane
-  in front of it fogs its refracted sample to the opaque depth behind the
-  BLEND glass.
-- Ordinary blends are not in the scene-read list and draw over glass in every
-  setting.
-
-`python3 scripts/build.py --example transparency` draws a glass slab over a checkered backdrop,
-with a tinted smooth pane behind it that partly overlaps it on screen, two intersecting colored
-quads to the left and, to the right, a blended batch of two panels with a blended sphere sweeping
-between them, all lit by a shadowed sun, with a blended orange pane and a thick absorbing slab in front. R steps the slab's
-roughness through 0, 0.25, 0.5 and 1; L switches the view between 1 and 2 transmission layers; T switches
-its transparency between `SORTED` and `WEIGHTED` ([weighted transparency](#weighted-transparency)); C switches
-[colored shadows](shadows.md#colored-shadows).
-
-## Importing materials
-
-glTF materials arrive through `c3d::asset::gltf`, which selects Basic for
-unlit, Standard for metallic-roughness and Physical when any layer extension
-is present, and validates every factor against the constructor domains before
-building the material. The mapping table lives in
-[Models, glTF and FBX import](models.md).
-
-## Material storage
-
-Renderer material slots are 640 bytes (`render::MATERIAL_STRIDE`). The generated
-`StandardMaterialGpu` remains 224 bytes, with a 64-byte header followed by five
-nested 32-byte `TextureMapGpu` members at offsets 64, 96, 128, 160 and 192. Each map record
-contains `texture_index`, `sampler_index`, `uv_offset` and `uv_linear`; presence
-and UV-set selection live in the header's `map_flags`. Bits 0–4 are presence bits
-for base color, metallic-roughness, normal, occlusion and emissive in that order;
-bits 5–9 select UV1 for those same slots. The matching schema constants are
-`c3d::shader::MATERIAL_MAP_BASE_COLOR`, `MATERIAL_MAP_METALLIC_ROUGHNESS`,
-`MATERIAL_MAP_NORMAL`, `MATERIAL_MAP_OCCLUSION`, `MATERIAL_MAP_EMISSIVE` and
-`MATERIAL_MAP_UV1_SHIFT`.
-
-`BasicMaterialGpu` occupies 64 bytes: `map_flags` is at offset 12 and its
-`TextureMapGpu map` is at offset 32. It uses the same base-color presence and
-UV1 bits as Standard. `ToonMaterialGpu` occupies 128 bytes, including its color,
-rim factors, step count, gradient texture/sampler indices, one nested base-map
-record and the outline color, width and depth offset. `PhysicalMaterialGpu` occupies the full 640-byte slot: its Standard value
-is followed by layer factors, five 32-byte layer-map records, the specular,
-anisotropy and volume factors and five more map records. Layer presence lives in
-`map_flags` with `PHYSICAL_MAP_*` bits; the extension maps use a second word,
-`extension_map_flags`, with `PHYSICAL_EXTENSION_MAP_SPECULAR`,
-`PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR`, `PHYSICAL_EXTENSION_MAP_ANISOTROPY`,
-`PHYSICAL_EXTENSION_MAP_TRANSMISSION` and `PHYSICAL_EXTENSION_MAP_THICKNESS` and
-the same `MATERIAL_MAP_UV1_SHIFT`. `CustomMaterialGpu` occupies 320 bytes: its
-header, eight slot records, the payload address and capabilities, then four referenced
-Standard block addresses at offset 288
-([material references](custom_shaders.md#material-references)). The default 4096-slot
-material heap is 2,621,440 bytes. Custom renderer-side packing supplies
-one `TextureBinding` per Standard, Toon and Physical slot. Basic uses only its base
-color binding; Toon uses base color and gradient; disabled layer bindings stay
-empty. Bindless index zero is not a presence test. Ordinary consumers
-edit asset material slots and let the renderer resolve these bindings.
-
-## Shared edits
+## Edit a shared material
 
 ```c3
 MaterialAsset* record = assets.material(material_id);
@@ -653,317 +244,60 @@ record.data.standard.roughness = 0.8f;
 assets.mark_material_dirty(material_id);
 ```
 
-Every mesh using the id sees the edit. Finish edits before scene preparation or
-view recording; advance the revision once after changing values. An unchanged
-GUI frame leaves the revision alone. The GUI material panel selects the active
-material family before reading its parameters. Texture pixel, backing and sampler
-revisions are tracked independently for every slot: editing and marking a texture
-or sampler dirty does not require a material dirty call. Changing a slot itself
-does require one. Removed or stale texture generations use the absent-map behavior;
-they never silently bind a new asset reusing the index.
+Every mesh using the id sees the edit. Finish edits before scene preparation or view recording and advance the revision
+once after changing values.
 
-Prepare or upload resources before releasing CPU sources. A current mirror stays
-usable after explicit texture or geometry source release; a renderer that needs
-the missing source reports `c3d::ASSET_DATA_UNAVAILABLE`. Keep edits and releases
-outside the interval from preparation through submission. See
-[source ownership](textures.md#upload-edit-and-release-cpu-sources).
+- Texture pixel, backing and sampler revisions are tracked independently for every slot. Editing and marking a texture
+  or sampler dirty does not need a material dirty call. Changing a slot itself does.
+- A removed or stale texture generation uses the absent-map behavior. It never binds a new asset that reuses the index.
+- Prepare or upload resources before releasing CPU sources, and keep edits and releases outside the interval from
+  preparation through submission ([Textures](textures.md#upload-edit-and-release-cpu-sources)).
 
-Changing families requires assigning a complete `Material`, then marking it dirty:
+### Change the family
+
+Assign a complete `Material` and mark it dirty:
 
 ```c3
 record.data = material::basic({ .color = { 1, 0.5f, 0.2f, 1 } });
 assets.mark_material_dirty(material_id);
 ```
 
-Use the matching `.data.basic`, `.data.standard`, `.data.physical` or `.data.toon`
-arm. Do not change `kind` without initializing that arm from its named defaults.
+Use the matching `.data.basic`, `.data.standard`, `.data.physical` or `.data.toon` arm. Initialize the arm from its
+named defaults before you change `kind`.
 
-`assets.replace_material(material_id, material)` assigns a complete `Material` under the same id and key and
-advances the revision once; the kind may change. A custom payload is copied and the old one freed. The call has
-no fault. Call it from the owner thread, outside frame recording. It can still create a pairing fault at
-draw time, the same as `add_material` and `mark_material_dirty`: normal-map derivatives on non-triangle or wireframe-line geometry, and a cube or `R16_UINT` texture in a built-in
-slot. A material cannot see which geometries draw it. Path-traced views restart after a replacement; see
-[Accumulation and resets](path_tracing.md#accumulation-and-resets).
+`assets.replace_material(material_id, material)` assigns a complete `Material` under the same id and key and advances
+the revision once. The kind can change. A custom payload is copied and the old one freed. The call returns no fault.
+Call it from the owner thread, outside frame recording. Path-traced views restart after a replacement
+([Accumulation and resets](path_tracing.md#accumulation-and-resets)).
 
-## Lights
+A draw can still fault at preparation or render time, as with `add_material` and `mark_material_dirty`, because a
+material cannot see which geometries draw it ([faults](materials_reference.md#faults)).
 
-```c3
-Node* sun = scene.add_light(light::directional({ 1, 1, 1 }, 1))!;
-Node* bulb = scene.add_light(light::point({ 1, 1, 1 }, 10, 10))!;
-bulb.local.position = { -3, 2, 4 };
-Node* spot = scene.add_light(light::spot(
-    color: { 1, 1, 1 },
-    intensity: 20,
-    inner: 0.3f,
-    outer: 0.6f,
-    range: 12,
-))!;
-spot.local.position = { 3, 3, 5 };
-spot.local.rotation = maths::look_rotation((-spot.local.position).normalize(), { 0, 1, 0 });
-```
+## Import materials
 
-Directional and spot lights emit along their node's transformed local −Z axis.
-Point and spot positions come from the node's world transform. Parenting therefore
-moves and rotates a light; scale does not rescale intensity or range. The
-transformed direction must remain nonzero.
+`c3d::asset::gltf` selects Basic for unlit materials, Standard for metallic-roughness and Physical when any layer
+extension is present. It validates every factor against the constructor ranges before building the material.
+`c3d::asset::fbx` builds Standard materials. The mapping tables are in [Models, glTF and FBX import](models.md).
 
-Light color and intensity are finite and nonnegative. Directional intensity
-is an irradiance scale; point and spot intensity is a radiant-intensity scale.
-Point and spot lights use inverse-square distance attenuation. A positive range
-is a world-space cutoff with smooth attenuation inside it and zero contribution
-at and beyond it; range 0 is unbounded.
+## Limits
 
-Spot angles are half-angles in radians, with `0 <= inner < outer <= PI/2`.
-The GUI displays degrees. Ordinary cones have full angular weight inside the
-inner cone and zero weight at the outer boundary, with a smooth ramp between
-them. For very narrow cones, the renderer floors the inner-to-outer cosine
-difference at 0.001 to keep the calculation bounded. This approximation can
-reduce the angular weight inside the authored inner cone.
+- Basic is unlit. Toon has no PBR reflections or transmission. Toon uses only the environment's diffuse SH term.
+- [Shadows](shadows.md) attenuate direct light on Standard, Physical and Toon. Standard and Physical support
+  [environment lighting and independent skies](environments.md).
+- Physical transmission samples the opaque scene through a 2x2 box-filtered mip chain and never sees ordinary blended
+  surfaces.
+- Shading writes scene-linear HDR into the view's working image. The view's output mode decides whether display
+  processing tone maps it ([Views](views.md), [Post-processing](post.md)).
+- Decals project only a Standard material onto Standard and Physical receivers ([Decals](decals.md)).
 
-`Light.volumetric` makes a light scatter in the [volumetric fog](sky.md#volumetric-fog) of a view that has
-one, and nothing else. The three constructors set it; set it to false to opt a light out. A zero-initialized
-`Light` has it false and does not scatter.
+Run `python3 scripts/build.py --example materials` for a view that switches between the families and
+`python3 scripts/build.py --example pbr` for a Standard sphere grid with editable maps.
 
-`Light.source_radius` (point and spot lights, metres) and `Light.source_angle` (directional lights, half-angle in
-radians) size the source that [ray-traced shadows](shadows.md#soft-shadows) sample. Both are zero by default, a point
-source with a hard shadow. They are finite and not negative, and the angle is below `PI / 2`. Atlas shadows ignore them.
+## See also
 
-`Scene.add_light` can return `c3d::CAPACITY_EXCEEDED` when node capacity is full.
-Lights are ordinary components owned by the scene. Edit the component and call
-`scene.update_world()` after transform changes, before rendering. Light values
-are gathered anew for each view and need no material dirty call.
-
-## Visibility and receiver layers
-
-A hidden node or ancestor disables its light. The light node's `layers` must
-intersect the camera's `layers` to make the light eligible for that view.
-`Light.layers` separately selects receiving mesh-node layers. A zero receiver
-mask or zero intensity disables contribution without consuming the light budget.
-
-These masks serve different purposes. A mesh visible through camera layer 1
-may have node layers 1|2 and receive a light whose receiver mask is only 2.
-Keep the complete receiver mask; it is not restricted to camera bits.
-
-```c3
-Light* light = scene.get(bulb, Light);
-bulb.layers = 3;
-light.layers = 2;
-```
-
-Here cameras seeing layer 1 or 2 can include the bulb, but it illuminates only
-meshes carrying layer 2. Ambient and emissive do not use direct-light masks. Traced hits
-(reflections, probe updates and the path tracer) apply the same receiver mask through their
-row's node layers.
-
-## Decals
-
-A `Decal` projects a borrowed Standard material onto opaque or masked Standard
-and Physical receivers. The forward and G-buffer material stages apply the same
-decal blend before lighting. Basic, Toon, alpha-blended and impostor receivers
-do not receive decals. Traced-hit shading used by reflections, GI and path
-tracing does not apply decals. Terrain receives decals on both paths
-([terrain](terrain.md#decals)); other custom shaders require explicit receiver
-integration.
-
-With a live Standard `material_id` and a scene:
-
-```c3
-DecalDesc desc = scene::default_decal_desc(material_id);
-desc.size = { 2, 1, 0.5f };
-desc.decal.weights = { .base_color = 1 };
-Node* decal_node = scene.add_decal(desc, name: "paint")!;
-decal_node.local.position = { 0, 0, 1 };
-scene.update_world();
-```
-
-`default_decal_desc` uses unit size, full channel weights, every receiver layer,
-order zero and `DEFAULT_DECAL_FADE_ANGLE` (80 degrees, stored in radians).
-`Scene.add_decal` copies `size` to the new node's local scale. Size components
-must be finite and positive, weights finite in [0, 1], and `fade_angle` finite
-in [0, PI/2]. Invalid descriptions return `c3d::INVALID_ARGUMENT` before creating
-a node; full node capacity returns `c3d::CAPACITY_EXCEEDED`. Neither fault adds a
-node or component. `Scene.add(node, decal)` can attach the component to an existing
-node; direct component edits must preserve the same weight and angle ranges.
-
-The volume is the node's unit cube, from -0.5 to +0.5 on each axis, mapped by its
-world transform. Finite affine transforms support non-uniform scale, inherited
-shear and reflection. A collapsed volume draws nothing and consumes no packed
-decal slot. Extraction also skips a non-finite determinant or inverse; non-finite
-world transforms are not supported input. Call `scene.update_world()` after moving
-or scaling a node. Decals follow their hierarchy's visibility. Node `layers`
-select cameras; `Decal.receiver_layers` independently selects receiver-node
-layers, with zero disabling the decal.
-
-The projected UV is `(local.x + 0.5, 0.5 - local.y)`. Each projected map applies its
-own UV transform and sampler to that projection; UV0/UV1 selection does not select
-a receiver UV stream. The source base factor and map provide RGB and opacity;
-the metallic-roughness map supplies G roughness and B metallic.
-
-| `DecalWeights` field | Blended receiver value |
-| --- | --- |
-| `base_color` | Base RGB |
-| `normal` | Shading normal |
-| `roughness` | Roughness |
-| `metallic` | Metallic |
-
-Each blend weight is the channel weight times source base alpha times angular
-opacity. Receiver alpha, emissive, occlusion and geometric `offset_normal` remain
-unchanged; decals do not change alpha masking or shadow coverage. Physical
-extension parameters, including clearcoat and sheen, remain unchanged. Overlaps
-apply in ascending `(order, entity.index, entity.generation)`, so later entries blend
-over earlier ones. Each view retains at most 256 eligible decals after culling
-and ordering. This base-first budget keeps the lowest-order entries and drops
-higher-order overlays first; dropped entries count as `decals_dropped`.
-
-Angular fading compares the receiver's geometric normal with the normalized
-world image of local +Z, including under shear. For `c = cos(fade_angle)`, the
-cosine band is `min(DECAL_FADE_BAND, 1 - c)`, where the generated ABI constant is
-0.1. A nonzero band gives `clamp((facing - c) / band, 0, 1)`: zero at the cutoff,
-full weight at facing 1. When the band is zero, including at zero degrees, the
-rule is `facing >= 1 ? 1 : 0`. This hard limit requires exact alignment; useful
-narrow fades start around one degree. Extraction computes the cosine and reciprocal
-band once per decal; the shader subtracts, multiplies and clamps.
-
-Normal maps follow the material convention: +X follows increasing U and +Y
-increasing V, which is local -Y for this projection. The packed tangent follows
-world local +X and has handedness `-sign(determinant)`, so reflections reverse it.
-The shared `tangent_normal` frame orthogonalizes against the receiver's shading
-normal after its own normal map. A flat decal normal map therefore preserves
-the receiver's normal-map detail even at full normal weight. Under shear, U
-follows that projected tangent and V is the orthogonal
-approximation. RGB XYZ decoding, normal scale and degenerate-frame behavior match
-mesh normal maps; scale zero disables perturbation.
-
-The scene owns the component, not its material or textures. `Scene.add_decal`
-does not validate material liveness or kind. Preparation and rendering skip dead
-or non-Standard source materials and count them in `dangling_refs`. Keep shared
-assets alive while used. Edit a source material through its asset record and call
-`assets.mark_material_dirty(material_id)`; direct decal edits need no dirty call.
-`Renderer.prepare_scene` resolves decal materials, and view extraction resolves
-their current revisions before packing.
-
-Custom receivers may include public `decals.glsl` and call `apply_decals` before
-lighting or writing their G-buffer. Supply a fully initialized
-`StandardMaterialSample`, the receiver's material flags and `DrawRoot.layers`,
-frame-relative position and matching view depth. Compute position derivatives
-in uniform flow before any discard or divergent decal branch, then pass them to
-the helper. It applies map UV transforms and frame mip bias to those gradients.
-Other custom shaders opt in explicitly; the terrain stages already do. The serialization add-on
-has no built-in `Decal` codec.
-
-## Ambient and light capacity
-
-Scenes start with white `ambient_color` and zero `ambient_intensity`. Both must
-remain finite and nonnegative. Ambient supplies a simple diffuse contribution:
-`ambient_color * ambient_intensity * base_color.rgb * (1 - metallic)`,
-using mapped base/metallic values and the occlusion multiplier when present.
-The constant term adds no specular reflection. A selected lighting environment
-replaces it unless `scene.ambient_add` is true. Environments supply SH diffuse
-lighting and filtered specular reflections; the occlusion map affects only the
-diffuse contribution. See [Environments](environments.md) for source selection,
-preparation and independent backgrounds. Emissive RGB times strength remains
-visible without direct or ambient illumination.
-
-`RendererDesc.max_lights` sets per-view capacity. Zero chooses the default 256;
-`Renderer.max_lights` holds the resolved capacity. The renderer first excludes
-hidden, off-camera-layer, zero-intensity and zero-receiver-mask lights, then
-culls finite point and spot ranges against the view frustum. Directional and
-unbounded lights have no spatial culling.
-
-The first eligible lights in current dense component order fill the budget.
-Remaining eligible lights count as drops. Removing components can change that
-order; selection is neither brightness-ranked nor stable insertion order.
-`Stats.lights` and `Stats.lights_dropped` accumulate packed lights and budget
-drops across recorded views and reset at `begin_frame`. The GUI Stats panel
-shows the previous frame's counts.
-
-## Interactive example
-
-```bash
-python3 scripts/build.py --example materials
-./examples/build/materials --gpu-timings
-```
-
-`materials` combines seven interactive presets. Masked foliage casts cutout
-shadows onto an opaque receiver. Two separated blended objects show source-over
-composition against an opaque reference and HDR sky. Three Toon spheres compare
-uniform steps, a nonuniform grayscale ramp and an enabled rim; the Toon preset
-toggles an outline on all three (`O`, or `--toon-outline <pixels>` to start with it)
-and sets its width (`[` and `]`). The Physical view
-places an ordinary Standard sphere beside an equivalent zero-layer Physical
-sphere, factor-only coated paint and fabric, and a combined mapped surface.
-The Physical specular view compares an IOR row of 1.0, 1.5 and 2.4 with a
-specular-weight row of 0, 0.5 and a tinted unit weight. The Physical anisotropy
-view compares an isotropic brushed metal with three stretch rotations and a
-mapped direction. The Physical transmission view places thin, thick tinted and
-blended glass in front of a checker backdrop and three opaque spheres, with one
-glass cube behind the thin sphere to show that glass never sees other glass.
-
-The controls switch presets, editable surfaces, material families, base textures
-and Toon ramps. The Physical controls independently toggle the base normal, all
-five layer maps, the specular, anisotropy, transmission and thickness maps; the
-tiny generated fixtures use the documented channels, different UV sets/transforms
-and distinct base/coat normals. Family changes
-initialize the selected parameter arm from named defaults and preserve only the
-common state and base color. Material controls edit all family factors and shared
-alpha/depth/raster state. The warm directional and cool point lights have separate
-enable and intensity controls. Ambient fill, environment fill and background
-intensity remain independent, and either bundled HDR can supply lighting and sky.
-
-Studio is prewarmed by the initial `prepare_scene` call, including hidden mesh
-materials. Sky is first prepared through `upload_environment`, which intentionally
-does not generate sheen resources. Select Sky while viewing a base-only preset,
-then select Physical layers to exercise the possible one-time sheen preparation
-cost. Repeated use reuses the prepared resources. Drag outside GUI windows to
-orbit, scroll to zoom, and release Escape outside GUI keyboard capture to close.
-GPU timings are optional; full validation is enabled for every run.
-
-The broader Standard material example remains available:
-
-```bash
-python3 scripts/build.py --example pbr
-./examples/build/pbr --gpu-timings
-```
-
-The static grid uses 49 distinct materials. Columns increase metallic from 0 to
-1; rows increase roughness from 0.05 to 1, bottom to top. Alternating columns use
-receiver layers 1 and 2. Both prepared sphere assets have UV1 equal to twice UV0;
-“Geometry has supplied tangents” switches the entire grid between an absent
-tangent stream and explicitly generated UV0 tangents.
-
-All maps initially use trilinear repeat, identity transforms and strength 1.
-Occlusion uses UV1; other maps use UV0. Metallic/roughness and occlusion share one
-linear image. The middle row has emissive RGB `(0.15, 0.15, 0.15)`; the other rows
-start black. Opaque alpha leaves the base-color checker solid until “Alpha mask”
-is enabled for a selected sphere.
-
-Select a sphere in Scene to edit factors and the five collapsible Sphere maps
-sections, or select a light to edit color, intensity, range, cone angles and
-receiver layers. Each map exposes enable, UV set, scale, rotation in degrees,
-offset and sampler presets. Scene supplies visibility, layers and transforms.
-“Scalar-only preset” restores the original grid factors, empty maps and opaque
-common state; “Reset mapped preset” restores the mapped materials described
-above. Both leave geometry selection, lights and camera settings unchanged.
-
-Controls supplies ambient, camera layer visibility and orthographic projection.
-Drag outside GUI windows to orbit, scroll to zoom, and release Escape outside
-GUI keyboard capture to close. Orthographic view height has a separate control.
-GPU timings are optional; full validation is enabled for every run.
-
-## Current rendering limits
-
-Texture ownership and sampling are described in [Textures and
-images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standard,
-Physical and Toon direct lighting. Standard and Physical support [environment
-lighting and independent skies](environments.md); Toon uses only its diffuse SH
-contribution, and Basic remains unlit. Toon does not provide PBR reflections or
-transmission. Physical transmission samples
-the opaque scene through a 2x2 box-filtered mip chain and never sees other
-transmissive or blended surfaces. Shading writes scene-linear HDR into the view's
-working image; the view's output mode decides whether display processing tone
-maps it (see [views](views.md) and
-[display processing](post.md)). A texture slot may reference a render target with
-`{ .kind = RENDER_TARGET, .target = id }`; a dead target resolves to white, and a
-resized target repacks the material on its own. A custom material slot may instead take a
-texture the drawing view supplies, `{ .kind = VIEW, .view_slot = n }` (see
-[view textures](views.md#view-textures)).
+- [Materials reference](materials_reference.md) for parameter tables, slots, tangent frames and faults.
+- [Transparency](transparency.md) for blending, weighted transparency and transmission.
+- [Decals](decals.md) for projected materials.
+- [Lights](lights.md) for lights, receiver layers, ambient and light capacity.
+- [Textures](textures.md), [Environments](environments.md), [Shadows](shadows.md).
+- [Custom shaders](custom_shaders.md) for `material::custom`.
