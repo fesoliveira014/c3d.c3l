@@ -68,8 +68,7 @@ for the humanoid in `examples/assets/quaternius`; run the example with `python3 
 `RagdollDesc.filter` is the `CollisionFilter` of every bone shape (default `FILTER_ALL`); `collide_adjacent` lets
 neighbouring bones collide (default false). `build_ragdoll` faults `NO_SKIN`, `RAGDOLL_EXISTS`,
 `c3d::INVALID_ARGUMENT` (no bones, a bad joint index, a duplicate joint, a child listed before its parent bone, a
-missing leaf `length` or a zero hinge axis),
-`c3d::UNSUPPORTED` (a scaled skin node) and `c3d::CAPACITY_EXCEEDED`.
+missing leaf `length` or a zero hinge axis), `c3d::UNSUPPORTED` (a scaled skin node) and `c3d::CAPACITY_EXCEEDED`.
 
 ## Frame order
 
