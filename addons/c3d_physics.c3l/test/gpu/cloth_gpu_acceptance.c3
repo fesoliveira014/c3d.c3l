@@ -1032,6 +1032,41 @@ fn void test_skinned_flags_of_different_sizes_stage_their_own_references_in_one_
     };
 }
 
+fn void test_a_plain_flag_and_a_featured_flag_step_in_one_dispatch() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        FlagOptions plain = { .hanging = true, .damping = FOLLOWER_DAMPING, .stretch_stiffness = FOLLOWER_STRETCH };
+        FlagOptions[2] options = { plain, follower_options(false) };
+        Node*[2] hosts;
+        Node*[2] devices;
+        Vec3[][2] initials;
+        foreach (index, option : options) {
+            GeometryId geometry = add_flag_geometry(&fixture, SMALL_CELLS, hanging: option.hanging)!!;
+            hosts[index] = add_flag(&fixture, geometry, SMALL_CELLS, ClothExecution.CPU, options: option)!!;
+            devices[index] = add_flag(&fixture, geometry, SMALL_CELLS, ClothExecution.GPU, options: option)!!;
+            ClothState* state = fixture.scene.get(hosts[index], Cloth).state;
+            initials[index] = alloc::new_array(tmem, Vec3, state.positions.len);
+            initials[index][..] = state.positions[..];
+        }
+
+        for (uint step = 0; step < TWIN_STEPS; step++) {
+            Node*[4] owners = { hosts[0], hosts[1], devices[0], devices[1] };
+            pose_owners(&fixture, owners[..], step, false);
+            run_frame(&fixture, true)!!;
+            assert(fixture.renderer.stats.dispatches == 1);
+        }
+        for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(&fixture, false)!!;
+
+        foreach (index, host : hosts) {
+            TwinResult result = compare_twins(&fixture, host, devices[index], initials[index]);
+            report_twin("mixed batch", result);
+        }
+    };
+}
+
 fn void test_dispatches_per_step_follow_the_step_shape() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
