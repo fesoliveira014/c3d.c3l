@@ -19,9 +19,6 @@ enum ClothExecution {
 *>
 const uint MAX_DEVICE_SHAPES = 32; // 3 KiB of ring per step at 96 B a shape; more faults CAPACITY_EXCEEDED from the device update
 
-<*
- Where one sphere or capsule of a listed owner stands at the start and the end of a request.
-*>
 struct ClothDeviceShape @private {
     maths::Transform solved;  // pose of the owner at the start of the request
     maths::Transform current; // pose of the owner at its end

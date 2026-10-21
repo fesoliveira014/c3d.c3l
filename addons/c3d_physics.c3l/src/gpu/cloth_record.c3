@@ -21,6 +21,7 @@ const uint PASS_SOFT_AFTER @private = 128; // mirrored in cloth_step.glsl
 const uint PASS_STAGE @private = 256; // mirrored in cloth_step.glsl
 const uint PASS_SHAPES @private = 512; // mirrored in cloth_step.glsl
 const uint PASS_FIRST_CONTACT @private = 1024; // mirrored in cloth_step.glsl
+const uint SHAPE_VECTORS @private = 6; // vec4s of a ShapeGpu; mirrored as CLOTH_SHAPE_VECTORS in cloth_root.glsl
 const float NO_GROUND @private = -1e30f; // below every particle; disables the ground contact
 
 // Mirrors ClothRoot in cloth_root.glsl.
@@ -98,8 +99,7 @@ struct ShapeGpu @private {
     float[4] end;
 }
 
-$assert ShapeGpu::size == 96;
-const uint SHAPE_VECTORS @private = 6; // vec4s of a ShapeGpu; mirrored as CLOTH_SHAPE_VECTORS in cloth_root.glsl
+$assert ShapeGpu::size == SHAPE_VECTORS * Vec4::size;
 
 struct StepRecorder @private {
     Renderer*       renderer;
