@@ -21,7 +21,11 @@ const uint PASS_SOFT_AFTER @private = 128; // mirrored in cloth_step.glsl
 const uint PASS_STAGE @private = 256; // mirrored in cloth_step.glsl
 const uint PASS_SHAPES @private = 512; // mirrored in cloth_step.glsl
 const uint PASS_FIRST_CONTACT @private = 1024; // mirrored in cloth_step.glsl
+const uint PASS_PLACE @private = 2048; // mirrored in cloth_step.glsl
 const uint SHAPE_VECTORS @private = 6; // vec4s of a ShapeGpu; mirrored as CLOTH_SHAPE_VECTORS in cloth_root.glsl
+const uint PLACED_SHAPES @private = 32; // segments the single shader keeps in shared memory; mirrored as CLOTH_MAX_SHAPES in cloth_root.glsl
+const usz PLACED_OFFSET @private = 3072; // bytes from a slot's staged shapes to its placed segments; mirrored as CLOTH_PLACED_OFFSET in cloth_root.glsl
+const usz PLACED_BYTES @private = 32; // two vec4s a shape
 const float NO_GROUND @private = -1e30f; // below every particle; disables the ground contact
 
 // Mirrors ClothRoot in cloth_root.glsl.
@@ -100,6 +104,8 @@ struct ShapeGpu @private {
 }
 
 $assert ShapeGpu::size == SHAPE_VECTORS * Vec4::size;
+$assert cloth::MAX_DEVICE_SHAPES <= PLACED_SHAPES;
+$assert cloth::MAX_DEVICE_SHAPES * ShapeGpu::size == PLACED_OFFSET;
 
 struct StepRecorder @private {
     Renderer*       renderer;
@@ -173,6 +179,7 @@ fn void? StepRecorder.record_fused(&self, uint[] pass_starts, bool first) {
                 uint phases = substep + 1 == substeps ? PASS_FINAL_SUBSTEP : 0;
                 if (iteration == 0 && pass == 0) {
                     phases |= PASS_PREDICT;
+                    if (shapes) phases |= PASS_PLACE;
                     if (soft) phases |= PASS_SOFT_BEFORE;
                     if (merge_initialize && substep == 0) phases |= PASS_INITIALIZE;
                 }
@@ -197,7 +204,8 @@ fn void? StepRecorder.record_fused(&self, uint[] pass_starts, bool first) {
                     ? self.root.stretch_stiffness
                     : self.root.bend_stiffness;
                 uint owned_particles = (phases & (PASS_PREDICT | PASS_COLLIDE)) != 0 ? self.root.particle_count : 0;
-                self.run(self.root.count + owned_particles)!;
+                uint placed_shapes = (phases & PASS_PLACE) != 0 ? self.root.shape_count : 0;
+                self.run(self.root.count + owned_particles + placed_shapes)!;
             }
         }
     }
@@ -361,7 +369,7 @@ fn ClothRoot? step_root(
     ulong positions = (ulong)renderer.buffer_address(cloths.positions) + slot.first_particle * vector;
     ulong work = (ulong)renderer.buffer_address(cloths.work);
     ulong tables = (ulong)renderer.buffer_address(cloths.tables) + slot.tables_offset;
-    usz shape_stride = cloth::MAX_DEVICE_SHAPES * ShapeGpu::size;
+    usz shape_stride = PLACED_OFFSET + cloth::MAX_DEVICE_SHAPES * PLACED_BYTES;
     ulong shapes = work + WORK_SECTIONS * capacity * vector + slot_index(cloths, slot) * shape_stride;
     return {
         .positions          = positions,

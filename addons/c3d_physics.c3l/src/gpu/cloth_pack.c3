@@ -122,7 +122,7 @@ fn usz GpuCloths.device_bytes(&self) {
 }
 
 fn usz shape_bytes(uint max_cloths) @private {
-    return (usz)max_cloths * cloth::MAX_DEVICE_SHAPES * ShapeGpu::size;
+    return (usz)max_cloths * (PLACED_OFFSET + cloth::MAX_DEVICE_SHAPES * PLACED_BYTES);
 }
 
 <*

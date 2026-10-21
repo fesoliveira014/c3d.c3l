@@ -1,6 +1,11 @@
 #version 460
 #define CLOTH_LOCAL_SIZE 128 // the smallest group size Vulkan guarantees
 #define CLOTH_COHERENT coherent
+#define CLOTH_SHARED_SHAPES
+#include "physics/cloth_root.glsl"
+
+shared vec4 cloth_placed[2u * CLOTH_MAX_SHAPES]; // the segments of the shapes at the substep, two vectors each
+
 #include "physics/cloth_step.glsl"
 
 // Every thread of a workgroup reaches each of these in step; the loops around them have uniform bounds.
@@ -32,6 +37,15 @@ void main() {
         bool final_substep = substep + 1u == root.substeps;
         float progress = float(substep + 1u) / float(root.substeps);
         float previous_progress = float(substep) / float(root.substeps);
+        if (shapes) {
+            for (uint shape = thread; shape < root.shape_count; shape += stride) {
+                vec4 first;
+                vec4 second;
+                step_place_shape(root, shape, progress, first, second);
+                step_store_placed(root, shape, first, second);
+            }
+            sync_workgroup();
+        }
         for (uint iteration = 0u; iteration < root.iterations; iteration++) {
             for (uint pass = 0u; pass < root.color_count; pass++) {
                 uint phases = final_substep ? PASS_FINAL_SUBSTEP : 0u;

@@ -18,6 +18,7 @@ const uint PASS_SOFT_AFTER = 128u;   // mirrored in gpu/cloth_record.c3; project
 const uint PASS_STAGE = 256u;        // mirrored in gpu/cloth_record.c3; copy the reference pairs and shapes the root names into place
 const uint PASS_SHAPES = 512u;       // mirrored in gpu/cloth_record.c3; push the particles it collides out of the shapes
 const uint PASS_FIRST_CONTACT = 1024u; // mirrored in gpu/cloth_record.c3; the shape contacts of this pass are the substep's first
+const uint PASS_PLACE = 2048u;       // mirrored in gpu/cloth_record.c3; place the shapes for the substep, one extra item each
 const float MIN_EDGE_LENGTH = 1e-7;  // metres; mirrored as MIN_CONSTRAINT_LENGTH in solve.c3
 const float CONTACT_AXIS_SQUARED = 1e-14; // square metres; mirrored as CONTACT_AXIS_DISTANCE squared in cloth_contact_math.c3
 const float CONTACT_PUSH_UNBOUNDED = 0.0;  // value of the push's w until the substep's total reaches the particle's limit
@@ -37,9 +38,10 @@ struct StepPass {
 };
 
 struct StepShape {
-    vec3  start;  // world end points of the segment at the substep
-    vec3  end;
-    float reach;  // radius and contact offset
+    vec3  start;                // world start of the segment at the substep
+    vec3  axis;                 // world end minus start
+    float reach;                // radius and contact offset
+    float inverse_axis_squared; // zero for a sphere
 };
 
 struct StepConstraint {
@@ -249,14 +251,15 @@ vec3 step_rotate(vec4 rotation, vec3 point) {
     return point + 2.0 * cross(unit.xyz, cross(unit.xyz, point) + unit.w * point);
 }
 
-// The segment of a shape where its owner stands at the share of the request's motion the substep ends at.
-StepShape step_shape_at(ClothRoot root, uint shape, float progress) {
-    StepVectors shapes = StepVectors(root.shapes);
+// Where a shape's owner stands at the share of the request's motion the substep ends at, as the segment the contact
+// reads: start and reach, then axis and the inverse of its squared length.
+void step_place_shape(ClothRoot root, uint shape, float progress, out vec4 first, out vec4 second) {
+    StepVectors staged = StepVectors(root.shapes);
     uint base = shape * CLOTH_SHAPE_VECTORS;
-    vec4 solved_position = shapes.values[base];
-    vec4 solved_rotation = shapes.values[base + 1u];
-    vec3 current_position = shapes.values[base + 2u].xyz;
-    vec4 current_rotation = shapes.values[base + 3u];
+    vec4 solved_position = staged.values[base];
+    vec4 solved_rotation = staged.values[base + 1u];
+    vec3 current_position = staged.values[base + 2u].xyz;
+    vec4 current_rotation = staged.values[base + 3u];
 
     vec3 position = current_position;
     vec4 rotation = current_rotation;
@@ -264,11 +267,46 @@ StepShape step_shape_at(ClothRoot root, uint shape, float progress) {
         position = solved_position.xyz + (current_position - solved_position.xyz) * progress;
         rotation = step_slerp(solved_rotation, current_rotation, progress);
     }
-    return StepShape(
-        position + step_rotate(rotation, shapes.values[base + 4u].xyz),
-        position + step_rotate(rotation, shapes.values[base + 5u].xyz),
-        solved_position.w
-    );
+    vec3 local_start = staged.values[base + 4u].xyz;
+    vec3 axis = step_rotate(rotation, staged.values[base + 5u].xyz - local_start);
+    float axis_squared = dot(axis, axis);
+    first = vec4(position + step_rotate(rotation, local_start), solved_position.w);
+    second = vec4(axis, axis_squared > 0.0 ? 1.0 / axis_squared : 0.0);
+}
+
+#ifdef CLOTH_SHARED_SHAPES
+void step_store_placed(ClothRoot root, uint shape, vec4 first, vec4 second) {
+    cloth_placed[2u * shape] = first;
+    cloth_placed[2u * shape + 1u] = second;
+}
+
+StepShape step_placed_shape(ClothRoot root, uint shape) {
+    vec4 first = cloth_placed[2u * shape];
+    vec4 second = cloth_placed[2u * shape + 1u];
+    return StepShape(first.xyz, second.xyz, first.w, second.w);
+}
+#else
+void step_store_placed(ClothRoot root, uint shape, vec4 first, vec4 second) {
+    StepVectors placed = StepVectors(root.shapes + CLOTH_PLACED_OFFSET);
+    placed.values[2u * shape] = first;
+    placed.values[2u * shape + 1u] = second;
+}
+
+StepShape step_placed_shape(ClothRoot root, uint shape) {
+    StepVectors placed = StepVectors(root.shapes + CLOTH_PLACED_OFFSET);
+    vec4 first = placed.values[2u * shape];
+    vec4 second = placed.values[2u * shape + 1u];
+    return StepShape(first.xyz, second.xyz, first.w, second.w);
+}
+#endif
+
+void step_place_item(ClothRoot root, uint shape, StepPass step) {
+    if (shape >= root.shape_count) return;
+
+    vec4 first;
+    vec4 second;
+    step_place_shape(root, shape, step.progress, first, second);
+    step_store_placed(root, shape, first, second);
 }
 
 vec3 step_perpendicular(vec3 axis) {
@@ -276,55 +314,58 @@ vec3 step_perpendicular(vec3 axis) {
     if (!(squared > 0.0)) return vec3(0.0, 1.0, 0.0);
 
     vec3 unit = axis / sqrt(squared);
-    return cross(unit, abs(unit.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0));
+    return normalize(cross(unit, abs(unit.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0)));
 }
 
-// Distance of a position outside the segment's capsule, along the direction that leaves it.
-float step_separation(StepShape shape, vec3 position, out vec3 direction) {
-    vec3 axis = shape.end - shape.start;
-    float axis_squared = dot(axis, axis);
-    float along = axis_squared > 0.0 ? clamp(dot(position - shape.start, axis) / axis_squared, 0.0, 1.0) : 0.0;
-    vec3 normal = position - shape.start - axis * along;
-    if (dot(normal, normal) <= CONTACT_AXIS_SQUARED) normal = step_perpendicular(axis);
-
-    vec3 support = dot(normal, shape.start) >= dot(normal, shape.end) ? shape.start : shape.end;
-    float normal_length = length(normal);
-    direction = normal / normal_length;
-    return dot(normal, position - support) / normal_length;
+// The position minus the nearest point of the segment.
+vec3 step_shape_offset(StepShape shape, vec3 position) {
+    vec3 relative = position - shape.start;
+    float along = clamp(dot(relative, shape.axis) * shape.inverse_axis_squared, 0.0, 1.0);
+    return relative - shape.axis * along;
 }
 
 // Pushes a position out of every shape it overlaps, in shape order, within the substep's push limit.
 // A shape counts only if it overlaps the position the pass started from, as on the host.
 vec3 step_collide_shapes(ClothRoot root, uint index, vec3 position, StepPass step) {
-    StepVectors push_totals = StepVectors(root.push);
     bool first_contact = (step.phases & PASS_FIRST_CONTACT) != 0u;
-    vec4 pushed = first_contact ? vec4(0.0) : push_totals.values[index];
-    if (pushed.w != CONTACT_PUSH_UNBOUNDED) return position;
-
-    uint overlapping = 0u;
-    vec3 direction;
-    for (uint shape = 0u; shape < root.shape_count; shape++) {
-        StepShape placed = step_shape_at(root, shape, step.progress);
-        if (placed.reach - step_separation(placed, position, direction) > root.contact_tolerance) {
-            overlapping |= 1u << shape;
-        }
-    }
-    if (overlapping == 0u) {
-        if (first_contact) push_totals.values[index] = pushed;
-        return position;
-    }
-
-    float limit = uintBitsToFloat(ClothWords(root.limits).values[index]);
-    vec3 total = pushed.xyz;
+    float tolerance = root.contact_tolerance;
+    vec3 start_position = position;
+    StepVectors push_totals = StepVectors(root.push);
+    bool pushed = false;
+    vec3 total = vec3(0.0);
+    float limit = 0.0;
     float bounded = CONTACT_PUSH_UNBOUNDED;
-    for (uint shape = 0u; shape < root.shape_count; shape++) {
-        if ((overlapping & (1u << shape)) == 0u) continue;
 
-        StepShape placed = step_shape_at(root, shape, step.progress);
-        float residual = placed.reach - step_separation(placed, position, direction);
-        if (residual <= root.contact_tolerance) continue;
+    uint count = root.shape_count;
+    for (uint shape = 0u; shape < count; shape++) {
+        StepShape placed = step_placed_shape(root, shape);
+        float inner = placed.reach - tolerance;
+        vec3 offset = step_shape_offset(placed, start_position);
+        if (!(inner > 0.0 && dot(offset, offset) < inner * inner)) continue;
 
-        vec3 target = position + direction * (residual + 0.25 * root.contact_tolerance);
+        if (!pushed) {
+            pushed = true;
+            vec4 state = first_contact ? vec4(0.0) : push_totals.values[index];
+            if (state.w != CONTACT_PUSH_UNBOUNDED) return position;
+
+            total = state.xyz;
+            limit = uintBitsToFloat(ClothWords(root.limits).values[index]);
+        }
+        if (position != start_position) offset = step_shape_offset(placed, position);
+
+        float squared = dot(offset, offset);
+        float separation = 0.0;
+        vec3 direction;
+        if (squared > CONTACT_AXIS_SQUARED) {
+            separation = sqrt(squared);
+            direction = offset / separation;
+        } else {
+            direction = step_perpendicular(placed.axis);
+        }
+        float residual = placed.reach - separation;
+        if (residual <= tolerance) continue;
+
+        vec3 target = position + direction * (residual + 0.25 * tolerance);
         vec3 sum = total + (target - position);
         float length_now = length(sum);
         if (!(length_now > limit)) {
@@ -337,7 +378,11 @@ vec3 step_collide_shapes(ClothRoot root, uint index, vec3 position, StepPass ste
             bounded = 1.0;
         }
     }
-    push_totals.values[index] = vec4(total, bounded);
+    if (pushed) {
+        push_totals.values[index] = vec4(total, bounded);
+    } else if (first_contact) {
+        push_totals.values[index] = vec4(0.0);
+    }
     return position;
 }
 
@@ -395,7 +440,10 @@ void step_item(ClothRoot root, uint item, StepPass step) {
     }
 
     uint particle = item - step.count;
-    if (particle >= root.particle_count) return;
+    if (particle >= root.particle_count) {
+        if ((step.phases & PASS_PLACE) != 0u) step_place_item(root, particle - root.particle_count, step);
+        return;
+    }
     if (((ClothWords(root.marks).values[particle] >> step.member_bit) & 1u) != 0u) return;
 
     step_enter(root, particle, step);
@@ -404,7 +452,8 @@ void step_item(ClothRoot root, uint item, StepPass step) {
 
 uint step_item_count(ClothRoot root, StepPass step) {
     bool owns_particles = (step.phases & (PASS_PREDICT | PASS_COLLIDE)) != 0u;
-    return step.count + (owns_particles ? root.particle_count : 0u);
+    uint placed = (step.phases & PASS_PLACE) != 0u ? root.shape_count : 0u;
+    return step.count + (owns_particles ? root.particle_count : 0u) + placed;
 }
 
 vec3 step_local_position(ClothRoot root, uint particle) {

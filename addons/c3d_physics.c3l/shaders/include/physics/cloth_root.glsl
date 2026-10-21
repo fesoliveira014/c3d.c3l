@@ -71,6 +71,8 @@ const uint CLOTH_FEATURE_REFERENCE = 4u; // mirrored as FEATURE_REFERENCE in gpu
 const uint CLOTH_FEATURE_WIND = 8u;      // mirrored as FEATURE_WIND in gpu/cloth_pack.c3
 const uint CLOTH_FEATURE_SHAPES = 16u;   // mirrored as FEATURE_SHAPES in gpu/cloth_pack.c3
 const uint CLOTH_SHAPE_VECTORS = 6u;     // mirrored as SHAPE_VECTORS in gpu/cloth_record.c3
+const uint CLOTH_MAX_SHAPES = 32u;       // mirrored as PLACED_SHAPES in gpu/cloth_record.c3
+const uint64_t CLOTH_PLACED_OFFSET = uint64_t(3072u); // mirrored as PLACED_OFFSET in gpu/cloth_record.c3; bytes from a slot's staged shapes to its placed segments
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClothVectors {
     vec4 values[];
