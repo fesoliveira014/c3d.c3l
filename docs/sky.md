@@ -94,7 +94,7 @@ and the path tracer.
 
 The lighting regenerates in place when, compared with the last generation:
 
-- the sun has turned by more than `render::SKY_REGENERATION_SUN_ANGLE` (0.5°);
+- the sun has turned by more than `render::SKY_REGENERATION_SUN_ANGLE` (0.0087 rad, 0.5°);
 - `observer_altitude` has moved by more than `render::SKY_REGENERATION_ALTITUDE` (500 m);
 - the sun's colour changed;
 - any air field changed (the tables regenerate too).

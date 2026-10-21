@@ -38,7 +38,7 @@ change moves the fog's base and the view's camera together.
 A view is fogged when its scene has an atmosphere, it sees a valid `HeightFog` or it keeps a medium volume. A fogged view
 runs one compute pass, `Pass.FOG`, after the scene readers and before the blended draws. It fogs every pixel from the
 camera to the depth it holds. Opaque, masked and custom opaque surfaces, the sky, terrain, foliage and depth-writing
-readers such as water need no fog code. A view with neither fog nor atmosphere records no fog pass.
+readers such as water need no fog code. A view with no fog, no medium volume and no atmosphere records no fog pass.
 
 - **Blended draws** write no depth, so they fog themselves per fragment with `apply_fog`. The built-in Standard,
   Physical, Toon and Basic materials do.
@@ -66,8 +66,8 @@ to the hit, and a probe ray takes the scene's from the probe to the hit. A ray t
 fog to infinity and no atmosphere, because the sky it reads already holds it. The fog pass fogs the camera to the
 reflecting surface, so no part of a path is fogged twice.
 
-- The atmosphere over a segment is marched in 8 steps (`ATMOSPHERE_SEGMENT_STEPS` in `atmosphere.glsl`), each reading two
-  tables: the step count is the cost lever of hit atmosphere. A segment through a medium takes the medium's coefficients
+- The atmosphere over a segment is marched in 8 steps, each reading two tables: the step count is the cost lever of hit
+  atmosphere. A segment through a medium takes the medium's coefficients
   in place of the air.
 - The froxel volume is indexed by the camera's screen and is not applied at hits. A view with `volumetric_fog` fogs its
   hits with the analytic fog, so a reflection's haze can differ in colour from the haze around it.
@@ -139,7 +139,7 @@ lookup, then for each light its radiance and, for a shadowed one, a 3 × 3 shado
   `ClusterDesc.lights_per_cluster` lights take every light of the view instead.
 - The cluster grid spans view depths from the camera's near plane to `ClusterDesc.far_distance` (100 by default) while
   the volume reaches `max_distance`. A froxel whose midpoint lies deeper than `far_distance` falls outside the grid.
-  Raise `far_distance` with `max_distance`, and keep few lights in a cell. See [lights](many_lights.md).
+  Raise `far_distance` with `max_distance`, and keep few lights in a cell. See [lights](lights.md).
 - A light with `volumetric` false still sits in its cell's list. It saves the radiance and the shadow sample, not the read
   of the list.
 
@@ -165,11 +165,12 @@ history. The switch is off by default and does nothing without `volumetric_fog`.
   - any `HeightFog` field, the fog node's height or the frame origin changed;
   - the sun's direction moved more than 0.1° since the previous frame;
   - a light with `Light.volumetric` changed in position, direction, range, cone, layers, colour, intensity or shadow
-    state, or the sun changed in anything but its direction and, under an atmosphere, its colour.
+    state, or the sun changed in anything but its direction and, under an atmosphere, its colour and intensity.
 
   A light that moves every frame gets no temporal convergence, and neither does a sun turning faster than the
   threshold. A change of ambient light or of the lighting environment is not a trigger; it converges through the blend.
-  An aborted frame neither swaps nor commits the history.
+  An aborted frame neither swaps nor commits the history. A view that was not rendered, or rendered no fog, in a
+  submitted frame starts again without history, and a second recording of the volume in one frame takes none.
 - **Cost.** The volume's memory doubles, `FOG_SCATTERING` adds a reprojection and one trilinear read of the history per
   froxel, and lights other than the sun are sampled at two depths. A view with the switch runs a separate shader
   variant.
@@ -232,9 +233,9 @@ gets 1.
 ### Cost
 
 Each fogged pixel does one box test per kept volume and up to nine sub-intervals, five of them air. A traced hit marches
-the atmosphere on each air sub-interval. In a view that keeps a medium, each shaded fragment that receives the fog sun's
-shadow also runs up to four box tests, one column per box holding it and one `exp`, whether or not the sun has a shadow
-map. A view without media pays one flag test per light that casts shadows.
+the atmosphere on each air sub-interval, twice for those that do not start at the origin. In a view that keeps a medium,
+each shaded fragment that receives the fog sun's shadow also runs up to four box tests, one column per box holding it and
+one `exp`, whether or not the sun has a shadow map. A view without media pays one flag test per light that casts shadows.
 
 ## Custom stages
 
@@ -251,7 +252,7 @@ map. A view without media pays one flag test per light that casts shadows.
 | `apply_fog_segment(frame, origin, hit_position, radiance)` | The height fog and, behind it, the marched atmosphere over the segment from a ray's origin to its hit, for a ray cast from elsewhere than the camera; returns `radiance` when `frame.sky_fog` is zero |
 | `apply_fog_to_infinity(frame, origin, direction, radiance)` | The height fog from a point to infinity, for a ray that leaves the scene; no atmosphere, except the marched atmosphere in front of a [medium volume](#medium-volumes) |
 | `fog_phase(cos_angle, anisotropy)` | The Henyey-Greenstein phase, per steradian |
-| `atmosphere_segment(sky, altitude, direction, distance)` | The `FogTerms` of the marched atmosphere over `distance` of a unit ray from a world altitude; none without an atmosphere |
+| `atmosphere_segment(sky, altitude, direction, distance)` | The `FogTerms` of the marched atmosphere over `distance` of a unit ray from a world altitude (packed y plus `FrameRoot.origin.y`, the camera's datum, zero below zero); none without an atmosphere |
 
 - Every helper above that fogs a ray includes the view's medium volumes, with the same signature: a segment through a box
   takes the medium's absorption and in-scatter in place of the air.

@@ -44,7 +44,7 @@ The density is referenced to the node's world y. The node's rotation and scale a
 | `falloff` | 0.02 | Per metre of height; the density halves every 35 m above the node; 0 is uniform fog |
 | `albedo` | (1, 1, 1) | Scattered share of the extinction, per channel |
 | `max_distance` | 200 | Metres of view the [volumetric fog](fog.md#volumetric-fog) covers; the analytic fog continues past it |
-| `anisotropy` | 0.3 | Henyey-Greenstein `g` of the volumetric fog's sun light, in (-1, 1) |
+| `anisotropy` | 0.3 | Henyey-Greenstein `g` of the volumetric fog's sun light, in (-1, 1); 0 is isotropic, positive favours looking toward the sun |
 
 `light::height_fog_valid` accepts a fog with finite nonnegative `density`, `falloff` and `albedo`, a finite positive
 `max_distance` and `|anisotropy|` below 1.
@@ -95,15 +95,15 @@ All are pure and callable from any thread.
 | `light::height_fog_limit_transmittance(fog, base_height, origin, direction)` | Transmittance to infinity; zero at and below the horizon unless the density is zero |
 | `light::fog_rise_factor(rise)` | The share of the level integral a sloped ray keeps, `(1 - e^-rise) / rise` |
 
-`atmosphere_transmittance` takes `ATMOSPHERE_TRANSMITTANCE_STEPS` (64) steps and stays within 0.35 % of a
-100,000-step double reference. `altitude` is in metres above the surface, unbounded above and zero below zero.
+`atmosphere_transmittance` takes `ATMOSPHERE_TRANSMITTANCE_STEPS` (64) steps, accurate to about 0.35 %. `altitude` is in
+metres above the surface, unbounded above and zero below zero.
 
 ## Constants
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
 | `render::ATMOSPHERE_CAPACITY` | 4 | Atmospheres of different scenes the renderer keeps at once |
-| `render::SKY_REGENERATION_SUN_ANGLE` | 0.5° | Sun motion that regenerates the lighting |
+| `render::SKY_REGENERATION_SUN_ANGLE` | 0.0087 rad (0.5°) | Sun motion that regenerates the lighting |
 | `render::SKY_REGENERATION_ALTITUDE` | 500 m | `observer_altitude` change that regenerates the lighting |
 | `render::SKY_ENVIRONMENT_SIZE` | 64 | Face size of the lighting cubes |
 | `render::AERIAL_PERSPECTIVE_DISTANCE` | 128,000 m | Distance the aerial perspective volume covers |
@@ -152,10 +152,25 @@ Reflection captures render without height fog, medium volumes and clouds. Path-t
 | `SKY_VIEW` | The per-view sky-view table |
 | `AERIAL_PERSPECTIVE` | The per-view aerial perspective volume |
 | `FOG_SCATTERING`, `FOG_INTEGRATION` | The fog volume |
+| `SKY` | The sky background draw |
 | `FOG` | The fog pass over the scene |
 | `CLOUD_SHADOWS` | The cloud shadow map |
 | `CLOUDS` | The cloud march and composite |
 | `ENVIRONMENT` | The atmosphere's tables and cubes, as the stages `environment.sky_transmittance`, `environment.sky_multi_scattering` and `environment.sky`, then `environment.prefilter`, `environment.irradiance` and `environment.sheen`; the cloud noise as `environment.cloud_noise` |
+
+Order of a fogged raster view (brackets mark passes that exist only with their feature):
+
+```
+forward:   uploads, shadows, sky view, aerial perspective, [cloud shadows], [fog volume], [depth prepass],
+           [ambient occlusion], [screen-space GI], forward opaque and sky, [clouds], [scene snapshot, scene reads],
+           [snapshot for blended readers], [screen-space GI colour copy], fog, [transparent], debug lines, post
+deferred:  uploads, shadows, sky view, aerial perspective, [cloud shadows], [fog volume], depth prepass, G-buffer,
+           [ambient occlusion], [screen-space GI], [reflections], lighting, forward opaque and sky, then as forward
+```
+
+The sky-view and aerial perspective tables record only when the scene has an atmosphere. The fog pass reads depth and
+rewrites `hdr_color` in place. The transparent pass reopens with depth attached for testing, so a blended stage fogs
+itself with `apply_fog`. A view with depth-pruned clusters records the fog volume after the pruning.
 
 ## Memory
 

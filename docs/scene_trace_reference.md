@@ -7,7 +7,7 @@ traces, the two kinds and the shader API.
 
 | Name | Value | Meaning |
 | --- | --- | --- |
-| `RendererDesc.max_trace_instances` | `DEFAULT_MAX_TRACE_INSTANCES`, 4096 | Size of the instance table; more eligible instances fault `c3d::CAPACITY_EXCEEDED` |
+| `RendererDesc.max_trace_instances` | `DEFAULT_MAX_TRACE_INSTANCES`, 4096 | Size of the instance table; more eligible instances fault `c3d::CAPACITY_EXCEEDED`; with ray queries on, `create_renderer` faults `c3d::UNSUPPORTED` above the device's instance limit. The hardware kind keeps 64 bytes of CPU instance descriptors per entry, allocated with its first preparation |
 | `RendererDesc.max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | Posed slots; zero never disables posing |
 | `INSTANCE_ABSENCE_FRAMES` | `FRAMES_IN_FLIGHT + 1` | Frames a posed slot stays unclaimed before it is released |
 | `shader::BVH_STACK_DEPTH` | 32 | Entries of the traversal stack per level |
@@ -17,8 +17,13 @@ device's allocation table (4,096 entries) and, with ray queries or ray-tracing p
 `max_posed_trace_instances + 32` fits its acceleration-structure table (4,096 entries). The 32 are the renderer's own
 entries in each table, and the 16 per view are one view's allocations. At the default 8 views, at most 1,968 slots are
 accepted. A software slot takes 2 allocation entries, one for its posed streams and one for its node copy. A hardware slot
-takes 1 allocation entry and 1 structure entry for its bottom level. Content shares both tables, so a scene can still fault
-`gpu::SLOT_TABLE_FULL` in `prepare_scene_trace` when it fills what is left.
+takes 1 allocation entry and 1 structure entry for its bottom level. The bound counts both kinds, so a scene of hardware
+slots alone is bounded as if it used both, although its slots would fit about twice as many.
+
+Content shares both tables uncounted: geometry blocks and their previous copies, rest trees and bottom levels, instance
+batches and resident crowds, compute-skin bindings, material payloads, environments, buffers and upload overflow. A scene
+can therefore fault `gpu::SLOT_TABLE_FULL` in `prepare_scene_trace` when it fills what is left. A frame that replaces every
+slot holds the replaced entries until they retire, up to twice the slot entries.
 
 ## Counters
 
@@ -28,7 +33,7 @@ takes 1 allocation entry and 1 structure entry for its bottom level. Content sha
 | --- | --- |
 | `trace_instances`, `trace_nodes` | Rows and top-level nodes of the current trace |
 | `trace_skipped` | Instances left out: released geometry, no triangle list, a custom row whose pose stage is missing or rejected |
-| `trace_sway_at_rest` | Swaying batches and LOD groups traced at rest, including those that found no posed slot or whose CPU arrays are gone |
+| `trace_sway_at_rest` | Swaying batches and LOD groups traced at rest, including those that found no posed slot, whose CPU arrays are gone, or that have a custom vertex stage (which traces through its own trace-pose form and never through the sway) |
 | `trace_build_ms` | CPU time spent in `prepare_scene_trace` |
 | `trace_top_level_writes` | Rewrites of the top-level boxes and instance rows |
 | `trace_posed_instances`, `trace_posed_shared` | Posed rows, and posed rows that use another row's slot |
@@ -67,9 +72,9 @@ the pose with no shader change.
   instance is left out of the trace, never traced at rest, and counted in `Stats.trace_posed_overflow`.
   `Mesh.trace = false` keeps a mesh out. A slot unclaimed for more than `INSTANCE_ABSENCE_FRAMES` frames is released; an
   off-screen posed mesh still traces, because it can cast, so it keeps its slot.
-- **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams and 32 bytes per node of refit copy, plus
-  a bottom level on the hardware kind. A geometry that can deform adds a depth table to its rest trace allocation. A
-  skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
+- **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams, a 112-byte geometry root and 32 bytes
+  per node of refit copy, plus a bottom level on the hardware kind. A geometry that can deform adds a depth table to its
+  rest trace allocation: 4 bytes per node plus 132 bytes. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
 - **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
 - **Compute skinning.** With [compute skinning](animation.md#compute-skinning) on, a slot whose mesh or crowd part has a
   posed binding this frame takes that pose instead of running its own pose pass; its streams stay allocated, unwritten.
@@ -93,7 +98,10 @@ triangle indices must also change a count to rebuild the slot.
   that shape traces slower, not wrongly.
 - **Capacity.** Slots count against `max_posed_trace_instances`. With none free the mesh traces through the shared
   geometry and rebuilds it every revision, as a mesh without `vertex_motion` does; it is not counted in
-  `trace_posed_overflow`.
+  `trace_posed_overflow`. A static mesh with `vertex_motion` still holds a slot.
+- **Top level.** On the hardware kind every `vertex_motion` revision rebuilds the top level and advances the trace
+  revision, which resets traced accumulation, as for skin and morph poses. The rows are rewritten only when a field
+  other than the pose changes.
 
 ## Custom trace poses
 
@@ -127,6 +135,9 @@ the rest tree, and the hardware kind builds or updates the slot's bottom level.
   once for its batch or group in `Stats.trace_sway_at_rest`. Each preparation claims swayed rows after every other kind,
   so a vegetation layer that holds every slot yields them to a character that appears later; its rows trace at rest until
   slots free again.
+- **Cost.** A slot costs what [posed instances](#posed-instances) lists. A pose also takes frame upload ring bytes: 40
+  per custom row, plus 128 for an instanced one, and 256 per swayed row plus 80 per swayed batch or group part. A stage
+  that reads time poses and updates every frame.
 - **Long rows.** A pose dispatch wraps a row whose groups of 64 vertices exceed the device's group count along x into
   rows of groups, so a row of any length poses in one dispatch. A custom stage that indexes through `trace_pose_index`
   and sets `ShaderDesc.trace_pose_grid` poses it. An undeclared stage faults `c3d::UNSUPPORTED` at `prepare_scene_trace`
@@ -142,6 +153,7 @@ the rest tree, and the hardware kind builds or updates the slot's bottom level.
 
 ## Animated crowds
 
+Each crowd row is boxed by the `pose_bounds` passed to `add_crowd`, which must cover every pose the crowd plays.
 Placements of one crowd part batch (`AnimatedCrowd` or a crowd-backed `LodGroup`) with byte-identical palette and morph
 inputs share a posed trace slot: the lowest placement index in the group claims the slot, and the others point their
 rows at its root, refit nodes and bottom level (`Stats.trace_posed_shared`). Under compute skinning the shared slot
@@ -160,8 +172,8 @@ and refits a tree copy per distinct pose and builds no bottom level.
 - The renderer keeps two top-level structures and rebuilds one only when the rows, their world matrices, geometry,
   material or pose change. `SceneTraceRoot.tlas_index` names the top level the frame reads, or 0 without hardware data.
 - A frame's bottom-level builds and updates are recorded in batches with one barrier after each. The scratch memory is
-  one allocation per frame slot; it grows to the larger of the top-level build's need and the frame's largest batch, and
-  it does not shrink.
+  one allocation per frame slot; it grows to the larger of the top-level build's need and the frame's largest batch, which
+  is at most 64 MiB or the largest single build, and it does not shrink.
 
 ## See also
 

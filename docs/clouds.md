@@ -8,8 +8,10 @@ and validity rules are in the [reference](sky_reference.md#cloudlayer).
 ## Quick start
 
 ```c3
+import c3d;
 import c3d::light;
 import c3d::material;
+import c3d::scene;
 
 char[256 * 256 * 4] pixels;
 // Fill R with the coverage and G with the share of the layer a cloud fills.
@@ -42,7 +44,8 @@ clouds.
 - **Weather map.** `coverage` is a 2D texture: R is the coverage, G the share of the layer a cloud fills. Unset is full
   cover. Replace the texture's pixels with `AssetStore.replace_texture` to change the weather; the renderer caches
   nothing about it, so edits show on the next frame. A dangling `coverage` counts in `Stats.dangling_refs` and the view
-  draws no clouds. A cube, array, 3D or `R16_UINT` map faults `c3d::UNSUPPORTED` when the view renders.
+  draws no clouds. A cube, array, 3D or `R16_UINT` map faults `c3d::UNSUPPORTED` in `prepare_scene`, which checks every valid layer without a
+  visibility test, and when a view draws the layer.
 - **Wind.** The map and the noise slide with `wind_offset`: a feature at `p` sits at `p + wind_offset`. The application
   advances it.
 - **Noise.** The renderer owns one 128³ `RGBA8` volume that repeats on every axis. A compute pass generates it once, the
@@ -78,10 +81,12 @@ records no pass and allocates no map. A bare `CloudLayer{}` casts none; `CLOUD_L
   low enough sun. At or above the bottom, and below the datum, the ground under the camera sits at the centre.
 - **Light.** The sun is the one the cloud march uses. No map exists while the sun is at or below the horizon, and the
   sun's visibility is then unchanged.
-- **Receivers.** `shadow_visibility` and `shadow_transmittance` multiply that light's visibility, so forward Standard,
-  Physical and Toon, the deferred lighting resolve, the volumetric fog's sun term and custom stages that call them
-  receive it, as does a sun with traced shadows. A draw that does not receive shadows receives none. The volumetric
-  fog's froxels take it too, so gaps between clouds light shafts.
+- **Receivers.** The sun's packed light carries `LIGHT_CLOUD_SHADOW`, and `FrameRoot.cloud_shadow` addresses the
+  `CloudShadowRoot`; it is zero without a map. `shadow_visibility` and `shadow_transmittance` multiply that light's
+  visibility, so forward Standard, Physical and Toon, the deferred lighting resolve, the volumetric fog's sun term and
+  custom stages that call them receive it, as does a sun with traced shadows. `light_casts_shadow` is true for the
+  flagged light even when it has no shadow layers, so a custom stage may gate its shadow call on it. A draw that does not
+  receive shadows receives none. The volumetric fog's froxels take it too, so gaps between clouds light shafts.
 - **Projection.** A receiver at altitude `y` goes along the sun to the bottom plane and reads the map there. A receiver
   inside the layer reads the transmittance raised to the share of the layer above it. A receiver above the layer gets 1.
 - **Edge.** Outside the map the transmittance is 1. It fades to 1 over the outer 10 % of the map's half extent, so the
@@ -117,7 +122,7 @@ size and camera. A view without it runs the plain march.
   The sun's colour and intensity, the ambient light and the contents of the weather map are not triggers; they converge
   through the blend. A layer that changes every frame, or a sun turning faster than the threshold, gets no convergence.
 - **Aborted frames.** An aborted frame neither swaps nor commits the history. A view that was not rendered, or drew no
-  layer, in a submitted frame starts again without history.
+  layer, in a submitted frame starts again without history, and a second recording in one frame takes none.
 - **Cost.** The memory doubles. The march adds the reprojection, the filtered read of the history and a fetch of its
   distance per pixel, and a one-pixel border march per 16 × 16 group (about 1.27 times the marches) on frames that take
   history.
@@ -132,7 +137,7 @@ size and camera. A view without it runs the plain march.
   transmittance) and an `R32F` target (4 B, the distance). The view allocates them the first frame it draws a layer and
   keeps them until the view is destroyed or its working size changes. The renderer adds one 8 MiB noise volume.
 - The shadow map adds `CLOUD_SHADOW_SIZE² × 2` bytes per view (512 KiB), allocated the first frame the view casts the
-  shadow.
+  shadow and kept until the view is destroyed or its images are reallocated.
 - The march costs `CLOUD_STEPS` samples per half-resolution pixel and `CLOUD_LIGHT_STEPS` light samples per step.
 
 ## Limits

@@ -57,8 +57,7 @@ origin from an already rounded absolute AABB or composed instance matrix cannot 
 preserves an affine matrix's basis, scale and homogeneous row. Spatial bound helpers accept an optional origin;
 omitting it keeps their absolute-world result.
 
-The shader ABI appends `FrameRoot.origin` at byte 512; `FrameRoot` is 640 bytes. Rebuild consumer shader packages against
-the current generated headers.
+`FrameRoot.origin` sits at byte 512 of the 640-byte `FrameRoot`.
 
 ## Usage
 

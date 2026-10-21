@@ -47,15 +47,16 @@ bool blocked = trace_scene_any(scene, origin, direction, distance_to_light, TRAC
 | Kind | Structure | Needs |
 | --- | --- | --- |
 | Software | A two-level bounding volume hierarchy the renderer builds on the CPU. The traversal is plain shader code. | Any Vulkan 1.3 device |
-| Hardware | One bottom-level acceleration structure per geometry and a top-level structure over the rows, traversed with ray queries. | `RendererDesc.ray_queries` |
+| Hardware | One bottom-level acceleration structure per geometry and a top-level structure over the rows, traversed with ray queries. | `RendererDesc.ray_queries` or `ray_tracing_pipelines` |
 
-- Every built-in consumer picks its kind from `RendererDesc.ray_queries`. There is no per-view or per-effect setting, so
-  comparing the kinds means two renderers. A renderer created without ray queries runs every traced effect on the
-  software walk, which traces slower than ray queries for the same rays.
+- Every built-in consumer picks its kind from whether the renderer has ray queries, which `RendererDesc.ray_queries` or
+  `ray_tracing_pipelines` enables. There is no per-view or per-effect setting, so comparing the kinds means two
+  renderers. A renderer created without ray queries runs every traced effect on the software walk, which traces slower
+  than ray queries for the same rays.
 - Both kinds report the same hits: the same triangles, the instance mask, the alpha test and the face rules
   ([facing](#facing)).
-- The path tracer alone needs `RendererDesc.ray_tracing_pipelines`, which implies ray queries, and always traces hardware
-  data.
+- The path tracer alone needs `RendererDesc.ray_tracing_pipelines`, which also enables ray queries, and always traces
+  hardware data.
 - The built-in shaders that serve both kinds compile twice through the `SCENE_TRACE_BVH` flag of
   `shaders/variants.json`. A custom stage's traced forms follow the same rule; see
   [custom shaders](custom_shaders.md#traced-shadows).
@@ -85,11 +86,13 @@ like any other. Every row carries its node's `layers`, which hit shading tests a
 | Mesh with `vertex_motion` and neither a skin binding nor a selected morph target | At its current vertex streams ([vertex-motion slots](scene_trace_reference.md#vertex-motion-slots)) |
 | Crowd part batch | Only with `add_crowd(trace: true)`, at the placement's raster pose ([animated crowds](scene_trace_reference.md#animated-crowds)) |
 | `InstancedMesh` with `source = DEVICE` | Only the instances of its host mirror ([device batches](instancing.md#device-batches)); none without one |
+| `LodGroup` with `LodEffects.trace` | Its level-zero parts: an ordinary group at rest or, with `trace_sway`, swayed; an animated group at its raster pose |
 | `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest` |
 | The same with `trace_sway` | Each instance at its swayed pose, up to the posed capacity |
 | Mesh or `InstancedMesh` of a material with a custom vertex stage and a trace-pose stage | At the pose the stage computes |
 | Any other material with a custom vertex stage | Never |
 | `BLEND` material | Never |
+| Billboard and ribbon batches (billboard and ribbon particles included), decals, LOD levels above zero | Never |
 
 A custom vertex stage can move vertices anywhere, and the renderer sees the stage, not the displacement. A material with
 one traces only when its shader also supplies a trace-pose stage, whatever `trace` says. A stage that displaces nothing
@@ -116,7 +119,7 @@ capture skip it. Its row is a [trace proxy](#trace-proxies).
 - `AUTO` (the default) builds the hardware data when the renderer has ray queries, else the software data.
 - `SOFTWARE` builds the bounding volume hierarchy.
 - `HARDWARE` builds acceleration structures; it faults `c3d::UNSUPPORTED` on a renderer created without
-  `RendererDesc.ray_queries`.
+  `RendererDesc.ray_queries` or `ray_tracing_pipelines`.
 
 A shader reads only the kind it asked for. Asking for both kinds in the same frame keeps one set of rows: the second call
 fills in the other half.
@@ -126,8 +129,9 @@ fills in the other half.
   instance's world matrix, geometry, material or pose changed.
 - A second call in the same frame for the same scene and kind returns at once. The returned address is the same for the
   renderer's life, but its contents and coordinate space can change.
-- The renderer holds one top level. Prepare one scene per frame: preparing a second scene in the same frame rewrites the
-  same buffer.
+- The renderer holds one trace set. Prepare one scene per frame: preparing a second scene in the same frame rewrites the
+  same buffer, which is ordered only after a dispatch or view has recorded the first scene's copies and consumed them.
+  The copies a preparation queues are recorded by the frame's next dispatch or view, or by `end_frame`.
 - With no frame open, the call records, submits and waits on its own, like `Renderer.upload_geometry`.
 - Rows, bounds and ray origins use the frame's relative space; supply the current absolute reference to `begin_frame`
   before preparing. A custom dispatch expresses its rays in the space of the preparation it consumes. Closed-frame
@@ -212,20 +216,21 @@ otherwise block it.
 A material that knows how far its proxy may sit above its surface raises `trace_proxy_skip_height` before it shades, in
 metres above the surface. `trace_proxy_t_min(skip_height, direction, normal)` gives the distance along a ray at which it
 has risen that far above the plane of the surface at its origin. `trace_scene`, `trace_scene_any` and
-`trace_scene_query` take it as a `proxy_t_min` argument before the hit (or after the instance mask, for
-`trace_scene_any`). A hit on a proxy nearer than it is ignored, on both kinds.
+`trace_scene_query` (only on the ray-query kind) take it as a `proxy_t_min` argument before the hit (or after the
+instance mask, for `trace_scene_any`). A hit on a proxy nearer than it is ignored, on both kinds.
 
 - Every other instance, a box on the terrain among them, keeps counting from the ray's start, so contact shadows stay.
   Every `trace_only` mesh is a proxy and a pixel's skip height applies to all of them: a trace-only occluder standing on
   the terrain loses its contact shadow within that height of the surface.
 - `SceneTraceRoot.proxy_count` is the number of proxy rows in the frame's trace set; a frame without proxies pays no
   proxy query.
-- A deferred view carries the height per pixel: `write_gbuffer` packs it into the upper 16 bits of the flags channel as
+- The forward shadow paths read `trace_proxy_skip_height` themselves. A deferred view carries the height per pixel: `write_gbuffer` packs it into the upper 16 bits of the flags channel as
   centimetres, rounded up and clamped at 655.35 m, and the lighting resolve, [ray-traced ambient
   occlusion](ambient_occlusion.md#ray-traced) and [ray-traced reflections](reflections.md) read it back. A forward view
   with ray-traced ambient occlusion writes the same word from its depth prepass into an `R32_UINT` `proxy_skip` image;
   the core fragments write zero, and a shader's [prepass stage](custom_shaders.md#prepass-stage) writes its own height.
-  A forward view's reflections read none, because only Standard and Physical pixels trace and they raise no height.
+  A multisampled view reads sample 0 of the word: a deferred view's flags and a forward view's multisample `proxy_skip`
+  are copied to a single-sample image after the pass that writes them. A forward view's reflections read none, because only Standard and Physical pixels trace and they raise no height.
 - A material that never sets the height writes zero. The path tracer starts its rays at trace hits and is unaffected.
 
 ### Hit surfaces
@@ -267,9 +272,9 @@ hardware data and compiles the same trace shader with `SCENE_TRACE_RAY_QUERY`.
 
 ## Limits
 
-- Rays see only the traced scene ([What traces](#what-traces)). Custom shader code does not run at hits; `shade_hit`
-  evaluates the built-in Standard and Physical rows.
-- One scene per frame, one top level per renderer.
+- Rays see only the traced scene ([What traces](#what-traces)). Custom shader code does not run at hits: `shade_hit`
+  evaluates the built-in Basic, Standard, Physical and Toon rows and shades custom-material rows a neutral grey.
+- One trace set per renderer; prepare one scene per frame.
 - The software kind traces slower than ray queries. A strongly posed instance can trace slower than at rest, because
   posed trees are refit rather than rebuilt.
 - The path tracer needs ray-tracing pipelines and hardware data; the other effects run on either kind.
