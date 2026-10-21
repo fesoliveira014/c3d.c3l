@@ -8,7 +8,7 @@ descriptors, the capture types, the JSON export and the GPU statistics.
 | Feature | Requires | Effect |
 | --- | --- | --- |
 | `C3D_PROFILE_CPU` | | Application scopes, CPU capture and export. |
-| `C3D_PROFILE_GPU` | | Application GPU scopes, completed GPU capture history, `Stats` GPU fields. Compiles `c3d::render::profile_gpu`. |
+| `C3D_PROFILE_GPU` | | Application GPU scopes, completed GPU capture history and the `Stats` GPU fields; pass and stage times need `C3D_PROFILE_INTERNAL`. `RendererDesc.profiler`, `gpu_scope_capacity` and `gpu_label_bytes_per_slot` exist only under this feature. Compiles `c3d::render::profile_gpu`. |
 | `C3D_PROFILE_INTERNAL` | CPU or GPU | CPU: the library scopes below. GPU: automatic frame, view, pass, pass-stage, shadow-layer and custom-dispatch intervals. |
 | `C3D_PROFILE_GUI` | CPU or GPU | The `c3d_profile_gui` panel in `c3d::gui`. Adds no declarations when absent. |
 
@@ -22,8 +22,8 @@ example need no renderer dependencies or shader build tools: `c3c test profile_c
 ## Library scopes
 
 With CPU and INTERNAL profiling, c3d records these `LIBRARY` scopes beneath the application scope that encloses the
-call. Labels are fixed, and a child label nests under the entry point that contains it. No loop records one scope per
-item, so the sample count per frame follows code structure, not scene size.
+call. Labels are fixed, and a child label nests under the entry point that contains it. Scope counts follow code
+structure, not scene size, but some calls run whole frames inside one capture; see the sample budget.
 
 | Entry point | Label | Region |
 | --- | --- | --- |
@@ -84,10 +84,14 @@ Upper bounds for one frame with one animated scene and one raster view with the 
 | `renderer.end_frame` and its children | 3 |
 | Each `prepare_scene`, `prepare_model` or `upload_texture` call | 1 |
 | Each additional view | 15 |
+| Each `capture_reflection_probe` or `recapture_reflection_probe` call | up to 6 × 23, one frame per cube face |
+| Each `bake_impostor` call | up to 23 per atlas frame, `frames_per_side` squared frames |
 
-A window-less renderer records one fewer sample in `begin_frame` and `end_frame`. Probe fills and reflection passes add
-three `view.light_spatial` samples each. Size `cpu_scopes_per_frame` for the application scopes plus these counts, with
-margin. The library scopes nest at most four deep (`renderer.render_view`, `view.lights`, `view.light_spatial`,
+A window-less renderer records one fewer sample in `begin_frame` and `end_frame`. A frame of a probe capture or an
+impostor bake has no window output, so it records up to 23 samples (6 in `begin_frame`, 14 in `render_view`, 1 in
+`finish_view`, 2 in `end_frame`) inside the capture that is open when the call runs. Probe fills and reflection passes
+add three `view.light_spatial` samples each. Size `cpu_scopes_per_frame` for the application scopes plus these counts,
+with margin. The library scopes nest at most four deep (`renderer.render_view`, `view.lights`, `view.light_spatial`,
 `view.light_spatial.build`), so size `max_depth` for the application nesting plus 4.
 
 ## Descriptors

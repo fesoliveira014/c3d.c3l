@@ -11,6 +11,7 @@ and readbacks with the CPU animator and with literal expectations.
 | `test_lod_indirect_native.c3` | The indirect draw path: literal counts for three levels, equal-count parity and blend sorting, near-singular parts. |
 | `test_lod_temporal_native.c3` | History across parity swaps, view skips, cuts, aborts, topology replacement and culling-arena overflow. |
 | `test_lod_trace_native.c3` | Traced animated levels and shared crowd poses on the software and hardware traces. |
+| `../render/test_submission.c3`, `../render/test_crowd_variants.c3` | Compiled into this project as well, so their tests run here too: the 33 general render tests of `test_submission.c3` (submission, history, TAA, uploads, batches) and the crowd-variant validation draw of `test_crowd_variants.c3`. |
 
 The project reuses the fixture and frame harness of `test/gpu/render` and the recipes in `test/fixtures/`
 (`animated_crowd_fixtures.c3`, `animated_lod_fixtures.c3`). The real sources are the Quaternius animation library and

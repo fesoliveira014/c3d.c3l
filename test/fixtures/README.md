@@ -1,19 +1,22 @@
 # Test fixtures
 
-Committed inputs and authoring recipes for the CPU tests (`test/`), the GPU acceptance projects (`test/gpu/`) and the add-on
-tests. Third-party content and its licenses are in [LICENSES.md](LICENSES.md). "Project-authored" files fall under the
-repository's [MIT license](../../LICENSE).
+Committed inputs and authoring recipes for the CPU tests (`test/`), the GPU acceptance projects (`test/gpu/`) and the
+add-on tests. Third-party content and its licenses are in [LICENSES.md](LICENSES.md). "Project-authored" files fall
+under the repository's [MIT license](../../LICENSE).
 
 ## Rules
 
 These rules apply to every set below and are not repeated in the set READMEs.
 
 - Fixtures are committed bytes. No build or test regenerates them. A recipe in this directory records how a file was
-  authored, and rerunning it reproduces the committed bytes.
-- Tests embed the files (`$embed`), preload the assets under the keys each set README names, and mutate in-memory copies only.
-- A compatibility set is immutable. It holds the bytes a past codec wrote, so the current reader still restores an old save.
-  Never rewrite its files after a codec change; add a new set for the new payload version.
-- `SHA256SUMS`, where a set has one, records the file bytes. Check it with `sha256sum -c SHA256SUMS` in the set's directory.
+  authored, and rerunning it with the recorded tool versions reproduces the committed bytes. Where a recipe records no
+  tool version or has no script (the cube PNGs), it describes the content only.
+- Tests embed the files (`$embed`) or open them by a path resolved from the test source, so fixtures keep their paths.
+  They preload the assets under the keys each set README names and mutate in-memory copies only.
+- A compatibility set is immutable. It holds the bytes a past codec wrote, so the current reader still restores an old
+  save. Never rewrite its files after a codec change; add a new set for the new payload version.
+- `SHA256SUMS`, where a set has one, records the file bytes. Check it with `sha256sum -c SHA256SUMS` in the set's
+  directory.
 
 ## Layout
 
@@ -35,49 +38,45 @@ These rules apply to every set below and are not repeated in the set READMEs.
 | `fonts/` | Noto Sans and Noto Sans CJK subsets | SIL OFL 1.1 (`OFL.txt`) |
 | `gltf/` | Small glTF documents written by `generate.py`, plus `lod.gltf` and `lod_animated.gltf` | project-authored |
 | `texture/` | DDS, KTX and KTX2 containers | mixed; [LICENSES.md](LICENSES.md) |
-| `texture_fidelity/` | `leaf_rgba8.bin`, a raw 32 x 32 RGBA8 image with varying alpha, for mip coverage tests | project-authored |
+| `texture_fidelity/` | `leaf_rgba8.bin`, a raw 32 x 32 RGBA8 image with varying alpha, for mip coverage tests | origin not recorded |
 | `cube/` | 2 x 2 cube faces and rejection inputs | project-authored |
 | `rgba.png`, `radiance.hdr`, `gray16.png`, `gray.jpg`, `truncated.png` | Decoder inputs | project-authored |
 | `animated_crowd_fixtures.c3`, `animated_lod_fixtures.c3`, `loading_fixtures.c3` | C3 recipes that build fixtures in memory | project-authored |
 
-The serialization compatibility sets are read by `addons/c3d_serial.c3l/test_described/`; `fonts/` also feeds the UI add-on
-tests.
+The serialization compatibility sets are read by `addons/c3d_serial.c3l/test_described/`; `fonts/` also feeds the UI
+add-on tests.
 
 ## Authored recipes in C3
 
-`animated_crowd_fixtures.c3` builds the mixed animated model deterministically in an asset store: eight template nodes, five
-meshes (each one triangle), two identical ordered two-joint skins, an animated rigid part and two independent morph parts. The
-skin-free variant keeps the three rigid and morph meshes. Nonidentity mesh and bind transforms and a scaled rigid ancestor
-distinguish missing from repeated transform application. The named `lift` channel has two targets at full weights `0.5` and
-`1`, with mesh defaults `0.25` and `0.75`.
+`animated_crowd_fixtures.c3` builds the mixed animated model deterministically in an asset store: eight template nodes,
+five meshes (each one triangle), two identical ordered two-joint skins, an animated rigid part and two independent morph
+parts. The skin-free variant keeps the three rigid and morph meshes. Nonidentity mesh and bind transforms and a scaled
+rigid ancestor distinguish missing from repeated transform application. The named `lift` channel has two targets at full
+weights `0.5` and `1`, with mesh defaults `0.25` and `0.75`.
 
-The model-local pose envelope is `PARTS_POSE_BOUNDS`, min `(-6, -3, -4)` and max `(12, 6, 4)`. It covers the rest, posing and
-missing-weight clips. The literal world-space arrays use the instance-root translation `(10, 0, -2)`, which is not part of the
-envelope. The recipe also builds compatible-alias, reordered-joint and different-bind variants.
+The model-local pose envelope is `PARTS_POSE_BOUNDS`, min `(-6, -3, -4)` and max `(12, 6, 4)`. It covers the rest,
+posing and missing-weight clips. The literal world-space arrays use the instance-root translation `(10, 0, -2)`, which
+is not part of the envelope. The recipe also builds compatible-alias, reordered-joint and different-bind variants.
 
-`animated_lod_fixtures.c3` builds geometry alternatives for the Quaternius mannequin, and `loading_fixtures.c3` generates small
-models and a seeded texture corpus. The real inputs stay in `examples/assets/` with their own notices: the Quaternius animation
-library (SHA-256 `272d5c1e2c27f566595ece27b6985935d42dcee1dacee1b320af9f0c40d5c97c`) and `AnimatedMorphCube.glb` (SHA-256
-`214ee56160a50dbf22543a1d66dbf860986e87f0efac3d89feac1359d0e6aeab`).
+`animated_lod_fixtures.c3` builds geometry alternatives for the Quaternius mannequin, and `loading_fixtures.c3`
+generates small models and a seeded texture corpus. The real inputs stay in `examples/assets/` with their own notices:
+the Quaternius animation library (SHA-256 `272d5c1e2c27f566595ece27b6985935d42dcee1dacee1b320af9f0c40d5c97c`) and
+`AnimatedMorphCube.glb` (SHA-256 `214ee56160a50dbf22543a1d66dbf860986e87f0efac3d89feac1359d0e6aeab`).
 
 ## Generated glTF
 
 `gltf/generate.py` writes `quad.gltf`, `hierarchy.gltf`, `strip.gltf`, `unsupported.gltf`, `skin.gltf` and
-`import_fixes.gltf`. It reads `rgba.png` and writes beside itself. Run it from anywhere: `python3 test/fixtures/gltf/generate.py`.
+`import_fixes.gltf`. It reads `rgba.png` and writes beside itself. Run it from anywhere with
+`python3 test/fixtures/gltf/generate.py`.
 
 ## Decoder fixtures
 
-`rgba.png` is a 2×2 RGBA image, in top-row-first order:
-red `(255, 0, 0, 255)`, green `(0, 255, 0, 128)`, blue `(0, 0, 255, 64)`,
-and white `(255, 255, 255, 0)`.
-`radiance.hdr` is a 2×1 RGBE image representing
-`(2, 1, 0.5)` and `(0.25, 0.5, 1)`.
-`truncated.png` is an intentionally malformed input for file-loader fault coverage.
-`gray16.png` is a 2×2 16-bit grayscale image holding
-`0, 1, 0x1234, 0xFFFF`, top row first; 1 and `0x1234` are not multiples of
-257, so an 8-bit decode cannot produce them.
-Run from the repository root, this Python script writes `rgba.png`, `radiance.hdr` and `gray16.png`. `truncated.png` is the
-first twelve bytes of `rgba.png`.
+`rgba.png` is a 2×2 RGBA image, in top-row-first order: red `(255, 0, 0, 255)`, green `(0, 255, 0, 128)`, blue
+`(0, 0, 255, 64)`, and white `(255, 255, 255, 0)`. `radiance.hdr` is a 2×1 RGBE image representing `(2, 1, 0.5)` and
+`(0.25, 0.5, 1)`. `truncated.png` is an intentionally malformed input for file-loader fault coverage. `gray16.png` is a
+2×2 16-bit grayscale image holding `0, 1, 0x1234, 0xFFFF`, top row first; 1 and `0x1234` are not multiples of 257, so an
+8-bit decode cannot produce them. Run from the repository root, this Python script writes `rgba.png`, `radiance.hdr` and
+`gray16.png`. `truncated.png` is the first twelve bytes of `rgba.png`.
 
 ```python
 from pathlib import Path
@@ -111,7 +110,7 @@ rows = [struct.pack(">HH", 0, 1), struct.pack(">HH", 0x1234, 0xFFFF)]
 ```
 
 `gray.jpg` contains two grayscale pixels with value 128. It was
-created once with ImageMagick 6, from the repository root:
+created once with ImageMagick 6 (version not recorded), from the repository root:
 
 ```bash
 convert -size 2x1 xc:'gray(50%)' -colorspace Gray -quality 100 test/fixtures/gray.jpg
@@ -369,7 +368,7 @@ each file's header.
 
 | Directory | Source, commit | License | Writer | Files |
 | --- | --- | --- | --- | --- |
-| `imagemagick/` | this project | project-authored | ImageMagick 6.9.11-60 | `dxt1_8x8.dds`, `dxt5_16x8.dds` |
+| `imagemagick/` | this project | project-authored | ImageMagick 6.9.11-60 Q16 (the Ubuntu 22.04 package) | `dxt1_8x8.dds`, `dxt5_16x8.dds` |
 | `ktxtest/` | [sevmeyer/ktxtest](https://github.com/sevmeyer/ktxtest) `e1181e40de001d0d073161f3758d3262f3cd507b`, `ktx/valid/{compression,format,composition}/` | CC0 1.0 | containers ktxjuggle; BC payloads CompressonatorCLI 3.1.307 | `format_bc1_rgba_unorm.ktx`, `format_bc1_rgb_unorm.ktx`, `format_bc3_unorm.ktx`, `format_bc4_unorm.ktx`, `format_bc5_unorm.ktx`, `format_bc7_unorm.ktx`, `endian_big_type_ubyte_r8g8.ktx`, `array_2_elements_2d.ktx` |
 | `gltf_sample_assets/` | [KhronosGroup/glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) `edc7c9e67c639d230715049ee31f9a96a6babbbe`, `Models/FlightHelmet/glTF-KTX-BasisU/` | CC0 1.0 | `ktx create v4.4.2` (its `KTXwriter` key) | `FlightHelmet_Materials_LensesMat_Normal.ktx2` |
 | `bcnencoder/` | [Nominom/BCnEncoder.NET](https://github.com/Nominom/BCnEncoder.NET) `51d3199b3bc374e0bdda3947d9f347cb6235a9a0`, `BCnEncTests/testImages/` | public domain (that directory's `NOTICE`) | not recorded (no header tag) | `test_decompress_bc1a.dds`, `test_decompress_bc1a.ktx`, `decoding_dds_bc5.dds` |

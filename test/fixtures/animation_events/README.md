@@ -11,8 +11,8 @@ bytes. `SHA256SUMS` records the file bytes.
 
 One second is 46186158000 FBX ticks. Both specimens use event payload version 1.
 
-The glTF events are authored as `(time, id)` in the order `(1, 9)`, `(0, 0)`, `(0.5, 4294967295)`, `(0.5, 3)`, `(0.5,
-3)`, and the importer returns `(0, 0)`, `(0.5, 4294967295)`, `(0.5, 3)`, `(0.5, 3)`, `(1, 9)`. The FBX events are
-authored as `(1, 4294967295)`, `(0.5, 7)`, `(0, 0)`, `(0.5, 7)`, `(0.5, 11)` and return `(0, 0)`, `(0.5, 7)`, `(0.5,
-7)`, `(0.5, 11)`, `(1, 4294967295)`. Equal times keep their authored order. Event markers do not extend a track-derived
-clip duration, and event times are never rebased.
+The glTF events are authored as `(time, id)` in the order `(1, 9)`, `(0, 0)`, `(0.5, 4294967295)`, `(0.5, 3)`,
+`(0.5, 3)`, and the importer returns `(0, 0)`, `(0.5, 4294967295)`, `(0.5, 3)`, `(0.5, 3)`, `(1, 9)`. The FBX events are
+authored as `(1, 4294967295)`, `(0.5, 7)`, `(0, 0)`, `(0.5, 7)`, `(0.5, 11)` and return `(0, 0)`, `(0.5, 7)`,
+`(0.5, 7)`, `(0.5, 11)`, `(1, 4294967295)`. Equal times keep their authored order. Event markers do not extend a
+track-derived clip duration, and event times are never rebased.

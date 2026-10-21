@@ -69,7 +69,7 @@ Example for core and physics:
   `$ORIGIN`.
 - c3c compiles the C sources some libraries carry (stb in core, cgltf, ufbx, clay, miniaudio) with the system C
   compiler; on Windows that is MSVC.
-- The Linux natives of sdl3, c3imgui, box3d and shaderc are built on Ubuntu 22.04 and need glibc 2.35 or newer.
+- The Linux natives of sdl3, c3imgui, box3d, shaderc and vma are built on Ubuntu 22.04 and need glibc 2.35 or newer.
 
 ## Shader packages
 

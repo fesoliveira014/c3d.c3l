@@ -1,8 +1,8 @@
 # Description test consumers
 
-Private visitors that exercise the `c3d::describe` contract against a shared example component, an owned-data fixture and a
-numeric fixture. They are test code, not production serialization APIs or formats. The description contract itself is in
-[type descriptions](../../docs/type_descriptions.md).
+Private visitors that exercise the `c3d::describe` contract against a shared example component, an owned-data fixture
+and a numeric fixture. They are test code, not production serialization APIs or formats. The description contract itself
+is in [type descriptions](../../docs/type_descriptions.md).
 
 ## Files
 
@@ -27,9 +27,16 @@ The core description and device-free inspector contract tests (`test/src/test_de
 | Allocations tracked per read | 64 |
 | Fixture buffer | 16 KiB |
 
-The fixture reader allocates every destination through a bounded ledger. A successful read keeps the storage until the caller
-releases it, and a fault releases everything. The JSONC reader uses the standard library DOM, which allocates infallibly, so
-the tests make no out-of-memory guarantee for parsing.
+The fixture reader allocates every destination through a bounded ledger. A successful read keeps the storage until the
+caller releases it, and a fault releases everything. The JSONC reader uses the standard library DOM, which allocates
+infallibly, so the tests make no out-of-memory guarantee for parsing.
+
+## JSONC fixture text
+
+- Every described field is required. A missing field, a wrong shape, an out-of-range integer or an invalid enum or
+  reference token returns `INVALID_FIXTURE`.
+- Finite floats use 9 significant digits and doubles 17, with an explicit `-0.0`. Non-finite values are the strings
+  `"f32:%08x"` and `"f64:%016x"` of their bits. Unsigned 64-bit values are quoted decimals.
 
 ## Run
 

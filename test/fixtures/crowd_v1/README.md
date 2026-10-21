@@ -1,7 +1,7 @@
 # AnimatedCrowd v1 inputs
 
-Immutable streams from the AnimatedCrowd v1 codec. Pending and prepared exports were identical, and independent captures
-produced identical bytes. The serialization tests read them (`addons/c3d_serial.c3l/test_described/crowd_v2_test.c3`).
+Immutable streams from the AnimatedCrowd v1 codec. A prepared crowd writes the same bytes as a pending one. The
+serialization tests read them (`addons/c3d_serial.c3l/test_described/crowd_v2_test.c3`).
 The shared rules for compatibility sets are in [the fixtures README](../README.md#rules).
 
 | File | Bytes | SHA-256 |

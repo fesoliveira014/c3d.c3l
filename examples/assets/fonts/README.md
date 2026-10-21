@@ -18,8 +18,8 @@ Sources:
   (16,437,364 bytes)
 
 The subset was made once with fontTools 4.65.0 in a scratch virtual environment
-(`python3 -m venv /tmp/fonts && /tmp/fonts/bin/pip install fonttools && . /tmp/fonts/bin/activate`), from the repository
-root with the source fonts in the working directory:
+(`python3 -m venv /tmp/fonts && /tmp/fonts/bin/pip install fonttools==4.65.0 && . /tmp/fonts/bin/activate`), from the
+repository root with the source fonts in the working directory:
 
 ```bash
 python -c "

@@ -8,6 +8,6 @@
 - 127 clips, including `Idle_Loop`, `Walk_Loop`, `Jog_Fwd_Loop`, `Hit_Chest` and `Death01`.
 
 Loaded by the `ik`, `retarget`, `skinned_crowd` and `animation_authoring` examples, the physics package's `cloth`
-example, the physics inspector example (`physics_inspector`), the job package's crowd benchmark (`job_bench --crowd`),
-and the GPU acceptance and benchmark projects under `test/gpu/`. SHA-256
+example, the physics inspector examples (`physics_inspector`, `physics_inspector_character`), the job package's crowd
+benchmark (`job_bench --crowd`), and the GPU acceptance and benchmark projects under `test/gpu/`. SHA-256
 `272d5c1e2c27f566595ece27b6985935d42dcee1dacee1b320af9f0c40d5c97c`.

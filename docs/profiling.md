@@ -212,11 +212,13 @@ successful submission does not discard its pending measurements.
   query or label exhaustion stops admission until the next recording; accepted scopes still close and omitted scopes are
   counted. History copies a parent-complete prefix and keeps GPU truncation separate from CPU truncation. Disabled or
   unsupported instances allocate no recording arrays.
-- The adapter reserves two timestamp queries per scope in every frame slot, plus scope, sample and label storage; at the
-  defaults that is `FRAMES_IN_FLIGHT` slots of 2048 scopes, so 8192 queries. The storage excludes the retained capture
-  history and the renderer's copied shadow summary.
-- A frame that records no view work (for example a warm compute-only frame) discards its recording, and the capture
-  reports it as aborted. Use explicit `render_view` and `finish_view` calls in a profiled workload.
+- The adapter reserves two timestamp queries per scope in every frame slot, plus scope, sample and label storage. At the
+  defaults (`FRAMES_IN_FLIGHT` slots of 2048 scopes and 65536 label bytes) it requests about 960 KiB of host storage on
+  x64 (416 KiB of scope storage and 64 KiB of labels per slot), a timestamp pool of 8192 queries and the backend's pool
+  overhead. Size `gpu_scope_capacity` and `gpu_label_bytes_per_slot` down when that is too much. The figure excludes the
+  retained capture history and the renderer's copied shadow summary.
+- A frame that records no work at all (no view, dispatch, upload, overlay or preparation) discards its recording, and
+  the capture reports it as aborted.
 
 Each GPU sample has a source id, renderer frame, parent, origin, label and, where relevant, a copied view, pass, stage,
 light or shader identity. GPU times are floating-point nanoseconds relative to the first accepted begin of that

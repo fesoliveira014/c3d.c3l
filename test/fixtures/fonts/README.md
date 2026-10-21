@@ -30,7 +30,7 @@ Sources:
 With fontTools 4.65.0 in a scratch virtual environment, run from the repository root:
 
 ```bash
-python3 -m venv /tmp/fonts && /tmp/fonts/bin/pip install fonttools && . /tmp/fonts/bin/activate
+python3 -m venv /tmp/fonts && /tmp/fonts/bin/pip install fonttools==4.65.0 && . /tmp/fonts/bin/activate
 pyftsubset NotoSans-Regular.ttf --unicodes="U+0020-007E,U+0391,U+03A9,U+03B1,U+03C9,U+0411,U+0416,U+042F,U+0431,U+0436,U+044F" \
    --layout-features=kern --no-hinting --notdef-outline --output-file=test/fixtures/fonts/latin.ttf
 pyftsubset NotoSansCJKsc-Regular.otf --unicodes="U+0020,U+4E2D,U+6587,U+5B57,U+6C38,U+3042,U+30A2" \

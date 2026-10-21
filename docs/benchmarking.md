@@ -183,9 +183,10 @@ inactive lights are hidden. World matrices update every frame, as in the interac
 x 24 with a far distance of 100. Warmup excludes pipeline creation and first-use uploads from the samples; raise it if a
 driver has not reached steady state.
 
-Benchmark mode disables validation and timestamps by default. Run a correctness smoke with `--validation`, then collect
-timing without it. Add `--gpu-timings` for a separate diagnostic run, because timestamp instrumentation can change
-performance.
+Benchmark mode of `many_lights`, `gltf_viewer` and `instancing` disables validation and timestamps by default. Run a
+correctness smoke with `--validation`, then collect timing without it. Add `--gpu-timings` for a separate diagnostic
+run, because timestamp instrumentation can change performance. `effects`, `rt_shadows` and `rt_effects` always run with
+validation on, so their timings include its cost.
 
 ### Options of every benchmark example
 
@@ -209,11 +210,11 @@ height of 0 or above 8,192, `--ssgi-steps` outside 4 to 64 with screen-space GI 
 | `--panel` | `--window`, `--capture`, `C3D_PROFILE_GUI` | Draws the profiler panel every frame through the overlay and reports its cost as `gui_ms`. |
 | `--print-features` | | Prints `cpu=<0\|1> gpu=<0\|1> internal=<0\|1> gui=<0\|1>` and exits. |
 | `--anti-aliasing none\|fxaa\|taa` | | Anti-aliasing filter of the measured view; FXAA by default. |
-| `--msaa 1\|2\|4\|8` | | Samples per pixel of the measured view; 1 by default. A count above 1 with `--anti-aliasing taa` or `--shading path-traced` is rejected. A deferred count above 1 reports its classification pass as `gpu_msaa_edges_ms`. |
+| `--msaa 1\|2\|4\|8` | | `many_lights` and `gltf_viewer` only; `instancing` parses it and ignores it. Samples per pixel of the measured view; 1 by default. A count above 1 with `--anti-aliasing taa` or `--shading path-traced` is rejected. A deferred count above 1 reports its classification pass as `gpu_msaa_edges_ms`. |
 | `--depth-prepass on\|off` | | Depth prepass of a forward view; on by default. Deferred views always run it. |
-| `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Screen-space AO at half or full resolution, or ray traced at half resolution with 4 rays; none by default. Reported as `gpu_ambient_occlusion_ms`. |
+| `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter, unless `--trace software` | Screen-space AO at half or full resolution, or ray traced at half resolution with 4 rays; none by default. Reported as `gpu_ambient_occlusion_ms`. |
 | `--auto-exposure on\|off` | | Automatic exposure; off by default. Reported as `gpu_exposure_ms`. |
-| `--reflections on\|off` | a ray-query adapter, deferred or forward shading | Ray-traced reflections; off by default. A path-traced view faults `UNSUPPORTED`. Reported as `gpu_rt_reflections_ms`. |
+| `--reflections on\|off` | a ray-query adapter, unless `--trace software`; deferred or forward shading | Ray-traced reflections; off by default. A path-traced view faults `UNSUPPORTED`. Reported as `gpu_rt_reflections_ms`. |
 | `--screen-space-gi on\|off` | | [Screen-space GI](screen_space_gi.md); off by default. Reported as `gpu_screen_space_gi_ms` and `gpu_ssgi_copy_ms`. |
 | `--ssgi-trace linear\|hierarchical` | `--screen-space-gi on` | Ray search; `linear` by default. Orthographic views use `linear`. A hierarchical perspective view also reports `gpu_depth_pyramid_ms`; add it to `gpu_screen_space_gi_ms` when comparing modes. |
 | `--ssgi-steps N` | `--screen-space-gi on` | Steps per ray, 4 to 64; default 24. Keep it equal across compared trace modes. |
@@ -221,9 +222,10 @@ height of 0 or above 8,192, `--ssgi-steps` outside 4 to 64 with screen-space GI 
 | `--shading forward\|deferred\|path-traced` | `path-traced`: a ray-tracing-pipeline adapter | `many_lights` and `gltf_viewer`: shading path of the measured view; path tracing uses the default settings and forces the flat light mode. Reported as `gpu_path_trace_ms`. |
 
 `many_lights` also takes `--mode flat|clustered`, `--lights N`, `--capacity N`, `--range R` and `--depth-pruning on|off`
-([depth pruning](lights.md#depth-pruning)). Keep extent, camera, range, capacity and material fixed when comparing
-flat and clustered modes or the shading paths. Report overflow counts: an overflow falls back to the complete flat light
-list instead of dropping contributions. A correctness stress:
+(off by default) ([depth pruning](lights.md#depth-pruning)). Keep extent, camera, range, capacity and material fixed
+when comparing flat and clustered modes or the shading paths. Report overflow counts: an overflow falls back to the
+complete flat light list instead of dropping contributions. `many_lights` rejects fewer than 1 or more than 4,096
+lights, a capacity outside 1 to 256 and a range outside 1 to 32. A correctness stress:
 
 ```bash
 ./examples/build/many_lights --benchmark --mode clustered --lights 256 \
@@ -232,12 +234,12 @@ list instead of dropping contributions. A correctness stress:
 
 ### CSV fields
 
-Every benchmark loop writes one row per measured frame:
+Every benchmark loop writes one row per measured frame, led by a `frame` column:
 
 | Field | Interval or result |
 | --- | --- |
 | `wall_ms` | Scene update through submission, including frame-slot waiting. |
-| `update_ms` | `Scene.update_world`, after the benchmark's own per-frame scene edits. |
+| `update_ms` | The benchmark's own per-frame scene edits plus `Scene.update_world`. |
 | `begin_ms` | `begin_frame`, including prior-slot completion, readbacks and cache sweeps. |
 | `render_ms` | `render_view`, including CPU extraction and command recording. |
 | `finish_ms` | `finish_view`. |
@@ -268,8 +270,8 @@ drain the last measured slots. Sample storage is allocated before the loop and t
 measures steady-state submission throughput with frames in flight, not isolated GPU latency. Pass timestamps are partial
 intervals; do not present them as total frame time.
 
-A windowed run is a different workload from the headless one: the default view carries the interactive example's
-settings and window-system pacing applies. Compare windowed rows only with other windowed rows.
+A windowed run presents the same view settings to the window, and window-system pacing applies. Compare windowed rows
+only with other windowed rows.
 
 When the run traces rays, the loop prints `first frame: trace preparation ... ms CPU, acceleration build ... ms GPU` to
 standard error once the first frame's GPU time arrives.
@@ -287,8 +289,8 @@ The scene suite renders Crytek Sponza from `KhronosGroup/glTF-Sample-Assets`. `s
 downloads it at a pinned commit into `examples/assets/benchmark/sponza/`, which is gitignored: the model files are under
 the Cryengine Limited License Agreement and are not redistributed here. The fetch skips files that already exist with
 the right size; `--force` downloads everything again. `benchmark.py scene` refuses to run without the model and prints
-the fetch command. Any glTF file replaces Sponza through the positional path of `gltf_viewer` or `benchmark.py scene
---model`; light and camera placement derive from the model bounds.
+the fetch command. Any glTF file replaces Sponza through the positional path of `gltf_viewer` or
+`benchmark.py scene --model`; light and camera placement derive from the model bounds.
 
 `gltf_viewer --benchmark` reuses the viewer's loading and environment: one instance at the origin, the studio HDR as
 environment and background, a sun, and `--lights N` point lights on a deterministic grid inside the model bounds at 0.35
@@ -440,9 +442,9 @@ other than `off` needs `--binary`. `environment.json` records `features`, `defin
 Measure the overhead of a configuration on an idle machine, per suite (`render` and `scene`), with the same `--lights`,
 `--mode`, extent, `--frames` and `--warmup` throughout and three repeats per configuration:
 
-1. Headless capture cost: `off`; `cpu --capture`; `internal --capture`; `gpu --capture --gpu-timings`; `full --capture
-   --gpu-timings`. Compare medians of `wall_ms` and the phase columns against `off`. Run `gpu` and `full` once more
-   without `--gpu-timings` to separate query cost from capture cost.
+1. Headless capture cost: `off`; `cpu --capture`; `internal --capture`; `gpu --capture --gpu-timings`;
+   `full --capture --gpu-timings`. Compare medians of `wall_ms` and the phase columns against `off`. Run `gpu` and
+   `full` once more without `--gpu-timings` to separate query cost from capture cost.
 2. Presentation cost: `gui --capture --window` and `gui --capture --panel`. Compare `wall_ms` and read `gui_ms`. Do not
    compare these rows with headless rows.
 3. Correctness: `draws`, `lights`, `dropped` and `overflows` must match across every configuration of the same workload.

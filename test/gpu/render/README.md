@@ -11,16 +11,17 @@ Build the repository once so `shaders/spv/` and the generated tables exist, then
 
 ```bash
 python3 scripts/build.py --target compute_textures
-c3c test acceptance --path test/gpu/render --test-filter none   # build only
+c3c test acceptance --path test/gpu/render --suppress-run   # build only
 cp lib/shaderc.c3l/linux/libshaderc_shared.so.1 build/render_acceptance/
 c3c test acceptance --path test/gpu/render
 ```
 
 - The executable is `build/render_acceptance/testrun`. The project compiles shaders in process (`C3D_SHADER_COMPILER`),
   so the shaderc shared library must sit beside it: `libshaderc_shared.so.1` from `lib/shaderc.c3l/linux/` on Linux, or
-  `shaderc_shared.dll` from `lib/shaderc.c3l/windows/` on Windows. `build.py` copies runtimes only for the examples and
-  the profiler acceptance project, not for this one.
-- `--test-filter <name>` runs one test.
+  `shaderc_shared.dll` from `lib/shaderc.c3l/windows/` on Windows. `build.py` copies runtimes into the example build
+  directories and `build/profile_gpu`, not into this project's output.
+- `--test-filter <name>` runs one test. When you start `testrun` by hand, start it from `test/gpu/render`: some tests
+  open `../../../examples/...` relative to it.
 - Headless and WSL runs need a software Vulkan driver and a few environment variables; see
   [Headless and WSL runs](../../../docs/development.md#headless-and-wsl-runs).
 
@@ -31,6 +32,8 @@ c3c test acceptance --path test/gpu/render
 - A test whose assertion fails skips its `defer destroy_fixture`. The harness records the live fixture and, when the
   test ends, prints which function created it and destroys it, so the next test starts without a leaked runtime. If the
   test also holds device allocations only it can free, the harness prints that the runtime is still alive.
+- `selection_probe.vert.glsl` stores from the vertex stage through a device address, without
+  `vertexPipelineStoresAndAtomics`, which the library does not enable. Library shaders must not use that pattern.
 - A test that needs a capability the machine lacks prints a `skipped` or `SKIP` line instead of failing: a window, ray
   queries, ray-tracing pipelines or block-compressed sampling.
 
@@ -57,10 +60,12 @@ Two executables in the project time the renderer. Build them with `c3c build <na
 from the repository root. Both print CSV to standard output.
 
 - `origin_bench [zero|grid|exact] [population]` times origin rebasing for a shadow scene or a 2,048-instance population;
-  [large worlds](../../../docs/large_world.md) describes the policies.
+  [large worlds](../../../docs/large_world.md) describes the policies. It needs ray queries.
 - `posed_trace_bench mannequin <count> <software|hardware> <rest|strong|animate> [fresh] [novalidation]` and
-  `posed_trace_bench crowd <count> <software|hardware> [novalidation]` time posed trace instances. Columns are the pose,
-  acceleration build and trace GPU times plus the pose, refit, update and build counts. `fresh` aborts every other frame
+  `posed_trace_bench crowd <count> <software|hardware> [novalidation]` time posed trace instances with a 1920 x 1080
+  primary-ray dispatch per frame. Columns are the pose, acceleration build and trace GPU times, `trace_build_ms`,
+  `posed_bytes` and the pose, refit, update and build counts; hardware runs also print the bottom-level storage with and
+  without `allow_update`. `fresh` aborts every other frame
   so each sampled frame builds every posed bottom level. Validation is on unless `novalidation` is the last argument.
 
 ## Limits

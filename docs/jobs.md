@@ -8,8 +8,9 @@ range runs on the calling thread. The package binds workers to processors on Lin
 standard library and `c3d`, plus `c3d::profile` under `C3D_PROFILE_CPU`. Core never imports it and has no job feature
 flag.
 
-This page also owns the [`ParallelFor` hook](#parallelfor-hook) that the cloth, physics and particle packages accept, so
-an application can drive them from a job pool without those packages importing it.
+This page also owns the [`ParallelFor` hook](#parallelfor-hook) that the physics world (cloth and crowd-slot staging,
+breakable graphs, debug lines) and the particle package accept, so an application can drive them from a job pool without
+those packages importing it.
 
 ## Quick start
 
@@ -60,8 +61,8 @@ fn void? integrate_all(Particles* particles) {
 
 ## Concepts
 
-- **Run and range.** A run of `count` items at `batch = b` has `ceil(count / b)` ranges, `[i * b, min((i + 1) * b,
-  count))`; only the last is short. Each range is one call of the function.
+- **Run and range.** A run of `count` items at `batch = b` has `ceil(count / b)` ranges,
+  `[i * b, min((i + 1) * b, count))`; only the last is short. Each range is one call of the function.
 - **Class.** A run is `FRAME` or `BACKGROUND`. Workers take frame ranges first. Background work runs in frame idle time,
   so a pool that is never idle of frame work starves it, by design.
 - **Inline mode.** With `worker_count = 0`, `run` runs every range on the calling thread in ascending order and returns
@@ -111,9 +112,9 @@ and `quota` is `job::cpu_quota()` when it returns one:
 
 On Windows `available_cpus()` covers the calling thread's processor group only, and `cpu_quota()` never returns a quota
 (job-object rate limits are not read). Processors numbered 1024 and up are not represented. The count has no upper
-limit. box3d runs its own worker threads (`PhysicsDesc.worker_count`, 1 by default) inside `PhysicsWorld.step`; an
-application that runs jobs during a step and also uses several box3d workers lowers the job pool's `worker_count` to
-avoid oversubscription.
+limit. box3d steps on its own worker threads only when `PhysicsDesc.worker_count` is above 1; the default, 1, steps on
+the calling thread. Those threads run only inside `PhysicsWorld.step`, so an application that runs jobs during a step
+and uses several box3d workers lowers the job pool's `worker_count` to avoid oversubscription.
 
 ## Run and wait
 
@@ -172,8 +173,9 @@ if (pool.is_finished(streaming)) publish(&decode);
 - **Cap.** At most `background_workers` shared workers run background ranges at once. The others take only frame ranges,
   and a worker takes a frame range before a background one. A range that has started is never interrupted, so a long
   background range delays frame work only by holding its own worker.
-- **`pump(max_ranges)`** runs background ranges on the calling thread, in submission order, and returns how many ran. It
-  runs only ranges queued before the call, so a background run that a pumped range submits waits for the next `pump`. It
+- **`pump(max_ranges)`** runs up to `max_ranges` background ranges on the calling thread, in submission order, and
+  returns how many ran. `max_ranges` defaults to `uint::max`, which runs every range queued before the call. It runs
+  only ranges queued before the call, so a background run that a pumped range submits waits for the next `pump`. It
   ignores the cap and never takes frame ranges.
 - **Background-only workers.** `background_only_workers` adds workers that take only background ranges, in the same
   order, outside the cap. They never take frame ranges, so a pool with zero shared workers and some background-only
@@ -286,20 +288,24 @@ The pool does not check these. A range that breaks them races.
 ## ParallelFor hook
 
 Core declares `c3d::ParallelFor` (`src/c3d/parallel.c3`), a caller-supplied fork-join over index ranges. Packages that
-parallelize their own work take a `ParallelFor`: `PhysicsWorld.set_parallel` stages [cloth](cloth.md),
-and `particle::update` and `particle::step` take a trailing parameter ([particles](particles.md)). Those
-packages import no job library; the hook is their only coupling.
+parallelize their own work take a `ParallelFor`: `PhysicsWorld.set_parallel` runs cloth and crowd-slot staging
+([cloth](cloth.md#update-on-a-job-pool)), breakable graph derivation ([breakables](breakables.md)) and debug collider
+lines ([physics](physics.md#update-on-a-worker-pool)), and `particle::update` and `particle::step` take a trailing
+parameter ([particles](particles.md#parallel-update)). Those packages import no job library; the hook is their only
+coupling.
 
 | Item | Meaning |
 | --- | --- |
 | `ParallelFor.run` | `fn void(void* context, ParallelRangeFn range, void* data, uint count, uint batch)`. Calls `range(data, first, count)` over `[0, count)` in batches of `batch` items and returns only after every range finished. |
 | `ParallelFor.context` | Passed to `run` unchanged. |
 | `ParallelRangeFn` | `fn void(void* data, uint first, uint count)`, the signature of `c3d::job::RangeFn`. |
-| `ParallelFor.for_ranges(range, data, count, batch)` | Runs through `run`, or as one range `range(data, 0, count)` when `run` is null. |
+| `ParallelFor.for_ranges(range, data, count, batch)` | Runs through `run`, or as one call `range(data, 0, count)` that ignores `batch` when `run` is null. |
 
-A zero `ParallelFor` runs every range inline on the calling thread. The ranges of a pooled `run` may execute in any
-order and concurrently, and `data` stays valid until the call returns. A consumer therefore writes disjoint outputs per
-range and follows [the rules for ranges](#rules-for-ranges).
+A zero `ParallelFor` calls `range` once over `[0, count)` on the calling thread and ignores `batch`, so a range must
+accept any count. The ranges of a pooled `run` may execute in any order and concurrently, and `data` stays valid until
+the call returns. A consumer therefore keeps the ranges free of data races (typically disjoint outputs per range, or
+atomic claims followed by a serial merge) and follows [the rules for ranges](#rules-for-ranges). The function type is
+`c3d::ParallelForFn`.
 
 A `JobPool` adapter is a few lines:
 
@@ -367,8 +373,8 @@ profile::@capture(&recorder, frame_id) {
 
 ## Benchmark
 
-`job_bench` (`python3 scripts/build.py --target job_bench --opt O3`) prints one CSV block per measurement, with a `#
-<name>,...` header line each:
+`job_bench` (`python3 scripts/build.py --target job_bench --opt O3`) prints one CSV block per measurement, each with a
+header line that starts with `# <name>,`:
 
 - `overhead`: the time per range of one run of 1024 empty ranges at batch 1, per worker count, with `inline_ranges`.
 - `kernel`: 16 `Mat4` multiplies per item against a shared chain, for several worker counts, item counts and batches. It
@@ -379,8 +385,8 @@ profile::@capture(&recorder, frame_id) {
   capped workers alone.
 - `loaded`: the same kernel idle and while a long background run keeps the default cap of workers busy.
 - `pinned`: the kernel with the frame workers bound to the performance cores against unbound, on a hybrid processor.
-- `recording`: the overhead workload with `set_recording(true)`, when built with `--define C3D_PROFILE_CPU --lib
-  c3d_profile`.
+- `recording`: the overhead workload with `set_recording(true)`, when built with
+  `--define C3D_PROFILE_CPU --lib c3d_profile`.
 
 `job_bench --crowd COUNT [--shared-phases] [--compress]` times an animated crowd instead. It loads the Quaternius
 character, creates COUNT instances with six looping clips at random phases and speeds, and per frame runs `advance` on
@@ -404,6 +410,7 @@ saved. `--compress` quantizes the clips first and prints their bytes and the lar
 ## See also
 
 - [Profiling](profiling.md): the recorder that receives worker ranges.
-- [Cloth](cloth.md) and [particles](particles.md): consumers of the `ParallelFor` hook.
+- [Physics](physics.md#update-on-a-worker-pool), [cloth](cloth.md#update-on-a-job-pool), [breakables](breakables.md) and
+  [particles](particles.md#parallel-update): consumers of the `ParallelFor` hook.
 - [Benchmarking](benchmarking.md): the runner and the profiling configurations.
 - [Development](development.md#test-targets): the `job_test` and `job_profile_test` targets.
