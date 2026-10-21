@@ -132,7 +132,8 @@ owning its table. If an asset's CPU data was released and no cooked entry exists
 | `COMPOUND` | `children`: spheres, capsules, boxes, hulls and meshes with their own placement and materials; no `sensor` | `STATIC` only |
 
 `MESH`, `HEIGHT_FIELD` and `COMPOUND` colliders return `STATIC_ONLY` on a non-static body and `UNSUPPORTED` with a
-non-identity `local` position or rotation; their `local.scale` scales the shape. The common collider fields:
+non-identity `local` position or rotation. A mesh or height field's `local.scale` scales the shape; a compound takes scale
+only from each child's `local`, and hull children must be unscaled. The common collider fields:
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -141,8 +142,8 @@ non-identity `local` position or rotation; their `local.scale` scales the shape.
 | `material` | friction 0.6, restitution 0 | `SurfaceMaterialDesc`: `friction`, `restitution`, `rolling_resistance` (spheres and capsules), `tangent_velocity` (shape-local, for conveyors) and an application `id`. |
 | `face_materials`, `material_indices` | empty | Per-face (mesh) or per-cell (height field) materials. |
 | `sensor` | false | Detects overlaps without a collision response. A sensor with density above zero still adds mass. |
-| `contact_events` | false | Reports contact begin and end, and makes the shape visible to sensors. Kinematic and dynamic bodies only. |
-| `hit_events` | false | Reports hits above `hit_speed_threshold`. Kinematic and dynamic bodies only. |
+| `contact_events` | false | Reports contact begin and end, and makes the shape visible to sensors. Applies to any pair in which either shape sets it. |
+| `hit_events` | false | Reports hits above `hit_speed_threshold`. Applies to any pair in which either shape sets it. |
 | `filter` | `FILTER_ALL` | `CollisionFilter`: `category`, `mask` and `group`. |
 | `explosion_scale` | 1 | Scales the impulse of `explode`. |
 
@@ -212,8 +213,8 @@ The world fills these lists during `update` and resets them at the start of the 
 
 | List | Element | Requires |
 | --- | --- | --- |
-| `contacts_begin()`, `contacts_end()` | `ContactEvent { a, b }` | `contact_events` on a shape of either body |
-| `hits()` | `HitEvent`: nodes, `point`, `normal`, `approach_speed`, both surface ids | `hit_events` on a shape of either body; approach speed above `hit_speed_threshold` (default 1 m/s) |
+| `contacts_begin()`, `contacts_end()` | `ContactEvent { a, b }` | `contact_events` on either shape of the pair |
+| `hits()` | `HitEvent`: nodes, `point`, `normal`, `approach_speed`, both surface ids | `hit_events` on either shape of the pair; approach speed above `hit_speed_threshold` (default 1 m/s) |
 | `sensors_begin()`, `sensors_end()` | `SensorEvent { sensor, visitor }` | a `sensor` shape; the visitor's shape needs `contact_events` and must be convex |
 | `joint_events()` | `JointEvent { node, other }` | a joint threshold |
 | `breaks()` | `BreakEvent` | a [`Breakable`](breakables.md#update-and-event-order) |
@@ -230,7 +231,7 @@ Node pointers in events are frame borrows: read them before `Scene.flush_removal
 | `overlap_sphere(allocator, center, radius, filter)` | Nodes whose shapes overlap the sphere, each once. |
 | `overlap_aabb(allocator, bounds, filter)` | Nodes with a shape whose bounds overlap the box (broad phase). |
 | `cast_shape(allocator, shape, translation, filter)` | `ShapeCastHit` list for a moving sphere, capsule or box, nearest first. |
-| `contact_points(allocator, node)` | `ContactPoint` list of the node's last step. |
+| `contact_points(allocator, node)` | `ContactPoint` list of the node's last step. `normal` points from the node toward `other`; a speculative point may be slightly separated. |
 | `cast_mover(...)`, `collide_mover(...)`, `solve_planes(...)`, `clip_vector(...)` | Capsule mover primitives for application-driven controllers. |
 
 The allocator receives the result array. Results past 256 overlap shapes, 128 cast hits and 64 body contacts per
@@ -280,7 +281,8 @@ workers when they all fit in the sink; the result matches the serial draw. Do no
 `create_physics_replay(allocator, data, friction_mix, restitution_mix)` opens them in a separate box3d world with
 `step`, `restart`, `seek`, `frame`, `frame_count` and `diverge_frame`, and `PhysicsReplay.debug_draw` draws it. A
 recording stores calls, not callbacks: a replay matches the recording only with the mixes the recorded world used.
-A replay runs the box3d world only: it recreates no scene components and reports no events.
+A recording captures an origin shift as `set_transform` calls on every body, and replay reproduces it. A replay runs the
+box3d world only: it recreates no scene components and reports no events.
 
 ## Update on a worker pool
 
@@ -334,8 +336,9 @@ shift. The full order is in [origin rebasing](origin_rebasing.md).
 
 With `C3D_PHYSICS_SERIAL`, `physics::register_serial_codecs()` installs the codecs for `PhysicsBody`, `PhysicsJoint`,
 `Wind`, `Force`, `Buoyancy`, `Ragdoll`, `Breakable`, `Cloth`, `CrowdCloth` and `HeightFieldWindows`. Restored bodies
-are `PENDING`; the world builds them on its next update. `RigidBody`, `Joint` and `ClothOutput` are transient. Payload
-versions and coverage are in [serialization](serialization.md#physics-adapter).
+are `PENDING`; the world builds them on its next update. `RigidBody`, `Joint`, `ClothOutput` and
+`HeightFieldWindowOwner` are transient. Payload versions and coverage are in
+[serialization](serialization.md#physics-adapter).
 
 ## Examples
 

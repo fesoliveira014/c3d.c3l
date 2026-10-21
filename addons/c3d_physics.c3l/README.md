@@ -10,7 +10,8 @@ feature flag.
 - Rigid bodies and colliders (sphere, capsule, box, hull, mesh, height field, compound), surface materials, filters,
   joints, `Wind`, `Force` and `Buoyancy` components, events, scene queries, recording and replay, debug draw.
   [Physics guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics.md).
-- World-free collision queries on prepared shapes and a shared cooking cache (`c3d::physics::collide`).
+- World-free collision queries on prepared shapes (`CollisionShape`, `CollisionCache` in `c3d::physics`) and the direct
+  `c3d::physics::collide` API.
   [Collision queries](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/collision_queries.md).
 - Ragdolls with physical get-up recovery.
   [Ragdolls](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/ragdoll.md).
