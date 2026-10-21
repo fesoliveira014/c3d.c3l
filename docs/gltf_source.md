@@ -1,83 +1,113 @@
 # glTF source inspection
 
-`c3d::asset::gltf` offers `decode_model_with_source` and
-`decode_model_memory_with_source` for tools that need source metadata alongside a
-`ModelDocument`. Ordinary decode keeps its existing behavior and allocations.
+`c3d::asset::gltf` offers `decode_model_with_source` and `decode_model_memory_with_source` for tools that need source
+metadata alongside a `ModelDocument`: independent encoded images, source indices, original sampler values and extension
+names. Ordinary decoding is unchanged and keeps its allocations. An exporter or converter uses it to write what the source
+file contained; an application that only loads models does not need it.
 
-Both entry points decode the same input once through cgltf. Source inspection
-re-reads extension names from cgltf's retained JSON because cgltf discards
-texture-info extensions; remove this metadata pass if a future pinned parser
-retains them. The pass checks material/texture array counts and each recognized
-texture-info slot and index against cgltf. It never resolves resources or
-decodes asset values. The file entry point does not read the document twice.
+## Quick start
 
-The returned document and `SourceRecord` are separate owners using the requested
-allocator. The output record is assigned only on success; failure releases both
-temporary owners and leaves it unchanged. Destroying or publishing the document
-does not invalidate the record. Destroying the record does not invalidate the
-document. Call `destroy_source_record` once for its ownership. All record arrays
-and strings are observational borrows until destruction; do not edit or free
-them individually.
+```c3
+import c3d::asset;
+import c3d::asset::gltf;
 
-`SourceDiagnostic` is optional. Both indices reset to `NO_SOURCE_INDEX` at entry
-and remain there on success. A metadata mismatch reports the source material
-and texture indices when known; other failures may have neither index.
+gltf::SourceRecord source;
+ModelDocument document = gltf::decode_model_with_source(assets.allocator, "models/helmet.glb", &source)!;
+defer asset::destroy_model_document(&document);
+defer gltf::destroy_source_record(&source);
 
-## Indices and retained data
+foreach (image : source.images) {
+    // image.encoded holds the original bytes; image.declared_mime_type holds the declaration.
+}
+```
 
-| Record field | Index and contents |
-|---|---|
-| `images` | Source image order; encoded bytes and declared MIME type |
-| `samplers` | Source sampler order; original glTF integer filter/wrap values |
-| `textures` | Source texture order; source image/sampler pair and decoded sRGB/linear IDs |
-| `materials` | Source material order; name, extension names, referenced source textures |
-| `texture_images` | Decoded document texture order; source image index |
-| `template_nodes` | Source node order; decoded template index |
-| `extensions_required` | Source document required-extension names |
+Both entry points decode the input once through cgltf. `decode_model_memory_with_source` takes the same bytes, base
+directory and key as `decode_model_memory`, and both take optional `LoadOptions`, `SourceDiagnostic*` and `FileSource`
+arguments.
 
-Absent source image/sampler indices use `NO_SOURCE_INDEX`. Source nodes outside
-the imported scene use `NO_TEMPLATE_NODE`. A decoded texture variant that does
-not exist uses the zero `TextureId`. Decoded IDs retain document references
-(index plus one, generation zero), even after the document is published; they
-are not live store IDs.
+## Concepts
 
-Only decoded images retain bytes. An unused image has an empty encoding slice
-and is not loaded for inspection. sRGB and linear variants share one copied
-encoding. Buffer-view bytes, decoded data-URI bytes and external-file bytes are
-copied without re-encoding, using the existing importer resolver.
+### Two owners
 
-`declared_mime_type` copies the explicit image declaration or data-URI media type
-and is empty when absent. It does not identify or validate the actual encoding.
-An exporter must inspect supported encoded bytes before selecting its MIME
-type. The declaration may disagree with those bytes.
+The returned document and the `SourceRecord` are separate owners using the requested allocator. The record is assigned
+only on success; a failure releases both temporary owners and leaves it unchanged. Destroying or publishing the document
+does not invalidate the record, and destroying the record does not invalidate the document. Call `destroy_source_record`
+once. All record arrays and strings are observational borrows until destruction: do not edit or free them individually.
 
-Material and texture extension names come from the metadata pass. A material's
-list also includes extensions on its recognized texture-info objects. Lists
-are deduplicated and sorted lexicographically. Referenced source texture indices
-are deduplicated and sorted numerically. `SUPPORTED_MATERIAL_EXTENSIONS` is the
-shared list of material/texture-transform extensions represented by the decoder;
-inspection reports unknown optional names without accepting their semantics.
+### Diagnostics
 
-## Material fidelity
+`SourceDiagnostic` is optional. Both of its indices reset to `NO_SOURCE_INDEX` at entry and stay there on success. A
+metadata mismatch reports the source material and texture indices when known; other failures may report neither.
 
-The document owns decoded material factors, colors, alpha mode/cutoff,
-double-sided state, normal scale, occlusion strength, effective UV set indices,
-texture transforms and texture/sampler assignments. Effective UV indices include
-`KHR_texture_transform.texCoord` overrides. Physical material thickness is in
-the source mesh's length units; attenuation distance is in world meters.
-Sampler descriptions contain decoded behavior; the source record additionally
-preserves original filter values, including unspecified filters (zero) and the
-distinction between mipmapped and non-mipmapped minification.
+### Index spaces
 
-A material slot resolves to the lowest referenced source texture index whose
-image matches the decoded texture and whose sampler decodes to the slot's
-sampler. Compare sampler values, not document sampler identity. This handles
-several source textures sharing one image and keeps each slot's decoded behavior.
-Equivalent candidates may lose the distinction between an explicit filter and
-an unspecified filter when both decode identically. The contract preserves
-decoded equality rather than original JSON spelling.
+| `SourceRecord` field | Index and contents |
+| --- | --- |
+| `images` | Source image order; encoded bytes and declared MIME type. |
+| `samplers` | Source sampler order; original glTF integer filter and wrap values. |
+| `textures` | Source texture order; source image and sampler, decoded sRGB and linear IDs, and extension names. |
+| `materials` | Source material order; name, extension names, referenced source textures. |
+| `texture_images` | Decoded document texture order; source image index. |
+| `template_nodes` | Source node order; decoded template index. |
+| `extensions_required` | The document's required-extension names. |
 
-The source record's sRGB and linear handles describe ordinary color variants.
-Normal and masked-coverage variants resolve through the decoded material slots
-and `texture_images`, which retain their source image identity. All variants of
-one image share its copied encoded source bytes.
+Absent source image or sampler indices use `NO_SOURCE_INDEX`. Source nodes outside the imported scene use
+`NO_TEMPLATE_NODE`. A decoded texture variant that does not exist uses the zero `TextureId`. Decoded IDs keep document
+references (index plus one, generation zero) even after the document is published, so they are not live store IDs.
+
+### Encoded images
+
+Only decoded images retain bytes. An unused image has an empty encoding slice and is not loaded for inspection. The sRGB
+and linear variants share one copied encoding. Buffer-view bytes, decoded data-URI bytes and external-file bytes are
+copied without re-encoding, using the importer's file resolver.
+
+`declared_mime_type` copies the explicit image declaration or data-URI media type and is empty when absent. It does not
+identify or validate the actual encoding and may disagree with the bytes: an exporter inspects the encoded bytes before
+choosing its MIME type.
+
+### Extension names
+
+Material and texture extension names come from a pass over the retained JSON, because cgltf discards texture-info
+extensions. The pass checks material and texture array counts and each recognized texture-info slot and index against
+cgltf, and it never resolves resources or decodes asset values. A material's list also includes extensions on its
+recognized texture-info objects. Lists are deduplicated and sorted lexicographically; referenced source texture indices are
+deduplicated and sorted numerically. `SUPPORTED_MATERIAL_EXTENSIONS` is the shared list of material and texture-transform
+extensions the decoder represents; inspection reports unknown optional names without accepting their semantics.
+
+## Material and sampler fidelity
+
+The document owns decoded material factors, colors, alpha mode and cutoff, double-sided state, normal scale, occlusion
+strength, effective UV set indices, texture transforms and texture and sampler assignments. Effective UV indices include
+`KHR_texture_transform.texCoord` overrides. Physical material thickness is in the source mesh's length units; attenuation
+distance is in world meters. The mapping to c3d materials is in [Models](models.md#materials).
+
+Sampler descriptions in the document hold decoded behavior. The source record also keeps the original filter values,
+including unspecified filters (zero) and the distinction between mipmapped and non-mipmapped minification.
+
+A material slot resolves to the lowest referenced source texture index whose image matches the decoded texture and whose
+sampler decodes to the slot's sampler. Compare sampler values, not document sampler identity. This handles several source
+textures sharing one image and keeps each slot's decoded behavior. Equivalent candidates can lose the distinction between
+an explicit filter and an unspecified filter when both decode identically: the contract preserves decoded equality, not
+the original JSON spelling.
+
+The record's sRGB and linear handles describe ordinary color variants. Normal and masked-coverage variants resolve through
+the decoded material slots and `texture_images`, which keep their source image identity. All variants of one image share
+its copied encoded bytes.
+
+## Faults
+
+`decode_model_with_source` and `decode_model_memory_with_source` fault `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`,
+`UNSUPPORTED`, `INVALID_ARGUMENT` and `CAPACITY_EXCEEDED`, as the ordinary decoders do ([Models](models.md#faults)). A
+metadata mismatch between the retained JSON and cgltf is an `ASSET_FORMAT_ERROR` with the diagnostic filled.
+
+## Limits
+
+- glTF only; FBX has no source record.
+- Encoded bytes are copied for every decoded image, so a record holds a second copy of each image file's content.
+- The declared MIME type is not validated.
+
+## See also
+
+- [Models](models.md) for import and material mapping.
+- [Asset loading](asset_loading.md) for publishing the document.
+- [Fracture](fracture.md) for a consumer of independent encoded images.

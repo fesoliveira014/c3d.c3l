@@ -1,48 +1,54 @@
 # Custom asset kinds
 
-`AssetStore` holds ten builtin kinds. An add-on or application adds its own
-kind by registering a record type: the store then owns a pool for it, keys and
-`find` cover it, and `destroy_asset_store` releases it. Core provides the
-mechanism; the kind's owner writes the typed methods.
+`AssetStore` holds 11 built-in kinds (geometry, texture, sampler, material, model, clip, skeleton, shader, compute shader,
+environment and font). An add-on or application adds its own kind by registering a record type: the store then owns a
+pool for it, keys and `find` cover it, and `destroy_asset_store` releases it. Core provides the mechanism; the kind's
+owner writes the typed functions. The `c3d_audio` add-on's `AudioClip` is the worked example throughout. The store is
+described in [Asset store](assets.md).
 
-## Registering a kind
+## Quick start
+
+Register the kind once per store, add a record and find it by key.
 
 ```c3
+import c3d::asset;
+import c3d::audio;
+
 AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
 defer asset::destroy_asset_store(&assets);
 
-assets.register(AudioClip, 256, &free_audio_clip_payload)!;
+audio::register_audio_clips(&assets, 256)!;
+AudioClipId id = audio::add_audio_clip(&assets, encoded_sound, key: "sfx/door")!;
+
+AssetRef ref = assets.find("sfx/door")!;
+AudioClipId found = asset::custom_id(AudioClip, ref)!;
 ```
 
-The hook re-types the payload and calls the kind's own free:
+`encoded_sound` holds the bytes of a WAV, FLAC, MP3 or Ogg Vorbis file. Applications call the owner's typed functions
+instead of using the pool directly. The next sections show how an owner writes them.
 
-```c3
-fn void free_audio_clip_payload(Allocator allocator, void* data, void* user) {
-    free_audio_clip(allocator, (AudioClip*)data);
-}
-```
+## Concepts
 
-`free_audio_clip(Allocator, AudioClip*)` is the owner's function that frees the
-payload's arrays; `remove_audio_clip` below calls it too.
+- **Process slot.** `register($Type, capacity, on_destroy = null, user = null)` gives the type a process-wide slot the
+  first time any store registers it, then allocates this store's pool of `capacity` records. A second call on the same
+  store changes nothing; the first capacity and hook stand.
+- **Per-store pool.** Each store holds its own `CustomPool{T}`, reached with `pool($Type)`. `is_registered($Type)` reports
+  whether this store has one.
+- **Ids.** `CustomId{T}` is a distinct struct per kind: an ID of one kind cannot be cast into an ID of another. A record is
+  a `CustomAsset{T}` with a `header` and a `data` payload.
+- **Destroy hook.** `on_destroy(allocator, data, user)` runs from `destroy_asset_store` on every live record's payload.
+  Pass `null` when the payload owns no memory. `CustomFreeFn` is the hook type.
+- **Capacity.** A process registers at most `asset::MAX_CUSTOM_ASSET_TYPES` (16) distinct types; the next one faults
+  `CAPACITY_EXCEEDED`.
+- **Thread.** The slot counter and each type's slot are unsynchronized process globals. Call `register` during setup on one
+  thread.
 
-- `register($Type, capacity, on_destroy, user)` gives the type a process-wide
-  slot the first time any store registers it, then allocates this store's pool
-  of `capacity` records. A second call on the same store changes nothing; the
-  first capacity and hook stand.
-- `on_destroy(allocator, data, user)` runs from `destroy_asset_store` on every
-  live record's payload. Pass `null` when the payload owns no memory.
-- A process registers at most `asset::MAX_CUSTOM_ASSET_TYPES` (16) distinct
-  types; the next one faults `CAPACITY_EXCEEDED`.
-- The slot counter and each type's slot are unsynchronized process globals.
-  Call `register` during setup, on one thread.
-- `is_registered($Type)` reports whether this store has a pool; `pool($Type)`
-  returns it as `custom::CustomPool{$Type}*`.
+## Define the owner API
 
-## The owner layer
-
-The owner declares the same four methods a builtin kind has, as extension
-methods on `AssetStore`. Users of the kind call them exactly like
-`add_clip_owned`, `clip`, `remove_clip` and `find_clip`.
+The owner declares the typed functions of its kind. A builtin kind has `add_clip_owned`, `clip`, `remove_clip` and
+`find_clip` as `AssetStore` methods; the audio add-on uses free functions that take the store, and either shape is valid.
+This excerpt follows `register_audio_clips`, `add_audio_clip` and `remove_audio_clip` of the add-on, with format probing
+left out.
 
 ```c3
 module c3d::audio;
@@ -54,80 +60,88 @@ import c3d::asset::custom;
 alias AudioClipId = CustomId{AudioClip};
 alias AudioClipAsset = CustomAsset{AudioClip};
 
+fn void free_audio_clip_payload(Allocator allocator, void* data, void* user) {
+    alloc::free(allocator, ((AudioClip*)data).bytes.ptr);
+}
+
 <*
- Add an audio clip, taking ownership of its arrays.
- @param [&in] clip : "Arrays must come from the store allocator."
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ Register the clip kind with the store.
+ @return? c3d::CAPACITY_EXCEEDED
+ @require capacity > 0
 *>
-fn AudioClipId? AssetStore.add_audio_clip_owned(&self, AudioClip* clip, String key = "") {
-    asset::check_key(self, key)!;
-    CustomPool{AudioClip}* pool = self.pool(AudioClip);
+fn void? register_audio_clips(AssetStore* assets, uint capacity) {
+    assets.register(AudioClip, capacity, &free_audio_clip_payload)!;
+}
+
+<*
+ Add a clip, copying the encoded bytes.
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
+fn AudioClipId? add_audio_clip(AssetStore* assets, char[] bytes, String key = "") {
+    asset::check_key(assets, key)!;
+    CustomPool{AudioClip}* pool = assets.pool(AudioClip);
     AudioClipId id = pool.add({})!;
+    char[] copy = alloc::new_array(assets.allocator, char, bytes.len);
+    copy[..] = bytes[..];
     *pool.get(id) = {
-        .header = { .key = asset::copy_string(self.allocator, key), .revision = 1 },
-        .data   = *clip,
+        .header = { .key = asset::copy_string(assets.allocator, key), .revision = 1 },
+        .data   = { .bytes = copy },
     };
-    asset::register_key(self, key, asset::custom_ref(AudioClip, id));
+    asset::register_key(assets, key, asset::custom_ref(AudioClip, id));
     return id;
 }
 
 <*
- Borrow an audio clip record.
- @require self.pool(AudioClip).is_live(id)
+ Free the clip and make its id stale.
+ @require assets.pool(AudioClip).is_live(clip)
 *>
-fn AudioClipAsset* AssetStore.audio_clip(&self, AudioClipId id) => self.pool(AudioClip).get(id);
-
-<*
- Remove an audio clip and free its arrays.
- @require self.pool(AudioClip).is_live(id)
-*>
-fn void AssetStore.remove_audio_clip(&self, AudioClipId id) {
-    CustomPool{AudioClip}* pool = self.pool(AudioClip);
-    AudioClipAsset* record = pool.get(id);
-    asset::forget_key(self, record.header.key);
-    asset::free_string(self.allocator, record.header.key);
-    free_audio_clip(self.allocator, &record.data);
+fn void remove_audio_clip(AssetStore* assets, AudioClipId clip) {
+    CustomPool{AudioClip}* pool = assets.pool(AudioClip);
+    AudioClipAsset* record = pool.get(clip);
+    asset::forget_key(assets, record.header.key);
+    asset::free_string(assets.allocator, record.header.key);
+    alloc::free(assets.allocator, record.data.bytes.ptr);
     *record = {};
-    pool.remove(id);
+    pool.remove(clip);
 }
-
-<*
- Audio clip registered under the key.
- @return? NOT_FOUND, c3d::INVALID_ARGUMENT
-*>
-fn AudioClipId? AssetStore.find_audio_clip(&self, String key) => asset::custom_id(AudioClip, self.find(key)!);
 ```
 
-`check_key` runs before a pool slot is taken, so a duplicate key faults
-`INVALID_ARGUMENT` without consuming capacity. `CustomFreeFn` is the hook type.
+`check_key` runs before a pool slot is taken, so a duplicate key faults `INVALID_ARGUMENT` without consuming capacity.
+`check_key`, `register_key`, `forget_key`, `copy_string` and `free_string` are the public key helpers. `custom_ref($Type,
+id)` builds the `AssetRef` a key maps to.
 
 ## Keys and find
 
-`assets.find(key)` returns an `AssetRef` with `kind == AssetKind.CUSTOM` and
-`slot` set to the type's process slot. `asset::custom_id($Type, ref)` turns it
-into a typed id and faults `INVALID_ARGUMENT` for a builtin reference or a
-reference of another custom kind. `find_texture` and the other builtin
-adapters fault `INVALID_ARGUMENT` on a custom key.
+`assets.find(key)` returns an `AssetRef` with `kind == AssetKind.CUSTOM` and `slot` set to the type's process slot.
+`asset::custom_id($Type, ref)` turns it into a typed ID and faults `INVALID_ARGUMENT` for a built-in reference or a
+reference of another custom kind. `find_texture` and the other built-in adapters fault `INVALID_ARGUMENT` on a custom key.
+An owner that wants lookup by key wraps these two calls in a function of its own.
 
-`CustomId{T}` is a distinct struct per kind: an id of one kind cannot be cast
-into an id of another.
+## Lifetime and revisions
 
-## Lifetime
-
-- A record with `header.revision == 0` is an empty slot. `add_*_owned` sets
-  revision 1; `remove_*` zeroes the record before `pool.remove`.
-- An owner that edits a payload in place advances `header.revision`, as
-  `mark_material_dirty` does for materials, so consumers keyed on the revision
-  see the change.
+- A record with `header.revision == 0` is an empty slot. `add` sets revision 1; `remove` zeroes the record before
+  `pool.remove`.
+- An owner that edits a payload in place advances `header.revision`, as `mark_material_dirty` does for materials, so
+  consumers keyed on the revision see the change.
 - An owner that replaces a whole payload also sets `header.replaced_revision` to the new revision, so consumers that
-  refresh incrementally do not patch replaced content as an edit. `mark_*_dirty` leaves it unchanged.
-- `remove_*` frees the payload itself; `on_destroy` covers only records still
-  live when the store is destroyed.
-- `destroy_asset_store` releases custom pools after the builtin records and
-  before the key map.
+  refresh incrementally do not patch replaced content as an edit. An in-place edit leaves it unchanged.
+- `remove` frees the payload itself; `on_destroy` covers only records still live when the store is destroyed.
+- `destroy_asset_store` releases custom pools after the built-in records and before the key map.
+
+## Serialization and descriptions
+
+A custom kind is saved by key through its process-wide slot ([Serialization](serialization.md)), and a described field
+reports `CUSTOM` and the slot address ([Type descriptions](type_descriptions.md#fields-and-metadata)).
 
 ## Limits
 
-- `MAX_CUSTOM_ASSET_TYPES` kinds per process.
-- The renderer never sees custom kinds; there is no GPU mirror for them.
-- Builtin kinds keep their typed pools and loaders; nothing migrates.
+- At most `MAX_CUSTOM_ASSET_TYPES` kinds per process.
+- The renderer never sees custom kinds; there is no GPU mirror for them. An owner that needs one mirrors the record itself,
+  as the audio add-on does for its clips.
+- Built-in kinds keep their typed pools and loaders.
+
+## See also
+
+- [Asset store](assets.md) for ids, keys and capacities.
+- [Audio](audio.md) for the add-on that uses this mechanism.
+- [Serialization](serialization.md) for references to custom kinds.
