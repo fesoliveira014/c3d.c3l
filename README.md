@@ -198,7 +198,7 @@ depth of field to [auto focus](docs/post.md#auto-focus) on the point under the c
 python3 scripts/build.py --example effects
 ```
 
-`taa` shows [temporal anti-aliasing](docs/post.md#temporal-anti-aliasing) on fine checker
+`taa` shows [temporal anti-aliasing](docs/anti_aliasing.md#temporal-anti-aliasing) on fine checker
 texture, a thin diagonal fence, a spinning cube, the skinned Fox, a morphing cube and a ring of
 individually orbiting instances, through a full-window view and a smaller inset of the same camera.
 Its panel freezes motion, sweeps the camera, cuts the main view and resizes the inset, each view
@@ -332,7 +332,7 @@ See [Models, glTF and FBX import](docs/models.md) for keys, options, the materia
 mapping and the supported extension subset. Its Textures panel sets the texture
 budget and lists each texture's resident mips, bytes and required level
 (`--texture-budget <MiB>` starts under a budget); see
-[Residency and memory budgets](docs/textures.md#residency-and-memory-budgets).
+[Residency and memory budgets](docs/texture_streaming.md#residency-and-memory-budgets).
 
 `animation` instantiates a model twice and plays a different clip on each
 instance through `c3d::anim`, with cross-fades, a quarter-weight action and
@@ -389,7 +389,7 @@ The cube preview selects faces with 1–6, switches generated/supplied sources w
 C, and controls LOD with L and +/−. The BC example uses N/L/A filtering, mouse
 orbit and wheel zoom. Both enable full validation. See
 [cube loading](docs/textures.md#load-six-cube-faces) and
-[supplied mip data](docs/textures.md#supply-mip-levels) for source ownership and
+[supplied mip data](docs/textures_reference.md#supply-mip-levels) for source ownership and
 the remaining unsupported texture forms.
 
 The `lod` example bakes one prototype at startup and draws 5,000 placements

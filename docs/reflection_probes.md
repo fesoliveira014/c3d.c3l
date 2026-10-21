@@ -1,15 +1,12 @@
 # Reflection probes
 
-A reflection probe lights the specular reflections of surfaces inside an oriented box from a cube
-environment. The component is `light::ReflectionProbe`; its `environment` names an
-[environment](environments.md) whose filtered cube the renderer samples. Diffuse light, the path
-tracer, probe-volume updates and ray misses never read a reflection probe; diffuse light from a grid
-of probes is described in [probe volumes](probe_volumes.md).
+A reflection probe lights the specular reflections of surfaces inside an oriented box from a cube environment. The
+component is `light::ReflectionProbe`; its `environment` names an [environment](environments.md) whose filtered cube the
+renderer samples. The cube comes from the application (any environment) or from `Renderer.capture_reflection_probe`, which
+renders the scene around the probe. Diffuse light, the path tracer, probe-volume updates and ray misses never read a
+reflection probe. Diffuse light from a grid of probes is in [probe volumes](probe_volumes.md).
 
-The cube comes from the application (any environment) or from `Renderer.capture_reflection_probe`,
-which renders the scene around the probe.
-
-## Workflow
+## Quick start
 
 ```c3
 Node* probe_node = scene.add_node(name: "living_room_probe")!;
@@ -25,176 +22,131 @@ renderer.upload_environment(captured)!;
 renderer.prepare_scene(&scene)!;
 ```
 
-1. Place the node at the box centre and size `half_extents` to the interior. The node's rotation orients
-   the box; its scale is ignored.
-2. Capture outside a frame, assign the returned id and prepare. The renderer writes no component or
-   node data; recording updates only batch aggregates.
-3. Move the node or change the room, then call `recapture_reflection_probe(&scene, probe_node)`. It
-   keeps both the environment and the texture ids.
+1. Place the node at the box center and size `half_extents` to the interior. The node's rotation orients the box; its scale
+   is ignored.
+2. Capture outside a frame, assign the returned id and prepare. The renderer writes no component or node data; recording
+   updates only batch aggregates.
+3. Move the node or change the room, then call `recapture_reflection_probe(&scene, probe_node)`. It keeps both the
+   environment and the texture ids.
 
-`reflection_probe(half_extents, environment)` returns a `BOX` probe with `blend_distance` 0.5, unit
-intensity and the capture point at the node. `reflection_probe_valid` reports whether the renderer can
-read a component: finite positive half extents, a capture offset strictly inside the box on every axis,
-and finite nonnegative `blend_distance` and `intensity`. A zeroed `ReflectionProbe` is not valid; the renderer requires `light::reflection_probe_valid`.
+## Concepts
 
-## Placement and capture point
-
-The capture point is `node position + rotation * capture_offset`. Place it where a viewer stands, away
-from large reflective or emissive objects near the centre. The box is the region the probe lights; it
-need not match the room exactly, but a point outside every box reads the global environment.
+- **Box.** The probe lights every shaded point inside its oriented box. `reflection_probe(half_extents, environment)`
+  returns a `BOX` probe with `blend_distance` 0.5, unit intensity and the capture point at the node.
+- **Capture point.** `node position + rotation * capture_offset`. Place it where a viewer stands, away from large
+  reflective or emissive objects near the center. A point outside every box reads the global environment.
+- **Projection.** `BOX` intersects the reflected direction with the box and aims it from the capture point, for interiors.
+  `INFINITE` samples the cube with the world direction unchanged, for far surroundings. Rough lobes are not
+  distance-corrected. Cubes are world-aligned: an authored cube does not turn with its node.
+- **Static captures.** A capture is a snapshot. A moved node moves its box and capture point but not its cube, and a changed
+  light or global environment leaves captures stale. Nothing marks staleness; call `recapture_reflection_probe`.
+- **Validity.** `reflection_probe_valid` reports whether the renderer can read a component: finite positive half extents, a
+  capture offset strictly inside the box on every axis, and finite nonnegative `blend_distance` and `intensity`. The renderer
+  requires a valid component. A zeroed `ReflectionProbe` is not valid.
 
 ## Overlap and edges
 
-A view gathers every visible probe on a layer of the camera that names a live environment, keeps the 16
-nearest to the camera, and sorts them by `priority` (higher first), then box volume (smaller first), then
-entity index. At each shaded point the first box that contains it lights the point, the second fades in
-under it, and later boxes are not read. The shares of the two probes and the global environment sum to
-one; without a global environment the global share is zero specular.
+A view gathers every visible probe on a layer of the camera that names a live environment, keeps the 16 nearest to the
+camera (`REFLECTION_PROBE_CAPACITY`), and sorts them by `priority` (higher first), then box volume (smaller first), then
+entity index. At each shaded point the first box that contains it lights the point, the second fades in under it, and later
+boxes are not read. The shares of the two probes and the global environment sum to one. Without a global environment the
+global share is zero specular.
 
-`blend_distance` is the inward fade at every face. The weight is the distance to the nearest face over
-`blend_distance`, clamped to one. With 0 the edge is hard and the first box that contains the point
-supplies all its light. A blend wider than the smallest half extent is clamped to it. Near a face a point
-reads two cubes; keep the fade only as wide as the seam needs.
+- `blend_distance` is the inward fade at every face: the distance to the nearest face over `blend_distance`, clamped to
+  one. With 0 the edge is hard. A blend wider than the smallest half extent is clamped to it. Near a face a point reads two
+  cubes, so keep the fade only as wide as the seam needs.
+- Without a global environment, the fade band at the edge of a lone probe and any point outside every box receive no
+  specular for the share the missing environment would have supplied. Set a global environment or `blend_distance = 0` so a
+  probe does not fade to black at its faces.
 
-Without a global environment, a point outside every box and the fade band at the edge of a lone probe
-receive no specular for the share the missing environment would have supplied. In a scene without a global
-environment, set a global environment or `blend_distance = 0` so a probe does not fade to black at its faces.
+## Capture and re-capture
 
-## Projection
+`capture_reflection_probe(&scene, probe_node, desc, key)` renders six forward frames of 90 degrees from the capture point at
+`LINEAR_HDR`, with no anti-aliasing or post processing, waits, and copies them into a new store-owned cube environment.
+`recapture_reflection_probe(&scene, probe_node, desc)` renders into the cube the probe's environment already borrows.
 
-| Projection | Use |
-| --- | --- |
-| `BOX` | Interiors: the reflected direction is intersected with the box and aimed from the capture point |
-| `INFINITE` | Far surroundings: the world direction samples the cube unchanged |
+- **Seen:** shadows from every shadowing light, the global environment and background, the atmosphere sky and its aerial
+  perspective, probe volumes and every other reflection probe.
+- **Not seen:** the probe being captured, ambient occlusion, screen-space indirect light, traced effects, volumetric fog,
+  `HeightFog` and cloud layers. A static cube would freeze the fog the capture point saw and leave every probe stale
+  after each fog edit.
+- **Time.** Frames run at time 0: sway, water waves and animated custom stages are captured at time 0.
+- **Description.** `ReflectionCaptureDesc` sets the face edge in texels (`size`, a power of two from
+  `asset::MIN_ENVIRONMENT_SPECULAR_SIZE` to `MAX_REFLECTION_CAPTURE_SIZE`; default `DEFAULT_REFLECTION_CAPTURE_SIZE`), the
+  `near` plane (positive), the `far` plane (0 is infinite, else beyond `near`) and the `layers` the faces render.
+  `Renderer.last_reflection_capture` holds the time and bytes of the last capture.
+- **Frame state and faults.** Both entry points need an unopened frame. They fault `INVALID_ID` for a dead node,
+  `INVALID_ARGUMENT` for a node without a probe, an invalid probe or description or a rejected key, `CAPACITY_EXCEEDED` for a
+  full store, view or target pool, `UNSUPPORTED`, `ASSET_DATA_UNAVAILABLE`, `SHADER_NOT_FOUND`, `RESOURCE_IN_USE` and the
+  gpu faults of rendering six frames. A fault leaves the store, the frame index and an existing cube unchanged.
+- **Re-capture faults.** `recapture_reflection_probe` also faults `INVALID_ID` for a dead environment or texture, and
+  `INVALID_ARGUMENT` when the environment is not a texture environment or its cube is not an `RGBA16_FLOAT` cube of
+  `desc.size`.
 
-Rough lobes are not distance-corrected. Cubes are world-aligned: an authored cube does not turn with its
-node, and the box axes turn only the volume and the projection.
+A re-capture rewrites the cube in place; its `size` must match the cube. The next preparation re-uploads the texture and
+re-filters the
+environment without a new GPU allocation. Every probe that names that environment changes.
 
-## Lobes
+To author a cube yourself, register any cube [environment](environments.md) and assign it to `ReflectionProbe.environment`.
 
-Every positional environment-specular lookup selects once per pixel and re-aims its own direction through
-each selected probe: Standard and Physical base specular, clearcoat, sheen (through the probe's own
-Charlie cube) and the transmission fallback. Forward and deferred views, custom stages that call
-`shade_standard_surface` or `evaluate_environment`, and the shading of traced reflection hits all apply
-probes. Toon has no environment specular.
+## Lobes that use probes
 
-A traced reflection replaces the probe term on smooth pixels, the probe term remains above
-`max_reflection_roughness`, and the two mix over the top fifth of the threshold, so no specular is counted
-twice ([reflections](reflections.md)).
+Every positional environment-specular lookup selects once per pixel and re-aims its own direction through each selected
+probe: Standard and Physical base specular, clearcoat, sheen (through the probe's own Charlie cube) and the transmission
+fallback. Forward and deferred views, custom stages that call `shade_standard_surface` or `evaluate_environment`, and the
+shading of traced reflection hits apply probes. Toon has no environment specular.
 
-A probe's sheen cube is built the first time a view contains a sheen material, like the global one;
-until then no draw has sheen. That first use stalls for about the prefilter cost.
-`Renderer.prepare_scene` prepares every probe environment and its sheen cube, which avoids the stall.
+A traced reflection replaces the probe term on smooth pixels; see [reflections](reflections.md#lighting).
 
-## What a capture sees
+A probe's sheen cube is built the first time a view contains a sheen material, and that first use stalls for about the
+prefilter cost. `Renderer.prepare_scene` prepares every probe environment and its sheen cube, which avoids the stall.
 
-A capture renders six forward frames of 90 degrees from the capture point at `LINEAR_HDR`, with no
-anti-aliasing or post processing, then waits and copies them into the cube.
+## Remove probe assets
 
-- Seen: shadows from every shadowing light, the global environment and background, the atmosphere sky and
-  its aerial perspective, probe volumes and every other reflection probe.
-- Not seen: the probe being captured, ambient occlusion, screen-space indirect light, traced effects,
-  volumetric fog and `HeightFog`. A static cube would freeze the fog the capture point saw and leave every
-  probe stale after each fog edit; the sky and aerial perspective are one fog pass, so the aerial
-  perspective stays.
-- Frames run at time 0: sway, water waves and animated custom stages are captured at time 0.
+Read `assets.environment(id).desc.source`, then call `remove_environment(id)` and `remove_texture(source)`, in that order.
+A probe whose environment was removed is skipped and counted in `Stats.dangling_refs`. Removing the component or the node
+removes the probe from every view.
 
-`ReflectionCaptureDesc` sets the face edge (`size`, a power of two from
-`asset::MIN_ENVIRONMENT_SPECULAR_SIZE` to `MAX_REFLECTION_CAPTURE_SIZE`; default
-`DEFAULT_REFLECTION_CAPTURE_SIZE`), the depth range and the layers the faces render.
-`Renderer.last_reflection_capture` holds the time and bytes of the last capture.
+## Capacity and counters
 
-Both entry points need an unopened frame. A capture checks the node, the component, the description, the
-key and the free store, view and target slots before it creates anything; a fault leaves the store, the
-frame index and an existing cube unchanged.
+| Face size | Source cube (GPU) | GGX cube | Charlie cube (sheen only) | CPU copy and capture readback |
+| --- | --- | --- | --- | --- |
+| 128 | about 1 MiB | about 1 MiB | about 1 MiB | 768 KiB each |
+| 256 | 4 MiB | 4 MiB | 4 MiB | 3 MiB each |
+| 1024 | 64 MiB | 64 MiB | 64 MiB | 48 MiB each |
 
-## Invalidation and removal
+- The source cube keeps its full mip chain, which the prefilters read: 1.33 times its base level. The CPU copy holds the base
+  level only, and the readback is temporary.
+- A resolved probe holds 38 texture heap slots, 75 with a Charlie cube. Only probes a renderer has resolved hold cubes and
+  slots.
+- Each probe takes one environment and one texture record from the asset store. Raise `AssetStoreDesc.max_environments`
+  (default 16, shared with authored environments) for more than 15 probes beside a global environment.
+- `assets.release_texture_cpu(source)` frees the CPU copy once the renderer has prepared the probe. A renderer created
+  afterwards cannot upload that probe and counts it in `Stats.reflection_probes_unavailable`; it still takes one of the 16
+  nearest slots, so it can push usable probes out. A re-capture restores the copy.
+- `Stats.reflection_probes_dropped` counts, per view and frame, probes past the nearest 16. `Stats.dangling_refs` includes
+  probes whose environment is dead.
 
-Captures are static. A moved node moves its box and capture point but not its cube; a changed light or
-global environment leaves captures stale. Nothing marks staleness; call `recapture_reflection_probe`.
+## Debug probes
 
-A re-capture at the same size rewrites the cube in place. The next preparation re-uploads the texture and
-re-filters the environment without a new GPU allocation. It rewrites the cube the environment borrows, so
-every probe that names that environment changes.
+- `DebugDraw.reflection_probes(scene, rgba)` draws each visible probe's oriented box and a cross at its capture point.
+- `gui::scene_panel` edits the component. `gui::reflection_capture_buttons` adds "Capture new" and "Re-capture" for the
+  selected probe. "Capture new" keeps the previous environment and texture in the store, so repeated presses fill the
+  environment pool and then fault with `CAPACITY_EXCEEDED`; remove the old assets first or use "Re-capture".
+- `gui::targets_panel` previews a probe's cube when given its environment id.
 
-To remove a captured probe's assets, read `assets.environment(id).desc.source`, then call
-`remove_environment(id)` and `remove_texture(source)`, in that order. A probe whose environment was
-removed is skipped and counted in `Stats.dangling_refs`; removing the component or the node removes the
-probe from every view.
+Run `python3 scripts/build.py --example reflection_probes` for two rooms with a probe each. It takes `--deferred`,
+`--reflections`, `--capture-size N` and `--benchmark`. `gltf_viewer --benchmark` adds probes with `--reflection-probes`; see
+[benchmarking](benchmarking.md).
 
-## Capacity and memory
+## Limits
 
-Per probe:
+- A view reads the 16 nearest probes and blends at most two boxes at a point.
+- Probes carry specular only. Captures are static.
 
-| Face size | Source cube (GPU) | GGX cube | SH buffers | Charlie cube (sheen only) | CPU copy | Capture readback (temporary) |
-| --- | --- | --- | --- | --- | --- | --- |
-| 128 | 1,023.98 KiB | 1,023.75 KiB | 18 KiB | 1,023.75 KiB | 768 KiB | 768 KiB |
-| 256 | 4.0 MiB | 4.0 MiB | 18 KiB | 4.0 MiB | 3 MiB | 3 MiB |
-| 1024 | 64.0 MiB | 64.0 MiB | 18 KiB | 64.0 MiB | 48 MiB | 48 MiB |
+## See also
 
-- The source cube keeps its full mip chain, which the prefilters read: one third more than its base level
-  (1.33 times). The chain is built when the renderer uploads the capture; the CPU copy holds the base level only.
-  A capture whose chain is incomplete when it is filtered is read at its base level with a much larger sampling
-  budget.
-- A resolved probe holds 38 texture heap slots, 75 with a Charlie cube, of the 4,096-slot heap. Only probes a
-  renderer has resolved hold cubes and slots.
-- Each probe takes one environment and one texture record from the asset store. Raise
-  `AssetStoreDesc.max_environments` (default 16, shared with authored environments) for more than 15 probes
-  beside a global environment.
-- A view packs 1,552 bytes of frame upload ring for the probe set and allocates nothing else per frame.
-- `assets.release_texture_cpu(source)` frees the CPU copy once the renderer has prepared the probe. A
-  renderer created afterwards cannot upload that probe and counts it in `Stats.reflection_probes_unavailable`;
-  it still takes one of the 16 nearest slots. A re-capture restores the copy.
-
-## Stats and debugging
-
-| Counter | Meaning |
-| --- | --- |
-| `Stats.reflection_probes_dropped` | This frame, per view: probes past the nearest 16 |
-| `Stats.reflection_probes_unavailable` | This frame, per view: probes whose CPU copy was released before this renderer uploaded them |
-| `Stats.dangling_refs` | Includes probes whose environment is dead |
-
-`DebugDraw.reflection_probes(scene, rgba)` draws each visible probe's oriented box and a cross at its capture
-point. `gui::scene_panel` edits the component through the inspector, and `gui::reflection_capture_buttons`
-adds "Capture new" and "Re-capture" for the selected probe. "Capture new" keeps the previous environment and texture
-in the store, so repeated presses fill the environment pool (`max_environments`) and then fault with
-`CAPACITY_EXCEEDED`; remove the old assets first or use "Re-capture". The `targets_panel` previews a probe's cube when
-given its environment id.
-
-## Example
-
-`python3 scripts/build.py --example reflection_probes` builds and runs two rooms with a probe each: warm and
-cool walls and lamps, a window in the cool room, a glossy floor across both, rows of metal spheres from
-roughness 0 to 1, and a clearcoat and a sheen sphere. Flags: `--deferred`; `--reflections` (deferred view with
-traced reflections); `--gpu-timings`; `--capture-size N`; `--validation`; `--benchmark [--frames N]`, which
-renders headless at 2560 by 1440 and prints each capture's time, the first frame's `environment.prefilter` and
-`environment.irradiance` stage times, and the mean GPU time of the pass that samples the probes
-(`Pass.FORWARD_OPAQUE` forward, `Pass.LIGHTING` deferred). GPU times need the profiling build used for `sky`:
-
-```bash
-c3c build reflection_probes --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
-```
-
-`gltf_viewer --benchmark` adds probes over the model bounds with `--reflection-probes 0|1|2|16` and
-`--reflection-probe-placement inside|outside`; see [benchmarking](benchmarking.md).
-
-## Measured cost
-
-Measured on an RTX 4090, medians of per-run medians. Sampling runs Sponza at 2560 by 1440 (seven interleaved runs
-for one probe and for 16 with none inside, three for the rest); capture runs the example, three runs. The commands
-are in [benchmarking](benchmarking.md) and the example section above.
-
-| Measurement | Result |
-| --- | --- |
-| Sampling, `gpu_opaque_ms` with 0, 1, 2 and 16 probes, and 16 probes with none inside | 0.348, 0.376, 0.441, 0.395 and 0.504 ms |
-| Sampling, `gpu_lighting_ms` with the same placements, deferred | 0.338, 0.360, 0.413, 0.371 and 0.463 ms |
-| Capture time per probe, steady (the second probe) | 4.6 to 5.8 ms at 128; 17 to 19 ms at 256 |
-| Capture time of the first probe in a run, with first-use pipeline creation | 59 to 61 ms at 128 (839 ms on a cold first run); 56 to 64 ms at 256 |
-| First-frame `environment.irradiance`, two probes | 0.017 ms at 128; 0.045 to 0.047 ms at 256 |
-| The example's forward opaque pass | 0.17 to 0.20 ms at both sizes |
-
-The profiler sums stage times over a frame, so the environment row covers both probes.
-
-Selection tests the packed boxes in order until a box holds the point at full weight, or two boxes hold it, loading
-only each box's centre, axes and blend distance. Sixteen boxes that hold no point are the worst case: 0.128 ms forward and 0.103 ms deferred over one
-probe. Sixteen boxes that hold the points cost 0.02 ms over one.
+- [Reflections](reflections.md) for traced reflections that replace the probe term on smooth pixels.
+- [Environments](environments.md) for the environment asset and its pool limits.
+- [Probe volumes](probe_volumes.md) for diffuse indirect light.
+- [Lighting techniques](lighting_techniques.md) for choosing between effects.

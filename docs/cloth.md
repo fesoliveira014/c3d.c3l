@@ -6,7 +6,7 @@ rigid bodies and publishes the result back to the geometry every frame. It handl
 or dihedral bending, wind, self-contact, continuous contact, skinned and crowd meshes, tearing, and resting.
 
 It imports the standard library, core and `c3d::physics`, and creates no GPU resources: it writes editable geometry
-and [vertex motion history](post.md#edited-vertices), and the renderer uploads the changed ranges. Parameters, faults
+and [vertex motion history](geometry_edits.md#edited-vertices), and the renderer uploads the changed ranges. Parameters, faults
 and diagnostics are in the [cloth reference](cloth_reference.md).
 
 ## Quick start
@@ -415,7 +415,7 @@ Publication converts world positions through the inverse current node matrix int
 normals, optional tangents and bounds, and marks only the changed range of each stream dirty. Unchanged streams are not
 marked and unchanged output keeps the geometry revision. Solve and publication allocate nothing after preparation. A
 revision uploads only the changed vertex ranges (counted in `Stats.upload_bytes`; see
-[publishing geometry edits](post.md#publishing-geometry-edits)): 24 bytes per vertex when every vertex changes, or 40
+[publishing geometry edits](geometry_edits.md#publishing-geometry-edits)): 24 bytes per vertex when every vertex changes, or 40
 with `tangent_frame`. Each temporal view also writes 12 bytes per vertex of previous positions through the frame ring
 (`Stats.vertex_history_bytes`).
 
@@ -481,4 +481,4 @@ The panel shows the solver and upload statistics. An unknown or malformed flag p
 
 - [Cloth reference](cloth_reference.md)
 - [Physics](physics.md), [ragdolls](ragdoll.md), [owner readiness](owner_readiness.md), [large worlds](large_world.md)
-- [Serialization](serialization_reference.md#physics), [scene trace](scene_trace.md), [post](post.md#edited-vertices)
+- [Serialization](serialization_reference.md#physics), [scene trace](scene_trace.md), [post](geometry_edits.md#edited-vertices)

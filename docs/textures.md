@@ -1,16 +1,15 @@
 # Textures and images
 
-Basic supports one color map; [Standard materials](materials.md#standard-maps)
-support base color, metallic/roughness, normal, occlusion and emissive maps.
+A texture asset holds the CPU pixels of an image, or the mip levels of a supplied chain, in the `AssetStore`. A material
+slot selects a texture, a sampler, a UV set and a UV transform. The renderer owns the uploaded images: it builds mip
+chains or uploads supplied levels unchanged. Loaders live in `c3d::asset::image`; descriptors, slots and formats live in
+`c3d::material`. Compressed containers, supplied mips and the container format tables are in the
+[textures reference](textures_reference.md). Region edits, replacement and residency budgets are in
+[texture streaming](texture_streaming.md).
 
-A texture asset owns either mip-zero pixels or supplied mip/layer data. A material
-slot selects a 2D texture, sampler, UV set and UV transform. The renderer owns
-uploaded images and either builds mips or uploads the supplied levels unchanged.
+## Quick start
 
-## Load a color map
-
-Import `c3d`, `c3d::asset`, `c3d::asset::image` and `c3d::material`.
-Given a live `AssetStore assets`:
+Import `c3d`, `c3d::asset`, `c3d::asset::image` and `c3d::material`. Given a live `AssetStore assets`:
 
 ```c3
 TextureId texture = image::load_texture(
@@ -25,192 +24,95 @@ MaterialId material_id = assets.add_material(material::basic({
 }))!;
 ```
 
-PNG and JPEG decode to four eight-bit channels with the top row first. JPEG's
-missing alpha becomes 255. Choose `srgb: true` for color maps and `false` for
-linear data such as masks. The storage format becomes `RGBA8_SRGB` or
-`RGBA8_UNORM`; selecting sRGB does not rewrite the decoded bytes. No loader flips
-rows or changes global decoder settings.
+`texture_slot(texture)` selects UV0, the builtin trilinear repeat sampler and an identity transform. Basic shading
+multiplies its color by the sampled map. The renderer uploads the texture the first time a drawn material references it.
+Upload earlier with [`renderer.upload(texture)`](#upload-edit-and-release-cpu-sources).
 
-Basic shading multiplies its color by the sampled map. A material with no map
-keeps its color-only behavior. `texture_slot(texture)` selects UV0, the builtin
-trilinear repeat sampler, and an identity transform.
+## Concepts
 
-## Standard color and data maps
+- **Asset and device copy.** A `TextureAsset` owns the CPU source: mip-zero pixels (`MIP_ZERO`), a supplied chain
+  (`SUPPLIED_MIPS`) or nothing for an empty storage texture (`EMPTY`). Each renderer keeps its own GPU image, uploaded
+  from the source. The source can be released after upload.
+- **Rows and color space.** Decoded images and cube faces keep the top row first; no loader flips rows or changes global
+  decoder settings. `srgb: true` stores `RGBA8_SRGB` and `false` stores `RGBA8_UNORM` without rewriting the decoded bytes,
+  and sRGB decoding comes from the texture format. Mips filter sRGB color in linear light and alpha linearly.
+- **Mips.** `texture_2d_desc` requests a full generated chain; odd edges contribute, floating-point channels filter without
+  clamping, and each cube face filters independently. Disable `desc.generate_mips` for mip zero alone, or supply every level
+  ([supplied mips](textures_reference.md#supply-mip-levels)); supplied levels are never regenerated.
+- **Samplers.** The material slot selects the sampler, so materials can share a texture with different filtering. Builtin
+  ids: `asset::SAMPLER_NEAREST`, `SAMPLER_LINEAR_REPEAT`, `SAMPLER_LINEAR_CLAMP`, `SAMPLER_ANISOTROPIC` (clamped to the
+  device limit) and `SAMPLER_SHADOW` (a comparison sampler for shadow reads). A comparison sampler in a material slot faults
+  `c3d::INVALID_ARGUMENT`. Builtin texture and sampler ids live
+  for the store lifetime and cannot be replaced or removed; their CPU pixels can still be released after preparation.
 
-Load base-color and emissive images with `srgb: true`; load metallic/roughness,
-normal and occlusion images with `srgb: false`. Base RGBA multiplies the base
-factor, G/B multiply roughness/metallic, RGB encodes tangent-space XYZ normals,
-R controls ambient occlusion, and emissive RGB multiplies emission. Alpha remains
-linear even in sRGB formats. A packed R/G/B image can serve occlusion and
-metallic/roughness through two independent slots sharing one texture asset.
+### Pixel formats
 
-Each slot starts absent with identity coordinates in `STANDARD_PARAMS_DEFAULT`;
-normal scale and occlusion strength both start at 1. Use the named default before
-assigning maps. Normal scale is finite and signed; occlusion strength is [0, 1].
-Missing or stale ids preserve scalar factors and the geometry normal. Normal
-textures use `TextureDesc.semantic = NORMAL_RGB` or `NORMAL_RG`; RG reconstructs
-positive Z. These semantics require linear formats. Generated normal mips filter
-decoded vectors and normalize them before encoding. A zero decoded vector uses
-neutral +Z. See [tangent frames](materials_reference.md#tangent-frames) for supplied-tangent
-authority, derivative fallback and unsupported nontriangle/wireframe cases.
+| Format | Use |
+| --- | --- |
+| `RGBA8_UNORM`, `RGBA8_SRGB` | Eight-bit color and data; the PNG and JPEG loaders produce these |
+| `RGBA16_FLOAT`, `RGBA32_FLOAT` | Floating-point data; Radiance HDR produces `RGBA32_FLOAT` |
+| `R16_UINT` | One unsigned 16-bit integer per texel, such as heights; no generated mips, integer fetch only |
+| `BC1_RGBA_*`, `BC3_*`, `BC4_UNORM`, `BC5_UNORM`, `BC6H_UFLOAT`, `BC7_*` | Block-compressed 2D textures, supplied with their mips |
 
-The mapped `pbr` example loads four committed fixtures relative to its source file,
-so it does not depend on the launch directory. Both geometry variants and all
-referenced textures are prepared before interaction. Its private map editor can
-change each slot without modifying shared UV streams; scalar and mapped presets
-make the difference visible. See the `pbr` example
-and [fixture provenance](../test/fixtures/README.md#standard-material-fixtures).
+Two-dimensional textures take every format. Cubes are uncompressed, and volumes are single-mip RGBA8. A slot that is
+empty, dead or stale uses that slot's
+scalar or unperturbed-normal fallback; a dead sampler uses builtin trilinear repeat.
 
-## Generated alpha coverage
+## Load a color map
 
-`TextureDesc.coverage` defaults to `NONE`. `THRESHOLD` preserves the fraction of
-texels passing `alpha_threshold` during mip generation; `ALL_PASS` and
-`ALL_FAIL` describe constant coverage. The threshold must be finite and in
-(0, 1]. Coverage filtering applies only to eligible uncompressed generated
-color mips. Supplied DDS/KTX levels remain unchanged.
-
-Each generated level, per cube face, keeps its filtered alpha when its passing
-fraction is within 0.02 of mip zero's or already the nearest count to it. Otherwise
-the level's alpha is scaled about the threshold and its passing count becomes the
-nearest one: texels above a cutoff alpha pass, texels below fail, and evenly spaced
-texels at the cutoff pass in raster order. Eight-bit alpha selects the cutoff by
-code; float alpha selects it in 1/256 steps. The result is deterministic and
-independent of banding, and color channels are unchanged.
-
-Adding or replacing a coverage texture rejects alpha outside [0, 1] with
-`INVALID_ARGUMENT`. Threshold generation counts mip zero's passing texels while it
-filters the first level, so `mark_texture_dirty` only advances the revision and
-`restore_texture_cpu` keeps it. Restoring expects the released bytes; call
-`mark_texture_dirty` after restoring different pixels. Alpha edited in place outside
-[0, 1] fails that generation with `INVALID_ARGUMENT`; on the budgeted path the fault
-comes from a generation step and fails the preparation record.
-
-## Decode memory and retain ownership
-
-Use `decode_image` for embedded or already-loaded PNG, JPEG or Radiance HDR
-bytes. `load_image(allocator, path)` returns the same owned `Image` from a file:
+`load_texture` decodes a PNG or JPEG file into four eight-bit channels. A JPEG's missing alpha becomes 255.
 
 ```c3
-image::Image decoded = image::decode_image(mem, encoded_bytes)!;
-defer image::destroy_image(&decoded);
+TextureId color = image::load_texture(&assets, "albedo.png", true)!;   // srgb color map
+TextureId mask = image::load_texture(&assets, "mask.png", false)!;     // linear data
+```
 
-TextureId texture = assets.add_texture(
-    material::texture_2d_desc(decoded.width, decoded.height, decoded.format),
-    decoded.pixels,
+Choose `srgb: true` for color maps and `false` for linear data such as masks. `load_texture` rejects Radiance HDR
+files with `c3d::ASSET_FORMAT_ERROR`.
+
+### Standard material maps
+
+| Slot | `srgb` | Channels |
+| --- | --- | --- |
+| Base color | `true` | RGBA multiplies the base factor |
+| Emissive | `true` | RGB multiplies the emission |
+| Metallic and roughness | `false` | G multiplies roughness, B multiplies metallic |
+| Occlusion | `false` | R controls ambient occlusion |
+| Normal | `false`, with `semantic` | Tangent-space XYZ |
+
+A packed R, G and B image serves occlusion and metallic-roughness through two slots that share one texture asset. Start
+from `STANDARD_PARAMS_DEFAULT`: every slot is absent with identity coordinates, and normal scale and occlusion strength
+are 1. Normal scale is finite and signed; occlusion strength is in `[0, 1]`. A missing or stale id keeps the scalar
+factors and the geometry normal.
+
+### Load a normal map
+
+Pass `TextureSemantic.NORMAL_RGB` or `NORMAL_RG` so generated mips filter and renormalize the decoded vectors:
+
+```c3
+TextureId normals = image::load_texture(
+    assets: &assets,
+    path: "normal.png",
+    srgb: false,
+    semantic: TextureSemantic.NORMAL_RGB,
 )!;
 ```
 
-`Image` stores its allocator and owns one pixel allocation. `add_texture` copies
-pixels into the store, so destroying the decoded image or ending its temporary
-pool does not invalidate the texture. For a color PNG/JPEG, select
-`RGBA8_SRGB` in the texture description when the bytes represent sRGB color.
+`NORMAL_RG` reconstructs positive Z. Both semantics need a linear format; an sRGB format faults
+`c3d::INVALID_ARGUMENT` and `R16_UINT` faults `c3d::UNSUPPORTED`. A zero decoded vector becomes neutral +Z. The container
+loaders take the same `semantic` argument and leave supplied texels unchanged. For supplied tangents and the derivative
+fallback, see [tangent frames](materials_reference.md#tangent-frames).
 
-To avoid that second copy, decode with `assets.allocator` and transfer the slice:
-
-```c3
-image::Image decoded = image::decode_image(assets.allocator, encoded_bytes)!;
-defer image::destroy_image(&decoded);
-
-TextureId texture = assets.add_texture_owned(
-    material::texture_2d_desc(decoded.width, decoded.height, decoded.format),
-    decoded.pixels,
-)!;
-decoded.pixels = {};
-```
-
-Clear the image's slice only after insertion succeeds. On failure it still owns
-its allocation. `load_texture` and `load_hdr` use this transfer path internally;
-keys follow the store's existing uniqueness policy and are not replaced.
-
-## File sources
-
-`load_texture`, `load_hdr`, `load_cube`, `load_texture_r16` and
-`load_texture_container` read through the store's file source, and `load_image`
-takes a trailing `FileSource file_source = {}`. A null source reads the file
-system. See [File sources](assets.md#file-sources).
-
-## Write a PNG
-
-`image::write_png(path, width, height, pixels)` encodes tightly packed RGBA8 rows, top row first,
-as a PNG file and writes the bytes unchanged (no colour-space chunk), so pass sRGB-encoded bytes
-for colour, such as a `read_render_target` copy of an `RGBA8_SRGB` target. A zero extent or a
-buffer that is not width x height x 4 bytes faults `INVALID_ARGUMENT`; a file that cannot be
-written faults `ASSET_IO_ERROR`. The encoder is C3 over the standard library's deflate and needs
-no C source.
-
-## HDR data and mip filtering
+## Load HDR data
 
 ```c3
 TextureId environment_pixels = image::load_hdr(&assets, "studio.hdr")!;
 ```
 
-`load_hdr` accepts Radiance HDR and stores `RGBA32_FLOAT`, retaining values above
-one. Its pixel slice contains tightly packed four-channel floats. It rejects
-PNG/JPEG rather than implicitly converting their range. Conversely,
-`load_texture` rejects HDR. Register the resulting TextureId through
-`light::texture_environment` and `assets.add_environment` for
-[image-based lighting or an independent sky](environments.md). Texture loading
-does not perform display tonemapping.
-
-Two-dimensional uploads support `RGBA8_UNORM`, `RGBA8_SRGB`, `RGBA16_FLOAT`,
-`RGBA32_FLOAT` and `R16_UINT`. `texture_2d_desc` requests a complete mip chain by
-default. Mips filter sRGB RGB channels in linear light, alpha linearly, and
-floating-point channels without clamping their range. Odd edges contribute to the
-filtered result. Disable `desc.generate_mips` for mip zero alone. `R16_UINT` takes
-no generated mips: `add_texture` rejects the request with
-`c3d::INVALID_ARGUMENT`. Uncompressed cube textures use the same formats and
-filter each face independently. Supplied levels, including compressed ones, use
-the copying API below and are never regenerated.
-
-Builtin sampler ids are `asset::SAMPLER_NEAREST`,
-`asset::SAMPLER_LINEAR_REPEAT`, `asset::SAMPLER_LINEAR_CLAMP` and
-`asset::SAMPLER_ANISOTROPIC`. The renderer clamps requested anisotropy to device
-limits. Sampler choice lives on the material slot, so several materials can use
-the same texture with different filtering. Builtin texture and sampler ids are reserved
-for the store lifetime; removal applies to custom assets. Their CPU pixels may still be
-released after preparation.
-
-A zero or stale map reference uses that slot's scalar or unperturbed-normal
-fallback; a zero or stale sampler reference selects builtin trilinear repeat.
-A live cube reference in any Basic or Standard material slot reports `c3d::UNSUPPORTED`; cube views use a different sampled-image heap.
-So does an `R16_UINT` texture, which only an integer fetch can read.
-Render-target references, non-cube arrays and volumes remain unsupported.
-
-## Sixteen-bit single-channel data
-
-`R16_UINT` holds one unsigned 16-bit integer per texel, such as a height map.
-Load one from a PNG or JPEG:
-
-```c3
-TextureId heights = image::load_texture_r16(&assets, "heights.png")!;
-```
-
-`load_texture_r16` stores a single-mip, linear texture with the top row first and
-the texels in native byte order; `decode_image_r16` returns the same data as an
-`Image` without inserting it. A 16-bit PNG keeps all 16 bits. An 8-bit PNG or JPEG
-widens exactly, `v × 257`, so 255 becomes 65535, and color reduces to luminance.
-Radiance input is rejected with `c3d::ASSET_FORMAT_ERROR`, since its decoder
-would pass 8-bit values as heights. For RAW heights, pass native-order `ushort`
-texels to `add_texture` with an `R16_UINT` description and `generate_mips`
-disabled.
-
-Shaders read the texture only through gpu.c3l's integer fetch, never through a
-sampler, so filtering is manual. `texture_fetch.glsl` includes it:
-
-```glsl
-uint height = gpu_fetch_uint(material.slots[0].texture_index, texel, 0);
-```
-
-A custom material may hold it in any slot except slot 0 of a masked material,
-which the depth stage and traced coverage sample for alpha. A dispatch reads it
-through a `read_texture` entry. A Basic, Standard, Physical or Toon map, a Toon
-gradient map, and slot 0 of a masked custom material report `c3d::UNSUPPORTED`
-when the material is uploaded or drawn. `R16_UINT` is not a storage, render
-target, volume or environment source format.
-
-Heights follow `offset + scale × texel / 65535`, beside the 8-bit
-`texel / 255`. A physics height field reads an `R16_UINT` texture with the same
-convention: its node's position and `local.scale.y` supply the offset and scale.
+`load_hdr` accepts Radiance HDR and stores tightly packed four-channel floats (`RGBA32_FLOAT`), keeping values above
+one. It rejects PNG and JPEG with
+`c3d::ASSET_FORMAT_ERROR`. Loading does not tone map. Register the texture with `light::texture_environment` and
+`assets.add_environment` for [image-based lighting or a sky](environments.md).
 
 ## Load six cube faces
 
@@ -229,91 +131,88 @@ TextureId cube = image::load_cube(
 renderer.upload(cube)!;
 ```
 
-`CubeFace` names this order: `POSITIVE_X`, `NEGATIVE_X`, `POSITIVE_Y`,
-`NEGATIVE_Y`, `POSITIVE_Z`, `NEGATIVE_Z`. Each path must be nonempty. Every face
-must be square, equally sized, and decode to the same format. PNG and JPEG may
-be mixed because both normalize to byte RGBA. Six Radiance HDR files produce
-`RGBA32_FLOAT` regardless of `srgb`; mixing HDR and byte faces is a format error.
-Failed loading or insertion releases all partial face allocations.
+- `CubeFace` names the order: `POSITIVE_X`, `NEGATIVE_X`, `POSITIVE_Y`, `NEGATIVE_Y`, `POSITIVE_Z`, `NEGATIVE_Z`.
+- Every path is nonempty. Every face is square, the same size and the same decoded format. PNG and JPEG faces can mix.
+  Six HDR files produce `RGBA32_FLOAT` whatever `srgb` says; mixing HDR and byte faces faults
+  `c3d::ASSET_FORMAT_ERROR`.
+- A failed load or insertion releases every partial face allocation.
+- Faces stay top row first. No rotation, flip or filename convention applies, so supply the native cube orientation.
+  With `s = 2u - 1` and `t = 2v - 1`, image coordinates increasing right and down, a face samples this direction:
 
-Faces remain top-row-first with no rotations, flips or inferred filename
-conventions. Supply their native cube orientation. The preview uses this mapping,
-where `s = 2u - 1`, `t = 2v - 1`, and image coordinates increase right/down:
+| Face | Direction | Face | Direction |
+| --- | --- | --- | --- |
+| +X | `(1, -t, -s)` | -X | `(-1, -t, s)` |
+| +Y | `(s, 1, t)` | -Y | `(s, -1, -t)` |
+| +Z | `(s, -t, 1)` | -Z | `(-s, -t, -1)` |
 
-| Face | Sampling direction |
-| --- | --- |
-| +X | `(1, -t, -s)` |
-| -X | `(-1, -t, s)` |
-| +Y | `(s, 1, t)` |
-| -Y | `(s, -1, -t)` |
-| +Z | `(s, -t, 1)` |
-| -Z | `(-s, -t, -1)` |
+`texture_cube_desc(size, format)` describes six square layers with generated mips; mip zero holds complete faces in the
+order above. A cube is a sampled cube view for environments and previews. Register it as an
+[environment source](environments.md) to light a scene or draw a sky; environment processing borrows the native cube and
+skips equirectangular conversion. Basic and Standard material slots stay 2D.
 
-`texture_cube_desc(size, format)` describes six square layers and generated mips.
-Its mip-zero bytes contain complete faces in that order. The renderer creates one
-cube-compatible image and one native sampled cube view. The cube preview samples
-that view by direction; Basic materials remain 2D. Register the cube as an
-[environment source](environments.md) to use it for scene lighting or a sky.
-Environment processing borrows the native cube and bypasses equirectangular
-conversion.
+## Sixteen-bit single-channel data
 
-## Supply mip levels
-
-`add_texture_mips` copies a complete array of `TextureMipData` records and every
-payload into the store. Supply records in mip-major order, then layer order:
+`R16_UINT` holds one unsigned 16-bit integer per texel. Load one from a PNG or JPEG:
 
 ```c3
-char[16] base_rgba = {
-    255, 0, 0, 255, 255, 0, 0, 255,
-    255, 0, 0, 255, 255, 0, 0, 255,
-};
-char[4] tail_rgba = { 0, 255, 0, 255 };
-TextureMipData[2] levels = {
-    { .mip = 0, .layer = 0, .bytes = base_rgba[..] },
-    { .mip = 1, .layer = 0, .bytes = tail_rgba[..] },
-};
-TextureDesc desc = material::texture_2d_desc(2, 2, RGBA8_SRGB);
-desc.generate_mips = false;
-desc.mip_levels = 2;
-TextureId supplied = assets.add_texture_mips(desc, levels[..], "example/supplied")!;
-renderer.upload(supplied)!;
+TextureId heights = image::load_texture_r16(&assets, "heights.png")!;
 ```
 
-The deliberately green 1×1 level stays green. Supplied uncompressed levels are
-copied without filtering or conversion. A cube supplies six records for mip zero,
-then six for mip one, and so on, using `texture_cube_desc` with generation disabled.
-Every allocated mip/layer must occur exactly once, with a complete tightly packed
-payload. `mip_levels` may describe a shorter chain than the full extent permits;
-it must be positive and cannot exceed that full count.
+- The result is a single-mip, linear texture with the top row first and texels in native byte order.
+  `decode_image_r16` returns the same data as an `Image` without inserting it.
+- A 16-bit PNG keeps all 16 bits. An 8-bit PNG or JPEG widens exactly as `v * 257`, so 255 becomes 65535, and color
+  reduces to luminance. Radiance input faults `c3d::ASSET_FORMAT_ERROR`.
+- For raw heights, pass native-order `ushort` texels to `add_texture` with an `R16_UINT` description and
+  `generate_mips` disabled. An `R16_UINT` description with generated mips or storage faults `c3d::INVALID_ARGUMENT`.
+- Heights follow `offset + scale * texel / 65535`, beside the 8-bit `texel / 255`. A physics height field reads an
+  `R16_UINT` texture with the same convention: its node's position and `local.scale.y` supply the offset and scale.
 
-The store's source kind is `SUPPLIED_MIPS`; ordinary `add_texture`,
-`add_texture_owned` and image loaders select `MIP_ZERO`. Supplied storage is one
-owned allocation: the record array is its prefix, followed by the byte payloads.
-The stored records and their `bytes` slices are interior borrows. Never free byte
-slices individually, replace their pointers/lengths, or reorder records. The
-input records and arrays may be changed or released after insertion succeeds.
-There is no ownership-transfer overload for supplied mip data.
+Shaders read the texture only through gpu.c3l's integer fetch, never through a sampler, so filtering is manual.
+`texture_fetch.glsl` includes it:
 
-### Compressed 2D textures
+```glsl
+uint height = gpu_fetch_uint(material.slots[0].texture_index, texel, 0);
+```
 
-The same supplied API accepts `BC1_RGBA_UNORM`, `BC1_RGBA_SRGB`, `BC3_UNORM`,
-`BC3_SRGB`, `BC4_UNORM`, `BC5_UNORM`, `BC6H_UFLOAT`, `BC7_UNORM` and `BC7_SRGB`.
-Compressed textures are sampled 2D images with one layer. Set
-`generate_mips = false` and provide every allocated level, including complete
-blocks at small tails: a 1×1 BC1 level still occupies eight bytes, and BC7 uses
-sixteen. Odd extents round up to complete 4×4 blocks.
+A custom material can hold an `R16_UINT` texture in any slot except slot 0 of a masked material. A dispatch reads it
+through a `read_texture` entry. A Basic, Standard, Physical or Toon map, a Toon gradient map, and slot 0 of a masked
+custom material fault `c3d::UNSUPPORTED` when the material uploads or draws. `R16_UINT` is not a storage, render target,
+volume or environment source format.
 
-Bytes stay compressed in both the asset store and upload staging. No decoder,
-transcoder or mip generator runs on them; [container loaders](#load-dds-and-ktx-containers)
-slice files without changing a byte. Unsupported
-device format support propagates the backend fault, including
-`gpu::UNSUPPORTED_FEATURE`; there is no automatic uncompressed fallback.
-Compressed cubes, cube arrays, non-cube arrays and volumes are unsupported.
+## Decode from memory
 
-## Load DDS and KTX containers
+`decode_image(allocator, bytes)` decodes embedded or already loaded PNG, JPEG or Radiance HDR bytes into an owned `Image`;
+`load_image(allocator, path, file_source = {})` does the same from a file. `add_texture` copies the pixels, so destroying
+the image does not invalidate the texture. To skip the copy, decode with `assets.allocator` and transfer the slice:
 
-Import `c3d::asset::image`. `load_texture_container` reads a DDS, KTX 1.1 or KTX 2.0 file and inserts its levels
-unchanged; `add_texture_container` does the same for bytes already in memory, such as an `$embed`:
+```c3
+image::Image decoded = image::decode_image(assets.allocator, encoded_bytes)!;
+defer image::destroy_image(&decoded);
+
+TextureId texture = assets.add_texture_owned(
+    material::texture_2d_desc(decoded.width, decoded.height, decoded.format),
+    decoded.pixels,
+)!;
+decoded.pixels = {};
+```
+
+Clear the image's slice only after insertion succeeds; on a fault the image still owns its allocation. For a color PNG or
+JPEG pass `RGBA8_SRGB` as the format when the bytes represent sRGB color. Keys follow the store's uniqueness policy and are
+never replaced. `load_texture`, `load_hdr`, `load_cube`, `load_texture_r16` and `load_texture_container` read through the
+store's file source; a null source reads the file system ([file sources](assets.md#file-sources)).
+
+## Write a PNG
+
+`image::write_png(path, width, height, pixels)` encodes tightly packed RGBA8 rows, top row first, and writes the bytes
+unchanged with no color-space chunk. Pass sRGB-encoded bytes for color, such as a `read_render_target` copy of an
+`RGBA8_SRGB` target ([read a target back](views.md#read-a-target-back)). A zero extent or a buffer that is not
+`width * height * 4` bytes faults `c3d::INVALID_ARGUMENT`; an unwritable file faults `c3d::ASSET_IO_ERROR`. The encoder is C3
+and needs no native source.
+
+## Load compressed containers
+
+`load_texture_container` reads a DDS, KTX 1.1 or KTX 2.0 file and inserts its levels unchanged. `add_texture_container`
+does the same for bytes already in memory, such as an `$embed`:
 
 ```c3
 TextureId albedo = image::load_texture_container(
@@ -325,101 +224,11 @@ TextureId albedo = image::load_texture_container(
 renderer.upload(albedo)!;
 ```
 
-The container sets the format, extent and level count. Every level is copied byte for byte into one store
-allocation, the same `SUPPLIED_MIPS` source that `add_texture_mips` makes; nothing is decoded, re-encoded, flipped or
-regenerated. A KTX file that asks for generated mips (a level count of 0) of an uncompressed format other than
-`R16_UINT` loads as a `MIP_ZERO` texture with `generate_mips` set. `load_texture_container` frees the file buffer
-before it returns, and a fault leaves the store unchanged.
-
-`color_space` is `FROM_FILE` (the default), `SRGB` or `LINEAR`. `FROM_FILE` keeps the container's format; legacy DDS
-headers carry no color space and load as UNORM. `SRGB` and `LINEAR` pick the sRGB or UNORM twin of RGBA8, BC1, BC3
-and BC7 without touching the bytes; an explicit choice overrides the file. `LINEAR` leaves the other formats as they
-are; `SRGB` on them faults `c3d::INVALID_ARGUMENT`.
-
-To inspect a container first, parse it into a borrowed view:
-
-```c3
-@pool() {
-    image::TextureContainerView container = image::parse_texture_container(tmem, bytes)!;
-    io::printfn("%s, %d levels", container.desc.format, container.level_count);
-};
-```
-
-The view's level slices point into `bytes`. The exception is KTX1 `R16_UINT` with an odd width, whose padded rows are
-copied tight into the `scratch` allocator. The view is invalid once `bytes` or `scratch` is freed. The store helpers
-parse inside their own `@pool`, so the store's allocator must not be `tmem`.
-
-### Supported formats
-
-| `PixelFormat` | DDS legacy | DXGI | KTX1 `glInternalFormat` (`glType` / `glFormat`) | KTX2 vkFormat |
-| --- | --- | --- | --- | --- |
-| RGBA8_UNORM | `DDPF_RGB`, 32 bit, masks R `0xFF` G `0xFF00` B `0xFF0000` A `0xFF000000` | 28 | `GL_RGBA8` 0x8058 (`GL_UNSIGNED_BYTE` 0x1401 / `GL_RGBA` 0x1908) | 37 |
-| RGBA8_SRGB | none | 29 | `GL_SRGB8_ALPHA8` 0x8C43 (0x1401 / 0x1908) | 43 |
-| RGBA16_FLOAT | FourCC 113 | 10 | `GL_RGBA16F` 0x881A (`GL_HALF_FLOAT` 0x140B / 0x1908) | 97 |
-| RGBA32_FLOAT | FourCC 116 | 2 | `GL_RGBA32F` 0x8814 (`GL_FLOAT` 0x1406 / 0x1908) | 109 |
-| R16_UINT | none | 57 | `GL_R16UI` 0x8234 (`GL_UNSIGNED_SHORT` 0x1403 / `GL_RED_INTEGER` 0x8D94) | 74 |
-| BC1_RGBA_UNORM | `DXT1` | 71 | 0x83F1; 0x83F0 after the scan | 133; 131 after the scan |
-| BC1_RGBA_SRGB | none | 72 | 0x8C4D; 0x8C4C after the scan | 134; 132 after the scan |
-| BC3_UNORM | `DXT5` | 77 | 0x83F3 | 137 |
-| BC3_SRGB | none | 78 | 0x8C4F | 138 |
-| BC4_UNORM | `ATI1`, `BC4U` | 80 | 0x8DBB | 139 |
-| BC5_UNORM | `ATI2`, `BC5U` | 83 | 0x8DBD | 141 |
-| BC6H_UFLOAT | none | 95 | 0x8E8F | 143 |
-| BC7_UNORM | none | 98 | 0x8E8C | 145 |
-| BC7_SRGB | none | 99 | 0x8E8D | 146 |
-
-Each container holds one 2D image with one layer. Uncompressed KTX1 formats need the listed `glType` and `glFormat`,
-compressed ones 0 for both. The legacy DDS FourCCs, `ATI1` and `ATI2` included, are those DirectXTex reads
-([`g_LegacyDDSMap`](https://github.com/microsoft/DirectXTex/blob/20f7316f1b55dcab3479636015e643c9559fa193/DirectXTex/DirectXTexDDS.cpp#L61-L167)).
-Legacy `DXT1` loads as `BC1_RGBA_UNORM`, which decodes a BC1 file without alpha to the same RGB. BC1 without alpha in KTX (`0x83F0`, `0x8C4C`, vkFormat 131 and 132) loads as the `BC1_RGBA` twin when no
-three-color block uses index 3, the only texels the two forms decode differently; otherwise it is unsupported.
-
-Rows are never flipped. DDS rows are taken as stored. A KTX file loads when `KTXorientation` is absent or says
-top-left (`S=r,T=d` in KTX1, `rd` in KTX2): both specifications put the first stored texel at the texture-coordinate
-origin, and c3d samples the first stored row at v = 0. Tools that wrote GL-style bottom-up rows without the key load
-upside down under glTF UVs; re-export them top row first.
-
-### Rejected variants
-
-| Container | Variant | Fault | Offline route |
-| --- | --- | --- | --- |
-| DDS | `DXT3` (BC2) | `UNSUPPORTED` | `texconv -f BC3_UNORM` |
-| DDS | `DXT2`, `DXT4` (premultiplied BC2, BC3) | `UNSUPPORTED` | `texconv -alpha -f BC3_UNORM` |
-| DDS | BGRA or BGRX masks; DXGI B8G8R8A8, B8G8R8X8 (87, 88, 91, 93) | `UNSUPPORTED` | `texconv -f R8G8B8A8_UNORM` (or `R8G8B8A8_UNORM_SRGB`) |
-| DDS | X8B8G8R8 (no alpha mask) | `UNSUPPORTED` | `texconv -f R8G8B8A8_UNORM` |
-| DDS | luminance, alpha-only, YUV, bump, 16- or 24-bit RGB, any other FourCC (`BC4S`, `BC5S`, 36) | `UNSUPPORTED` | `texconv -f` one of the supported DXGI formats |
-| DDS DX10 | typeless formats (27, 70, 73, 76, 79, 82, 94, 97) | `UNSUPPORTED` | `texconv -tu -f <format>_UNORM` (or `_UNORM_SRGB`); `-tu` treats TYPELESS as UNORM ([texconv](https://github.com/microsoft/DirectXTex/wiki/Texconv)) |
-| DDS DX10 | BC2 (74, 75), BC4 and BC5 SNORM (81, 84), BC6H SF16 (96), any other DXGI format | `UNSUPPORTED` | `texconv -f BC3_UNORM`, `BC4_UNORM`, `BC5_UNORM` or `BC6H_UF16` |
-| DDS DX10 | premultiplied alpha mode | `UNSUPPORTED` | `texconv -alpha` |
-| DDS | cube, volume, array, 1D | `UNSUPPORTED` | export each 2D image; load cube faces with `load_cube` |
-| KTX1 | big-endian | `UNSUPPORTED` | `ktx convert` (legacy `ktx2ktx2`), then load the KTX2 file |
-| KTX1 | `glInternalFormat` outside the table (unsized `GL_RGBA`, `GL_RGB8`, DXT3, signed RGTC, signed BC6H) | `UNSUPPORTED` | re-export in a supported format |
-| KTX1, KTX2 | 1D, 3D, arrays, cubes | `UNSUPPORTED` | export each 2D image |
-| KTX1, KTX2 | generated mips requested for a block format or `R16_UINT` | `UNSUPPORTED` (`ASSET_FORMAT_ERROR` for KTX2 block formats, which the specification forbids) | write every level |
-| KTX1, KTX2 | `KTXorientation` other than top-left | `UNSUPPORTED` | re-export top row first: `ktx create` from the source images (its default origin is top-left) or `texconv -vflip` for DDS |
-| KTX1, KTX2 | `KTXswizzle` other than `rgba` | `UNSUPPORTED` | re-create with `ktx create --input-swizzle`, which moves the channels, instead of `--swizzle` metadata |
-| KTX1, KTX2 | BC1 without alpha with a three-color block that uses index 3 | `UNSUPPORTED` | re-encode as BC1 with alpha, for example `texconv -f BC1_UNORM` (writes DDS) |
-| KTX2 | BasisLZ or UASTC payloads, Zstandard or ZLIB supercompression | `UNSUPPORTED` | `ktx transcode --target bc7` (or `bc1`, `bc3`, `bc4`, `bc5`, `rgba8`); other supercompressed files: re-create without `--zstd` or `--zlib` |
-| KTX2 | `VK_FORMAT_UNDEFINED` or a vkFormat outside the table | `UNSUPPORTED` | re-export in a supported format, for example `ktx create --format R8G8B8A8_SRGB` |
-| KTX2 | premultiplied DFD flag | `UNSUPPORTED` | re-export with straight alpha |
-
-### Container faults
-
-Container loaders split the faults that image decoders report together:
-
-- `c3d::ASSET_IO_ERROR`: the file cannot be read.
-- `c3d::ASSET_FORMAT_ERROR`: empty input, an unknown magic, a truncated header, index or payload, a level whose
-  offset, length or alignment is wrong, overlapping KTX2 levels, bytes after the last KTX2 level, a level count the
-  extent cannot have, or fields that contradict each other (KTX1 `glType` and `glFormat`, KTX2 `typeSize`,
-  `uncompressedByteLength` and the data format descriptor's transfer function).
-- `c3d::UNSUPPORTED`: a well-formed container outside the supported set.
-- `c3d::INVALID_ARGUMENT`: `SRGB` for a format without an sRGB twin, or a key the store rejects.
-- `c3d::CAPACITY_EXCEEDED`: the texture pool is full.
-
-DDS and KTX1 readers ignore advisory fields (DDS flags, pitch and caps other than the cube and volume bits; KTX1
-`glTypeSize` and `glBaseInternalFormat`) and bytes after the last level. KTX2 is read strictly. Device support for a
-format is still checked at upload, which reports the backend fault, such as `gpu::UNSUPPORTED_FEATURE`. Fixture
-provenance: [texture container fixtures](../test/fixtures/README.md#texture-container-fixtures).
+The container sets the format, extent and level count, and nothing is decoded, re-encoded, flipped or regenerated. The
+store allocator must not be `tmem`. `color_space` is `FROM_FILE` (default), `SRGB` or `LINEAR`. The
+[reference](textures_reference.md#load-dds-and-ktx-containers) lists the supported formats, the rejected files and the
+faults. A device without support for a format reports the backend fault, such as `gpu::UNSUPPORTED_FEATURE`, at upload;
+there is no uncompressed fallback.
 
 ## Select and transform UVs
 
@@ -435,344 +244,102 @@ slot.transform = {
 assets.mark_material_dirty(material_id);
 ```
 
-UV set zero selects `Geometry.uv0`, and one selects `Geometry.uv1`; supply the
-chosen stream on the geometry. Transforms scale first, rotate about the UV
-origin in radians, then translate. They do not modify shared geometry. Mark the
-material dirty after changing its slot or color. Each Standard slot applies its
-own coordinates independently. A normal-map lookup transform changes a derivative
-frame but does not rotate an explicitly supplied tangent basis. Use `texture_slot`
-for identity defaults:
-a manually zero-initialized transform has zero scale, not identity.
+- UV set 0 selects `Geometry.uv0` and 1 selects `Geometry.uv1`. Supply the chosen stream on the geometry. A set above 1
+  faults `c3d::INVALID_ARGUMENT`.
+- A transform scales, rotates about the UV origin in radians, then translates. It never modifies shared geometry.
+- Each Standard slot applies its own coordinates. A normal-map transform changes a derivative frame but does not rotate
+  an explicitly supplied tangent basis.
+- A zero-initialized transform has zero scale, not identity. Use `texture_slot` or `UV_TRANSFORM_IDENTITY`.
+- Mark the material dirty after changing a slot or color.
 
-For a cutout, start with `material::MATERIAL_COMMON_DEFAULT`, set
-`common.alpha_mode = MASK` and pass `common` as the second argument to
-`material::basic` or `material::standard`. The fragment's sampled alpha multiplied
-by the material's color alpha is compared with `common.alpha_cutoff`, which defaults to 0.5.
-Discarded fragments leave the geometry behind visible. This path supports
-opaque and masked materials; alpha blending is not implemented.
+For a cutout, start from `material::MATERIAL_COMMON_DEFAULT`, set `common.alpha_mode = MASK` and pass `common` as the
+second argument of `material::basic` or `material::standard`. The sampled alpha times the color alpha is compared with
+`common.alpha_cutoff` (default 0.5). Discarded fragments leave the geometry behind visible. For blended alpha see
+[transparency](transparency.md).
+
+## Generated alpha coverage
+
+Minifying an alpha-tested texture shrinks its cutout unless the mips preserve coverage. `TextureDesc.coverage` defaults to
+`NONE`. `THRESHOLD` preserves the fraction of texels that pass `alpha_threshold`; `ALL_PASS` and `ALL_FAIL` describe
+constant coverage.
+
+- The threshold is finite and in `(0, 1]`, else `c3d::INVALID_ARGUMENT`. Alpha outside `[0, 1]` faults the same way on
+  insertion, replacement and generation after an in-place edit.
+- Coverage applies only to uncompressed generated color mips of a 2D texture or a cube with `mip_levels` 1. A supplied
+  chain, a compressed format, `R16_UINT`, a volume or a storage texture faults `c3d::UNSUPPORTED`.
+- A generated level (per cube face) whose passing fraction is within 0.02 of that face's mip zero keeps its filtered alpha.
+  Otherwise its alpha is rescaled about the threshold so the passing count is the nearest achievable. Color channels are
+  unchanged.
+- Mip zero's passing count is taken while the first level filters. `mark_texture_dirty` advances the revision and
+  `restore_texture_cpu` keeps it, so call `mark_texture_dirty` after restoring different pixels.
 
 ## Upload, edit and release CPU sources
 
-After creating a renderer associated with the store, outside an open frame:
+Outside an open frame, `renderer.upload(texture)` uploads the texture and returns when the work completes. Inside an open
+frame it records the upload for that frame's submission, which needs a drawable window output and no open overlay and must
+precede the views that sample the texture. `renderer.prepare_scene(&scene)` prepares every resource the scene references
+([preparation](preparation.md)). Both work on a renderer created without a surface. Finish asset and material edits before
+preparation, and do not edit or release source data between preparation and submission.
 
 ```c3
 renderer.upload(texture)!;
 assets.release_texture_cpu(texture);
 ```
 
-Successful explicit upload completes the upload work without presenting a frame.
-Inside an open frame, upload records work for that frame's submission instead.
-`renderer.prepare_scene(&scene)!` likewise prepares the scene's resources and
-completes uploads. Both work with a renderer created without a surface; this does
-not provide off-screen image rendering.
-
-CPU release is explicit. It frees the selected source allocation and clears its
-slices while preserving the asset's id, description, revision and source kind.
-A current image already uploaded by that renderer remains usable. A second
-renderer, a changed backing image, or another
-upload requiring absent source bytes reports `c3d::ASSET_DATA_UNAVAILABLE`.
-Keep either CPU source when it will be edited or uploaded into another renderer.
-
-While pixels remain available, edit mip-zero data and advance the texture's
-revision:
+- **Release** is explicit. It frees the selected source and clears its slices, keeping the id, description, revision and
+  source kind. An image this renderer already uploaded stays usable. A second renderer, a changed backing image or another
+  upload that needs the absent bytes faults `c3d::ASSET_DATA_UNAVAILABLE`, so keep the source of a texture you will edit or
+  upload into another renderer. `restore_texture_cpu(texture, pixels)` gives a released `MIP_ZERO` texture its pixels again
+  and takes ownership of them.
+- **Edit** mip zero while the pixels remain, then advance the revision. The renderer regenerates generated mips on upload.
+  A texture edit needs no material edit, for every Standard slot and shared image; sampler revisions and replacement
+  images refresh the resolved bindings the same way. A removed texture whose index is reused leaves old ids absent.
+- **Supplied data** is edited in the retained bytes (`TextureAsset.supplied_mips[level].bytes`), then marked dirty. Compressed
+  edits keep complete valid blocks.
 
 ```c3
 TextureAsset* source = assets.texture(texture);
 source.pixels[0] = 255;
-source.pixels[1] = 0;
-source.pixels[2] = 255;
 assets.mark_texture_dirty(texture);
 renderer.upload(texture)!;
 ```
 
-This example assumes a nonempty RGBA8 texture whose CPU pixels were retained.
-The renderer regenerates mips on upload. The material revision need not change
-for an edit to any referenced texture. This applies independently to all five
-Standard slots, including shared images. Sampler revision changes and replacement
-image backing also refresh the resolved bindings without a material edit. If a
-texture is removed and its index reused, an old generation stays absent. To change dimensions
-or format, use [Replacing a texture](#replacing-a-texture).
+To upload only the changed texels, to change dimensions, format or mip count, or to bound memory, see
+[texture streaming](texture_streaming.md).
 
-For supplied data, edit only the retained bytes, then mark the texture dirty:
+## Faults
 
-```c3
-TextureAsset* source = assets.texture(supplied);
-source.supplied_mips[1].bytes[0] = 255;
-assets.mark_texture_dirty(supplied);
-renderer.upload(supplied)!;
-```
-
-This edits the uncompressed example's supplied tail. Compressed edits must keep
-valid complete blocks. To replace a supplied source's dimensions, format, mip
-count or record structure, use [Replacing a texture](#replacing-a-texture). Do not edit
-or release either source between preparation and submission. Current cube and BC
-mirrors remain usable after explicit release, just like ordinary 2D textures.
-
-## Editing a region
-
-Mark the texels an in-place edit changed instead of the whole texture, and the renderer uploads only those texels:
-
-```c3
-TextureAsset* source = assets.texture(texture);
-// write the new texels into source.pixels
-assets.mark_texture_region_dirty(texture, 0, { .x = 8, .y = 4, .width = 16, .height = 8, .depth = 1 })!;
-renderer.upload(texture)!;
-```
-
-- A `TextureRegion` is a texel box of one mip level. `z` and `depth` count the layers of a cube texture or the
-  slices of a volume; a 2D texture uses `z` 0 and `depth` 1.
-- The call advances the revision once. It faults `c3d::INVALID_ID` for a dead id and `c3d::INVALID_ARGUMENT` for a
-  mip the texture does not name, a box outside the mip's extent, or a texture with no texels (an empty storage
-  texture).
-- A mip-zero texture names mip 0 only, generated mips included. A texture with supplied mips names any supplied
-  level; edit that level's bytes.
-- `mark_texture_dirty`, a replacement and `release_texture_cpu` change or drop the source as a whole, so they
-  empty the log of marks.
-
-**Log.** Each texture keeps its last `TEXTURE_REGION_MARKS` (4) marks with the revision each produced. When the
-log is full, the two oldest marks merge into their bounding box if they share a mip. If they do not, the oldest
-mark is dropped, and a reader older than it re-uploads the whole texture. Nothing clears the log, so every
-renderer reads it independently. `TextureAsset.regions_since(revision, per_mip)` answers `NONE` (nothing changed),
-`REGIONS` (one union region per mip in `per_mip`) or `WHOLE` (the log does not reach back to the revision).
-
-**Partial upload.** A renderer copies only the marked regions into its image when all of these hold:
-- its image is current at an earlier revision and `regions_since` answers `REGIONS` for it;
-- the image shape is unchanged;
-- the format is uncompressed, and the texture is not a storage texture;
-- the texture does not combine generated mips with the `THRESHOLD` alpha-coverage policy, whose scale depends on
-  every texel of a level;
-- the image has no upload staged in the open frame that is not yet recorded, which a residency change leaves.
-
-Otherwise the whole texture is staged. A mark on a compressed or storage texture, or on generated mips with
-`THRESHOLD` coverage, is accepted and advances the revision, and the renderer stages that texture whole. Each
-region is staged once per mip and copied with the barriers any upload of a resident image records.
-`Stats.upload_bytes` counts the staged texels of the boxes.
-
-**Mips.**
-- With generated mips, the renderer keeps the generated levels of a region-edited texture in a CPU chain owned by
-  the texture's mirror, about one third of mip 0 in size. The first region upload allocates the chain and filters
-  every level whole, which costs what a whole upload costs. Each later region upload filters, for each level, only
-  the box the edit reaches: the mip-0 box scaled to the level and widened to every texel whose filter reads it. The
-  same boxes are copied, so the filtering and the staged bytes follow the boxes.
-- A whole upload of the texture refilters the chain in place. A replaced image (a changed extent or format, a
-  residency change or a prepared re-upload) and a released CPU source free it, and a discarded upload leaves it
-  untrusted. The next region upload then fills it whole again. A texture that is never region-edited keeps no chain.
-- With supplied mips, each marked level's box is copied from that level's bytes.
-- A streamed texture copies only the levels of its resident chain.
-
-## Replacing a texture
-
-A replacement swaps the content of a live texture under its id and key. Every material, environment and
-overlay that references the id shows the new content at its next use.
-
-```c3
-assets.replace_texture(texture, desc, pixels)!;           // copies mip-zero pixels
-assets.replace_texture_owned(texture, desc, pixels)!;     // takes pixels allocated with the store allocator
-assets.replace_texture_mips(texture, desc, levels)!;      // copies supplied mips
-assets.replace_texture_empty(texture, desc)!;             // an empty storage texture
-```
-
-- Each form takes the inputs of its `add_texture` form and rejects the same data with `c3d::INVALID_ARGUMENT`.
-- The source form may change: mip-zero, supplied mips or empty.
-- Width, height, mip count and a format of the same sample type may change.
-- `is_cube`, `storage`, `layers`, 2D versus volume (zero or positive `depth`) and whether the format is `R16_UINT` may not. A material binding refuses a
-  cube or `R16_UINT` texture in a built-in slot on every draw, so these changes fault with
-  `c3d::INCOMPATIBLE_STRUCTURE`. Add a new texture and update the references instead.
-- A fault changes nothing. An `_owned` form takes the pixels only on success; on a fault the caller keeps them.
-- `revision` advances once. `replaced_revision` takes the same value; `mark_texture_dirty` leaves it alone. Consumers
-  that refresh part of a texture compare it, so they never patch replaced content as an edit.
-- Call from the owner thread, outside frame recording. The renderer retires the old image after its last submitted
-  frame.
-- Built-in textures cannot be replaced.
-
-## Residency and memory budgets
-
-By default every texture is fully resident on its first use. Setting a texture budget makes the renderer
-keep the device bytes of store textures at or under it.
-
-```c3
-RendererDesc desc = { .texture_budget_bytes = 256 << 20 };
-renderer.set_texture_budget(128 << 20);   // replaces the budget; zero lifts it
-```
-
-**Model.**
-- A 2D, single-layer, mipped, sampled-only texture with a CPU source streams. That covers generated mips and
-  supplied mips, compressed formats included. Cubes, arrays, volumes, storage textures, single-mip textures,
-  empty textures and render targets stay fully resident.
-- A streamed texture holds a contiguous range of mips from `resident_base` to the last level. Its image has
-  only those levels, so the image extent is the extent of `resident_base`.
-- The tail is the levels whose larger extent is at most 64 (`TEXTURE_TAIL_EXTENT`). Under a budget every
-  streamed texture starts with its tail resident.
-- Shading samples the resident image, so a texture below the detail it needs is blurry, never missing.
-
-**Demand.** Each raster view records, per material, the largest on-screen extent of the objects, batches and
-decals it draws with that material, scaled by the view's material sampling bias. The next frame turns that
-extent into the mip each texture of the material needs, including the Standard materials a custom material
-references. Shadow, trace and path-traced views record nothing, so a path-traced view samples what raster
-views keep resident.
-
-**Budget and pacing.** The step runs at `begin_frame`, after retired resources are released:
-- A drawn texture is raised toward its needed mip when the bytes fit the budget. The first raise of a frame is
-  always admitted; further raises share 8 MiB per frame (`TEXTURE_STREAM_FRAME_BYTES`), largest deficit first.
-- A raise of a texture whose chain is generated from mip zero also costs its mip-zero texels. The first raise
-  counts its texels, and further raises must keep the frame within `TEXTURE_REGENERATION_FRAME_TEXELS`: one
-  1024² regeneration per frame. Textures with supplied mips cost no texels and are paced by bytes only. The first
-  resolve of a texture under a budget still regenerates from mip zero, outside this pacing.
-- When bytes exceed the budget, textures that were not drawn return to their tail, least recently used first.
-- When the drawn set still does not fit, one global bias holds every drawn texture the same number of levels
-  below its need. The bias relaxes once the set fits within 90% of the budget.
-- Lifting the budget raises every streamed texture to full residency, paced by the same allowance: the first
-  raise of each frame, then 8 MiB.
-
-**Full readers.** Some paths read a texture outside material sampling and need every level: environment
-sources, overlay and UI images, compute dispatch reads, textures in custom-material slots (except the
-base-color slot of a masked material), and toon gradient maps. A texture used this way is a full reader. It
-never streams and is never evicted; its bytes count against the budget as fixed bytes. The flag stays set for
-the texture's life in that renderer, replacements included. A texture already streamed that becomes a full
-reader is raised to full residency by the next step.
-
-**Raising needs the source.** A raise re-reads the CPU source, so releasing it (`release_texture_cpu`) pins
-the texture: the step neither raises nor evicts it. Under a budget, releasing sources after the first frames
-pins those textures at whatever they hold, usually their tails. Keep sources for textures that should stream,
-or release them only once the detail is final.
-
-**Memory accounting.** `Stats.texture_bytes` counts resident images. A raise or eviction creates a new image,
-copies the surviving levels on the device and retires the old image after the frames in flight, so memory
-overshoots the budget briefly by the retired images.
-
-**Observation.**
-- `Renderer.texture_residency(texture)` returns the record of a store texture as this renderer holds it:
-  `resident_base`, `chain_mips`, `required_base`, `last_used_frame` and the `streamed`, `full_reader` and
-  `raisable` flags. A live texture the renderer has not resolved has `chain_mips == 0`. A dead id faults
-  `c3d::INVALID_ID`.
-- `Stats` reports, for the frame: `texture_bytes`, `texture_raises`, `texture_evictions`, `texture_bias`,
-  `textures_starved` (drawn textures below their biased target) and `texture_changes_deferred`.
-
-**Faults.** Failures while resolving or moving a texture are reported by `begin_frame` with the faults of
-`upload_texture`. A change that cannot allocate an image or a view slot (`gpu::SLOT_TABLE_FULL`,
-`gpu::DESCRIPTOR_HEAP_FULL`, `gpu::OUT_OF_DEVICE_MEMORY`) is skipped for the frame and counted in
-`texture_changes_deferred`. Replacing a texture keeps its record and restarts it at the tail when the
-dimensions, mip count or format change; the texture is then re-raised from its last demand one frame later.
-
-## Faults and native requirements
-
-Paths must be nonempty. File access failures produce `c3d::ASSET_IO_ERROR`;
-malformed, unsupported, or wrong-loader image formats produce
-`c3d::ASSET_FORMAT_ERROR`. DDS and KTX containers separate malformed from unsupported files
-instead; see [container faults](#container-faults). Empty encoded data or data exceeding the native
-integer length limit produces `c3d::INVALID_ARGUMENT`. Store insertion can also
-produce `c3d::INVALID_ARGUMENT` for a duplicate key or
-`c3d::CAPACITY_EXCEEDED` for a full texture pool. Replacement produces `c3d::INVALID_ARGUMENT` for data that
-insertion rejects and `c3d::INCOMPATIBLE_STRUCTURE` for a structural change. GPU upload faults propagate
-unchanged; upload input with absent pixels reports
-`c3d::ASSET_DATA_UNAVAILABLE`. Cube face shape/type mismatches report
-`c3d::ASSET_FORMAT_ERROR`. Supplied insertion rejects zero mip/layer counts,
-missing or misordered records, empty payloads and size overflow as
-`c3d::INVALID_ARGUMENT`. Upload preparation also validates exact per-layer byte
-footprints, accepted shapes and mip count. Malformed cube metadata is
-`c3d::INVALID_ARGUMENT`; unsupported texture forms are `c3d::UNSUPPORTED`.
-An `R16_UINT` description with generated mips or storage is
-`c3d::INVALID_ARGUMENT` at insertion. `c3d::UNSUPPORTED` covers an `R16_UINT`
-texture in a built-in material slot, a Toon gradient map or slot 0 of a masked
-custom material when the material is uploaded or drawn, an `R16_UINT` volume at
-upload, an `R16_UINT` render target, and an `R16_UINT` environment source.
-
-The package vendors stb_image and compiles one C translation unit with c3c's
-selected C compiler during ordinary builds. Follow the repository's
-[prerequisites and native dependency setup](../README.md#prerequisites).
-The current package still requires its declared GPU, SDL3, ImGui, geometry and
-physics dependencies. Native package isolation remains deferred; there is no
-separate decoder package.
-
-## Run the example
-
-```bash
-python3 scripts/build.py --example textured
-./examples/build/textured path/to/image.jpg
-```
-
-The default PNG is embedded, so running the executable does not depend on its
-working directory. The scene is static: an image cube on the left, a masked quad
-with an opaque magenta backing on the right, and a repeated checker floor into
-the distance. The masked quad shows red and green top corners, blue and white
-bottom corners, and the backing through its central hole.
-
-| Control | Effect |
+| Fault | Cause |
 | --- | --- |
-| N / L / A | Nearest / trilinear / anisotropic sampling |
-| S | Toggle map scale between 1 and 4 |
-| R | Add a 45-degree rotation about the UV origin |
-| O | Add UV offset (0.25, 0.125) |
-| U | Switch UV0 and UV1; UV1 swaps axes and doubles repetition |
-| Backspace | Reset filtering, transform and UV selection |
-| Left drag / wheel | Orbit / zoom |
-| Escape release | Quit |
+| `c3d::ASSET_IO_ERROR` | A file cannot be read or written |
+| `c3d::ASSET_FORMAT_ERROR` | Malformed image data, a loader given the wrong kind (PNG to `load_hdr`, HDR to `load_texture`), mismatched cube faces |
+| `c3d::INVALID_ARGUMENT` | Empty data or data over `int::max` bytes, a duplicate key, malformed cube or mip metadata, a bad coverage threshold, sRGB with a normal semantic, `R16_UINT` with generated mips or storage |
+| `c3d::UNSUPPORTED` | An unsupported texture form: coverage on a supplied or compressed chain, `R16_UINT` or a cube in a built-in slot, an `R16_UINT` volume, render target or environment source |
+| `c3d::CAPACITY_EXCEEDED` | The texture pool is full |
+| `c3d::ASSET_DATA_UNAVAILABLE` | An upload or insertion needs pixels that are absent |
+| `c3d::INVALID_ID` | A dead texture id at an entry point |
 
-Map controls apply to all three textured materials and mark each dirty. The
-example retains its CPU pixels and enables validation; GPU timings are off.
+Paths are nonempty (a contract, not a fault). GPU upload faults propagate unchanged. Container, region and replacement
+faults are in the
+[reference](textures_reference.md#container-faults) and [streaming](texture_streaming.md#replacing-a-texture) pages.
 
-`examples/assets/texture.png` is project-authored: a 64×64 RGBA image with red,
-green, blue and white quadrants. Alpha is zero where both coordinates fall in
-`[24, 40)`, and 255 elsewhere. It was generated with Python `struct` and `zlib`:
-write an 8-bit RGBA PNG IHDR, prefix each top-first row with filter byte zero,
-zlib-compress the rows into IDAT, and CRC each chunk. The chunk writer is shown
-in [the decoder fixture provenance](../test/fixtures/README.md#decoder-fixtures). No image
-encoder runs during a build.
+## Limits
 
-## Frame ordering
+- Texture shapes: 2D, cube (six uncompressed layers) and single-mip RGBA8 volumes such as LUTs. Non-cube arrays and
+  compressed cubes fault `c3d::UNSUPPORTED` at upload. A live cube in any Basic or Standard slot faults
+  `c3d::UNSUPPORTED`.
+- No comparison samplers in material slots.
+- No texture compression, transcoding or mip generation for block formats; supply every level.
+- No separate decoder package. stb_image is vendored in `csrc/` and compiled with the package; see
+  [native libraries](development.md#native-libraries).
+- Texture loading does not tone map or convert range between HDR and byte formats.
 
-An explicit texture upload inside an open renderer frame requires a drawable window output,
-no open overlay, and must precede views that sample the texture. Finish asset pixel/descriptor
-and material edits before preparation; do not edit or release their source data between
-preparation and submission. For dormant or windowless operation, use upload or prepare_scene
-with no frame open; successful return means the upload completed.
+## See also
 
-## Shader target
-
-Shaders use Vulkan 1.3 semantics and SPIR-V 1.5. This keeps alpha-mask discard as OpKill without
-requiring the optional shaderDemoteToHelperInvocation feature. The texture sampler selects
-mips through fragment derivatives; sRGB decoding comes from the texture format.
-
-## Cube and compressed examples
-
-```bash
-python3 scripts/build.py --example texture_cube
-python3 scripts/build.py --example texture_bc
-./examples/build/texture_cube positive_x.png negative_x.png positive_y.png negative_y.png positive_z.png negative_z.png
-```
-
-The cube preview selects generated or deliberately supplied mip data with C.
-Keys 1–6 select +X, −X, +Y, −Y, +Z, −Z. L switches implicit/explicit LOD, and
-+/− change explicit LOD and enable explicit sampling. The terminal prints face,
-source, LOD mode and framebuffer dimensions. Resize
-below the 256×256 source-face resolution to test implicit minification; compare
-actual framebuffer dimensions, not logical window size. Supplied lower mips have
-intentionally different colors. Release Escape to quit.
-
-The BC example embeds a 64×64 BC1_RGBA_SRGB image with seven supplied levels.
-Their colors are red, green, blue, yellow, magenta, cyan and white. A static
-repeated surface extends into the distance so its oblique view selects different
-mips. N/L/A select nearest/trilinear/anisotropic filtering; left drag orbits,
-wheel zooms, and Escape release quits. It prints format, mip count and the
-2744-byte compressed payload size. C switches the material between the hand-built records and the same chain loaded from
-`bc1_mips.dds` through `add_texture_container`; both show the same mips. A device without support reports its backend
-fault rather than displaying a converted replacement.
-
-Both examples retain CPU sources and use full validation. Their committed
-fixtures are project-authored; see [fixture provenance](../test/fixtures/README.md#cube-and-compressed-fixtures).
-
-
-## Bounded initial preparation
-
-Model [preparation steps](preparation.md#budgeted-preparation) split supplied or generated
-texture uploads into format-aligned mip/layer row bands. Single-mip RGBA8 UNORM and
-sRGB volumes split by slice; unsupported volume formats and generation remain
-unsupported. Generated 2D/cube mips use the synchronous filter and rounding, with
-one active chain per record and per-band source reads. Source release does not
-change identity/revision, so each step also checks source presence.
-
-A private texture is published only when its final copy is recorded. Earlier bands
-may already be submitted; cancellation retires that candidate after their covering
-completion. Abort preserves the active chain, while finalized units regenerate on
-retry and fail if required source was released. This initial path does not alter
-ordinary residency-raise pacing or synchronous texture uploads.
+- [Textures reference](textures_reference.md) for supplied mips, compressed formats and containers.
+- [Texture streaming](texture_streaming.md) for region edits, replacement and residency budgets.
+- [Materials](materials.md) and [materials reference](materials_reference.md) for slots and tangent frames.
+- [Environments](environments.md) for HDR and cube sources.
+- [Preparation](preparation.md) for budgeted initial uploads.
+- Examples: `textured` (UV and sampler controls), `pbr` (Standard maps), `texture_cube`, `texture_bc` and `streaming`; run with
+  `python3 scripts/build.py --example <name>`.

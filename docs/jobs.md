@@ -291,7 +291,7 @@ Core declares `c3d::ParallelFor` (`src/c3d/parallel.c3`), a caller-supplied fork
 parallelize their own work take a `ParallelFor`: `PhysicsWorld.set_parallel` runs cloth and crowd-slot staging
 ([cloth](cloth.md#update-on-a-job-pool)), breakable graph derivation ([breakables](breakables.md)) and debug collider
 lines ([physics](physics.md#update-on-a-worker-pool)), and `particle::update` and `particle::step` take a trailing
-parameter ([particles](particles.md#parallel-update)). Those packages import no job library; the hook is their only
+parameter ([particles](particles.md#update-on-a-job-pool)). Those packages import no job library; the hook is their only
 coupling.
 
 | Item | Meaning |
@@ -411,6 +411,6 @@ saved. `--compress` quantizes the clips first and prints their bytes and the lar
 
 - [Profiling](profiling.md): the recorder that receives worker ranges.
 - [Physics](physics.md#update-on-a-worker-pool), [cloth](cloth.md#update-on-a-job-pool), [breakables](breakables.md) and
-  [particles](particles.md#parallel-update): consumers of the `ParallelFor` hook.
+  [particles](particles.md#update-on-a-job-pool): consumers of the `ParallelFor` hook.
 - [Benchmarking](benchmarking.md): the runner and the profiling configurations.
 - [Development](development.md#test-targets): the `job_test` and `job_profile_test` targets.

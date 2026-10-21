@@ -218,7 +218,7 @@ crosses a symlinked directory) and a path that collapses to nothing becomes `.`.
 - The store is single-threaded; only the owner thread adds, replaces or removes.
 - A key is unique per store across all kinds, and a key cannot be changed after the record is added.
 - A process registers at most `MAX_CUSTOM_ASSET_TYPES` (16) custom kinds.
-- The store holds CPU data. GPU residency, budgets and uploads belong to the renderer ([Textures](textures.md#residency-and-memory-budgets)).
+- The store holds CPU data. GPU residency, budgets and uploads belong to the renderer ([Textures](texture_streaming.md#residency-and-memory-budgets)).
 
 ## See also
 

@@ -317,7 +317,7 @@ python3 scripts/build.py --example gltf_viewer
 
 | Example | Shows |
 | --- | --- |
-| `gltf_viewer` | Loads a model (default: the bundled BoxTextured), instantiates it twice side by side, prints the template's counts and spins the right instance. The bundled `RiggedSimple.glb` and `AnimatedMorphCube.glb` exercise skins and morphs. `--benchmark` runs the headless scene benchmark ([Benchmarking](benchmarking.md#scene-benchmark)); `--texture-budget <MiB>` starts it under a texture budget ([Residency and memory budgets](textures.md#residency-and-memory-budgets)). |
+| `gltf_viewer` | Loads a model (default: the bundled BoxTextured), instantiates it twice side by side, prints the template's counts and spins the right instance. The bundled `RiggedSimple.glb` and `AnimatedMorphCube.glb` exercise skins and morphs. `--benchmark` runs the headless scene benchmark ([Benchmarking](benchmarking.md#scene-benchmark)); `--texture-budget <MiB>` starts it under a texture budget ([Residency and memory budgets](texture_streaming.md#residency-and-memory-budgets)). |
 | `streaming` | Renders a small scene while a glTF or GLB file decodes on the loader's worker ([Asset loading](asset_loading.md#background-loading)). |
 
 The bundled sample assets are described in [examples/assets/gltf/README.md](../examples/assets/gltf/README.md).
