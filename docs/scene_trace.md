@@ -263,7 +263,8 @@ Ray-traced [reflections](reflections.md), [ambient occlusion](ambient_occlusion.
 
 ```bash
 python3 scripts/fetch_benchmark_assets.py
-python3 scripts/build.py --example software_rt
+python3 scripts/build.py --target software_rt
+cd examples/build && ./software_rt
 ```
 
 `examples/software_rt` renders Sponza and overwrites the right half of the view with one primary ray per pixel. `M`

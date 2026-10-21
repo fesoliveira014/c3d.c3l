@@ -308,8 +308,7 @@ Any later fault aborts the frame, like other renderer faults. The faults of anch
   scissor share a run.
 - `Pass.OVERLAY` times `draw_list` when GPU timings are on; a frame's window, target and world overlays add up.
 
-Run `python3 scripts/build.py --example overlay` to see every feature. The flags `--target`, `--transform`, `--shapes`,
-`--gradients`, `--backdrop`, `--world` and `--mirror` each show one feature.
+The `overlay` example shows every feature; its options are in the [examples](../examples/README.md#window-input-and-overlays).
 
 ## Limits
 

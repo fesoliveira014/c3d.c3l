@@ -147,7 +147,7 @@ and subpixel pen offset. The `text` example's `--compare` mode uses them as the 
 
 The glyph shader ports the reference pixel shader of Eric Lengyel's Slug algorithm
 ([github.com/EricLengyel/Slug](https://github.com/EricLengyel/Slug)), MIT licensed (`LICENSE-slug.txt`); the Slug patent is
-dedicated to the public domain. Fonts are parsed and rasterized with stb_truetype v1.26 by Sean Barrett (`csrc/README.md`).
+dedicated to the public domain. Fonts are parsed and rasterized with stb_truetype v1.26 by Sean Barrett ([csrc/README.md](../csrc/README.md)).
 
 ## See also
 

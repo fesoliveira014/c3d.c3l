@@ -165,7 +165,7 @@ run under `--test` or in CI, and they create a device with validation enabled. B
 
 | Project | Targets | Output directory | Needs the shaderc library at run time |
 | --- | --- | --- | --- |
-| `test/gpu/render` | `acceptance`; executables `origin_bench` and `posed_trace_bench`, built with `c3c build` and run with `c3c run` | `build/render_acceptance` | yes |
+| `test/gpu/render` | `acceptance`; executables `origin_bench` and `posed_trace_bench`, built with `c3c build <name> --path test/gpu/render` and run from the repository root as `build/render_acceptance/<name>` | `build/render_acceptance` | yes |
 | `test/gpu/profile` | `acceptance` | `build/profile_gpu` | yes; `build.py` places it |
 | `test/gpu/animated_crowd` | `acceptance` | `test/gpu/animated_crowd/build` | yes |
 | `test/gpu/animation_authoring` | `acceptance` | `test/gpu/animation_authoring/build` | yes |
@@ -179,9 +179,10 @@ Run a project with `c3c test <target> --path <project>`, for example `c3c test a
 `C3D_SHADER_COMPILER` needs the library at run time; the last column marks those projects. `build.py` places the library
 only in the output directory of `test/gpu/profile`, when it builds the default set or the `profile_gpu` example. For every
 other project marked yes, copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` (Linux) or
-`lib/shaderc.c3l/windows/shaderc_shared.dll` (Windows) next to the built `testrun` executable before running.
+`lib/shaderc.c3l/windows/shaderc_shared.dll` (Windows) next to the built `testrun` executable before running. Build
+without running by adding `--suppress-run`: `c3c test acceptance --path test/gpu/render --suppress-run`.
 
-Each project's README, where it has one, lists what it covers and what it cannot show.
+Each project's README, where it has one, lists what it covers and what it cannot show: [render](../test/gpu/render/README.md), [profile](../test/gpu/profile/README.md), [animated crowd](../test/gpu/animated_crowd/README.md) and [animation authoring](../test/gpu/animation_authoring/README.md). The [describe](../test/describe/README.md) README covers the `c3d::describe` test consumers, and the CPU tests' committed inputs are in the [fixtures](../test/fixtures/README.md) README.
 
 ## Headless and WSL runs
 
@@ -194,7 +195,7 @@ because `timeout` on `c3c` does not stop its child:
 
 ```bash
 mkdir -p /tmp/c3d-xdg && chmod 700 /tmp/c3d-xdg
-c3c test acceptance --path test/gpu/render --test-filter none   # build only
+c3c test acceptance --path test/gpu/render --suppress-run   # build only
 cd test/gpu/render
 env -u DISPLAY -u WAYLAND_DISPLAY XDG_RUNTIME_DIR=/tmp/c3d-xdg \
   VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json) \

@@ -144,21 +144,8 @@ python3 scripts/build.py --example sky
 `examples/sky` shows a 4 km ground with boxes and spheres from 10 to 800 m, glass and transmissive panes, a water pond
 and a planar mirror. Its panel sets the sun's elevation and azimuth, plays a time-lapse, edits the fog and the clouds,
 switches the exposure table and shows the sky's passes and the regeneration count. The presets pose the camera and the
-sun. The benchmark and its output are in [benchmarking](benchmarking.md#sky-benchmark).
-
-| Flag | Effect |
-| --- | --- |
-| `--atmosphere on\|off\|dense\|empty` | Earth's air (default), no atmosphere, an opaque scattering atmosphere, or air with no scattering |
-| `--fog on\|off` | Height fog; on by default |
-| `--volumetric-fog`, `--fog-quality low\|medium\|high`, `--fog-temporal` | A fog volume on the main and mirror views, its grid and its temporal accumulation |
-| `--clouds`, `--cloud-temporal` | A `CloudLayer` over a procedural weather map the example builds as the application's weather, and its temporal accumulation |
-| `--local-lights N`, `--lamp-range METRES`, `--lamps-in-fog on\|off` | Up to 128 point and spot lamps along the camera path, their range (14 m by default) and their `Light.volumetric` |
-| `--shading forward\|deferred`, `--shadows atlas\|traced`, `--ssgi`, `--taa` | The view's shading path, shadow kind, screen-space GI and TAA |
-| `--reflections on\|off` | Traced reflections on the main view; needs `--shading deferred` |
-| `--path-traced` | Path-traced main view; rejects `--clouds` and `--reflections` |
-| `--auto-exposure`, `--pre-exposure off\|FACTOR` | Auto exposure instead of the table; a forced pre-exposure of 1 or a power of two |
-| `--preset noon\|twilight\|dusk\|nautical\|valley\|pan\|orbit\|time-lapse` | Camera and sun pose |
-| `--benchmark [frames]`, `--gpu-timings`, `--validation`, `--width`, `--height` | Offscreen benchmark and device options |
+sun. The options are listed in the [examples](../examples/README.md#sky-post-processing-and-effects); the benchmark and its
+output are in [benchmarking](benchmarking.md#sky-benchmark).
 
 The `orbit` preset puts the camera 400 km up, pitched 10° down, with the sun 12° up. Above 50 km the example gives the
 camera a 1,000 km far plane, sets `FrameInfo.reference_position` to it and uses an exposure of 1, because the exposure

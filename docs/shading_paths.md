@@ -14,8 +14,8 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 ```
 
 Both view constructors choose `FORWARD`. Run `python3 scripts/build.py --example deferred` to see one scene forward on
-the left and deferred on the right, or `--example shading_paths` for all four `ShadingPath` and `LightSelection`
-combinations in a 2x2 grid.
+the left and deferred on the right, or `shading_paths` for all four `ShadingPath` and `LightSelection` combinations in
+a 2x2 grid. `shading_paths` runs from `examples/build`; see the [examples](../examples/README.md#run-an-example).
 
 ## Concepts
 

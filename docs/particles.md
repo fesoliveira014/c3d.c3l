@@ -192,7 +192,7 @@ The trail does not change the simulation or take any spawn draw.
 
 ## Update on a job pool
 
-`particle::update` and `particle::step` take a trailing `ParallelFor`, the neutral fork-join hook that core declares and the physics package also takes. The [job pool](jobs.md) does not use it; an application adapts a pool to the hook, as the `particles` example does for its `--workers` option. A zero value runs every range inline on the calling thread. The package never imports `c3d_job`.
+`particle::update` and `particle::step` take a trailing `ParallelFor`; the hook, its rules and the adapter for a pool are in [the job pool](jobs.md#parallelfor-hook). The package never imports `c3d_job`; the `particles` example adapts a pool for its `--workers` option.
 
 The pool splits into blocks of 1,024 particles, and each fork runs one block per range for:
 
@@ -201,7 +201,7 @@ The pool splits into blocks of 1,024 particles, and each fork runs one block per
 - trail recording;
 - publication of billboard records and mesh instances.
 
-Collision raises events in visit order, so a callback or a sub-emitter keeps collision serial. Expiry, admission, emission, events, sub-emitter deliveries and trail publication stay serial, as does everything outside `update`. A range reads and writes only its own blocks, so every hook, partition and range order produces the same pools, counters and draw arrays byte for byte. The hook must return only after every range has finished. A pool of at most one block runs inline whatever the hook.
+Collision raises events in visit order, so a callback or a sub-emitter keeps collision serial. Expiry, admission, emission, events, sub-emitter deliveries and trail publication stay serial, as does everything outside `update`. A range reads and writes only its own blocks, so every hook, partition and range order produces the same pools, counters and draw arrays byte for byte. A pool of at most one block runs inline whatever the hook.
 
 ## Large worlds
 

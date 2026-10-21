@@ -358,9 +358,8 @@ then awake.
 
 ## Update on a job pool
 
-`PhysicsWorld.set_parallel(ParallelFor)` lets the application stage cloth on its own workers; the
-[physics page](physics.md#update-on-a-worker-pool) shows the `c3d_job` adapter and the [job pool](jobs.md) describes
-`ParallelFor`. A zero `ParallelFor` stages on the calling thread. `update_cloths` collects the prepared cloths and
+`PhysicsWorld.set_parallel(ParallelFor)` lets the application stage cloth on its own workers; the hook and its adapter
+are in [the job pool](jobs.md#parallelfor-hook). `update_cloths` collects the prepared cloths and
 active crowd slots serially in ECS order, stages each as one range item through `ParallelFor`, then commits serially in
 that order: it copies the changed vertex ranges into the private geometry and marks them dirty, resets vertex histories,
 writes output nodes, re-expresses a failed item's mesh and adds the item to `ClothStats`.
@@ -481,4 +480,4 @@ The panel shows the solver and upload statistics. An unknown or malformed flag p
 
 - [Cloth reference](cloth_reference.md)
 - [Physics](physics.md), [ragdolls](ragdoll.md), [owner readiness](owner_readiness.md), [large worlds](large_world.md)
-- [Serialization](serialization_reference.md#physics), [scene trace](scene_trace.md), [post](geometry_edits.md#edited-vertices)
+- [Serialization](serialization_reference.md#physics), [scene trace](scene_trace.md), [geometry edits](geometry_edits.md#edited-vertices)

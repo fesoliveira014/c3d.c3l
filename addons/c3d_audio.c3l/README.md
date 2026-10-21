@@ -44,6 +44,8 @@ audio.update(&scene);
 c3c test audio_test --path addons/c3d_audio.c3l
 ```
 
+The example's [asset README](https://github.com/fesoliveira014/c3d.c3l/blob/main/addons/c3d_audio.c3l/examples/assets/README.md) and the test [fixture README](https://github.com/fesoliveira014/c3d.c3l/blob/main/addons/c3d_audio.c3l/test/fixtures/README.md) record how the audio files were made.
+
 ## Guides
 
 - [Audio](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/audio.md): setup, clips, emitters, buses, threading and limits.

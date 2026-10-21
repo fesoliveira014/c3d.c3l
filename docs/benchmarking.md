@@ -221,11 +221,11 @@ height of 0 or above 8,192, `--ssgi-steps` outside 4 to 64 with screen-space GI 
 | `--trace software\|hardware` | `hardware`: a ray-query adapter | Creates the renderer with or without ray queries; every trace consumer of the run, probe updates included, follows. The default is `hardware` exactly when `--reflections on` or `--ambient-occlusion ray-traced` is given. `software` with `--shading path-traced` is rejected. |
 | `--shading forward\|deferred\|path-traced` | `path-traced`: a ray-tracing-pipeline adapter | `many_lights` and `gltf_viewer`: shading path of the measured view; path tracing uses the default settings and forces the flat light mode. Reported as `gpu_path_trace_ms`. |
 
-`many_lights` also takes `--mode flat|clustered`, `--lights N`, `--capacity N`, `--range R` and `--depth-pruning on|off`
-(off by default) ([depth pruning](lights.md#depth-pruning)). Keep extent, camera, range, capacity and material fixed
-when comparing flat and clustered modes or the shading paths. Report overflow counts: an overflow falls back to the
-complete flat light list instead of dropping contributions. `many_lights` rejects fewer than 1 or more than 4,096
-lights, a capacity outside 1 to 256 and a range outside 1 to 32. A correctness stress:
+`many_lights` takes its own options on top of these ([examples](../examples/README.md#materials-lights-and-shaders)). Keep
+extent, camera, range, capacity and material fixed when comparing flat and clustered modes or the shading paths. Report
+overflow counts: an overflow falls back to the complete flat light list instead of dropping contributions. `many_lights`
+rejects fewer than 1 or more than 4,096 lights, a capacity outside 1 to 256 and a range outside 1 to 32. A correctness
+stress:
 
 ```bash
 ./examples/build/many_lights --benchmark --mode clustered --lights 256 \
@@ -295,24 +295,14 @@ the fetch command. Any glTF file replaces Sponza through the positional path of 
 `gltf_viewer --benchmark` reuses the viewer's loading and environment: one instance at the origin, the studio HDR as
 environment and background, a sun, and `--lights N` point lights on a deterministic grid inside the model bounds at 0.35
 of the vertical extent. The camera sits inside the model at 0.3 of the height, 0.35 of the long axis behind the center,
-looking along the long axis. Shadow casting dominates the draw count. The options of the previous section apply, with
-these additions:
-
-| Option | Effect |
-| --- | --- |
-| `--mode flat\|clustered`, `--lights N`, `--capacity N` | As in `many_lights`. |
-| `--range R` | Light range as a fraction of the largest horizontal extent; default 0.08. |
-| `--shadows on\|off\|traced` | Sun shadows from the atlas (default), none, or traced ([shadows](shadows.md)). `traced` makes an `AUTO` run create the renderer with ray queries. |
-| `--texture-budget MiB` | Texture residency budget of the renderer. |
-| `--probe-volumes 0\|1\|8` | No probe volume, one over the model bounds, or one per octant ([probe volumes](probe_volumes.md)). |
-| `--probe-counts X,Y,Z` | Probes per volume; default 16,8,8. |
-| `--probe-fill environment\|scene` | Fill from the environment (default) or trace the scene every frame; the trace kind follows `--trace`. |
-| `--probe-window N` | Probes per update; 0 updates all. |
-| `--probe-rays N` | Rays per probe, 32 to 256; default 128. Reported with `gpu_probe_update_ms`. |
-| `--point-shadows on\|off` | Shadows on the point lights. |
-| `--reflection-probes 0\|1\|2\|16` | Reflection probes with distinct solid-colour environments: none, one box over the model bounds, two overlapping boxes, or a 4 x 2 x 2 grid. See [reflection probes](reflection_probes.md). The asset store is created with 32 environments when probes are on. The probe-sampling cost shows in `gpu_opaque_ms` (forward) or `gpu_lighting_ms` (deferred). |
-| `--reflection-probe-placement inside\|outside` | `outside` moves every box below the model, so each pixel tests every packed box and lies in none. |
-| `--environment-refresh on\|off` | Marks the studio source texture dirty before every frame, so each frame regenerates the environment: conversion, filtering and SH projection. Reported as `gpu_environment_ms` and its stage columns. The LUTs record only in the first prepared frame, and sheen only for a model with sheen. The upload's CPU mip generation lands in `cpu_record_ms`. See [environments](environments.md#preparation-and-edits). |
+looking along the long axis. Shadow casting dominates the draw count. The options of the previous section apply, and
+`gltf_viewer` adds light, shadow, probe and environment options; they are listed under
+[`gltf_viewer`](../examples/README.md#assets-and-models). `--range R` is a fraction of the largest horizontal extent
+(0.08 by default). With `--reflection-probes`, the probe-sampling cost shows in `gpu_opaque_ms` (forward) or
+`gpu_lighting_ms` (deferred). With `--environment-refresh on`, the environment regenerates every frame and is reported as
+`gpu_environment_ms` and its stage columns ([environments](environments.md#preparation-and-edits)). The LUTs record only
+in the first prepared frame, and sheen only for a model with sheen. The upload's CPU mip generation lands in
+`cpu_record_ms`.
 
 The banner printed to standard error repeats the effective settings.
 
@@ -326,13 +316,10 @@ python3 scripts/benchmark.py instancing --output results/instancing --build --fe
 
 `instancing --benchmark` renders the interactive example's scene headless from its starting camera, with instance
 culling and motion blur on and four sun cascades. The scene is still: only the sway moves, on the loop's fixed frame
-time. The options of the many-light section apply, and the CSV columns are the same.
-
-| Option | Effect |
-| --- | --- |
-| `--fade-field` | Adds a grid of 4,096 cell batches with a fade band, the shape of one foliage layer, most of whose cells lie wholly past the band. `RendererDesc.max_instance_batches` is raised to hold every cell. `batches_faded` counts the skipped cells. |
-| `--instance-edit range\|whole` | Bobs one row of the big batch every frame and animates the trio. `range` publishes the row with `Scene.mark_instances_range_dirty`; `whole` publishes with `Scene.mark_instances_dirty`. The images are identical; `upload_bytes` shows the difference. |
-| `--move-node` | Moves a batch node every frame. |
+time. The options of the many-light section apply, and the CSV columns are the same. `--fade-field`, `--instance-edit`
+and `--move-node` are listed in the [examples](../examples/README.md#scene-scale); `--fade-field` raises
+`RendererDesc.max_instance_batches` to hold every cell, `batches_faded` counts the skipped cells, and `upload_bytes` shows
+the difference between `--instance-edit range` and `whole`.
 
 `benchmark.py instancing` runs the `fade-field-off` and `fade-field-on` jobs.
 
@@ -367,14 +354,9 @@ check the regeneration policy: the time-lapse expects `floor(sweep / period)` re
 `step`, and none without an atmosphere; `steady_sky` expects none after the first frame of `noon`;
 `ascent_regenerations` expects none after the first frame of `ascent`. A failed gate exits 1.
 
-| Option | Effect |
-| --- | --- |
-| `--gpu-timings`, `--validation`, `--width N`, `--height N` | As in the many-light section. |
-| `--shading forward\|deferred`, `--shadows atlas\|traced`, `--ssgi`, `--path-traced`, `--reflections on\|off`, `--taa`, `--auto-exposure`, `--pre-exposure V\|off` | Renderer configuration of the measured views. `--reflections on` needs `--shading deferred`. |
-| `--fog on\|off`, `--atmosphere off\|on\|dense\|empty` | Fog and atmosphere; `--fog off --atmosphere off` is the baseline. See [the sky example](sky.md#example). |
-| `--volumetric-fog`, `--fog-quality low\|medium\|high`, `--fog-temporal` | A froxel fog volume on the main and mirror views, its grid, and its [temporal accumulation](fog.md#temporal-accumulation). The `FOG_SCATTERING` and `FOG_INTEGRATION` lines report it. |
-| `--local-lights N`, `--lamp-range METRES`, `--lamps-in-fog on\|off` | Lamps that `FOG_SCATTERING` scatters. |
-| `--clouds`, `--cloud-temporal` | A [cloud layer](clouds.md) and its [temporal accumulation](clouds.md#cloud-temporal-accumulation). The `CLOUDS` and `CLOUD_SHADOWS` lines report it. |
+The options of the benchmark are the `sky` options listed in the [examples](../examples/README.md#sky-post-processing-and-effects);
+`--fog off --atmosphere off` is the baseline. The `FOG_SCATTERING` and `FOG_INTEGRATION` lines report the froxel volume, and the `CLOUDS` and `CLOUD_SHADOWS` lines
+report the cloud layer.
 
 ## Post-processing benchmark
 

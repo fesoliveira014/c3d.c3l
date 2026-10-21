@@ -224,5 +224,6 @@ crosses a symlinked directory) and a path that collapses to nothing becomes `.`.
 
 - [Models, glTF and FBX import](models.md) and [Asset loading](asset_loading.md) for filling a store.
 - [Custom asset kinds](custom_assets.md) for registering a kind.
+- [Geometry edits](geometry_edits.md) for changing a geometry in place and publishing the changed vertices.
 - [Owner readiness](owner_readiness.md) for components that finish after a load.
 - [Architecture](architecture.md) for where the store sits between the scene and the renderer.
