@@ -1,17 +1,45 @@
-# Description acceptance consumers
+# Description test consumers
 
-These private visitors prove the description contract against the shared example component, an owned-data fixture and a numeric fixture. They are test fixtures, not production serialization APIs or formats.
+Private visitors that exercise the `c3d::describe` contract against a shared example component, an owned-data fixture
+and a numeric fixture. They are test code, not production serialization APIs or formats. The description contract itself
+is in [type descriptions](../../docs/type_descriptions.md).
 
-- Reads target fresh zeroed values. A bounded allocation ledger owns every destination acquisition; success retains that storage until explicit release, while any read fault releases all acquisitions. Slice allocation honors the reported element alignment. Live-value replacement is unsupported.
-- Binary values use little-endian scalars and length-delimited scopes. Each encoded length is checked against its enclosing input before allocation. Dynamically allocated slices and strings permit at most 64 elements/bytes; fixed arrays retain their declared extent. Total destination storage is limited to 32 KiB, nesting to 16 scopes, and the fixture buffer to 16 KiB. Products are checked before allocation.
-- JSONC objects are parsed during test setup from bounded fixture text. The installed standard-library DOM parser allocates infallibly; these tests make no parser-OOM guarantee. The visitor receives an existing `Object*`; only its destination allocations propagate recoverable `mem::OUT_OF_MEMORY`.
-- JSONC requires every described field. Missing fields, wrong shapes, out-of-range integers and invalid enum/reference tokens return `INVALID_FIXTURE`. There is no field-evolution/defaulting policy. Scalar strings are escaped through the standard JSON writer; finite floats use 9 significant digits (17 for doubles) with explicit negative zero, non-finite values use lowercase fixed-width `f32:`/`f64:` hexadecimal bit strings, and unsigned 64-bit values use quoted decimal fixture text. Matrix lanes follow the same FLOAT rules. The fixture reader uses the existing DOM and does not claim production decimal-parser behavior.
-- Entity and asset references resolve symbolic fixture tokens through a table keyed by reference kind and, for assets, asset kind. Geometry and texture fixtures deliberately share raw handle bits. These tokens establish no production wire identity, asset lookup or scene remapping policy.
-- Tests overwrite binary input and destroy JSON source/DOM storage before comparing retained strings and slices. Injected faults cover top-level slices, nested slices and strings inside slice elements with zero remaining tracked allocations. Malformed lengths fail before allocation; valid input with a null destination allocator reports OOM unchanged.
-- The schema/event recorder copies callback metadata into fixed storage. Reflected and authored descriptions match explicit event lists in all four modes, including scopes, skips, layouts, metadata and reconstruction. Schema traversal needs no value and visits empty-slice element shapes.
+## Files
 
-Run `c3c test describe --path test` from the repository root. This target also includes core description and device-free inspector contract tests.
+| File | Holds |
+| --- | --- |
+| `fixtures.c3` | The fixture types and the limits below. |
+| `binary.c3`, `binary_tests.c3` | A little-endian binary reader and writer with length-delimited scopes, and its tests. |
+| `json.c3`, `json_tests.c3` | A JSONC reader and writer over the standard library DOM, and its tests. |
+| `events.c3` | A recorder that copies visit callbacks into fixed storage, and the tests that compare reflected and authored descriptions in every mode. |
+| `references.c3` | Symbolic fixture tokens for entity and asset references. |
+| `faults.c3` | `INVALID_FIXTURE` and `CONSUMER_ABORT`. |
 
-The numeric fixture covers signed and unsigned 8-bit and 16-bit limits, all three unsigned vector lanes, and every coefficient of a matrix with shear and reflection. Binary checks retain exact widths and floating-point bits; JSONC rejects narrow overflow and invalid unsigned lanes.
+The core description and device-free inspector contract tests (`test/src/test_describe*.c3`) build into the same target.
 
-Matrix-order coverage constructs translation and non-uniform scale through `Transform.to_mat4`, then checks all sixteen JSON positions against column-vector semantics. Range rejection includes CHAR `max = 300`; reflected invalid tags remain compile-time errors.
+## Fixture limits
+
+| Limit | Value |
+| --- | --- |
+| Elements or bytes in a dynamically allocated slice or string | 64 |
+| Total destination storage | 32 KiB |
+| Nesting | 16 scopes |
+| Allocations tracked per read | 64 |
+| Fixture buffer | 16 KiB |
+
+The fixture reader allocates every destination through a bounded ledger. A successful read keeps the storage until the
+caller releases it, and a fault releases everything. The JSONC reader uses the standard library DOM, which allocates
+infallibly, so the tests make no out-of-memory guarantee for parsing.
+
+## JSONC fixture text
+
+- Every described field is required. A missing field, a wrong shape, an out-of-range integer or an invalid enum or
+  reference token returns `INVALID_FIXTURE`.
+- Finite floats use 9 significant digits and doubles 17, with an explicit `-0.0`. Non-finite values are the strings
+  `"f32:%08x"` and `"f64:%016x"` of their bits. Unsigned 64-bit values are quoted decimals.
+
+## Run
+
+```bash
+c3c test describe --path test
+```

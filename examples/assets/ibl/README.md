@@ -1,8 +1,7 @@
 # HDR environment inputs
 
-The `ibl` example bundles these unmodified 1K Radiance HDR files. Both are
-1024 by 512 pixels and are loaded locally; running the example requires no
-download.
+Unmodified 1K Radiance HDR files for the `ibl`, `materials` and other examples. Both are 1024 by 512 pixels and are loaded
+locally; running an example requires no download.
 
 The assets are CC0. Source and license: [Poly Haven asset
 license](https://polyhaven.com/license), [CC0

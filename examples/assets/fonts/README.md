@@ -17,15 +17,17 @@ Sources:
 - `https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf`
   (16,437,364 bytes)
 
-The subset was made once with fontTools 4.65.0:
+The subset was made once with fontTools 4.65.0 in a scratch virtual environment
+(`python3 -m venv /tmp/fonts && /tmp/fonts/bin/pip install fonttools==4.65.0 && . /tmp/fonts/bin/activate`), from the
+repository root with the source fonts in the working directory:
 
 ```bash
-/tmp/fonts/bin/python -c "
+python -c "
 ranges = ['U+0020-007E', 'U+3000-303F', 'U+3041-309F', 'U+30A0-30FF', 'U+FF01-FF5E']
 hanzi = sorted({bytes([high, low]).decode('gb2312') for high in range(0xB0, 0xD8) for low in range(0xA1, 0xFF)
                 if not (high == 0xD7 and low > 0xF9)})
 open('/tmp/cjk_unicodes.txt', 'w').write(','.join(ranges + ['U+%04X' % ord(c) for c in hanzi]))"
-/tmp/fonts/bin/pyftsubset NotoSansCJKsc-Regular.otf --unicodes-file=/tmp/cjk_unicodes.txt \
+pyftsubset NotoSansCJKsc-Regular.otf --unicodes-file=/tmp/cjk_unicodes.txt \
    --layout-features=kern --no-hinting --notdef-outline \
    --output-file=examples/assets/fonts/NotoSansCJKsc-Regular-GB2312-L1.otf
 ```

@@ -1,7 +1,10 @@
 # Releases
 
-Each c3d release publishes every package as a packed C3 library: a zip whose root holds `manifest.json`. All
-packages share the release version.
+Each c3d release publishes every package as a packed C3 library: a zip whose root holds `manifest.json`. All packages
+share the release version. This page tells an application which files to download and list in `project.json`, and tells
+maintainers how a release is cut.
+
+## Files
 
 | File | Library name | Holds |
 | --- | --- | --- |
@@ -64,9 +67,9 @@ Example for core and physics:
   `build/unpacked_c3l/shaderc-v<version>-<platform>.c3l/linux/libshaderc_shared.so.1` or
   `.../windows/shaderc_shared.dll`, or unzip it from the artifact. On Linux the shaderc library sets the runpath to
   `$ORIGIN`.
-- c3c compiles the C sources some libraries carry (stb in core, cgltf, ufbx, clay, miniaudio) with the system C compiler;
-  on Windows that is MSVC.
-- Linux native libraries are built on Ubuntu 22.04 and need glibc 2.35 or newer.
+- c3c compiles the C sources some libraries carry (stb in core, cgltf, ufbx, clay, miniaudio) with the system C
+  compiler; on Windows that is MSVC.
+- The Linux natives of sdl3, c3imgui, box3d, shaderc and vma are built on Ubuntu 22.04 and need glibc 2.35 or newer.
 
 ## Shader packages
 
@@ -80,20 +83,19 @@ python3 c3d_shader_tools/scripts/build_shaders.py --package path/to/package
 ```
 
 `--check` verifies the committed output instead of writing it. The tools need Python 3.10+ and `glslangValidator` on
-`PATH`.
-
-## Breaking changes
-
-- Raw `InstanceArray` records are relative to the batch node. A custom vertex stage that indexes them directly places instances wrongly under a moved node, and nothing reports it. Read instances through `world_instance`, and a previous matrix through `previous_world_model`, as [Custom shaders](custom_shaders_reference.md#vertex-contract) describes.
-- Previous instance matrices are `AffineRowsGpu` records, not `mat4`. A shader package built against an earlier `mesh_vertex.glsl` reads them in the old layout and draws wrong velocity until it is rebuilt with the release's shader tools; a stage that calls `previous_world_model` needs no source change.
+`PATH`. Rebuild a package with the tools of the release it runs against. A custom stage reads instance data through
+`world_instance` and `previous_world_model` ([vertex contract](custom_shaders_reference.md#vertex-contract)); the raw record
+layouts behind them are not part of the contract.
 
 ## Making a release
+
+Maintainers only.
 
 1. Every `lib/` submodule, and gpu.c3l's own `lib/` submodules, sits on a released tag of its repository.
 2. `main` is green.
 3. Push a tag `v<version>`. `.github/workflows/release.yml` runs CI on Linux and Windows, compiles SPIR-V,
    runs `scripts/package_release.py` and publishes the files above with the pin table as release notes.
 
-`scripts/package_release.py --version <version> --out dist` refuses to pack when the tree has tracked modifications, `LICENSE` is empty,
-a submodule is off a tag, SPIR-V has not been compiled, or a packed source embeds a file its artifact lacks. Equal
-inputs give equal bytes: entries are sorted and dated 1980-01-01.
+`scripts/package_release.py --version <version> --out dist` refuses to pack when the tree has tracked modifications,
+`LICENSE` is empty, a submodule is off a tag, SPIR-V has not been compiled, or a packed source embeds a file its
+artifact lacks. Equal inputs give equal bytes: entries are sorted and dated 1980-01-01.

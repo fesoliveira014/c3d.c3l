@@ -1,447 +1,77 @@
-# Manual GPU submission acceptance
+# Render acceptance
 
-The LOD cases in `test_lod.c3` verify shared logical source indices, part/parity
-transforms, independent view/shadow selection, whole-group arena fallback,
-submission-owned history, temporal rejection, transparency sorting, common
-sway/fade anchors and a level that does not change when the object turns about Y
-(`test_lod_level_does_not_depend_on_yaw`, instanced and ordinary groups).
-Image comparisons use 512×512 reference color/depth/shadows.
-The `lod` example and its benchmark are described in [whole-object LOD](../../../docs/lod.md#run-the-example).
+Manual acceptance tests for the renderer on a real Vulkan device. They cover frame submission, shadows, lights,
+instancing and level of detail, probes and reflections, tracing, textures, custom shaders, sky and large worlds. The
+tests are their own documentation: each file's `@test` functions name what they check. The project does not run under
+`python3 scripts/build.py --test` or in CI, because it needs a device.
 
-The quadtree cases in `test_quadtree.c3` read each view's selection words back from the renderer-owned history. A 21-node
-batch (a root, four children and sixteen grandchildren) is drawn by two views at different distances: each view selects its own
-level, every leaf area has exactly one drawn node on its path to the root, the probe pixel shows the selected level's color and
-`Stats.instances_visible` counts the drawn nodes in each culling pass, shadow layer included. A camera that moves from near to
-far keeps its split nodes through hysteresis; an ordinary `configure_view` and a record-only edit keep that history and
-`set_instance_quadtree` drops it. A `LodGroup` added to the node after the quadtree makes `render_view` fault `UNSUPPORTED`. With
-a culling arena too small for the batch's lists, the batch draws its leaves in every pass and `Stats.quadtree_fallbacks` counts it.
+## Run
 
-The box-range cases in `test_quadtree.c3` use a 1,365-node batch (six depths) over a flat plane with the camera beside one corner.
-`test_box_ranges_bound_the_level_difference` reads the drawn nodes back and asserts that nodes sharing an edge differ by at most
-one depth, in a 512-pixel view where the natural ranges already hold and in a 128-pixel view where only the clamp holds (the
-pixels per extent drop to about one half by editing `split_pixels` in place); each pass must draw depths at least two apart.
-`selection_probe.vert.glsl` stores `FrameRoot.selection_camera`, `previous_selection_camera` and a vector holding the
-`FRAME_SELECTION_ORTHOGRAPHIC` bit and whether the frame's own `proj` is orthographic, from its shaded and its depth
-forms: `test_selection_camera_follows_the_owning_view` checks that a shadow layer holds its view's camera, not the light's, and
-that the layer's orthographic light projection leaves the bit clear in a perspective view;
-`test_selection_flag_follows_the_owning_views_projection` that an orthographic view sets it in both forms, and
-`test_vertex_stage_reads_the_quadtree_block` that an instanced stage reaches the batch's `QuadtreeGpu` and per-node depth through
-the instance-effects block and gets the expected range and morph from `quadtree_morph.glsl`; a smaller batch placed on a
-node whose larger slot survived reads its own depths. The probe stores from the vertex stage through a device address, without
-`vertexPipelineStoresAndAtomics` enabled by the library; library shaders must not use that pattern.
-
-The vertex-motion cases in `test_vertex_motion.c3` move a stationary quad's base
-positions and compare the centre velocity with the CPU projection (2e-3 UV) on
-forward and deferred views, without TAA, across two views with different
-cadence, across a render-origin crossing and under a static skin and morph. They
-also check zero motion with rejection for first observation, replaced geometry,
-a count change, reset, re-enabling and an aborted frame, the
-`ASSET_DATA_UNAVAILABLE` fault for released positions, and the per-frame
-`Stats.vertex_history_bytes` count.
-
-`test_vertex_stage_reads_texture_writes_made_earlier_in_the_frame` draws a custom material whose vertex stage fetches a
-store texture that the same frame wrote by a dispatch, by a region upload and by the first upload of a new texture; the
-box is in view only when the fetched red is one. Backend synchronization validation does not observe sampled reads through
-the descriptor heap, so a missing vertex-stage barrier fails no assertion here; the case checks the fetched value and that
-no validation error is logged. The barrier itself shows in a `VK_LAYER_LUNARG_api_dump` capture, where the image barrier
-that returns a store texture to the sampled state names the vertex, fragment and compute stages.
-
-`test_billboard_atlas_selects_cells_without_bleed_and_blends_frames` draws frame 2 of a 2x2, 128-texel atlas whose four
-cells differ in colour, carry an 8-texel border at zero alpha and have a generated mip chain. At 1:1 and at four texels
-per pixel, every pixel with alpha shows only cell 2's colour; an inset of 16 texels fills the whole quad with that
-colour; a two-row texture on a 1x1 atlas draws its first stored row at the top of the quad; and a custom fragment that
-outputs `v_billboard.z` reads 0.5 within 1/255 at frame 1.5. It runs under validation.
-
-`test_ribbon_strip_faces_two_views_with_a_break_and_a_cusp` draws a five-point strip, with a zero-length first segment, a
-`RIBBON_BREAK` at the fourth point and a last point of zero width, and a second batch whose strip doubles back on itself,
-from two orthographic views 90 degrees apart. Both views cover the drawn segments across their width, cover the wide end
-of the segment that tapers to the zero-width point and leave its narrow end empty, leave the gap across the break and the
-margin past the zero-length segment empty, and cover the doubled-back strip, which only the incoming-direction fallback
-keeps finite. It runs under validation.
-
-The auto-exposure cases in `test_auto_exposure.c3` render constant-luminance backgrounds into float targets and
-read each rendering's adapted value from the view's readback. They check the GLSL adaptation against its C3 twin
-within 1e-4 relative over a sequence of 0, 1/144 to 0.5 s steps and luminance changes, and the delayed
-`ViewStats.exposure` two frames late; a lit scene with bloom renders the same image under sixteen times the light;
-a path-traced view settles within 0.01 stops of its converged image's target and steps, without a snap, after its
-accumulation restarts; a `LINEAR_HDR` view records no exposure dispatch; auto exposure at unit scale equals manual
-output with bloom bit for bit; a narrowed `max_ev` bounds the next rendering; two views of one camera adapt
-independently at different cadences; an aborted frame changes nothing; a black frame holds and isolated 60,000-unit
-pixels leave the metered mean unchanged; a cut into a black frame lands the first lit frame on its target; the state
-is allocated with the view, not on toggle, and freed with it.
-`test_manual_exposure.c3` prints the digest of a manual image with bloom; it compiles on any revision, so running it
-before and after a change shows whether manual output moved.
-
-`test_scene_reads.c3` also renders rough and smooth Physical glass in one view, through a render-target resize and an
-in-place reconfiguration. The scene-color mip passes show as a `Stats.draws` difference of one pass per level below
-mip zero, and only the rough frames record them. Two overlapping panes render in one frame into a view with the
-default `transmission_layers` and one with two: the second records one more snapshot copy, and a mip chain only for a
-layer that holds rough glass.
-
-`test_weighted_blend.c3` renders one blended scene into a `SORTED` and a `WEIGHTED` view in one frame: only the
-`WEIGHTED` view allocates its accumulation and revealage images, and it records one more draw, the composite. A second
-case toggles one view between the modes several times with a mirrored blended mesh and a blended batch in the scene;
-the images keep their handles and no frame after the first cycle creates a pipeline. Both run under validation and
-compare no pixels. A third case renders three custom blended stages, with all weighted forms, with `shaded` only and
-with none, into a `SORTED` view, a `WEIGHTED` view and a `WEIGHTED` view that traces shadows. It checks that each view
-draws every stage, that the composite is the only extra draw, that the depth snapshot count matches the sorted view's,
-which fails if a weighted stage's scene reads are dropped, and which pipelines exist for each shader: the weighted and
-sorted pipelines of one shader coexist, a stage without the form its view needs keeps its sorted pipeline, and
-replacing a shader without weighted forms retires the weighted ones, and a rejected replacement keeps its draw on the
-published forms. It runs with no validation warning or error. The
-accumulation and composite math is not checked here: lavapipe applies the first attachment's
-blend equation to every attachment, so the weighted pass renders wrongly there and needs a hardware run.
-
-`test_colored_shadows.c3` renders a sun, a ground and a blended pane while `Renderer.set_colored_shadows` toggles off, on,
-off, on, on, off. The first on frame allocates the colored shadow images and the pane's two extra passes add draws; every
-off frame records exactly the draws of the first, the images keep their handles and no frame after the first on frame
-creates a pipeline. A second case renders a forward and a deferred view of one camera with colored shadows on and a
-transmissive Physical slab in the sun's path: the second view binds the first one's shadow set. Both run with no
-validation error or warning and compare no pixels.
-
-The view-texture cases in `test_view_textures.c3` draw one custom material, whose slot 0 is view-provided, in three views
-in one frame after two producer views have rendered a red and a green backdrop into their targets. The first view provides
-the red target, the second the green one, and the third provides nothing and shows the stage's fallback. Each view's centre
-pixel is read back. A second case follows one view through a second slot, a clear, an ordinary `configure_view` that keeps the
-binding, a destroyed target that reads as absent, and `destroy_view`, whose recycled record starts without bindings. A third
-checks that a target no view has rendered is in the sampled state after the consumer view records, and a fourth that a built-in
-material and an out-of-range slot fault `UNSUPPORTED` and `INVALID_ARGUMENT` when uploaded. All run with no validation
-error. The validation layer cannot see the layout of a bindless descriptor, so the readied state is asserted from the
-renderer's tracked state, and that assertion fails when the ready step is removed.
-
-Build the repository once so `shaders/spv/` exists, then invoke this project
-separately:
+Build the repository once so `shaders/spv/` and the generated tables exist, then build and run the project:
 
 ```bash
 python3 scripts/build.py --target compute_textures
+c3c test acceptance --path test/gpu/render --suppress-run   # build only
+cp lib/shaderc.c3l/linux/libshaderc_shared.so.1 build/render_acceptance/
 c3c test acceptance --path test/gpu/render
 ```
 
-These tests create a real Vulkan device with validation enabled and read the
-renderer's debug log for validation errors. They do not run in the root test
-matrix or CI. On Windows, the build step places the shader compiler DLL beside
-this project's executable in `build/render_acceptance`.
+- The executable is `build/render_acceptance/testrun`. The project compiles shaders in process (`C3D_SHADER_COMPILER`),
+  so the shaderc shared library must sit beside it: `libshaderc_shared.so.1` from `lib/shaderc.c3l/linux/` on Linux, or
+  `shaderc_shared.dll` from `lib/shaderc.c3l/windows/` on Windows. `build.py` copies runtimes into the example build
+  directories and `build/profile_gpu`, not into this project's output.
+- `--test-filter <name>` runs one test. When you start `testrun` by hand, start it from `test/gpu/render`: some tests
+  open `../../../examples/...` relative to it.
+- Headless and WSL runs need a software Vulkan driver and a few environment variables; see
+  [Headless and WSL runs](../../../docs/development.md#headless-and-wsl-runs).
 
-On WSL, a wedged WSLg compositor blocks Vulkan device enumeration: Mesa's ICDs wait on the
-WSLg Wayland socket, which accepts the connection and never answers. `vulkaninfo --summary`
-and every device-creating test then hang with no error. Run headless with the display
-variables unset and an empty private runtime directory, and bound the run on the built
-`testrun` itself, since `timeout` on `c3c` does not stop its child:
+## Harness
 
-```bash
-mkdir -p /tmp/c3d-xdg && chmod 700 /tmp/c3d-xdg
-c3c test acceptance --path test/gpu/render --test-filter none   # build only
-cd test/gpu/render
-env -u DISPLAY -u WAYLAND_DISPLAY XDG_RUNTIME_DIR=/tmp/c3d-xdg \
-  VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json) \
-  timeout -k 5 300 ../../../build/render_acceptance/testrun --test-filter <name>
-```
+- Every fixture creates a renderer with Vulkan validation enabled. Tests read the debug log and fail on a backend
+  validation error.
+- A test whose assertion fails skips its `defer destroy_fixture`. The harness records the live fixture and, when the
+  test ends, prints which function created it and destroys it, so the next test starts without a leaked runtime. If the
+  test also holds device allocations only it can free, the harness prints that the runtime is still alive.
+- `selection_probe.vert.glsl` stores from the vertex stage through a device address, without
+  `vertexPipelineStoresAndAtomics`, which the library does not enable. Library shaders must not use that pattern.
+- A test that needs a capability the machine lacks prints a `skipped` or `SKIP` line instead of failing: a window, ray
+  queries, ray-tracing pipelines or block-compressed sampling.
 
-Windowed examples cannot run while the compositor is wedged. `wsl --shutdown` from Windows
-recovers it but ends every WSL session on the host.
+## Coverage
 
-WSL runs must also restrict the Vulkan loader to lavapipe: WSL's dzn driver and `libd3d12core`
-abort the process on the 329th instance that enumerates devices, and every fixture creates one.
-Set `VK_ICD_FILENAMES=$(ls /usr/share/vulkan/icd.d/lvp_icd*.json)`, or
-`VK_LOADER_DRIVERS_SELECT='*lvp*'` when `LD_LIBRARY_PATH` selects the SDK loader; the system
-loader 1.3.204 ignores the second variable. Never set either on a native GPU host, where the suite
-must run on the GPU.
+| Area | Files |
+| --- | --- |
+| Frame submission, preparation, capacities | `test_submission.c3`, `test_prepare.c3`, `test_prepare_assets.c3`, `test_prepare_pipelines.c3`, `test_prepare_textures.c3`, `test_post_tiles.c3`, `test_capacities.c3`, `test_resize_faults.c3`, `test_asset_replace.c3` |
+| Lights, shadows, exposure | `test_light_spatial.c3`, `test_cascade_blend.c3`, `test_shadow_bias.c3`, `test_shadow_sets.c3`, `test_colored_shadows.c3`, `test_decals.c3`, `test_msaa_edges.c3`, `test_manual_exposure.c3`, `test_auto_exposure.c3` |
+| Instancing, level of detail, billboards, ribbons | `test_instance_cull.c3`, `test_device_instances.c3`, `test_instance_sort.c3`, `test_instance_effects.c3`, `test_crowd_variants.c3`, `test_lod.c3`, `test_quadtree.c3`, `test_impostor.c3`, `test_billboards.c3`, `test_ribbons.c3` |
+| Probes and reflections | `test_probe_volume.c3`, `test_probe_update.c3`, `test_probe_classification.c3`, `test_probe_classification_lifetime.c3`, `test_probe_sampling.c3`, `test_reflection_probe.c3`, `test_reflection_capture.c3` |
+| Tracing and traced effects | `test_scene_trace.c3`, `test_ray_tracing.c3`, `test_ray_traced_effects.c3`, `test_ambient_occlusion.c3`, `test_screen_space_gi.c3`, `test_path_tracing.c3`, `test_posed_trace.c3`, `test_custom_trace_pose.c3` |
+| Materials and custom shaders | `test_custom_shading.c3`, `test_custom_velocity.c3`, `test_vertex_motion.c3`, `test_vertex_fetch.c3`, `test_geometry_write.c3`, `test_clip_plane.c3`, `test_published_stages.c3`, `test_material_references.c3`, `test_material_blend.c3`, `test_weighted_blend.c3`, `test_scene_reads.c3`, `test_view_textures.c3` |
+| Textures | `test_r16_texture.c3`, `test_texture_containers.c3`, `test_texture_residency.c3`, `test_texture_fidelity.c3`, `test_texture_regions.c3` |
+| Sky, media, large worlds | `test_sky.c3`, `test_medium.c3`, `test_large_world.c3` |
 
-A test whose assertion fails skips its `defer destroy_fixture`. The harness records the live
-fixture, and when its test ends it prints which function created the fixture and destroys it, so
-the next test starts without the leaked runtime and device. If the test also holds device
-allocations that only it can free, the harness prints that the runtime is still alive.
+The `.glsl` files beside the tests are probe shaders that the tests compile in process. Image comparisons read back
+small targets and compare with tolerances stated in the test. Fixtures come from `test/fixtures/` and
+`examples/assets/`; see [fixtures](../../fixtures/README.md).
 
-The workload is headless: one box whose material samples an empty storage
-texture, two render targets (`RGBA16_FLOAT`, `RGBA8_UNORM`), a compute shader
-that stores a root color into a storage texture and one that samples a
-texture or target into a readback buffer.
+## Benchmarks
 
-What the four cases establish:
+Two executables in the project time the renderer. Build them with `c3c build <name> --path test/gpu/render` and run them
+from the repository root. Both print CSV to standard output.
 
-- `render_to` completes for `LINEAR_HDR` and `DISPLAY_LDR` and writes the
-  target; a `render_to` that faults closes the frame and frees its view.
-  A `create_renderer` that faults after its arrays exist (a builtin texture
-  without pixels) frees every allocation it made.
-- A warm frame with only a fullscreen draw or only a compute dispatch submits;
-  a frame with no recorded work is discarded without a fault.
-- A storage texture uploaded, written and sampled in one frame, written twice
-  in one frame, or written in a frame that is aborted before submission keeps
-  a valid layout; the next frame's reads return the last submitted color.
+- `origin_bench [zero|grid|exact] [population]` times origin rebasing for a shadow scene or a 2,048-instance population;
+  [large worlds](../../../docs/large_world.md) describes the policies. It needs ray queries.
+- `posed_trace_bench mannequin <count> <software|hardware> <rest|strong|animate> [fresh] [novalidation]` and
+  `posed_trace_bench crowd <count> <software|hardware> [novalidation]` time posed trace instances with a 1920 x 1080
+  primary-ray dispatch per frame. Columns are the pose, acceleration build and trace GPU times, `trace_build_ms`,
+  `posed_bytes` and the pose, refit, update and build counts; hardware runs also print the bottom-level storage with and
+  without `allow_update`. `fresh` aborts every other frame
+  so each sampled frame builds every posed bottom level. Validation is on unless `novalidation` is the last argument.
 
-- Two live scenes whose meshes share entity ids get distinct palette and
-  morph blocks in one frame; a view's previous pose is published only by a
-  submitted frame and dropped by an aborted one; an orthographic camera with
-  motion blur leaves the background at the clear color under camera motion.
+## Limits
 
-- Five boxes sharing one material resolve it once per view and look up one
-  pipeline per draw item; a shadowed skinned and morphed box records its
-  shadow layer with the pipeline prepared once.
-
-- Supplied mips land in the texture byte for byte through one staging copy;
-  a renderer with a tiny upload ring frees each frame's overflow allocations
-  when the slot is reused and grows the ring without losing its old
-  allocation.
-
-- Texture containers (`test_texture_containers.c3`, `sample_lod.comp.glsl`): an RGBA8 chain with a marker at
-  texel 0 of each level, loaded from DDS, KTX1 and KTX2, samples level by level like the same texels supplied
-  through `add_texture_mips`, with each marker at v = 0; `bc1_mips.dds` and four real-tool BC files match their
-  hand-built chains, and each level of the example chain reads its solid color. A device without BC sampling
-  prints `skipped: BC unsupported on <adapter>` and still runs the RGBA8 case.
-
-- A skinned geometry drawn by a node without a skin binding renders with the
-  unskinned vertex stage and shows its material.
-
-- Vertex colors tint the built-in shading, and a masked material discards
-  fragments whose vertex alpha falls under the cutoff in the visible and the
-  shadow pass.
-
-- A translucent draw blends inside the single forward attachment pass; FXAA
-  writes the output directly when the working image matches the output
-  rectangle and falls back to the compute route otherwise; bloom at zero
-  intensity records no dispatch.
-
-- The software scene trace matches CPU triangle picking ray for ray over a
-  64 by 64 grid (a box, a sphere, an instanced batch with a mirrored
-  instance and a non-indexed ground), skips a geometry released before its
-  first preparation and one whose index count is not a multiple of three, and
-  traces identically after every other geometry's CPU arrays are released.
-
-- The instance cap counts the rows that trace: with more candidates than
-  `max_trace_instances`, some left out for want of a posed slot, preparation
-  succeeds, and one more kept row faults `c3d::CAPACITY_EXCEEDED`.
-
-- On a renderer with ray queries, the software walk and ray queries report
-  the same instance, triangle, distance and barycentrics over the same grid,
-  with a masked checker box and a box that casts no shadow added; rays
-  through the checker holes reach what lies behind on both, and the shadow
-  caster mask hides the non-caster on both.
-
-- A thin rod's shadow read along one image column across the first
-  directional split: with `cascade_blend = 0` the two cascades meet in one
-  luminance step; with 0.1 the image before the band is unchanged pixel for
-  pixel, the band differs, and no step along the column is as large as the
-  unblended seam (`line.comp.glsl` reads the column). The case sets no normal
-  offset: an offset would shift the thin rod's shadow across the seam it
-  measures.
-
-- Own shadow sets render unchanged (`test_shadow_sets.c3`): one scene with casters over the first two cascades' blend
-  bands renders forward, deferred, through a custom stage that calls `evaluate_standard_lights`
-  (`standard_lights.frag.glsl`) and with volumetric fog. Each image is identical across two frames and every band
-  probe is shadowed. The test prints an FNV-1a hash per image (`--test-show-output`) for comparing two commits on one
-  machine.
-
-- Shadow sets shared between views (`test_shadow_sets.c3`): a mirror fitted to the main camera records the set and
-  main binds it, bit for bit as its own set (forward, deferred, the `evaluate_standard_lights` stage, volumetric fog,
-  a batch the mirror's distance fades); two views of one camera share one set unless either opts out, and the
-  opted-out frame renders the same image; a sun no cascade covers leaves an empty set and no layers for the own-set
-  and the borrowing view, and both render the same image.
-
-- Mirror shadow sets (`test_shadow_sets.c3`): the mirror records the frame's only atlas; its reflected wall matches
-  its own-set image within tolerance with and without volumetric fog; a borrowed set shadows a receiver its selected
-  cascade misses through a coarser cascade and leaves one outside every cascade lit; a spot outside the mirror's
-  frustum and a batch past the mirror's fade distance shadow main; a LodGroup caster's shadow stays within 6 % in
-  pixels; a light only the mirror sees draws unshadowed and counts in `shadow_lights_unshared`; a recording between
-  mirror and main makes main record.
-
-- Directional normal offsets at the default two texels of a 2048-texel atlas,
-  in their own fixture (`test_shadow_bias.c3`): flat ground stays lit
-  (visibility at least 0.99) in all four cascades at sun elevations of 10°,
-  20°, 46.5° and 60°, forward and deferred; a 1 m box keeps its contact shadow
-  in the first and third cascades; a slab 1.5 offsets thick still darkens the
-  ground beyond its edge to 0.5 or less; a deferred view reads the same
-  visibility with and without a 20° normal map (within 0.02, a flat 16 × 16
-  block's variance at most 1e-3) and matches a forward view within 0.05 across
-  a box's silhouettes and creases in the third and fourth cascades.
-
-- A box casts a dark shadow on a plane under both the atlas and ray-traced
-  shadows; a fully transparent masked box and a box with `cast_shadow` off
-  cast nothing; the ray-traced frames record no atlas layer.
-
-- The top level rebuilds only when the traced set changes, including an
-  emptied and refilled set, and a same-frame software preparation leaves it
-  alone; a geometry edit rebuilds its bottom level once and the replaced one
-  is destroyed without a validation error; a renderer without ray queries
-  rejects hardware preparation and ray-traced views with `c3d::UNSUPPORTED`.
-
-- Ambient occlusion images follow the settings (half and full resolution,
-  retired when switched off); a floor pixel 5 cm from a wall darkens below
-  90 % of its unoccluded value while open floor stays above 97 %, alike on
-  forward and deferred views; intensity 0 reproduces the image without AO,
-  masked and cut-out surfaces included; a transparent quad over the crease
-  reads no AO. A forward view renders the same image with and without its
-  depth prepass (opaque, masked, cut-out and transparent surfaces), so the
-  prepass and `EQUAL` shading lose nothing.
-
-- Open ground under every pixel of a forward view, seen straight down, keeps
-  its normal on the image border: the mean SSAO of each edge matches the
-  opposite edge within 0.01 (half and full resolution), ray-traced AO keeps
-  every border pixel above 97 % (software walk and ray queries), and SSGI
-  changes no border pixel by 1 % or more.
-
-- Probe volumes filled from the environment record four dispatches when first seen, none on a
-  frame where nothing changed and two when only the environment rotation or `max_distance` moved,
-  once per scene when two views render it; a surface inside a volume matches the SH render within
-  2 of 255 on both shading paths, also for a volume whose slices wrap into rows, and an edited
-  environment source refills the volume; a source edit rewrites the source, GGX and Charlie cubes
-  and the SH in place and still refills the volume, while a `specular_size` change reallocates the
-  GGX and Charlie cubes and keeps the source cube; of two nested volumes the smaller one lights the surfaces
-  it contains; the GLSL atlas helpers match their C3 twins; removing the component frees the slot.
-
-- A custom material that reads the scene colour shows the scene behind it, within 1 of 255, on
-  forward, half-scale, deferred and TAA views; one that reads depth measures its gap to the floor
-  under an orthographic and a perspective camera; a blended reader above an opaque reader sees the
-  opaque reader's depth, not the floor's; views without readers copy nothing and allocate neither
-  snapshot, and Physical transmission alone copies colour only; a replacement the backend rejects
-  keeps drawing with its old pipelines and snapshots, and an accepted one that reads nothing drops
-  them (`scene_probe.frag.glsl`).
-
-- A custom twin of the Standard material, built on `standard_shading.glsl` and compiled in process
-  with an application include, renders the same image as Standard within one half-float step on
-  forward and deferred views with flat and clustered lights; its traced forms receive the traced
-  sun's shadow on both kinds, and after a replacement without them the plain form draws unshadowed
-  without a rejection.
-
-- A custom shader's velocity form moves a still displaced box by its displacement between the
-  view's previous and current time, also when another view rendered in between, on late and early
-  velocity views; at frozen time it matches the background; an instanced form indexes by
-  `instance_source` under culling (`wave.vert.glsl`); a moving opaque glass box and glass batch write
-  geometry velocity while a blended one keeps the camera velocity; a velocity form rejected at first
-  use skips its velocity draw, and a rejected replacement keeps the previous form drawing
-  (`broken_push.vert.glsl`).
-
-- A swayed batch draws, shadows and moves like a batch whose node moved, in the view, the depth
-  prepass and the shadow layers, with instance culling on and off; its velocity follows the sway
-  the view last drew and that sway's phase; a batch past its fade band leaves the image, the shadows
-  and the culled lists, and one before the band draws bit for bit as without fade; the cull margin
-  keeps an instance the sway brings into view; a custom instanced stage sways through
-  `write_mesh_outputs`; vertex-alpha weighting keeps masked coverage in the depth prepass.
-
-- A blended batch of 5,000 boxes stored in scrambled depth order draws far to near: a fragment
-  that knows each instance's expected rank leaves the center pixel opaque green, with and without
-  instance culling. A culled translucent line batch lists and sorts only its survivors; a sort that
-  does not fit the cull arena draws from CPU arguments and counts one overflow; an opaque view
-  never creates the sort pipeline.
-
-- A world clip plane cuts a box and a batch on forward views with and without the depth prepass
-  and on deferred views, and culls a box wholly behind it (one more `Stats.culled`) without
-  reallocating the view's images; a caster behind the plane still casts its shadow; a plane that
-  keeps everything changes no pixel; a mirror camera built with `reflection_matrix` and
-  `transform_from_affine` shows only the kept side with single-sided faces kept; a custom stage
-  clips through `write_mesh_outputs`; a clipped moving box keeps its geometry velocity above the
-  plane; and the prepass and deferred paths cover an oblique cut exactly as the single pass does,
-  column by column (`line.comp.glsl`).
-
-- A shader replacement that gpu.c3l rejects leaves later pipelines on the published revision: a
-  deferred view first rendered after the rejection draws the published box through its depth prepass
-  and `EQUAL`, a batch added after it draws without a second rejection, and `prepare_scene` skips a
-  batch whose shader has no instanced pair (`shifted.vert.glsl`).
-
-- An `R16_UINT` texture keeps all 16 bits through upload and `gpu_fetch_uint`
-  (`fetch_r16.comp.glsl`); a Basic map, a Toon gradient map and slot 0 of a masked custom
-  material refuse it with `c3d::UNSUPPORTED`, while slot 0 of an opaque custom material and
-  slot 1 of a masked one accept it.
-
-- A custom stage that reads a referenced Standard block through `custom_reference`
-  (`reference.frag.glsl`) matches the Standard material's own pixels while no drawable uses the
-  referenced material; after both are edited and marked dirty the pair still matches without
-  dirtying the custom material; removing the referenced material, even with a new material in its
-  heap slot, skips the custom draws and counts them in `Stats.dangling_refs`.
-
-- Additive materials add coverage-scaled RGB while preserving HDR alpha, switch
-  between additive and source-over composition on the same pipeline, and share
-  those rules with instanced draws under both culling settings. Basic and custom
-  additive fog output is attenuated without another in-scatter contribution;
-  zero opacity leaves the background unchanged.
-
-- Two reflection-probe rooms light their own spheres per lobe: smooth and rough base, clearcoat, sheen and the
-  transmission fallback read the room's probe on forward and deferred views, a point outside both boxes reads the
-  global environment, metals agree across paths, and a sphere with `specular = 0` is bitwise equal without probes.
-
-- A glossy floor across the wall shared by two probe boxes follows the CPU shares, sums them to one, steps by less
-  than a tenth between neighbouring pixels, and a zero blend distance switches probes within one texel.
-
-- Traced reflections compose with probes through the roughness fade band: traced only on smooth strips, probe only
-  above the threshold, the half-and-half mix inside the band, on hardware and software traces.
-
-- The path tracer never reads a reflection probe: its image is bitwise equal with and without probes.
-
-- The probe-volume update never reads a reflection probe: its result is bitwise equal with and without probes.
-
-- A probe lights specular without a global environment, and spheres outside every box are bitwise equal without the
-  probe.
-
-- Removing a probe's environment, component or node falls back to the global environment, counts the dangling
-  reference and records no validation errors.
-
-- The selection, shares and box projection in GLSL match the C3 twins on 64 points (`reflection_twins.comp.glsl`).
-
-- A reflection capture renders six faces from a probe's capture point: each face's quadrant texels hold the wall
-  tile its direction points at, a mirror sphere seen along each axis shows that wall's hue, nodes outside the
-  capture layers are absent, and a capture frame records no exposure or other post compute work.
-
-- A re-capture keeps the texture and environment ids, advances the texture revision, repeats its bytes (the probe
-  never sees itself), shows an edited wall on the next frame with one environment preparation, and removing the
-  captured assets records no validation errors.
-
-- A capture with a dead probe node, a missing component, an invalid description, a key already in use or exhausted
-  store capacity faults with the specific fault before any frame, texture, environment or view is created.
-
-- Renderer capacities (`test_capacities.c3`): a renderer with 32 views and 64 render targets
-  creates and destroys all of them, renders every view and samples the last view's output without
-  per-frame allocation or leaks, and the next view or target faults `c3d::CAPACITY_EXCEEDED`; a
-  zeroed `RendererDesc` holds 8 views (the default view among them) and 8 targets over gpu.c3l's
-  default table and heap; with `max_views = 1` `create_view` and `render_to` fault and leave
-  nothing behind. A target at index 32 is sampled, after a compute write, by two views in one
-  frame through a Basic material and through a custom material's referenced Standard layer, and an
-  aborted frame restores its state and the state of a target created inside it. A full texture
-  table and a full heap fault `gpu::SLOT_TABLE_FULL` and `gpu::DESCRIPTOR_HEAP_FULL` with
-  unchanged live counts; capacities over 65,536 and `max_render_targets` over the texture table
-  fault at creation; `Stats` counts a new view's images and target at the next reading. The
-  overlay case opens a window: without one it prints a skip line.
-
-- Posed trace instances (`test_posed_trace.c3`, both kinds where noted): a skinned, a morphed and a combined mesh trace at the raster
-  pose over four frames (traced hit distance against the raster depth of the same pixels, hits on the slot's geometry
-  root, and each hit's shading normal against the normal of its posed triangle), two instances of one geometry stay independent beside a static mesh, a still pose records no posing and keeps the
-  trace revision while a joint or weight change advances it once (an aborted frame re-poses once), frames without a
-  traced consumer allocate and record nothing, a morph target that leaves the rest box is hit, a closed-frame preparation
-  reads the current pose and does not re-pose when repeated, the refit at rest reproduces the rest tree component for
-  component, a strong pose's refit tree encloses every posed triangle and child, and a posed stream reused for a
-  geometry with a new vertex count follows the new count.
-
-  Both kinds: the bottom level of a posed instance updates in place (one full build, then updates, no rebuild of an
-  unchanged pose, a rebuild after an aborted frame), the slot rebuilds on a source revision (also between two
-  preparations of one frame) and follows a replacement geometry, the capacity leaves later meshes out in walk order and
-  reuses a freed slot, absent slots retire and return fresh, two tracing views pose once, software and hardware hits agree,
-  a software preparation's pose reaches the next hardware preparation, a posed caster casts its traced shadow at its pose,
-  the path tracer accumulates on a still pose and restarts on a change, a posed cube occludes ray-traced ambient occlusion
-  only at its pose, a posed emissive cube shows in ray-traced reflections only at its pose, and a posed roof slab closes the
-  probe room's light only in place.
-
-  Crowds (`add_crowd(trace: true)`, both kinds): a mirrored and an unmirrored placement of a two-part crowd trace at their
-  raster poses with their own palettes and front faces (four posed slots), a part with a `MASK` material that discards
-  every pixel leaves no trace hits where raster shows none, and a placement posed outside its rest geometry but inside
-  `pose_bounds` is hit.
-
-- Resize faults (`test_resize_faults.c3`): at a full texture table a target resize, one whose second view cannot get
-  its images, and a `configure_view` that changes the render scale fault `gpu::SLOT_TABLE_FULL`; at a full heap an
-  in-place `configure_view` that adds bloom beside kept TAA images and drops ambient occlusion faults
-  `gpu::DESCRIPTOR_HEAP_FULL`. Each leaves the target, the views, their images and the live counts as they were and
-  renders the same pixel; the failed target and configure resizes keep the TAA history. Each call succeeds once the
-  fillers are destroyed. The window case grows its window over a full table: `begin_frame` faults with the window view
-  unchanged and the next one succeeds at the swapchain's extent; without a window, or when the window keeps its size,
-  it prints a skip line.
-
-`posed_trace_bench` (`c3c build posed_trace_bench --path test/gpu/render`, run from the repository root) prints one CSV
-row per sampled frame: `mannequin <count> <software|hardware> <rest|strong|animate> [fresh]` traces `count` animated
-Mannequins and `crowd <count> <software|hardware>` a traced crowd, with a 1920 x 1080 primary-ray dispatch per frame.
-The columns are the `TRACE_POSE`, `ACCELERATION_BUILD` and custom-compute GPU times, `trace_build_ms`,
-`trace_posed_bytes` and the pose, refit, update and build counts; hardware runs also print the bottom-level storage with
-and without `allow_update`. `fresh` aborts every other frame so each sampled frame builds every posed bottom level in
-full. Validation is on; a trailing `novalidation` argument turns it off for timing runs (validation-on and -off GPU
-times read the same, with 1 to 5 % more CPU `trace_build_ms` under validation). Numbers from a software rasterizer measure
-the harness only.
-
-What they cannot establish: window clear-only and GUI-only frames need a
-window (run the `clear` and `cube_gui` examples with validation), and a
-presentation failure after submission needs a hardware observation.
+- Frames with only a clear or only GUI draws need a window. Run the `clear` and `cube_gui` examples with validation.
+- A presentation failure after submission needs a hardware observation.
+- Software rasterizers (lavapipe) apply the first attachment's blend equation to every attachment, so the weighted
+  blending pass renders wrongly there and needs a hardware run.
+- Timings from a software rasterizer measure the harness only.

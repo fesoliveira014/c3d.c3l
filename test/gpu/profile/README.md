@@ -1,38 +1,36 @@
-# Manual GPU profiling acceptance
+# Profiler GPU acceptance
 
-Build the repository's generated shaders and the profiler example, then invoke
-this project separately:
+Manual Vulkan acceptance for GPU profiling ([profiling](../../../docs/profiling.md#capture-gpu-work)). The tests render
+a small headless workload with two views and custom compute dispatches, and check that GPU captures and `Stats` keep the
+right view, pass, shadow and shader identities through aborts, rejected shader replacements, history pressure, capture
+toggling, resize and teardown. They need graphics timestamp support and fail when the device lacks it.
+
+## Run
 
 ```bash
 python3 scripts/build.py --target profile_gpu
 c3c test acceptance --path test/gpu/profile
 ```
 
-These tests create real Vulkan devices with validation enabled. They do not run
-in the root test matrix or CI. They require graphics timestamps and fail clearly
-when that capability is absent; an unavailable device is not a passed hardware
-check. On Windows, the build step places the shader compiler DLL beside this
-project's executable in `build/profile_gpu`.
+- The project does not run under `python3 scripts/build.py --test` or in CI. It creates real Vulkan devices with
+  validation enabled.
+- The project compiles shaders in process, so the shaderc shared library must sit beside the test executable in
+  `build/profile_gpu`. `build.py` copies it there when it builds the default set or `--target profile_gpu`.
+- For software Vulkan and WSL, see [Headless and WSL runs](../../../docs/development.md#headless-and-wsl-runs).
 
-The workload renders two views, samples a rendered pixel through custom compute,
-and reads back that pixel plus a compute-written counter. It checks interleaved
-view finishes, frame-wide Stats, original shadow/view identities, successful and
-rejected shader replacement, aborts, empty recordings, tiny query/label budgets,
-history pressure, capture toggling, slot reuse, resize, preparation and teardown.
-A frame that prepares an environment records one `ENVIRONMENT` pass with its
-stage scopes; the next frame records none.
-The rejected shader deliberately violates the unsigned compute-root header ABI.
+## Capture to JSON
 
-The automated manual cases are headless. A real presentation failure after
-submission and a physical device without graphics timestamps require separate
-hardware observations; passing this suite does not establish either case. The
-neutral data tests cover pending publication after an aborted CPU capture.
-
-The headless example prints an owned JSON capture after renderer teardown:
+The `profile_gpu` example runs the same kind of workload and prints an owned JSON capture after renderer teardown:
 
 ```bash
 ./examples/build/profile_gpu > capture.json
 ```
 
-Use `profile_gpu.exe` on Windows. Correctness runs use validation; their timing
-values are not an instrumentation-overhead benchmark.
+Use `profile_gpu.exe` on Windows.
+
+## Limits
+
+- The cases are headless. A presentation failure after submission, and a physical device without graphics timestamps,
+  need separate hardware observations.
+- The neutral data tests of `addons/c3d_profile.c3l` cover pending publication after an aborted CPU capture.
+- Validation is on, so timings are not an instrumentation-overhead measurement.
