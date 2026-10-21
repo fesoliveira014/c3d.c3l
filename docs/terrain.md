@@ -10,7 +10,7 @@ height-mapped ground from an `R16_UINT` height map. A `Terrain` component on a n
 chunks as the instances of the node's own `InstancedMesh`, drawn with a custom material from the package's
 shaders, so they take part in every view, shadow layer, depth prepass, G-buffer and velocity pass through
 core's instanced path. The renderer selects the levels per view on the GPU ([quadtree
-selection](instancing.md#quadtree-selection)): every view and every shadow layer draws the levels its own
+selection](instancing_quadtree.md)): every view and every shadow layer draws the levels its own
 camera asks for. Up to four `STANDARD` layer materials blend through an RGBA control map. CPU height queries
 follow the physics height-field convention, so a height-field collider on the same node touches the drawn
 surface.
@@ -149,7 +149,7 @@ selected unturned. The selection reads no camera rotation, so turning in place n
 `lod_threshold`, `lod_hysteresis` or `morph_band` keeps every view's history. `update` checks the edited values: when
 `lod_threshold` or `lod_hysteresis` is negative or not finite, or `morph_band` is outside its limit, it faults
 `INVALID_ARGUMENT` and leaves the terrain as it was, so the batch never holds a value the [quadtree
-contract](instancing.md#quadtree-selection) rejects. The sphere rule above is the one of a terrain with `morph_band`
+contract](instancing_quadtree.md#constraints) rejects. The sphere rule above is the one of a terrain with `morph_band`
 zero; above zero, selection follows [box ranges](#morphing).
 
 - Two views of one terrain, such as a split screen or a mirror, draw different levels when their cameras are at
@@ -201,7 +201,7 @@ of the whole extent, built from the same height map and independent of any view.
   1025 map. The software kind adds a copy of the tree's nodes and the hardware kind a bottom level;
   `Stats.trace_posed_bytes` totals the slot. The shared rest geometry adds about 48 B per vertex on the CPU and on the
   GPU. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow`
-  ([capacity](scene_trace.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
+  ([capacity](scene_trace_reference.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
   refreshes for the grid and one for each coarser level; at preparation that is every chunk, so preparing a traced
   terrain costs one pass over the map per level.
 - **Proxy skip.** The grid is a [trace proxy](scene_trace.md#trace-proxies). A traced ray still starts a fixed 0.02 m
@@ -226,7 +226,7 @@ of the whole extent, built from the same height map and independent of any view.
 
 With `morph_band` above zero a level change neither pops nor leaves a seam: a chunk's vertices move onto the surface of
 the level that will replace it before it is replaced. `add_terrain` and `update` switch the batch to the
-[box-range](instancing.md#box-ranges) metric, with the extent of a node of each depth and the largest diagonal of the
+[box-range](instancing_quadtree.md#box-ranges) metric, with the extent of a node of each depth and the largest diagonal of the
 boxes of that depth, so every node of a depth shares one selection range and the vertex stage computes the morph from
 the same ranges. The ranges keep two conditions: a node merges only once its vertices have fully morphed, and nodes
 that touch differ by at most one level. `morph_band <= (1 - lod_hysteresis) / 2` is what keeps them.
@@ -732,7 +732,7 @@ the collider, then the terrain.
    `GridCache.shift_origin(offset)`, which rebuilds no tile. Subtract the offset from `sampler.origin`; the view it reads
    is the one retaken in step 4, at the same address. A later `set_source` takes `GridCache.source_origin()` as its origin.
 
-See [large worlds](large_world.md#navigation-grid-caches) for the rebase order and offsets.
+See [large worlds](origin_rebasing.md#navigation-grid-caches) for the rebase order and offsets.
 
 ## Removal
 
@@ -878,7 +878,7 @@ C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading fo
 rebuild the bounds again through the [job API](#detached-bounds-in-the-example)), `--validation` and `--sky`
 (an [atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the
 pass lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a
-[froxel volume](sky.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`).
+[froxel volume](fog.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`).
 Interactive runs always validate; benchmark runs validate only with `--validation`.
 
 ### Detached bounds in the example

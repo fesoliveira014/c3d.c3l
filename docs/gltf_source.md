@@ -113,4 +113,4 @@ nonempty bytes and key.
 
 - [Models](models.md) for import and material mapping.
 - [Asset loading](asset_loading.md) for publishing the document.
-- [Fracture](fracture.md) for a consumer of independent encoded images.
+- [Breakables](breakables.md#fracture-generation) for the fracture tooling that consumes independent encoded images.

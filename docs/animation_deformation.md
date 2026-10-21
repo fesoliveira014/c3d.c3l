@@ -33,14 +33,14 @@ the rest bound, and a skinned geometry drawn without a live binding draws unskin
 
 ### Animated LOD
 
-[Whole-object LOD](lod.md#animated-models-and-crowds) groups consume the same evaluated source pose and complete logical
+[Animated LOD](lod_animated.md) groups consume the same evaluated source pose and complete logical
 morph weights. Attach copied alternatives to a `ModelInstance` or `AnimatedCrowd` owner with `model::attach_animated_lod`.
 Selection never replaces playback or changes the source meshes' base geometry and material IDs.
 
 - Skinned alternatives use the template skin; named morph channels map to level-zero logical weights and defaults.
 - The renderer uses one model-space palette per owner and source across its parts, selected levels, views and shadows,
   not the ordinary mesh-local palette. A crowd's palettes and morph blocks stay resident on the GPU, and a frame uploads
-  only the instances whose pose revision advanced ([crowds](instancing.md#crowds)).
+  only the instances whose pose revision advanced ([crowds](crowds.md)).
 - Animated rigid and morph-only parts use their sampled mesh affine.
 - Complete animation and world updates before the frame's view, shadow, velocity and trace preparation.
 - Ordinary animated LOD bounds use retained posed skin and morph metadata or an authored override; crowds inherit their
@@ -49,13 +49,13 @@ Selection never replaces playback or changes the source meshes' base geometry an
   temporal rejection. Picking and opt-in posed tracing keep level-zero logical source and part identity.
 
 Creation, lifetime, bind and channel admission and replacement rules are in
-[Whole-object LOD](lod.md#animated-models-and-crowds).
+[Animated LOD](lod_animated.md).
 
 ### Instances and tracing
 
 Generic skinned `InstancedMesh` bindings are not supported; animated crowds provide the shared-pose instanced path
-([crowds](instancing.md#crowds)). Traced effects see the raster pose of a skinned or morphed mesh through a posing pass
-([scene trace](scene_trace.md#posed-instances)). The velocity pass reads the view's previous palettes and, for a crowd,
+([crowds](crowds.md)). Traced effects see the raster pose of a skinned or morphed mesh through a posing pass
+([scene trace](scene_trace_reference.md#posed-instances)). The velocity pass reads the view's previous palettes and, for a crowd,
 its previous resident buffers. A view that skipped a submitted frame has none: a crowd part binds the current buffers and
 gets no deformation motion for that frame, with node and instance motion unchanged, and an animated LOD part rejects the
 history instead.
@@ -127,7 +127,7 @@ afterwards compiles them on first use, in the first frame that draws a deformed 
 A traced skinned or morphed mesh or crowd part claims its binding as a pass does, so a traced mesh no view draws is posed
 once too, and its trace slot takes that pose instead of dispatching its own. The trace keeps its own dispatch with the
 switch off, for a mesh with `Mesh.vertex_motion`, for animated LOD parts, for a mesh or crowd part drawn by a custom
-vertex stage, for a mesh or crowd part past a cap and in a preparation outside a frame. See [scene trace](scene_trace.md#posed-instances).
+vertex stage, for a mesh or crowd part past a cap and in a preparation outside a frame. See [scene trace](scene_trace_reference.md#posed-instances).
 
 ## Limits
 
@@ -141,5 +141,5 @@ vertex stage, for a mesh or crowd part past a cap and in a preparation outside a
 
 - [Animation](animation.md) for playback.
 - [Models, glTF and FBX import](models.md#skeletons-and-clips) for skins and morph targets in the store.
-- [Whole-object LOD](lod.md#animated-models-and-crowds) and [Instancing](instancing.md#crowds).
-- [Scene trace](scene_trace.md#posed-instances) for posed ray tracing.
+- [Animated LOD](lod_animated.md) and [Animated crowds](crowds.md).
+- [Scene trace](scene_trace_reference.md#posed-instances) for posed ray tracing.

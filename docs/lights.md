@@ -72,7 +72,7 @@ need no dirty call. Call `scene.update_world()` after transform changes, before 
 - A spot has full angular weight inside the inner cone, zero at the outer cone, and a smooth ramp between. The
   renderer floors the inner-to-outer cosine difference at 0.001, so a very narrow cone can lose some weight inside
   its inner angle. The GUI shows spot angles in degrees.
-- `Light.volumetric` makes the light scatter in the [volumetric fog](sky.md#volumetric-fog) of a view that has one
+- `Light.volumetric` makes the light scatter in the [volumetric fog](fog.md#volumetric-fog) of a view that has one
   and does nothing else. The three constructors set it; set it to false to opt a light out. A zero-initialized
   `Light` does not scatter.
 - `Light.source_radius` (point and spot, metres) and `Light.source_angle` (directional, half-angle in radians) size
@@ -191,7 +191,7 @@ lights in a different order.
   ambient occlusion or screen-space GI, which imply one) ignores the field, and so does a forward view with traced
   reflections, whose thin reflection prepass is both the depth producer and a reader of the decal lists. Neither is
   a fault. Deferred views always have depth.
-- On a pruned view the reduction, the cull and the [volumetric fog](sky.md#volumetric-fog) volume run after the
+- On a pruned view the reduction, the cull and the [volumetric fog](fog.md#volumetric-fog) volume run after the
   depth prepass instead of before every other pass. On a deferred view that is between the prepass and the G-buffer
   pass.
 - Tiles map from the unjittered view. Under TAA a pixel within half a pixel of a tile edge can shade with the
@@ -228,7 +228,8 @@ hierarchy.
 - `Pass.LIGHT_CULL` times the cull, including the tile-depth reduction on a pruned view. Decal sampling is timed in
   the receiver's draw pass.
 - `gui::targets_panel` switches `FLAT` and `CLUSTERED` and shows a cluster-slice occupancy heatmap; see
-  [GUI diagnostics](gui.md#cluster-diagnostics). `gui::stats_panel` and `gui::view_stats_table` print the counters.
+  [GUI diagnostics](gui_panels.md#cluster-diagnostics). `gui::stats_panel` ([stats panel](gui_panels.md#stats-panel)) and
+  `gui::view_stats_table` print the counters.
 - `render::cluster_cell` and `render::cluster_index` are the C3 twins of the shader selection, for tools and tests.
 
 To compare `FLAT` and `CLUSTERED`, keep light count, range, capacity, camera and working extent fixed and compare

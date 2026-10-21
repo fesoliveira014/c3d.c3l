@@ -135,8 +135,8 @@ renderer.end_frame()!;
   leaves the window views as they are, so their images stay allocated while the window is minimized.
 - `Renderer.render(scene, camera)` is the default-view convenience for one frame.
 - `set_view_overlay(view, list)` gives a view an overlay list of items anchored in the world for one frame;
-  `finish_view` draws it over the view's output after post, tested against the view's depth ([world-space
-  items](overlay.md#world-space-items)).
+  `finish_view` draws it over the view's output after post, tested against the view's depth ([world-space overlay
+  items](overlay_world.md)).
 
 ### Frame queries
 
@@ -308,10 +308,10 @@ renderer.render_view(&scene, camera_node, main_view)!;
   composited reflection as part of its image. The target holds physical radiance: the surface's stage multiplies the
   sample by `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)).
 - World-space overlay items draw in a mirror view when their layers match its camera, reflected as the view shows them
-  ([world-space items](overlay.md#world-space-items)).
-- Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane, from the
+  ([world-space overlay items](overlay_world.md)).
+- Under [fog or an atmosphere](fog.md#where-fog-applies) a mirror view fogs only the path behind its plane, from the
   plane to the reflected surface. The view that shows the surface fogs the path to it, so the reflection carries the
-  reflected path's fog once. Its [medium volumes](sky.md#medium-volumes) follow the same cut. The mirror view owns its
+  reflected path's fog once. Its [medium volumes](fog.md#medium-volumes) follow the same cut. The mirror view owns its
   own sky tables.
 - Water from the landscape add-on places its mirror cameras and clip plane for you and reads each reflection from a
   view texture; see [water](water.md#the-mirror).

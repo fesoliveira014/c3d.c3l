@@ -42,7 +42,7 @@ cloth::prepare_subtree(&scene, &assets, null, &physics)!;
 | Water | Pending; validated descriptor | No generated surface or mirror camera | `water::prepare(scene, assets, node)` or `water::prepare_subtree(scene, assets, root)` | Publish node world matrices before preparation. A spectral wave model faults `UNSUPPORTED` when `C3D_LANDSCAPE_GPU` is off |
 | Breakable | Pending; copied pieces, hulls and rest frames; explicit recipes also keep edges, strengths and anchors | The authored `Mesh` nodes stay visible | `PhysicsWorld.prepare_breakable(node)` or `prepare_breakable_subtree(root)` | Publish world matrices, provide live hull sources and synchronize required `STATIC` anchor targets. Connected piece poses must match the captured recipe up to common rigid motion; a returned failure keeps pending authoring for retry |
 
-The owner pages describe each runtime: [Instancing](instancing.md#crowds), [Particles](particles.md),
+The owner pages describe each runtime: [Animated crowds](crowds.md), [Particles](particles.md),
 [Cloth](cloth.md), [Terrain](terrain.md), [Vegetation](vegetation.md) and [Water](water.md).
 
 ## Subtree preparation

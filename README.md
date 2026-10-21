@@ -9,9 +9,9 @@ visibility and explicit transform updates.
 Core [type descriptions](docs/type_descriptions.md) share reflected or handwritten
 field walks with the Scene inspector and application consumers.
 Core [whole-object LOD](docs/lod.md) selects rigid multipart alternatives per view,
-with GPU selection for instanced placements, optional static impostors and a
-5,000-tree example. Impostors reduce triangles but can increase GPU time; see
-the [measured acceptance](docs/impostor_acceptance.md).
+with GPU selection for instanced placements, optional [static impostors](docs/impostors.md)
+and a 5,000-tree example. An impostor cuts triangle work and can cost more GPU time than a
+very coarse mesh.
 Core [billboard batches](docs/billboards.md) provide camera-facing and directional
 quads through the transparent material pipeline, and [ribbon batches](docs/ribbons.md)
 camera-facing strips through lists of points.
@@ -291,7 +291,7 @@ source ownership, preparation and current display limits. The
 [bundled HDRs](examples/assets/ibl/README.md) are CC0 and require no runtime download.
 
 `sky` draws a physical sky with its sun and exponential height fog over readers, transmission and a planar
-mirror, with a time-of-day slider and a scripted benchmark. See [Sky, atmosphere and height fog](docs/sky.md):
+mirror, with a time-of-day slider and a scripted benchmark. See [Sky and atmosphere](docs/sky.md), [fog](docs/fog.md) and [clouds](docs/clouds.md):
 
 ```bash
 python3 scripts/build.py --example sky
@@ -398,7 +398,7 @@ mesh-only switch and forced-base switch compare the representations. Run
 `python scripts/build.py --example lod`, or use
 `examples/build/lod.exe --benchmark` for deterministic completed-frame counters
 and per-pass timings. `--frames 30` bounds a windowed smoke run. See
-[LOD usage](docs/lod.md) and [impostor acceptance](docs/impostor_acceptance.md).
+[whole-object LOD](docs/lod.md) and [static impostors](docs/impostors.md).
 
 ## Using c3d from your own project
 

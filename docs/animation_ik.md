@@ -148,7 +148,7 @@ the ankle short of the requested target; the anchor is retained without stretchi
 
 A standalone `FootContact` offers the same lifecycle with an explicit incoming `Transform` and plant settings. During
 origin rebasing, call `Scene.shift_foot_contacts` after the scene world refresh, or `FootContact.shift_origin` for
-standalone states; each state has one shift owner ([Protocol](large_world.md#protocol)).
+standalone states; each state has one shift owner ([Protocol](origin_rebasing.md#protocol)).
 
 ## Limits
 
@@ -179,5 +179,5 @@ reaches an orbiting sphere.
 ## See also
 
 - [Animation](animation.md) for the update sequence that precedes IK.
-- [Camera-relative rendering](large_world.md#protocol) for origin rebasing of contacts.
+- [Camera-relative rendering](origin_rebasing.md#protocol) for origin rebasing of contacts.
 - [Scene](scene.md) for nodes and transform spaces.

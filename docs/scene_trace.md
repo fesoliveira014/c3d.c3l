@@ -1,140 +1,12 @@
 # Scene tracing
 
 `Renderer.prepare_scene_trace` builds trace data over the scene and hands shaders a `SceneTraceRoot` address. Shaders
-trace rays against it with `trace_scene` and `trace_scene_any` from `scene_trace.glsl`. Two kinds of trace data serve
-the same rows and the same shader functions:
+trace rays against it with `trace_scene` and `trace_scene_any` from `scene_trace.glsl`. Every built-in ray-traced effect
+uses it: traced shadows, ray-traced ambient occlusion and reflections, probe updates, volumetric fog shadows and the
+path tracer. This page owns what the trace contains and how the two kinds differ; the other pages link here.
+[Scene trace reference](scene_trace_reference.md) holds the posed-instance rules, counters and capacities.
 
-- **Software**: a two-level bounding volume hierarchy the renderer builds on the CPU. The traversal is plain shader code and runs on any Vulkan 1.3 device.
-- **Hardware**: one bottom-level acceleration structure per geometry and a top-level structure over the rows, traversed with ray queries. It needs `RendererDesc.ray_queries`.
-
-## What traces
-
-An instance enters the trace when all of these hold:
-
-- its node is effectively visible;
-- `Mesh.trace` (or `InstancedMesh.trace`) is set. `Scene.add_mesh`, `Scene.add_instanced_mesh` and `model::instantiate` set it; clear it to keep a mesh out of every trace without touching raster, shadows or picking;
-- its geometry, material and, for a skinned mesh, skeleton ids are live, and a custom material's shader is live;
-- the geometry has `TRIANGLES` topology;
-- the material's alpha mode is `OPAQUE` or `MASK`;
-- the material has no custom vertex stage, or its shader poses the trace geometry in the row's form ([custom trace poses](#custom-trace-poses)).
-
-`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace collection takes it like any traced mesh, so its node must be effectively visible. Picking, the scene index and impostor capture skip it: its rest geometry is not what it traces as. Its row is a [trace proxy](#trace-proxies).
-
-A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces like any other. Every row carries its node's `layers`, which hit shading tests against `Light.layers`.
-
-| Instance | Traces |
-| --- | --- |
-| Mesh with no skin binding over joints and no selected morph target | At its rest pose |
-| Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose, in both kinds (see [Posed instances](#posed-instances)) |
-| Crowd part batch | Only with `add_crowd(trace: true)`: one slot per distinct pose in the part batch, at the placement's raster pose, boxed by the crowd's `pose_bounds` |
-| `InstancedMesh` with `source = DEVICE` | Only the instances of its host mirror ([device batches](instancing.md#device-batches)); none without one |
-| `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
-| The same with `trace_sway` | Each instance at its swayed pose, up to the posed capacity ([custom trace poses](#custom-trace-poses)) |
-| Mesh or `InstancedMesh` of a material with a custom vertex stage and a trace-pose stage | At the pose the stage computes ([custom trace poses](#custom-trace-poses)) |
-| Any other material with a custom vertex stage | Never |
-
-A custom vertex stage can move vertices anywhere, and the renderer sees the stage, not the displacement, so a material
-with one traces only when its shader also supplies a trace-pose stage, whatever `trace` says. A stage that displaces
-nothing and should trace draws through the built-in vertex stage.
-
-A bounds override (`has_bounds_override`) is a bound for culling and shadow fitting only; it does not keep a mesh out of
-the trace.
-
-A swaying batch or LOD group traces at its rest pose unless `InstancedMesh.trace_sway` or `LodEffects.trace_sway` is set:
-a traced shadow of a swaying tree stays still while atlas shadows sway, and a shadow ray from a swayed leaf can meet
-the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the swaying batches and LOD groups traced this way this
-frame, including those whose rows found no posed slot, those whose rest tree has no depth table and whose arrays are gone,
-and a batch with a custom vertex stage, which traces through its own `trace_pose` form and never through the sway. Clear
-`trace` to keep one out.
-
-Coverage ignores the geometry's vertex alpha on every row of a batch or LOD group whose sway takes its bend weight from
-it (`SwayWeight.VERTEX_ALPHA`), at rest or posed: raster consumes that alpha, so a masked material is not cut by it in
-either image.
-
-## Posed instances
-
-A skinned mesh, a morphed mesh or both traces at the pose raster draws in the same frame. A compute pass applies the raster deformation functions (morph targets, then skin) to the frame's palette and morph block and writes the posed positions, normals and tangents into a renderer-owned slot behind its own geometry root. Every trace consumer reads hits through the row's geometry root, so traced shadows, ambient occlusion, reflections, probe updates and path tracing see the pose with no shader change.
-
-- **Software.** One workgroup per instance refits a copy of the rest tree: each leaf takes the bounds of its posed triangles and each interior node the union of its children, level by level. Topology and leaf primitives stay those of the rest tree. At rest the copy equals the rest tree exactly; a strong pose widens the boxes, so a posed instance traces slower than at rest. Every tree a recording refits goes in one dispatch of one workgroup each.
-- **Bounds.** A posed row's box in the top level is `mesh_world_bounds`: the rest bound widened by the selected morph targets and, for a skinned mesh, by the joints. A `Mesh.local_bounds` override replaces it.
-- **Once per frame.** The pose is compared with the last recorded one and the pass runs only when the palette or morph block changed. Several views and several preparations in one frame pose a slot once, so a node holds one pose per frame; a pose moved between two views of one frame stays unseen until the next frame's preparation, like raster, which draws one palette per node per frame. A still pose keeps `Stats` poses at zero and the trace revision unchanged, so the path tracer keeps accumulating; a changed joint or weight advances the revision once.
-- **Capacity.** `RendererDesc.max_posed_trace_instances` bounds the slots (64 when zero; zero never disables posing). The device's 4,096-entry allocation table bounds them too and, with ray queries or ray-tracing pipelines, so does its 4,096-entry acceleration structure table. A software slot takes 2 allocation entries, for its posed streams and its node copy. A hardware slot takes 1 allocation entry for its streams and 1 structure entry for its bottom level. The bound counts both kinds, so a scene of hardware slots alone is bounded as if it used both, although its slots would fit about twice as many. `create_renderer` faults `c3d::INVALID_ARGUMENT` unless `2 × max_posed_trace_instances + 32 + 16 × max_views` fits the allocation table and, with ray queries or ray-tracing pipelines, `max_posed_trace_instances + 32` fits the structure table. The 32 are the renderer's own entries in each table, and the 16 per view are one view's allocations. At the default 8 views, at most 1,968 slots are accepted. Content shares both tables uncounted: geometry blocks and their previous copies, rest trees and bottom levels, instance batches and resident crowds, although RendererDesc sizes them, compute-skin bindings, material payloads, environments, buffers and upload overflow. A renderer that creates can still fault `gpu::SLOT_TABLE_FULL` in `prepare_scene_trace` when a scene fills what is left. A frame that replaces every slot holds the replaced entries until they retire, up to twice the slot entries. Posed instances are admitted in collection order; past the capacity an instance is left out of the trace, never traced at rest, and counted in `Stats.trace_posed_overflow`. Once a preparation finds every slot claimed, each further overflowing row costs constant time. `Mesh.trace = false` keeps a mesh out. A slot unclaimed for more than `INSTANCE_ABSENCE_FRAMES` frames is released; an off-screen posed mesh still traces, because it can cast, so it keeps its slot.
-- **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams, a 112-byte root, 32 bytes per node of refit copy, and on the CPU 64 bytes per joint plus 80 bytes with morph targets. A geometry that can deform adds a depth table to its rest trace allocation: 4 bytes per node plus 132 bytes. The example Mannequin holds 205 KB of streams over its two parts. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
-- **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
-- **Compute skinning.** With [compute skinning](animation_deformation.md#compute-skinning) on, a slot whose mesh or crowd part has a posed binding this frame takes that pose instead of running its own pose pass; its streams stay allocated, unwritten. The rule and its exceptions are on the animation deformation page.
-- **Stats.** `trace_posed_instances`, `trace_posed_shared`, `trace_posed_overflow`, `trace_deform_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_poses_reused`, `trace_refits` and `blas_updates` (this frame). `trace_poses` counts posing dispatches, one per swaying batch or group part and one per other posed row; `trace_refits` counts the trees refit, which share one dispatch. Posing and refits run under `Pass.TRACE_POSE`.
-- **Hardware.** Each slot owns one bottom level created with `allow_update` and `prefer_fast_trace`: a full build when the slot is new, rebuilt or its source geometry changed, and an in-place update each frame the pose changes. Static bottom levels keep `prefer_fast_trace` alone. A pose change rebuilds the top level too. Updates and builds share the batched scratch described under [Hardware lifetime](#hardware-lifetime). `Stats.blas_updates` counts the updates; a full posed build counts in `blas_builds`. Both kinds refit rather than rebuild, so a strong pose traces slower than rest. A geometry whose vertex or primitive counts change replaces the slot's bottom level.
-- **Pose-only frames.** When poses move and no other row field does, as a swaying batch does while time passes, the trace revision advances and the instance rows and software top-level boxes stay as written. The software kind refits its node copies in place, which its rows already address. The hardware kind rebuilds the top level from the instance descriptors of its last packing, which the renderer keeps on the CPU (64 bytes per `RendererDesc.max_trace_instances`, allocated with the first hardware preparation) and copies into the frame's upload ring, so no descriptor is packed again. A change to any other field, such as a gust that moves the sway reach and with it the bounds, rewrites the rows and boxes and packs the descriptors anew. `Stats.trace_top_level_writes` counts the rewrites.
-
-### Vertex-motion slots
-
-A traced `Mesh` with `vertex_motion` and neither a skin binding nor selected morph targets takes a posed slot too, for CPU deformation such as cloth. The slot follows the geometry's rest topology (geometry, vertex count, index count and stream layout), not its revision. A new revision with the same topology does not rebuild the trace data: a transfer copies the revision's positions, normals and tangents (when present) from the geometry mirror into the slot, then the software tree is refitted and the hardware bottom level is updated in place. No pose pass runs, and the triangle tree and bottom level of the shared geometry are not rebuilt. Index values are not part of the key: a revision that rewrites the triangle indices must also change a count to rebuild the slot.
-
-- **Device writes.** A [geometry write](custom_shaders.md#geometry-writes) is a revision of the streams the slot copies: it refills and refits the slot in the same frame, so the dispatch precedes `prepare_scene_trace`. The shared rest tree and bottom level keep the CPU form.
-- **Topology change.** A different geometry, vertex count, index count or stream layout rebuilds the slot, its tree and its bottom level.
-- **Refit only.** The tree keeps the topology of its first revision with no periodic rebuild. A surface folded far from that shape traces slower, not wrongly.
-- **Capacity.** Slots count against `RendererDesc.max_posed_trace_instances` and its creation bound ([Posed instances](#posed-instances)). With none free the mesh traces through the shared geometry and rebuilds it every revision, as a mesh without `vertex_motion` does; it is not counted in `trace_posed_overflow`.
-- **Top level.** The hardware top level still rebuilds on every revision, and the trace revision advances, as for skin and morph poses. The rows are rewritten only when a field other than the pose changes ([pose-only frames](#posed-instances)).
-- **Cost.** A slot holds the same bytes as other posed slots, and the geometry's rest tree gains the depth table at its first trace upload. A static `vertex_motion` mesh keeps a slot.
-
-### Custom trace poses
-
-A shader's `trace_pose` forms pose the trace geometry of a custom material that has a vertex stage ([custom shaders](custom_shaders.md#trace-pose)). `single` poses a mesh and `instanced` poses one instance of an `InstancedMesh`; a form needs the vertex form of the same kind. The built-in sway is posed the same way for a batch or LOD group with `trace_sway`. Both take posed slots and the paths of [Posed instances](#posed-instances): the compute pass writes the positions, normals and tangents into a renderer-owned slot, the software kind refits a copy of the rest tree, and the hardware kind builds or updates the slot's bottom level.
-
-- **Re-posing.** A row poses again when its inputs change: for a custom stage, the material's revision, the revisions of its asset textures, the revision of the shader the renderer published, the instance record of an instanced row and, with `CustomTracePose.reads_time`, the frame time; for the sway, the batch's key: its geometry, the sway at the frame time, the node's world and the batch's `revision`. A batch or group part poses all its rows in one dispatch when its key moves. A row whose slot holds no pose, because it is new or another row took the slot, poses alone. An in-place edit of a transform or colour reaches the pose only through `Scene.mark_instances_dirty` or `Scene.mark_lod_instances_dirty`, which advance the revision. A still scene keeps its pose, and with it the trace revision. A sway moves with the frame time, so a swaying batch poses whenever the time moves. A closed preparation poses at the last frame's time.
-- **Hardware.** The first pose of a slot builds its bottom level in full. So does a re-pose of a custom stage without `reads_time`, because an edit may reshape the surface and an update would keep the first pose's tree. A `reads_time` stage and the sway update in place, as skin does. `Stats.blas_builds` and `blas_updates` count them.
-- **Software.** A geometry posed by a custom stage or the sway keeps the depth table of its rest tree, as a skinned geometry does, so the refit has what it needs. A tree built for a rigid row has no table, and only the CPU arrays can rebuild it: a swayed row whose geometry released them traces at rest and counts in `Stats.trace_sway_at_rest`, and a custom row, which has no rest form, is left out and counted in `Stats.trace_skipped`.
-- **Bounds.** A custom-posed mesh takes `Mesh.local_bounds` when `has_bounds_override` is set, else the geometry's bound. A custom-posed instance takes the geometry's bound under its matrix. The stage keeps its surface inside that bound, as a displaced geometry needs one to be culled; the top level does not see past it. A swayed row's bound grows by the sway reach.
-- **Capacity.** Rows share `RendererDesc.max_posed_trace_instances`, and its creation bound ([Posed instances](#posed-instances)), with every other posed kind. A custom row without a slot is left out of the trace and counted in `Stats.trace_deform_overflow`. A swayed row without a slot traces at rest and counts once for its batch or group in `Stats.trace_sway_at_rest`. Each preparation claims swayed rows after every other kind, so a vegetation layer that holds every slot yields them to a character that appears later; its rows trace at rest until slots free again.
-- **Cost.** A slot costs what [Posed instances](#posed-instances) lists. A pose also takes 40 bytes of the frame's upload ring per custom row plus 128 bytes of instance record for an instanced one, and 256 bytes per swayed row plus 80 bytes per swayed batch or group part. The pose dispatch runs one thread per vertex; a stage that reads time poses and updates every frame.
-- **Long rows.** A pose dispatch wraps a row whose groups of 64 vertices exceed the device's group count along x into rows of groups, so a row of any length poses in one dispatch. A custom stage that indexes through `trace_pose_index` and sets `ShaderDesc.trace_pose_grid` poses it. An undeclared stage faults `c3d::UNSUPPORTED` at `prepare_scene_trace` for a row past that count (4,194,240 vertices where the device allows only the guaranteed 65,535 groups) and poses none of it. The built-in skin, morph and sway poses use the grid, and the terrain and water stages declare it.
-- **Limits.** A custom stage sees only its material, the instance record and the time ([custom shaders](custom_shaders.md#trace-pose)): it cannot reproduce a vertex stage that reads the camera or other frame data, and skin, morph targets and `vertex_motion` do not apply to a custom row. A `LodGroup` part and a crowd part with a custom vertex stage stay out of the trace. The sway applies no fade, which depends on the view, so every instance traces.
-- **Published stages.** A row is posed by the stage the renderer published. When the store's newest revision was rejected and the published one lacks the form the row needs, or a pose pipeline the backend rejects, the row is left out and counted in `Stats.trace_skipped`; a rejected pipeline also counts in `Stats.shader_rejections`.
-
-### Animated crowds
-
-Placements of one crowd part batch (`AnimatedCrowd` or a crowd-backed `LodGroup`) with byte-identical palette and morph inputs share a posed trace slot: the lowest placement index in the group claims the slot, and the others point their rows at its root, refit nodes and bottom level (`Stats.trace_posed_shared`). Under compute skinning the shared slot aliases the leader's skinned copy. When the leader's pose changes, its slot updates in place; a placement that leaves its group claims its own slot with a full build, and unclaimed slots release after `INSTANCE_ABSENCE_FRAMES` frames. On the hardware kind each claimed slot costs a bottom-level update every frame its pose changes, recorded in barrier-separated batches ([Hardware lifetime](#hardware-lifetime)); each posed slot holds its own streams and bottom level, so memory scales with the number of distinct poses per part batch. The software kind poses and refits a tree copy per distinct pose and builds no bottom level.
-
-### Measured cost
-
-RTX 4090 (driver 610.88), Windows 11, 1920 x 1080, validation off. Each value is the median over three runs of the 128-frame medians, with a run-to-run range under 5 %. Dance_Loop or Walk_Loop on the Quaternius mannequin, two posed meshes each. `posed_trace_bench` forces validation on, so a scratch build with `.validation = false` was timed; validation-on runs of `mannequin 16 hardware animate` and `crowd 64 software` read the same GPU times and 1 to 5 % more CPU `trace_build_ms`.
-
-Trace pass (`gpu_trace_ms`, ms), at rest and at a strong pose:
-
-| Kind | Rest | Strong | Ratio |
-| --- | ---: | ---: | ---: |
-| software | 0.104 | 0.144 | 1.38 |
-| hardware | 0.039 | 0.039 | 1.00 |
-
-The software refit stays under the 2x rebuild trigger.
-
-Animated mannequins (GPU ms; CPU `trace_build_ms`):
-
-| N (posed instances) | HW `TRACE_POSE` | HW trace | SW `TRACE_POSE` (pose + refit) | SW trace | CPU `trace_build_ms` HW / SW |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 (2) | 0.007 | 0.039 | 0.109 | 0.132 | 0.020 / 0.020 |
-| 16 (32) | 0.013 | 0.039 | 0.119 | 0.210 | 0.269 / 0.257 |
-| 64 (128) | 0.033 | 0.041 | 0.162 | 0.293 | 1.075 / 1.032 |
-
-Update against full build, one mannequin on the hardware kind: `ACCELERATION_BUILD` is 0.171 ms for the update and 0.526 ms for a full build (`fresh`), so the update is about 3.1x cheaper. The driver reports 406,016 B of bottom-level storage without `allow_update` and 369,664 B with it, and 25,984 B of update scratch.
-
-Crowds (`Walk_Loop`, `add_crowd(trace: true)`, two posed meshes per placement):
-
-| Crowd | `trace_posed_bytes` | `TRACE_POSE` | Dispatches (poses + refits) | Trace | CPU `trace_build_ms` |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| 64 hardware | 69.7 MB | 0.033 | 128 + 0 | 0.042 | 0.222 |
-| 512 hardware | 557.5 MB | 0.227 | 1,024 + 0 | 0.070 | 3.357 |
-| 64 software | 30.9 MB | 0.160 | 128 + 128 | 0.344 | 0.181 |
-| 512 software | 247.3 MB | 1.269 | 1,024 + 1,024 | 0.579 | 1.871 |
-
-## Preparing
-
-Trace rows, bounds and ray origins use the [frame's relative space](large_world.md).
-Supply the current absolute reference to `begin_frame` before preparation.
-Closed-frame preparation uses the most recently selected origin, initially zero;
-the next frame refreshes the data if its origin changes. A cell change rebuilds
-the top level while retaining local BLAS data. The stable root address does not
-make its contents or coordinate space immutable.
+## Quick start
 
 ```c3
 renderer.begin_frame()!;
@@ -142,44 +14,11 @@ gpu::GpuAddress scene_trace = renderer.prepare_scene_trace(&scene)!;
 // pass scene_trace in a dispatch root
 ```
 
-`prepare_scene_trace(scene, kind)` takes a `TraceKind`:
+Built-in effects prepare the trace themselves when a view enables them. Call `prepare_scene_trace` for your own
+dispatches, or on a loading screen.
 
-- `AUTO` (the default) builds the hardware data when the renderer has ray queries, else the software data.
-- `SOFTWARE` builds the bounding volume hierarchy.
-- `HARDWARE` builds acceleration structures; it faults `c3d::UNSUPPORTED` on a renderer created without `RendererDesc.ray_queries`.
-
-A shader reads only the kind it asked for. Asking for both kinds in the same frame keeps one set of rows: the second call fills in the other half.
-
-The call collects the eligible instances, poses the deformed ones, and builds each geometry's bottom level the first time the geometry traces, and again after its revision moves. It rebuilds the top level only when the eligible set, an instance's world matrix, geometry, material or pose changed. It sizes its working records by the instances of the batches that trace, so a batch with `trace` off or no instances adds nothing. A second call in the same frame for the same scene and kind returns at once. The returned address is the same for the renderer's life. Copies it queues are recorded by the frame's next dispatch or view, or by `end_frame`.
-
-The renderer holds one top level. Prepare one scene per frame: preparing a second scene in the same frame rewrites the same buffer, which is ordered only after a dispatch or view has recorded the first scene's copies and consumed them.
-
-With no frame open, the call records, submits and waits on its own, like `Renderer.upload_geometry`. Use it on a loading screen:
-
-```c3
-renderer.prepare_scene_trace(&scene)!;
-foreach (geometry : static_geometry) assets.release_geometry_cpu(geometry);
-```
-
-A bottom level built for the current revision keeps tracing after `release_geometry_cpu`. A geometry released before its first preparation has nothing to build from: its instances are skipped and counted in `Stats.trace_skipped`. An acceleration structure builds from the geometry's GPU streams, but only once the asset store proved the arrays form a valid triangle list for the current revision (`AssetStore.triangles_valid`) and the streams exist: the CPU arrays are present, or the renderer holds a GPU copy of the current revision. The store records the answer per revision, so a proof made before the release by a trace preparation or a triangle pick carries over. A geometry released before any proof, or before the renderer uploaded it, is skipped by both kinds.
-
-Triangle geometry whose arrays form no triangle list (fewer than three positions, an index count that is not a multiple of three, an index past the last vertex) still draws, but it does not trace: its instances are skipped and counted in `Stats.trace_skipped` until its revision moves. The software level is the store's triangle tree (`AssetStore.triangle_bvh`), built once per revision and shared with triangle picks.
-
-`RendererDesc.max_trace_instances` bounds the instance table (4096 when zero). More eligible instances fault `c3d::CAPACITY_EXCEEDED` and leave the previous table in place. The top level, the instance table and the root live in one buffer of that capacity; each bottom level takes one acceleration-structure table entry, not an allocation entry, and is owned by its geometry mirror and released with it.
-
-`Stats.trace_instances`, `trace_nodes` (top-level nodes), `trace_skipped` and `trace_build_ms` (CPU time spent in the call) describe the current frame; `begin_frame` resets them. `Stats.trace_top_level_writes` counts the frame's rewrites of the top-level boxes and instance rows. `Stats.blas_builds`, `blas_updates` and `tlas_builds` count acceleration structure builds and updates recorded in the frame, `acceleration_batches` the barrier-separated groups of bottom-level work; builds run under `Pass.ACCELERATION_BUILD`.
-
-### Hardware lifetime
-
-A geometry's bottom-level structure is created the first time a hardware preparation traces the geometry and again after its revision moves; the old one is destroyed after every frame that could trace it completed. A posed instance's bottom level is updated in place while its slot lives; barriers order the update after every earlier read of that structure. The renderer keeps two top-level structures and rebuilds one only when the rows, their world matrices, geometry, material or pose change. A frame reads at most one of them. A rebuild in a later frame targets the other, whose readers have completed; a rebuild in the same frame reuses the one the frame already reads, ordered after those reads. `SceneTraceRoot.tlas_index` names the top level the frame reads, or 0 without hardware data.
-
-Bottom-level builds and updates of a frame (new static bottom levels, then posed builds and updates) are recorded in batches. Each build takes its own range of the frame slot's scratch at a running offset aligned to the device's scratch alignment, so builds of a batch share no scratch and no barrier separates them. One barrier follows each batch; it orders the next batch's reuse of the scratch and the top-level build's reads of the bottom levels. A batch closes when the next range would pass `MAX_ACCELERATION_BATCH_SCRATCH`, 64 MiB; a build larger than that gets a batch of its own. The top-level build follows the last batch and uses the start of the same scratch.
-
-Scratch is one allocation per frame slot. It grows when a frame needs more and does not shrink: to the larger of the top-level build's scratch and the frame's largest batch, which is at most 64 MiB or the largest single build. `Stats.acceleration_batches` counts the batches recorded in the frame.
-
-## Tracing in a shader
-
-Define exactly one of `SCENE_TRACE_BVH` (software) or `SCENE_TRACE_RAY_QUERY` (hardware) to match the kind the renderer prepared, then include the file. `compile::compile_glsl` takes the define in `defines`, so one source serves both:
+In a compute shader, define exactly one of `SCENE_TRACE_BVH` (software) or `SCENE_TRACE_RAY_QUERY` (hardware) to match
+the kind the renderer prepared, then include the file:
 
 ```glsl
 #version 460
@@ -197,12 +36,131 @@ if (trace_scene(scene, origin, direction, 1.0e30, TRACE_MASK_ALL, hit)) {
     uvec3 corners = pull_triangle(geometry, hit.primitive);
 }
 bool blocked = trace_scene_any(scene, origin, direction, distance_to_light, TRACE_MASK_SHADOW_CASTER);
-bool met = trace_scene_with_back_faces(scene, origin, direction, 1.0e30, TRACE_MASK_ALL, hit);
 ```
 
-A built-in shader that serves both kinds is compiled twice through the `SCENE_TRACE_BVH` flag of `shaders/variants.json`: the source defines `SCENE_TRACE_RAY_QUERY` unless the flag is set (for traced shadows `shadows.glsl` does it under `RT_SHADOWS`, and a custom stage's traced forms follow the same rule; see [custom shaders](custom_shaders.md#traced-shadows)), and the renderer picks the variant from `caps.ray_queries.enabled`, the same bit that selects the prepared kind. Every built-in consumer does: traced shadows in the `standard`, `physical`, `toon` and `lighting_resolve` fragment stages, ray-traced ambient occlusion, ray-traced reflections and the probe update. A renderer created without ray queries therefore runs every traced effect on the software walk; the path tracer alone needs ray-tracing pipelines.
+`compile::compile_glsl` takes the define in `defines`, so one source serves both kinds.
 
-The instance mask selects rows: every row of a drawn mesh carries `TRACE_MASK_ALL`, and rows of meshes with `cast_shadow` also carry `TRACE_MASK_SHADOW_CASTER`. A [trace proxy](#trace-proxies) carries `TRACE_MASK_PROXY` and, with `cast_shadow`, `TRACE_MASK_PROXY_SHADOW_CASTER` instead, and the entry points reach it through the matching proxy bit of the mask they are given. A row whose mask shares no bit with the argument is skipped. A shader that calls `traceRayEXT` itself passes the proxy bits to see proxies.
+## Concepts
+
+### Software and hardware kinds
+
+| Kind | Structure | Needs |
+| --- | --- | --- |
+| Software | A two-level bounding volume hierarchy the renderer builds on the CPU. The traversal is plain shader code. | Any Vulkan 1.3 device |
+| Hardware | One bottom-level acceleration structure per geometry and a top-level structure over the rows, traversed with ray queries. | `RendererDesc.ray_queries` or `ray_tracing_pipelines` |
+
+- Every built-in consumer picks its kind from whether the renderer has ray queries, which `RendererDesc.ray_queries` or
+  `ray_tracing_pipelines` enables. There is no per-view or per-effect setting, so comparing the kinds means two
+  renderers. A renderer created without ray queries runs every traced effect on the software walk, which traces slower
+  than ray queries for the same rays.
+- Both kinds report the same hits: the same triangles, the instance mask, the alpha test and the face rules
+  ([facing](#facing)).
+- The path tracer alone needs `RendererDesc.ray_tracing_pipelines`, which also enables ray queries, and always traces
+  hardware data.
+- The built-in shaders that serve both kinds compile twice through the `SCENE_TRACE_BVH` flag of
+  `shaders/variants.json`. A custom stage's traced forms follow the same rule; see
+  [custom shaders](custom_shaders.md#traced-shadows).
+
+### What traces
+
+An instance enters the trace when all of these hold:
+
+- its node is effectively visible;
+- `Mesh.trace` (or `InstancedMesh.trace`) is set. `Scene.add_mesh`, `Scene.add_instanced_mesh` and `model::instantiate`
+  set it. Clear it to keep a mesh out of every trace without touching raster, shadows or picking;
+- its geometry, material and, for a skinned mesh, skeleton ids are live (dead ones count in `Stats.dangling_refs`), and a
+  custom material's shader is live;
+- the geometry has `TRIANGLES` topology;
+- the material's alpha mode is `OPAQUE` or `MASK`;
+- the material has no custom vertex stage, or its shader poses the trace geometry in the row's form
+  ([custom trace poses](scene_trace_reference.md#custom-trace-poses)).
+
+A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live
+transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces
+like any other. Every row carries its node's `layers`, which hit shading tests against `Light.layers`.
+
+| Instance | Traces |
+| --- | --- |
+| Mesh with no skin binding over joints and no selected morph target | At its rest pose |
+| Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose, in both kinds ([posed instances](scene_trace_reference.md#posed-instances)) |
+| Mesh with `vertex_motion` and neither a skin binding nor a selected morph target | At its current vertex streams ([vertex-motion slots](scene_trace_reference.md#vertex-motion-slots)) |
+| Crowd part batch | Only with `add_crowd(trace: true)`, at the placement's raster pose ([animated crowds](scene_trace_reference.md#animated-crowds)) |
+| `InstancedMesh` with `source = DEVICE` | Only the instances of its host mirror ([device batches](instancing.md#device-batches)); none without one |
+| `LodGroup` with `LodEffects.trace` | Its level-zero parts: an ordinary group at rest or, with `trace_sway`, swayed; an animated group at its raster pose |
+| `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest` |
+| The same with `trace_sway` | Each instance at its swayed pose, up to the posed capacity |
+| Mesh or `InstancedMesh` of a material with a custom vertex stage and a trace-pose stage | At the pose the stage computes |
+| Any other material with a custom vertex stage | Never |
+| `BLEND` material | Never |
+| Billboard and ribbon batches (billboard and ribbon particles included), decals, LOD levels above zero | Never |
+
+A custom vertex stage can move vertices anywhere, and the renderer sees the stage, not the displacement. A material with
+one traces only when its shader also supplies a trace-pose stage, whatever `trace` says. A stage that displaces nothing
+and should trace draws through the built-in vertex stage.
+
+A bounds override (`has_bounds_override`) is a bound for culling and shadow fitting only; it does not keep a mesh out of
+the trace.
+
+A swaying batch or LOD group traces at its rest pose unless `InstancedMesh.trace_sway` or `LodEffects.trace_sway` is
+set. A traced shadow of a swaying tree then stays still while atlas shadows sway, and a shadow ray from a swayed leaf
+can meet the tree's own rest geometry. Coverage ignores the geometry's vertex alpha on every row of a batch or LOD group
+whose sway takes its bend weight from it (`SwayWeight.VERTEX_ALPHA`), because raster consumes that alpha.
+
+`Mesh.trace_only` marks a mesh that is traced but never drawn: raster views and shadow layers skip it, and trace
+collection takes it like any traced mesh, so its node must be effectively visible. Picking, the scene index and impostor
+capture skip it. Its row is a [trace proxy](#trace-proxies).
+
+## Usage
+
+### Prepare a scene trace
+
+`prepare_scene_trace(scene, kind)` takes a `TraceKind`:
+
+- `AUTO` (the default) builds the hardware data when the renderer has ray queries, else the software data.
+- `SOFTWARE` builds the bounding volume hierarchy.
+- `HARDWARE` builds acceleration structures; it faults `c3d::UNSUPPORTED` on a renderer created without
+  `RendererDesc.ray_queries` or `ray_tracing_pipelines`.
+
+A shader reads only the kind it asked for. Asking for both kinds in the same frame keeps one set of rows: the second call
+fills in the other half.
+
+- The call collects the eligible instances, poses the deformed ones, and builds each geometry's bottom level the first
+  time the geometry traces and again after its revision moves. It rebuilds the top level only when the eligible set, an
+  instance's world matrix, geometry, material or pose changed.
+- A second call in the same frame for the same scene and kind returns at once. The returned address is the same for the
+  renderer's life, but its contents and coordinate space can change.
+- The renderer holds one trace set. Prepare one scene per frame: preparing a second scene in the same frame rewrites the
+  same buffer, which is ordered only after a dispatch or view has recorded the first scene's copies and consumed them.
+  The copies a preparation queues are recorded by the frame's next dispatch or view, or by `end_frame`.
+- With no frame open, the call records, submits and waits on its own, like `Renderer.upload_geometry`.
+- Rows, bounds and ray origins use the frame's relative space; supply the current absolute reference to `begin_frame`
+  before preparing. A custom dispatch expresses its rays in the space of the preparation it consumes. Closed-frame
+  preparation uses the most recently selected origin, initially zero, and the next frame refreshes the data if its origin
+  changes. See [camera-relative rendering](large_world.md#coordinate-contract).
+- `RendererDesc.max_trace_instances` bounds the instance table (4096 when zero). More eligible instances fault
+  `c3d::CAPACITY_EXCEEDED` and leave the previous table in place. Each bottom level takes one acceleration-structure
+  table entry and is owned by its geometry mirror.
+
+### Release CPU geometry after preparing
+
+```c3
+renderer.prepare_scene_trace(&scene)!;
+foreach (geometry : static_geometry) assets.release_geometry_cpu(geometry);
+```
+
+A bottom level built for the current revision keeps tracing after `release_geometry_cpu`. A geometry released before its
+first preparation has nothing to build from: its instances are skipped and counted in `Stats.trace_skipped`. Hardware
+data builds from the geometry's GPU streams, but only once the asset store proved the arrays form a valid triangle list
+for the current revision (`AssetStore.triangles_valid`). A trace preparation or a triangle pick makes that proof, and it
+carries over a later release. A geometry released before any proof, or before the renderer uploaded it, is skipped by both
+kinds.
+
+Triangle geometry whose arrays form no triangle list (fewer than three positions, an index count that is not a multiple
+of three, an index past the last vertex) still draws, but its instances are skipped and counted in `Stats.trace_skipped`
+until its revision moves. The software level is the store's triangle tree (`AssetStore.triangle_bvh`), built once per
+revision and shared with triangle picks.
+
+### Trace in a shader
 
 `SceneHit` carries:
 
@@ -211,49 +169,69 @@ The instance mask selects rows: every row of a drawn mesh carries `TRACE_MASK_AL
 - `barycentrics`: the weights of the triangle's second and third corners.
 - `t`: the distance along `direction` as given. It is a world distance when `direction` is normalized.
 
-`TraceInstanceGpu` gives the hit's `GeometryRoot`, material block address, material kind, `TRACE_INSTANCE_ALPHA_MASK` and `TRACE_INSTANCE_DOUBLE_SIDED` flags, the instance mask, the node's receiver `layers` and both affine transforms as rows. Which faces a ray meets is set by the entry point ([Facing](#facing)). A masked row (`TRACE_INSTANCE_ALPHA_MASK`) reports a triangle only where its coverage reaches the material's `alpha_cutoff`: base color alpha times the base map's alpha at the hit's UV (sampled at the top mip), times vertex alpha when the geometry has colors; a custom material uses slot 0's alpha. Both kinds apply the same test, so they report the same hits.
+`TraceInstanceGpu` gives the hit's `GeometryRoot`, material block address, material kind, the
+`TRACE_INSTANCE_ALPHA_MASK` and `TRACE_INSTANCE_DOUBLE_SIDED` flags, the instance mask, the node's receiver `layers` and
+both affine transforms as rows. A masked row (`TRACE_INSTANCE_ALPHA_MASK`) reports a triangle only where its coverage
+reaches the material's `alpha_cutoff`: base color alpha times the base map's alpha at the hit's UV (sampled at the top
+mip), times vertex alpha when the geometry has colors. A custom material uses slot 0's alpha. Both kinds apply the same
+test.
+
+The instance mask selects rows. Every row of a drawn mesh carries `TRACE_MASK_ALL`, and rows of meshes with `cast_shadow`
+also carry `TRACE_MASK_SHADOW_CASTER`. A [trace proxy](#trace-proxies) carries `TRACE_MASK_PROXY` and, with
+`cast_shadow`, `TRACE_MASK_PROXY_SHADOW_CASTER` instead, and the entry points reach it through the matching proxy bit of
+the mask they are given. A row whose mask shares no bit with the argument is skipped. A shader that calls `traceRayEXT`
+itself passes the proxy bits to see proxies.
 
 The traversal keeps a stack of `BVH_STACK_DEPTH` entries per level; builds never exceed that depth.
 
 ### Facing
 
-A triangle's front is its counter-clockwise side in the geometry's local space: the side raster draws, for mirrored models too, and the side `PickFaces.FRONT` accepts. A double-sided material (`TRACE_INSTANCE_DOUBLE_SIDED`) has two fronts. The entry points keep what raster would show from the ray's point of view:
+A triangle's front is its counter-clockwise side in the geometry's local space: the side raster draws, for mirrored
+models too, and the side `PickFaces.FRONT` accepts. A double-sided material (`TRACE_INSTANCE_DOUBLE_SIDED`) has two
+fronts. The entry points keep what raster would show from the ray's point of view:
 
-- `trace_scene` is a looking ray. It keeps the faces a viewer at its origin sees: a single-sided triangle counts only from its front. Primary, ambient occlusion, reflection and path-tracer bounce rays use it.
-- `trace_scene_any` is a shadow test toward the ray's far end. It keeps the faces a light there sees, the faces the shadow atlas draws: a single-sided triangle counts only when its front faces the far end. Its answer depends on the ray's direction; it is not a symmetric line-of-sight test.
-- `trace_scene_with_back_faces` keeps both faces of every triangle, and `surface_from_hit` sets `TraceSurface.back_face` for a single-sided triangle hit from behind. The probe update uses it, because a probe inside geometry must read dark.
+- `trace_scene` is a looking ray. It keeps the faces a viewer at its origin sees: a single-sided triangle counts only from
+  its front. Primary, ambient occlusion, reflection and path-tracer bounce rays use it.
+- `trace_scene_any` is a shadow test toward the ray's far end. It keeps the faces a light there sees, the faces the
+  shadow atlas draws: a single-sided triangle counts only when its front faces the far end. Its answer depends on the
+  ray's direction; it is not a symmetric line-of-sight test.
+- `trace_scene_with_back_faces` keeps both faces of every triangle, and `surface_from_hit` sets `TraceSurface.back_face`
+  for a single-sided triangle hit from behind. The probe update uses it, because a probe inside geometry must read dark.
+  Use it for a nearest hit on either face.
 
-`Mesh.trace_facing` (`TraceFacing`) sets which faces a mesh's row has, for traces only. `MATERIAL`, the default, follows the material's `double_sided`; `FRONT` gives the row front faces only, whatever the material says; `BOTH` gives it two fronts. The resolved value sets `TRACE_INSTANCE_DOUBLE_SIDED`, so both kinds, the three entry points above and `TraceSurface.back_face` follow it. Raster, the shadow atlas and picking read the material alone. `InstancedMesh` and `LodGroup` rows follow the material.
-
-The instance mask and the alpha test apply to all three, after the facing test. Both kinds give the same hits. `trace_scene` and `trace_scene_any` counted both faces before the software path for traced effects landed; a shader that relied on that uses `trace_scene_with_back_faces` for a nearest hit. CPU picking applies `PickOptions.faces`, whose default `MATERIAL` matches `trace_scene`.
+`Mesh.trace_facing` (`TraceFacing`) sets which faces a mesh's row has, for traces only. `MATERIAL`, the default, follows
+the material's `double_sided`. `FRONT` gives the row front faces only, whatever the material says. `BOTH` gives it two
+fronts. The resolved value sets `TRACE_INSTANCE_DOUBLE_SIDED`, so both kinds, the three entry points and
+`TraceSurface.back_face` follow it. Raster, the shadow atlas and picking read the material alone. `InstancedMesh` and
+`LodGroup` rows follow the material. The instance mask and the alpha test apply to all three entry points, after the
+facing test. CPU picking applies `PickOptions.faces`, whose default `MATERIAL` matches `trace_scene`.
 
 ### Trace proxies
 
-A trace-only mesh stands in for geometry that raster draws another way, so its triangles may sit above the drawn surface:
-a coarse grid for terrain is above it wherever the surface dips. A ray from a drawn surface starts `TRACE_SURFACE_OFFSET`
-along the normal whatever it meets, and a proxy under that start would otherwise block it. A material that knows how far
-its proxy may sit above its surface raises `trace_proxy_skip_height` before it shades, in metres above the surface;
-`trace_proxy_t_min(skip_height, direction, normal)` gives the distance along a ray at which it has risen that far above
-the plane of the surface at its origin. `trace_scene`, `trace_scene_any` and `trace_scene_query` take it as a
-`proxy_t_min` argument before the hit (or after the instance mask, for `trace_scene_any`): a hit on a proxy nearer than
-it is ignored, on both kinds. The kinds agree: the software walk skips the triangle, and the hardware kind keeps proxy
-rows opaque under their own mask bits and runs a second query over them from `proxy_t_min`, bounded by the first query's
-hit. A `trace_scene_any` ray skips the second query once the first has hit. Every other instance, a box on the terrain
-among them, keeps counting from the ray's start, so contact shadows stay. Every `trace_only` mesh is a proxy and a pixel's
-skip height applies to all of them: a trace-only occluder standing on the terrain loses its contact shadow within that
-height of the surface. `SceneTraceRoot.proxy_count` is the number of proxy rows in the frame's trace set; a frame without
-proxies pays no proxy query. Without the argument the entry points behave as before.
+A trace-only mesh stands in for geometry that raster draws another way, so its triangles may sit above the drawn
+surface: a coarse grid for terrain is above it wherever the surface dips. A ray from a drawn surface starts
+`TRACE_SURFACE_OFFSET` (0.02 world units) along the normal whatever it meets, and a proxy under that start would
+otherwise block it.
 
-The forward shadow paths read `trace_proxy_skip_height` themselves. A deferred view carries it per pixel: `write_gbuffer`
-packs it into the upper 16 bits of the flags channel as centimetres, rounded up and clamped at 655.35 m, and the
-lighting resolve, [ray-traced ambient occlusion](ambient_occlusion.md#ray-traced) and
-[ray-traced reflections](reflections.md) read it back. A forward view with ray-traced ambient occlusion carries the same
-word from its depth prepass: every prepass fragment writes it to an `R32_UINT` `proxy_skip` image, the core fragments
-write zero, and a shader's [prepass stage](custom_shaders.md#prepass-stage) writes its own height. A multisampled view
-reads sample 0 of the word: a deferred view's flags and a forward view's multisample `proxy_skip` are copied to a
-single-sample image after the pass that writes them. A forward view's reflections read none, because only Standard and
-Physical pixels trace and they raise no height. A material that never sets it writes zero.
-The path tracer starts its rays at trace hits and is unaffected.
+A material that knows how far its proxy may sit above its surface raises `trace_proxy_skip_height` before it shades, in
+metres above the surface. `trace_proxy_t_min(skip_height, direction, normal)` gives the distance along a ray at which it
+has risen that far above the plane of the surface at its origin. `trace_scene`, `trace_scene_any` and
+`trace_scene_query` (only on the ray-query kind) take it as a `proxy_t_min` argument before the hit (or after the
+instance mask, for `trace_scene_any`). A hit on a proxy nearer than it is ignored, on both kinds.
+
+- Every other instance, a box on the terrain among them, keeps counting from the ray's start, so contact shadows stay.
+  Every `trace_only` mesh is a proxy and a pixel's skip height applies to all of them: a trace-only occluder standing on
+  the terrain loses its contact shadow within that height of the surface.
+- `SceneTraceRoot.proxy_count` is the number of proxy rows in the frame's trace set; a frame without proxies pays no
+  proxy query.
+- The forward shadow paths read `trace_proxy_skip_height` themselves. A deferred view carries the height per pixel: `write_gbuffer` packs it into the upper 16 bits of the flags channel as
+  centimetres, rounded up and clamped at 655.35 m, and the lighting resolve, [ray-traced ambient
+  occlusion](ambient_occlusion.md#ray-traced) and [ray-traced reflections](reflections.md) read it back. A forward view
+  with ray-traced ambient occlusion writes the same word from its depth prepass into an `R32_UINT` `proxy_skip` image;
+  the core fragments write zero, and a shader's [prepass stage](custom_shaders.md#prepass-stage) writes its own height.
+  A multisampled view reads sample 0 of the word: a deferred view's flags and a forward view's multisample `proxy_skip`
+  are copied to a single-sample image after the pass that writes them. A forward view's reflections read none, because only Standard and Physical pixels trace and they raise no height.
+- A material that never sets the height writes zero. The path tracer starts its rays at trace hits and is unaffected.
 
 ### Hit surfaces
 
@@ -263,30 +241,48 @@ The path tracer starts its rays at trace hits and is unaffected.
 TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width);
 ```
 
-`TraceSurface` holds the world position, the shading and geometric normals, albedo (base colour
-times its map and vertex colour), emission, metallic and roughness (Standard and Physical rows;
-0 and 1 otherwise), the material kind and block address, the row's receiver `layers`, and `back_face`, set when the ray hit
-the back of a single-sided surface (only `trace_scene_with_back_faces` reports such hits). A Physical row also
-fills the IOR, specular colour and weight, clearcoat factor, roughness and normal, sheen colour and roughness,
-anisotropy strength and world-space stretch direction, transmission, and the
-thickness scaled by the row's axis scales, from `PhysicalMaterialGpu` and its maps as the forward Physical stage
-reads them; other rows hold the neutral values. Standard and Physical normal maps apply to the shading
-normal, the clearcoat normal map to the coat normal, and the anisotropy frame to the stretch direction, through the tangent stream when the geometry has one and through the triangle's edges
-otherwise. A double-sided surface hit from behind reports flipped normals instead. Maps sample at the level of detail a ray cone of width `cone_width` (world
-units, at the hit) selects over the triangle; `ray_cone_lod` in `c3d::render` is its CPU twin.
-Hit shading (`shade_hit` in `hit_shading.glsl`) runs in compute and ray stages, so it takes no
-screen-space derivative and every texture it reads samples at an explicit level. Offset ray origins by `TRACE_SURFACE_OFFSET` along the geometric normal. Ray-traced reflections,
-ambient occlusion and the path tracer use these helpers ([reflections](reflections.md),
-[ambient occlusion](ambient_occlusion.md#ray-traced), [path tracing](path_tracing.md)).
+`TraceSurface` holds the world position, the shading and geometric normals, albedo (base colour times its map and vertex
+colour), emission, metallic and roughness (Standard and Physical rows; 0 and 1 otherwise), the material kind and block
+address, the row's receiver `layers`, and `back_face`, set when the ray hit the back of a single-sided surface (only
+`trace_scene_with_back_faces` reports such hits). A Physical row also fills the IOR, specular colour and weight,
+clearcoat, sheen, anisotropy, transmission and thickness values; other rows hold the neutral values.
+
+- Normal maps apply to the shading normal, the clearcoat normal map to the coat normal, through the tangent stream when
+  the geometry has one and through the triangle's edges otherwise. A double-sided surface hit from behind reports
+  flipped normals.
+- Maps sample at the level of detail a ray cone of width `cone_width` (world units, at the hit) selects over the
+  triangle; `ray_cone_lod` in `c3d::render` is its CPU twin.
+- Hit shading (`shade_hit` in `hit_shading.glsl`) runs in compute and ray stages, so it takes no screen-space derivative
+  and every texture it reads samples at an explicit level.
+- Offset ray origins by `TRACE_SURFACE_OFFSET` along the geometric normal.
+
+Ray-traced [reflections](reflections.md), [ambient occlusion](ambient_occlusion.md#ray-traced) and
+[path tracing](path_tracing.md) use these helpers.
 
 ## Example
 
-`examples/software_rt` renders Sponza and overwrites the right half of the view with one primary ray per pixel. `M` cycles distance, geometric normal and instance colors. `--hardware` creates the renderer with ray queries, prepares hardware data and compiles the same trace shader with `SCENE_TRACE_RAY_QUERY`. It needs the benchmark assets: `python3 scripts/fetch_benchmark_assets.py`.
-
 ```bash
+python3 scripts/fetch_benchmark_assets.py
 python3 scripts/build.py --example software_rt
 ```
 
-In a GPU-profiling build (`c3c build software_rt --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL`), `--gpu-timings` shows rays per second in the panel, and `--gpu-timings --benchmark 300` opens 1920x1080, times the trace pass over 300 frames after a warm-up and prints the mean. On a software Vulkan driver such as llvmpipe those numbers measure the CPU; take them on a hardware driver.
+`examples/software_rt` renders Sponza and overwrites the right half of the view with one primary ray per pixel. `M`
+cycles distance, geometric normal and instance colors. `--hardware` creates the renderer with ray queries, prepares
+hardware data and compiles the same trace shader with `SCENE_TRACE_RAY_QUERY`.
 
-`cpu_bench bvh_top N` times a top-level build over `N` scattered boxes and `cpu_bench bvh_triangles S` a bottom-level build over a plane of `S` by `S` segments.
+## Limits
+
+- Rays see only the traced scene ([What traces](#what-traces)). Custom shader code does not run at hits: `shade_hit`
+  evaluates the built-in Basic, Standard, Physical and Toon rows and shades custom-material rows a neutral grey.
+- One trace set per renderer; prepare one scene per frame.
+- The software kind traces slower than ray queries. A strongly posed instance can trace slower than at rest, because
+  posed trees are refit rather than rebuilt.
+- The path tracer needs ray-tracing pipelines and hardware data; the other effects run on either kind.
+
+## See also
+
+- [Scene trace reference](scene_trace_reference.md) for posed instances, counters and capacities
+- [Shadows](shadows.md), [ambient occlusion](ambient_occlusion.md), [reflections](reflections.md),
+  [probe volumes](probe_volumes.md), [path tracing](path_tracing.md)
+- [Custom shaders](custom_shaders.md) for trace-pose and traced-shadow stages
+- [Camera-relative rendering](large_world.md)

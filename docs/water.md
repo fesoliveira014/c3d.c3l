@@ -14,7 +14,7 @@ the fragment stage reads the scene's colour and depth snapshots after opaque (a 
 [custom shaders](custom_shaders.md)), refracts what lies behind the surface, reflects from a
 planar mirror target, else a screen-space march over the snapshot, else the environment or the frame's
 ambient, adds lit foam, and shades sun glints through the public Standard parts. The body writes a core
-[medium volume](sky.md#medium-volumes) that absorbs and scatters the light in the water, from above and from below,
+[medium volume](fog.md#medium-volumes) that absorbs and scatters the light in the water, from above and from below,
 and the surface seen from under it shows Snell's window and total internal reflection ([Underwater](#underwater)).
 Ripple normals and foam colour
 come from referenced Standard materials; the application's wind scrolls the ripples, and `set_sea_state` turns a
@@ -644,7 +644,7 @@ five can pass the envelope. `Mesh.local_bounds` are what culling and shadows rea
 ## Ocean
 
 `WaterDesc.mode = OCEAN` draws a sea that reaches the horizon. The body is an `InstancedMesh` quadtree under
-[box ranges](instancing.md#box-ranges), like the [terrain](terrain.md) of the same package: every node is an instance
+[box ranges](instancing_quadtree.md#box-ranges), like the [terrain](terrain.md) of the same package: every node is an instance
 of one shared unit chunk of `OCEAN_CHUNK_CELLS` (64) cells per side, and each view selects the nodes it draws. The
 node's local XZ plane is the rest plane, as for a body, and mirrors, the clip plane, `surface_view`, the queries and
 `fluid_sample` work on it as before.
@@ -675,13 +675,13 @@ scene.update_world();
   hold what it covers, and queries outside answer `NOT_FOUND`. At the default 1.25 m cell a chunk is 80 m: 128 chunks
   cover 10 km and 256 cover 20 km. A 10 km sea has eight levels and 21,845 nodes. The largest tree has nine levels and
   87,381 nodes: 4.9 MiB of instance records on the CPU, 11 MiB on the device, 1.4 MB of selection state shared by the
-  views and 0.7 MB more for each ([instancing](instancing.md#quadtree-selection)).
+  views and 0.7 MB more for each ([quadtree cost](instancing_quadtree.md#passes-history-and-cost)).
 - **Chunk size.** The box ranges of a level grow with its chunk's diagonal, so large chunks draw their finest cells far
   past the distance where a cell is a pixel. A chunk of 64 cells keeps that reach short. The price is four times the
   nodes for an extent that 128-cell chunks would cover, and half the extent at the cap for a cell size.
 - **Per-view levels.** The split threshold is 512 px, the hysteresis 0.25 and the morph band 0.25, constants of the
   package (the terrain's defaults). An application tunes the threshold in place on the node's
-  `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing.md#quadtree-selection)); it survives `set_desc`.
+  `InstancedMesh.quadtree.split_pixels` ([tuning in place](instancing_quadtree.md#create-and-tune-a-tree)); it survives `set_desc`.
   Each view selects its own levels. Adjacent chunks differ by at most one level. The body casts no shadow.
 - **Morph.** A vertex at an odd lattice position moves toward the mean of its two parent-lattice neighbours' points
   over the last quarter of its level's range: the full displaced position, the normal and the crest factor, not a
@@ -731,7 +731,7 @@ scene.update_world();
   any other amount is correct and makes the vertex lattice slide under the waves.
 - **Rebasing.** `Scene.shift_origin` moves the node and `world_shift` together, so `A` is unchanged: heights at a
   fixed absolute point stay put and nothing uploads. The renderer's shift needs nothing more
-  ([large worlds](large_world.md)).
+  ([origin rebasing](origin_rebasing.md)).
 - **No tracing.** An ocean is not traced: the quadtree forbids `trace` and a posed 40 km grid every frame would cost
   more than it shows. `check_desc` faults `INVALID_ARGUMENT` for `trace` on an ocean. Mirrors reflect across the rest
   plane as for a body.
@@ -760,7 +760,7 @@ water. The sun lights glints and foam; the water's own colour is the medium's in
 ## Underwater
 
 A water body owns one child node, `WaterRuntime.medium_node`, named `water_medium`, that carries one core
-[`MediumVolume`](sky.md#medium-volumes), so the view's fog pass absorbs and scatters through the water and a camera can
+[`MediumVolume`](fog.md#medium-volumes), so the view's fog pass absorbs and scatters through the water and a camera can
 stand in it.
 
 - **Mapping.** Per colour channel, from the desc:
@@ -794,7 +794,7 @@ stand in it.
   what lies behind it along the view ray to the depth of that sample. The bed is absorbed by the medium once, with the
   camera above or below the surface.
 - **Where the medium applies.** Main, split and mirror views that keep the node (its layers meet the view's) take it,
-  and the nearest four media of a view are kept ([medium volumes](sky.md#medium-volumes)). A mirror view clips it at its
+  and the nearest four media of a view are kept ([medium volumes](fog.md#medium-volumes)). A mirror view clips it at its
   plane, so a mirror camera inside the box is not darkened by it. The mirror cameras leave out the body's own layer, so
   the body's medium is not in its own mirror either way. Probe updates, reflection captures and the path tracer take no
   media: a water surface they draw shows what lies behind it unabsorbed.
@@ -959,7 +959,7 @@ does not apply and the row carries `TRACE_MASK_ALL`.
   cell size (9,409 vertices) and 6.3 MB at the largest built grid (263,169). The software kind adds a copy of the
   tree's nodes (about 328 kB for the lake) and the hardware kind a bottom level; `Stats.trace_posed_bytes` totals
   the slot. The cost follows the vertex count, so `cell_size` is its lever. A body that finds no posed slot is left
-  out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace.md#custom-trace-poses)).
+  out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace_reference.md#custom-trace-poses)).
 - **Shadows.** The mesh casts no shadow, and a trace row carries `TRACE_MASK_SHADOW_CASTER` only for a mesh with
   `cast_shadow`: traced sun shadows ignore the water, as the shadow atlas does, and the bed under a lake is lit alike in
   both. Traced shadows on the water work as before.
@@ -1084,7 +1084,7 @@ store.
   `uv0` is the rest position in metres.
 - **Lighting**: the sun lights glints and foam. The water body's own colour is the medium's in-scatter: the ambient
   and the sun through the column above each point, with no occluder shadowing and no indirect light. A bed that
-  receives shadows takes the sun through the water from the box's top ([sun on surfaces](sky.md#medium-volumes)); the
+  receives shadows takes the sun through the water from the box's top ([sun on surfaces](fog.md#sun-on-surfaces)); the
   band between the surface and the top is not counted.
 - **Waterline**: the medium's top lies `total amplitude + MEDIUM_SKIN` under the rest plane, under the deepest trough,
   and the mirror's side test is the rest plane. A camera in the band from the box's top to a crest (`amplitude + skin`
@@ -1233,10 +1233,10 @@ camera leaves out the water's layer and has no mirror), `--ripples on|off`, `--s
 `--ocean`, `--dive [SHARE]`, `--shot FILE.png`, `--width W --height H` (2560 × 1440 by default in benchmark and shot modes) and `--sky`
 (an [atmosphere](sky.md) on the sun, which replaces the generated sky, and a haze
 pooling in the valleys, off by default; with `--gpu-timings` the main and mirror views print `SKY_VIEW`,
-`AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a [froxel volume](sky.md#volumetric-fog)
+`AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a [froxel volume](fog.md#volumetric-fog)
 for the main and mirror views; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`). Interactive runs always validate. Under `--sky` the water needs no fog code:
 the view's fog pass fogs its surface at its depth, its medium covers the path to the bed, and the mirror
-view fogs only the path behind its clip plane ([sky](sky.md#where-fog-applies)).
+view fogs only the path behind its clip plane ([fog](fog.md#where-fog-applies)).
 
 ## Measured cost
 

@@ -8,7 +8,7 @@ and the costs a user plans for. It needs no feature flag; the worker pool belong
 ## Crowd playback on workers
 
 `anim::crowd_update(&assets, &scene, dt)` advances and samples every prepared `AnimatedCrowd` on the calling thread and
-publishes the palettes and batches ([crowds](instancing.md#crowds)). Underneath, `CrowdPlaybackState.update` is `advance`
+publishes the palettes and batches ([crowds](crowds.md)). Underneath, `CrowdPlaybackState.update` is `advance`
 followed by `sample_range` over every live instance. An application that wants workers calls the two steps itself:
 
 ```c3
@@ -139,6 +139,6 @@ allocate nothing; creation allocates only the members' captured action data.
 ## See also
 
 - [Animation](animation.md) for playback.
-- [Instancing](instancing.md#crowds) for crowd creation and per-instance playback.
+- [Animated crowds](crowds.md) for crowd creation and per-instance playback.
 - [Jobs](jobs.md) for the worker pool.
 - [Animation deformation](animation_deformation.md) for what the renderer does with the sampled poses.

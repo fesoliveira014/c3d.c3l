@@ -85,7 +85,7 @@ Types, constants, faults, blend formulas, sampling and the clip event import sch
 
 `CrowdPlayer` offers the same `play`, `action`, `try_action`, `stop`, `cross_fade`, blend-space, `inertialize` and
 `cancel_inertial_transition` calls for one crowd instance, plus `base_action` and `set_root_node`. Obtain it with
-`crowd.playback.instance_id(index)` and `player(id)` ([crowds](instancing.md#crowds)).
+`crowd.playback.instance_id(index)` and `player(id)` ([crowds](crowds.md)).
 
 ### Root extraction and events
 

@@ -684,7 +684,7 @@ Empty/hidden batches make no draw or snapshot request.
   list when the frame has clusters and the flat list otherwise.
 - **DIRECT_SHADOWED** is DIRECT with each light multiplied by its shadow-map and
   cloud-shadow visibility at the particle's position, and, for the sun in a view
-  with a [medium](sky.md#medium-volumes), by the mean of the medium's sun column
+  with a [medium](fog.md#medium-volumes), by the mean of the medium's sun column
   there.
 
 `ParticleMaterialParams.normal` selects what a lit particle presents to the

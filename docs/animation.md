@@ -515,6 +515,6 @@ add-on. The Mixamo files the examples use are listed in `examples/assets/mixamo/
 
 - [Models, glTF and FBX import](models.md) for clips, skins and morph targets in the store.
 - [Asset store](assets.md) for clip replacement and keys.
-- [Instancing](instancing.md#crowds) for animated crowds.
-- [Whole-object LOD](lod.md#animated-models-and-crowds) for animated LOD groups.
+- [Animated crowds](crowds.md) for crowd creation and rendering.
+- [Animated LOD](lod_animated.md) for animated LOD groups.
 - [Scene](scene.md) for nodes, transforms and `update_world`.
