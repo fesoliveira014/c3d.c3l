@@ -15,7 +15,9 @@ descriptors, the capture types, the JSON export and the GPU statistics.
 The test targets of the standalone package are `profile_off`, `profile_cpu`, `profile_internal`, `profile_gpu`,
 `profile_gpu_internal`, `profile_cpu_gpu` and `profile_full`; `profile_full` selects CPU, GPU and INTERNAL and no GUI.
 The GPU targets need the backend libraries and create no device. The panel's data targets are `panel_off`, `panel_cpu`,
-`panel_gpu` and `panel_combined`. See [development.md](development.md#test-targets).
+`panel_gpu` and `panel_combined`. The `profile_off`, `profile_cpu` and `profile_internal` targets and the `capture`
+example need no renderer dependencies or shader build tools: `c3c test profile_cpu --path addons/c3d_profile.c3l`. See
+[development.md](development.md#test-targets).
 
 ## Library scopes
 

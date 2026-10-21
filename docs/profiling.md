@@ -2,7 +2,8 @@
 
 `c3d_profile` is a source-only C3 library in `addons/c3d_profile.c3l`. It records CPU scopes and GPU intervals into
 bounded capture storage, exports them as JSON and, with the renderer's cooperation, measures GPU pass times.
-`c3d_profile_gui`, in `addons/c3d_profile_gui.c3l`, is an optional ImGui panel for those captures.
+`c3d_profile_gui`, in `addons/c3d_profile_gui.c3l`, is an optional ImGui panel for those captures. It extends `c3d::gui`
+and imports only neutral capture values, ImGui and the standard library; neither the collector nor core invokes it.
 
 CPU-only use of `c3d::profile` needs C3 0.8.3 and its standard library: no core, device, SDL or ImGui. The GPU module
 (`c3d::render::profile_gpu`) uses gpu.c3l and is compiled only under `C3D_PROFILE_GPU`. Core never depends on the
@@ -93,7 +94,8 @@ listed in [release.md](release.md).
 Create one `profile::Recorder` per writing thread with `profile::create_recorder(allocator, desc)`. Set
 `frame_capacity`, `cpu_scopes_per_frame`, `max_depth` and `label_bytes_per_frame`; each must be nonzero, and the depth
 cannot exceed the scope capacity. An invalid budget or an allocation-size overflow faults with
-`profile::INVALID_ARGUMENT`. Storage is allocated once and never grows during recording.
+`profile::INVALID_ARGUMENT`. Allocator exhaustion follows the allocator's own behavior. Storage is allocated once and
+never grows during recording.
 
 Wrap the application frame in `profile::@capture(&recorder, frame_id)` and individual operations in
 `profile::@scope("label")`. Bodies run exactly once, including when capture is disabled or full. Keep recorder creation,
@@ -104,8 +106,8 @@ lookup and export inside the CPU feature selection; the body macros can stay in 
   its body runs. Capturing twice concurrently on one recorder is a programming error.
 - Frame ids increase strictly per recorder, including disabled captures. Zero is a valid first id.
 - Labels are copied into bounded capture storage, so the caller can reuse its buffer after a scope begins. A label
-  expression is evaluated only when the collector tries to admit the scope. Hot scopes do not allocate from a
-  general-purpose allocator.
+  expression is evaluated only when the collector tries to admit the scope; a label too large for the remaining label
+  storage is evaluated once to find that out. Hot scopes do not allocate from a general-purpose allocator.
 - The recorder owns its storage, must stay at a stable address while capturing and must not be copied. Call
   `profile::destroy_recorder` only with no active capture or scope, no attached renderer and no pending GPU capture. The
   application owns the recorder's lifetime; c3d never creates a recorder or advances frame ids.
@@ -175,6 +177,8 @@ python3 scripts/build.py --target shadows --lib c3d_profile --define C3D_PROFILE
 ./examples/build/shadows --gpu-timings
 ```
 
+Use `shadows.exe` on Windows.
+
 Requesting `RendererDesc.gpu_timings` in a build without GPU profiling returns `c3d::UNSUPPORTED`. Hardware without
 graphics timestamps still renders and reports unavailable timings.
 
@@ -206,7 +210,11 @@ successful submission does not discard its pending measurements.
 - `RendererDesc.gpu_scope_capacity` and `gpu_label_bytes_per_slot` bound pending storage independently of history. Zero
   selects 2048 scopes and 65536 label bytes per slot. Each scope reserves both timestamp queries at begin. The first
   query or label exhaustion stops admission until the next recording; accepted scopes still close and omitted scopes are
-  counted. Disabled or unsupported instances allocate no recording arrays.
+  counted. History copies a parent-complete prefix and keeps GPU truncation separate from CPU truncation. Disabled or
+  unsupported instances allocate no recording arrays.
+- The adapter reserves two timestamp queries per scope in every frame slot, plus scope, sample and label storage; at the
+  defaults that is `FRAMES_IN_FLIGHT` slots of 2048 scopes, so 8192 queries. The storage excludes the retained capture
+  history and the renderer's copied shadow summary.
 - A frame that records no view work (for example a warm compute-only frame) discards its recording, and the capture
   reports it as aborted. Use explicit `render_view` and `finish_view` calls in a profiled workload.
 
@@ -225,6 +233,8 @@ capture while its recorder is still alive:
 ```bash
 python3 scripts/build.py --example profile_gpu
 ```
+
+The manual device acceptance project is `test/gpu/profile`; see its [README](../test/gpu/profile/README.md).
 
 ## Inspect captures with ImGui
 

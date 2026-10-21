@@ -26,6 +26,7 @@ Create a pool, run a function over a range of items, and wait:
 
 ```c3
 import c3d::job;
+import std::math;
 
 struct Particles {
     Vec3[] positions;
@@ -40,17 +41,19 @@ fn void integrate_range(void* data, uint first, uint count) {
     }
 }
 
-JobPool pool = job::create_job_pool(mem, job::default_job_pool_desc())!;
-defer job::destroy_job_pool(&pool);
+fn void? integrate_all(Particles* particles) {
+    JobPool pool = job::create_job_pool(mem, job::default_job_pool_desc())!;
+    defer job::destroy_job_pool(&pool);
 
-JobId id = pool.run(
-    range: &integrate_range,
-    data:  &particles,
-    count: (uint)particles.positions.len,
-    batch: 256,
-);
-// other work on this thread
-pool.wait(id);
+    JobId id = pool.run(
+        range: &integrate_range,
+        data:  particles,
+        count: (uint)particles.positions.len,
+        batch: 256,
+    );
+    // other work on this thread
+    pool.wait(id);
+}
 ```
 
 `python3 scripts/build.py --example job_bench` builds and runs the package's benchmark example.
@@ -349,8 +352,8 @@ profile::@capture(&recorder, frame_id) {
   reads around the range and one record written under the lock the worker already takes at completion. Ranges the
   calling thread runs (inline, in `wait`, `wait_all` or `pump`) are not recorded; wrap those calls in application
   scopes.
-- **Ring.** Records wait in a ring of `record_capacity` entries (4096 by default). A full ring drops new records and
-  counts them; the next drain reports the count.
+- **Ring.** Records wait in a ring of `record_capacity` entries of 40 bytes each (4096 by default, 160 KiB). A full ring
+  drops new records and counts them; the next drain reports the count.
 - **Drain.** `take_records(records)` moves the oldest records out, on any thread, with the drop count since the previous
   drain. `forward_records(&recorder)` drains the records held at the call into the recorder's open capture through
   `Recorder.add_worker_interval` and forwards the drop count. Records that workers add while it runs wait for the next
@@ -396,7 +399,7 @@ saved. `--compress` quantizes the clips first and prints their bytes and the lar
 - `cpu_quota()` reads Linux cgroups only.
 - A pool that never idles of frame work starves background runs.
 - The pool uses one lock. Each range costs one claim and one completion under it, so very small batches on many workers
-  spend a visible share of the time in the lock; batches of a few hundred items or more keep that share small.
+  spend a visible share of the time in the lock. With many workers, use batches of about 512 items or more.
 
 ## See also
 

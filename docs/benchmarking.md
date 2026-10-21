@@ -8,8 +8,8 @@ Profiler contracts are in [profiling](profiling.md).
 
 ## Quick start
 
-Build with the pinned dependencies and `-O3`, which enables C3's unsafe release mode. Compare runs only when they use
-the same optimization and safety settings.
+Build with the pinned dependencies, C3 0.8.3 and `-O3`, which enables C3's unsafe release mode. Compare runs only when
+they use the same optimization and safety settings.
 
 ```bash
 python3 scripts/benchmark.py cpu --output results/cpu --repeats 3 --build
@@ -193,6 +193,11 @@ These options are parsed the same way by `many_lights`, `gltf_viewer` and `insta
 feature is rejected at parse time with the build recipe when the binary lacks it, so an excluded mode never reports zero
 timings silently.
 
+The loop rejects, as `c3d::INVALID_ARGUMENT`: a frame count of 0 or above 100,000, a warmup above 100,000, a width or
+height of 0 or above 8,192, `--ssgi-steps` outside 4 to 64 with screen-space GI on, `--panel` without `--window` and
+`--capture`, `--trace software` with path tracing, and a multisample count above 1 with TAA or path tracing.
+`gltf_viewer` also rejects more than 4,096 lights, a capacity outside 1 to 256 and a range outside 0 to 2.
+
 | Option | Needs | Effect |
 | --- | --- | --- |
 | `--benchmark` | | Selects benchmark mode. |
@@ -206,7 +211,7 @@ timings silently.
 | `--anti-aliasing none\|fxaa\|taa` | | Anti-aliasing filter of the measured view; FXAA by default. |
 | `--msaa 1\|2\|4\|8` | | Samples per pixel of the measured view; 1 by default. A count above 1 with `--anti-aliasing taa` or `--shading path-traced` is rejected. A deferred count above 1 reports its classification pass as `gpu_msaa_edges_ms`. |
 | `--depth-prepass on\|off` | | Depth prepass of a forward view; on by default. Deferred views always run it. |
-| `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Screen-space AO at half or full resolution, or ray traced at half resolution; none by default. Reported as `gpu_ambient_occlusion_ms`. |
+| `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Screen-space AO at half or full resolution, or ray traced at half resolution with 4 rays; none by default. Reported as `gpu_ambient_occlusion_ms`. |
 | `--auto-exposure on\|off` | | Automatic exposure; off by default. Reported as `gpu_exposure_ms`. |
 | `--reflections on\|off` | a ray-query adapter, deferred or forward shading | Ray-traced reflections; off by default. A path-traced view faults `UNSUPPORTED`. Reported as `gpu_rt_reflections_ms`. |
 | `--screen-space-gi on\|off` | | [Screen-space GI](screen_space_gi.md); off by default. Reported as `gpu_screen_space_gi_ms` and `gpu_ssgi_copy_ms`. |
@@ -286,9 +291,10 @@ the fetch command. Any glTF file replaces Sponza through the positional path of 
 --model`; light and camera placement derive from the model bounds.
 
 `gltf_viewer --benchmark` reuses the viewer's loading and environment: one instance at the origin, the studio HDR as
-environment and background, a sun, and `--lights N` point lights on a deterministic grid inside the model bounds. The
-camera sits inside the model looking along its long axis. The options of the previous section apply, with these
-additions:
+environment and background, a sun, and `--lights N` point lights on a deterministic grid inside the model bounds at 0.35
+of the vertical extent. The camera sits inside the model at 0.3 of the height, 0.35 of the long axis behind the center,
+looking along the long axis. Shadow casting dominates the draw count. The options of the previous section apply, with
+these additions:
 
 | Option | Effect |
 | --- | --- |
@@ -302,9 +308,9 @@ additions:
 | `--probe-window N` | Probes per update; 0 updates all. |
 | `--probe-rays N` | Rays per probe, 32 to 256; default 128. Reported with `gpu_probe_update_ms`. |
 | `--point-shadows on\|off` | Shadows on the point lights. |
-| `--reflection-probes 0\|1\|2\|16` | Reflection probes with distinct solid-colour environments: none, one box over the model bounds, two overlapping boxes, or a 4 x 2 x 2 grid. See [reflection probes](reflection_probes.md). The probe-sampling cost shows in `gpu_opaque_ms` (forward) or `gpu_lighting_ms` (deferred). |
+| `--reflection-probes 0\|1\|2\|16` | Reflection probes with distinct solid-colour environments: none, one box over the model bounds, two overlapping boxes, or a 4 x 2 x 2 grid. See [reflection probes](reflection_probes.md). The asset store is created with 32 environments when probes are on. The probe-sampling cost shows in `gpu_opaque_ms` (forward) or `gpu_lighting_ms` (deferred). |
 | `--reflection-probe-placement inside\|outside` | `outside` moves every box below the model, so each pixel tests every packed box and lies in none. |
-| `--environment-refresh on\|off` | Marks the studio source texture dirty before every frame, so each frame regenerates the environment: conversion, filtering and SH projection. Reported as `gpu_environment_ms` and its stage columns. The upload's CPU mip generation lands in `cpu_record_ms`. See [environments](environments.md#preparation-and-edits). |
+| `--environment-refresh on\|off` | Marks the studio source texture dirty before every frame, so each frame regenerates the environment: conversion, filtering and SH projection. Reported as `gpu_environment_ms` and its stage columns. The LUTs record only in the first prepared frame, and sheen only for a model with sheen. The upload's CPU mip generation lands in `cpu_record_ms`. See [environments](environments.md#preparation-and-edits). |
 
 The banner printed to standard error repeats the effective settings.
 
@@ -354,9 +360,10 @@ gate ascent_regenerations <pass|fail>
 ```
 
 `refresh_ms` reads the frames that regenerated the sky environment; `total` is the whole `ENVIRONMENT` pass. The gates
-check the regeneration policy: the time-lapse expects one regeneration per sun-elevation period and none without an
-atmosphere; `steady_sky` expects none after the first frame of `noon`; `ascent_regenerations` expects none after the
-first frame of `ascent`. A failed gate exits 1.
+check the regeneration policy: the time-lapse expects `floor(sweep / period)` regenerations after its first frame, where
+`sweep` is the sun's total elevation change and `period = (floor(0.5° / step) + 1) · step` for a per-frame change
+`step`, and none without an atmosphere; `steady_sky` expects none after the first frame of `noon`;
+`ascent_regenerations` expects none after the first frame of `ascent`. A failed gate exits 1.
 
 | Option | Effect |
 | --- | --- |
