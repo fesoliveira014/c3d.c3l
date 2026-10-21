@@ -93,7 +93,7 @@ $assert $reflect(ClothRoot.aero).offset == 432;
 $assert $reflect(ClothRoot.features).offset == 452;
 $assert $reflect(ClothRoot.payload_offset).offset == 460;
 
-const usz LEAN_ROOT_BYTES @private = $reflect(ClothRoot.progress).offset + float::size; // the lean stages read no root field past this
+const usz LEAN_ROOT_BYTES @private = $reflect(ClothRoot.progress).offset + float::size; // the lean fused stage reads no root field past this; the lean single stage reads the whole root
 
 $assert $reflect(ClothRoot.lambdas).offset == LEAN_ROOT_BYTES; // the feature fields start where the lean copy ends
 $assert $reflect(ClothRoot.edge_colors).offset >= LEAN_ROOT_BYTES;
