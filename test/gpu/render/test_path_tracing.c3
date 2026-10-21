@@ -189,6 +189,31 @@ fn void test_path_traced_furnace_returns_the_albedo() @test {
     check_validation(&fixture.renderer);
 }
 
+fn void test_path_traced_views_have_no_depth_frame() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_tracing_pipelines: true)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    if (!renderer.caps.ray_tracing_pipelines.enabled) {
+        io::printn("SKIP path-traced depth frame: ray tracing pipelines unavailable");
+        return;
+    }
+
+    PathScene target = create_path_scene(&fixture, FRONT_POSE)!!;
+    defer scene::destroy_scene(&target.scene);
+    MaterialId material = fixture.assets.add_material(material::basic({ .color = BASIC_COLOR }))!!;
+    Node* box = target.scene.add_mesh(fixture.box, material)!!;
+    box.local.position = { 0, 0, -3 };
+    target.scene.update_world();
+    RenderTargetId output = float_target(&fixture)!!;
+    ViewId view = create_path_view(&fixture, output, { .max_bounces = 1, .samples_per_frame = 1 })!!;
+    PathRun run = { .fixture = &fixture, .path_scene = &target, .view = view };
+    renderer.prepare_scene(&target.scene)!!;
+    render_frames(&run, 2)!!;
+    assert(@catch(renderer.view_depth_frame(view)) == render::NOT_READY);
+    check_validation(renderer);
+}
+
 fn void test_path_traced_emitters_and_basic_surfaces_show_their_radiance() @test {
     Fixture fixture;
     create_fixture(mem, &fixture, ray_tracing_pipelines: true)!!;

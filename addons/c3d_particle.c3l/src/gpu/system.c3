@@ -5,6 +5,8 @@ import c3d::particle @public;
 import c3d::scene;
 import std::math;
 
+alias DepthMat4 @private = float[<4>][4];
+
 const uint GROUP_SIZE @private = 256; // mirrored as local_size_x in each stage and PARTICLE_GROUP in particle_step.glsl
 const usz PARTICLE_STATE_BYTES @private = 64; // mirrored as ParticleGpu in particle_step.glsl
 const usz SCAN_ENTRY_BYTES @private = 16; // mirrored as the uvec4 of ParticleScan in particle_step.glsl
@@ -141,9 +143,18 @@ struct StepRoot @private {
     uint evicts;
     uint _pad6;
     uint _pad7;
+    DepthMat4 depth_view_proj;
+    DepthMat4 depth_inv_view_proj;
+    Vec4 depth_distance;
+    Vec4 depth_camera;
+    Vec4 depth_origin;
+    uint depth_width;
+    uint depth_height;
+    uint depth_collides;
+    uint _pad8;
 }
 
-$assert StepRoot::size == 896;
+$assert StepRoot::size == 1088;
 $assert $reflect(StepRoot.capacity).offset == 64;
 $assert $reflect(StepRoot.acceleration_radius).offset == 96;
 $assert $reflect(StepRoot.emitter_row0).offset == 176;
@@ -163,6 +174,9 @@ $assert $reflect(StepRoot.delivery_sub).offset == 848;
 $assert $reflect(StepRoot.delivery_valid).offset == 864;
 $assert $reflect(StepRoot.mirror).offset == 872;
 $assert $reflect(StepRoot.evict_accept).offset == 880;
+$assert $reflect(StepRoot.depth_view_proj).offset == 896;
+$assert $reflect(StepRoot.depth_distance).offset == 1024;
+$assert $reflect(StepRoot.depth_width).offset == 1072;
 
 struct SystemLayout @private {
     usz state_home;
@@ -247,6 +261,7 @@ fn StepRoot step_root(
     Mat4 emitter_world,
     Vec3 wind,
     Vec3 origin,
+    DepthCamera depth,
 ) @private {
     ParticleSystemDesc* desc = &system.desc;
     ParticleCollision* collision = &desc.collision;
@@ -337,5 +352,13 @@ fn StepRoot step_root(
         .mirror = addresses.mirror,
         .evict_accept = evict_accept,
         .evicts = desc.saturation == ParticleSaturation.DROP_OLDEST ? 1 : 0,
+        .depth_view_proj = bitcast(depth.view_proj, DepthMat4),
+        .depth_inv_view_proj = bitcast(depth.inv_view_proj, DepthMat4),
+        .depth_distance = depth.distance,
+        .depth_camera = depth.position,
+        .depth_origin = { depth.origin.x, depth.origin.y, depth.origin.z, 0 },
+        .depth_width = depth.width,
+        .depth_height = depth.height,
+        .depth_collides = depth.valid ? 1 : 0,
     };
 }

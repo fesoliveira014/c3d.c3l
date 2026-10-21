@@ -426,17 +426,6 @@ fn void test_gpu_aborted_frame_repeats_its_step() @test {
     }
 }
 
-fn void test_gpu_prepare_refuses_depth_only_collision() @test {
-    Scene scene = scene::create_scene(mem, { .max_nodes = 4 });
-    defer scene::destroy_scene(&scene);
-    particle::register_particles(&scene)!!;
-    ParticleSystemDesc desc = particle::default_particle_system_desc();
-    desc.execution = ParticleExecution.GPU;
-    desc.collision.response = CollisionResponse.BOUNCE;
-    desc.collision.ground_plane = false;
-    assert(@catch(scene.add_particle_system(desc)) == c3d::UNSUPPORTED);
-}
-
 fn void test_gpu_origin_shift_follows_the_cpu_reference() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;

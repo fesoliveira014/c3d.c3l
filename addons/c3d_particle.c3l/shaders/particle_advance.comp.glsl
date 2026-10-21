@@ -1,7 +1,7 @@
 #version 460
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
-#include "particle/particle_step.glsl"
+#include "particle/particle_depth.glsl"
 
 layout(local_size_x = 256) in; // mirrored as GROUP_SIZE in gpu/system.c3
 
@@ -117,21 +117,21 @@ vec3 turbulence_air_velocity(StepRoot root, vec3 position) {
     return air;
 }
 
-// Mirrors respond_to_hit in collide.c3 for the ground plane, whose normal is up.
-void respond_to_ground(
+// Mirrors respond_to_hit in collide.c3.
+void respond_to_hit(
     StepRoot root,
     ParticleControl control,
     inout ParticleGpu particle,
-    vec3 hit_point,
+    ParticleHit hit,
     float radius
 ) {
-    float approach = max(0.0, -particle.velocity.y);
-    vec3 resting = hit_point + vec3(0.0, radius, 0.0);
-    particle.position = hit_point;
+    float approach = max(0.0, -dot(particle.velocity, hit.normal));
+    vec3 resting = hit.point + hit.normal * radius;
+    particle.position = hit.point;
     if (approach >= root.impact_speed) particle_raise_event(root, control, particle, PARTICLE_TRIGGER_IMPACT);
     if (root.response == PARTICLE_RESPONSE_BOUNCE) {
         if (approach > 0.0) {
-            vec3 into = vec3(0.0, -approach, 0.0);
+            vec3 into = hit.normal * -approach;
             particle.velocity = (particle.velocity - into) * (1.0 - root.half_extents_friction.w)
                 - into * root.origin_restitution.w;
         }
@@ -145,22 +145,34 @@ void respond_to_ground(
     }
 }
 
-// Mirrors collide_ground_blocks and hit_ground_plane in collide.c3.
-void collide_ground(StepRoot root, ParticleControl control, inout ParticleGpu particle) {
+// Mirrors hit_ground_plane in collide.c3; the plane's normal is up.
+ParticleHit ground_hit(StepRoot root, vec3 from, vec3 to, float radius) {
+    float plane = root.spin_ground.z;
+    float clearance_from = from.y - plane - radius;
+    float clearance_to = to.y - plane - radius;
+    if (clearance_to >= 0.0 || to.y >= from.y) return ParticleHit(false, vec3(0.0), vec3(0.0), 0.0);
+
+    float fraction = clearance_from > 0.0 ? clearance_from / (clearance_from - clearance_to) : 0.0;
+    vec3 centre = from + (to - from) * fraction;
+    return ParticleHit(true, vec3(centre.x, plane, centre.z), vec3(0.0, 1.0, 0.0), fraction);
+}
+
+// Mirrors the hit choice of collide in collide.c3: the ground plane and the depth view each offer a hit, and the
+// nearer along the move answers.
+void collide(StepRoot root, ParticleControl control, uint depth_texture, inout ParticleGpu particle) {
     vec3 to = particle.position;
     vec3 from = particle.position - particle.velocity * root.seconds;
     if (from == to) return;
 
-    float plane = root.spin_ground.z;
     float life = particle.age / particle.lifetime;
     float radius = particle.size * particle_size_scale(root, life) * root.spin_ground.w;
-    float clearance_from = from.y - plane - radius;
-    float clearance_to = to.y - plane - radius;
-    if (clearance_to >= 0.0 || to.y >= from.y) return;
-
-    float fraction = clearance_from > 0.0 ? clearance_from / (clearance_from - clearance_to) : 0.0;
-    vec3 centre = from + (to - from) * fraction;
-    respond_to_ground(root, control, particle, vec3(centre.x, plane, centre.z), radius);
+    ParticleHit hit = ParticleHit(false, vec3(0.0), vec3(0.0), 0.0);
+    if (root.collides != 0u) hit = ground_hit(root, from, to, radius);
+    if (root.depth_collides != 0u) {
+        ParticleHit seen = depth_hit(root, depth_texture, from, to, radius);
+        if (seen.found && (!hit.found || seen.fraction < hit.fraction)) hit = seen;
+    }
+    if (hit.found) respond_to_hit(root, control, particle, hit, radius);
 }
 
 // Mirrors record_trail_blocks, append_trail_point and drop_expired_trail_points in trail.c3.
@@ -198,10 +210,13 @@ void record_trail(StepRoot root, uint index, ParticleGpu particle) {
 // Advances the survivors and the newborns together, flags who lives and who draws, and books the admission. A newborn
 // that expires in its first step raises its DEATH event here, after it moved.
 void main() {
-    StepRoot root = StepRoot(DispatchRoot(pc.root_gpu).parameters);
+    DispatchRoot dispatch = DispatchRoot(pc.root_gpu);
+    StepRoot root = StepRoot(dispatch.parameters);
     ParticleControl control = ParticleControl(root.control);
     uint index = gl_GlobalInvocationID.x;
     if (index >= root.capacity) return;
+
+    uint depth_texture = root.depth_collides != 0u ? DispatchTexturesGpu(dispatch.textures).slots[0].texture_index : 0u;
 
     uint survivors = particle_kept(root, control);
     uint emitted = particle_emitted(root, control);
@@ -231,8 +246,8 @@ void main() {
         if (index >= survivors) particle.age = root.seconds;
         bool live = particle.age < particle.lifetime;
         if (!live) particle_raise_event(root, control, particle, PARTICLE_TRIGGER_DEATH);
-        if (live && root.collides != 0u) {
-            collide_ground(root, control, particle);
+        if (live && (root.collides != 0u || root.depth_collides != 0u)) {
+            collide(root, control, depth_texture, particle);
             live = particle.age < particle.lifetime;
         }
         alternate.values[index] = particle;

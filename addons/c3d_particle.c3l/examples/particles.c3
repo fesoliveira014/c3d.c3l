@@ -854,6 +854,8 @@ fn void? run_benchmark(Options options) @local {
                         scene: &demo.scene,
                         dt: STEP_SECONDS,
                         wind: { 0.4f, 0, 0 },
+                        depth_view: options.collide ? view : (ViewId){},
+                        depth_camera: demo.cameras[0].id,
                     )!;
                     renderer.end_frame()!;
                 }
@@ -881,6 +883,8 @@ fn void? run_benchmark(Options options) @local {
                 scene: &demo.scene,
                 dt: STEP_SECONDS,
                 wind: { 0.4f, 0, 0 },
+                depth_view: options.collide ? view : (ViewId){},
+                depth_camera: demo.cameras[0].id,
             )!;
             update_ms += elapsed_ms(update_start);
             renderer.render_view(&demo.scene, demo.cameras[0], view)!;
@@ -1232,6 +1236,8 @@ fn void? run_interactive(Options options) @local {
                 scene: &demo.scene,
                 dt: window.clock.delta,
                 wind: { wind, 0, 0 },
+                depth_view: options.collide ? renderer.default_view : (ViewId){},
+                depth_camera: demo.cameras[0].id,
             )!;
             update_ms += elapsed_ms(started);
             if (renderer.has_output) {

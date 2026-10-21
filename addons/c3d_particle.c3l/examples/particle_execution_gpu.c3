@@ -23,6 +23,8 @@ fn void? update(
     Scene* scene,
     float dt,
     Vec3 wind,
+    ViewId depth_view,
+    Entity depth_camera,
 ) {
     gpu::update(
         particles: &context.particles,
@@ -30,6 +32,7 @@ fn void? update(
         scene: scene,
         dt: dt,
         wind: wind,
+        depth: { .view = depth_view, .camera = depth_camera },
     )!;
 }
 
