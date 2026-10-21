@@ -291,7 +291,7 @@ source ownership, preparation and current display limits. The
 [bundled HDRs](examples/assets/ibl/README.md) are CC0 and require no runtime download.
 
 `sky` draws a physical sky with its sun and exponential height fog over readers, transmission and a planar
-mirror, with a time-of-day slider and a scripted benchmark. See [Sky, atmosphere and height fog](docs/sky.md):
+mirror, with a time-of-day slider and a scripted benchmark. See [Sky and atmosphere](docs/sky.md), [fog](docs/fog.md) and [clouds](docs/clouds.md):
 
 ```bash
 python3 scripts/build.py --example sky

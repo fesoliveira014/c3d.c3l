@@ -280,7 +280,7 @@ grass.fade = { .start = 30, .end = 60 };
 - **Passes.** The view's passes, its depth prepass and its shadow layers read one block per batch, so shadows sway with the batch and fade from the view's camera, not the light's. The depth prepass, forward and velocity passes compute identical positions, so their `EQUAL` depth tests hold.
 - **Bounds.** The batch bound grows by the sway reach, `|normalize(direction)| * amplitude` per axis, after the node transform; the per-instance cull test admits a box within `amplitude` of each plane. The collapse moves toward a point inside both.
 - **Motion vectors.** The velocity pass uses the sway the view last drew the batch with, at the view's previous time, so a batch whose sway parameters change every frame keeps exact motion. A view without history uses the current sway for both. The collapse carries no motion vector. A batch the view skipped past the band has no history there: in the rendering that brings it back it draws without object motion, while its instances are still collapsed at the far edge of the band.
-- **Trace.** `InstancedMesh.trace_sway` traces each instance at its swayed pose, off-camera instances included, through the posed slots of the [scene trace](scene_trace.md#custom-trace-poses). The pose uses the batch's seed, anchor and weight, so it equals the vertex stage's offset at the frame's time; it applies no fade. Rows past the posed capacity trace at rest, and `Stats.trace_sway_at_rest` counts their batch. The default is off.
+- **Trace.** `InstancedMesh.trace_sway` traces each instance at its swayed pose, off-camera instances included, through the posed slots of the [scene trace](scene_trace_reference.md#custom-trace-poses). The pose uses the batch's seed, anchor and weight, so it equals the vertex stage's offset at the frame's time; it applies no fade. Rows past the posed capacity trace at rest, and `Stats.trace_sway_at_rest` counts their batch. The default is off.
 - **Cost.** One 112-byte block per batch and view in the frame upload ring, and the seed written into `InstanceGpu.normal_0.w` whenever records upload; no per-instance CPU work per frame. The seed adds about 25 ns per record to a re-pack: 2.5 ms (+19 %) for a full re-pack of 99,856 records, paid only on frames that re-pack a batch. Measured below.
 - **Limits.** Picking's per-instance tests, CPU triangle trees and the scene trace (ray-traced shadows, reflections, ambient occlusion, path tracing, probe traces) see the rest pose and every instance; a swaying batch traces at its rest pose and casts a still traced shadow unless `trace_sway` is set; `Stats.trace_sway_at_rest` counts such batches, the error is bounded by the sway reach, and `trace = false` keeps the batch out ([scene trace](scene_trace.md#what-traces)). Picking's broad phase uses the grown bound. Normals and tangents are not bent. Amplitude neither varies per instance nor scales with it. No fade for plain meshes, no per-view opt-out (a minimap fades from its own camera), no dithered or alpha fade, and no weight from `Geometry.custom_data`.
 
@@ -473,12 +473,12 @@ while (window.poll()) {
   byte-identical palette and morph inputs share the lowest placement index's posed trace slot (`Stats.trace_posed_shared`);
   rigid-only parts retain the rest-geometry path. Raise `RendererDesc.max_posed_trace_instances` past the required
   posed slots (placements beyond it are left out of the trace, counted in `Stats.trace_posed_overflow`). A slot costs
-  the posed streams, a refit copy and a bottom level of its part ([scene trace](scene_trace.md#posed-instances)).
+  the posed streams, a refit copy and a bottom level of its part ([scene trace](scene_trace_reference.md#posed-instances)).
   Raster shadows and temporal views work either way. The default is untraced.
 - **Traced crowd cost.** On the hardware kind each claimed slot costs a bottom-level update every frame its pose
   changes, recorded in barrier-separated batches; each posed slot holds its own streams and bottom level, so memory
   scales with the number of distinct poses per part batch. The software kind poses and refits a tree copy per distinct
-  pose and builds no bottom level ([animated crowds](scene_trace.md#animated-crowds)).
+  pose and builds no bottom level ([animated crowds](scene_trace_reference.md#animated-crowds)).
 - Custom materials: a fragment-only custom material draws with the built-in skinned instanced stage. A
   custom instanced vertex pair skins a crowd when compiled with the deformation defines
   ([Vertex contract](custom_shaders_reference.md#instances)); under compute skinning such a crowd part keeps that vertex skinning.

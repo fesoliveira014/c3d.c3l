@@ -65,7 +65,7 @@ or [reflection history](reflections.md#history), which records it early too. Sce
 velocity. The velocity image then uses the four-channel format whose third channel
 holds the expected previous depth, and the view keeps a full motion history like a view with TAA or motion
 blur. The previous colour is a copy of the lit image taken after the transparent pass and before debug
-lines, TAA and post-processing. On a view with [fog or an atmosphere](sky.md#where-fog-applies) the copy is
+lines, TAA and post-processing. On a view with [fog or an atmosphere](fog.md#where-fog-applies) the copy is
 taken at the fog split instead, before the fog pass and the transparent draws: the bounce source is unfogged
 and holds no blended draws.
 

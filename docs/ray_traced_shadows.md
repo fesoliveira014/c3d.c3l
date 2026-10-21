@@ -89,7 +89,7 @@ desc.ray_tracing.shadow_samples = 8;
 - **Noise.** One ray per pixel draws the penumbra as a dither of lit and shadowed pixels, `N` rays as `N + 1` steps of
   grey with a smaller dither. TAA averages the frames of the pattern; without it, raise the count. The cost is the
   count in traced queries for each shadowed pixel and each light with an extent.
-- **Other consumers.** [Volumetric fog](sky.md#volumetric-fog), the hits of [traced reflections](reflections.md) and
+- **Other consumers.** [Volumetric fog](fog.md#volumetric-fog), the hits of [traced reflections](reflections.md) and
   [probe updates](probe_volumes.md) cast one ray toward a point of the source, which their averaging smooths. The
   [path tracer](path_tracing.md) takes one point of the source at each bounce and converges with its accumulated
   samples; `shadow_samples` does not apply to it.

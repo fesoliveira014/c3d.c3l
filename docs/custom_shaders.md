@@ -540,7 +540,7 @@ on the pair.
 - **Screen-space terms.** Readers get no screen-space terms: `draw_ambient_occlusion` returns 1, `draw_bent_normal`
   returns the normal it is given and `draw_screen_space_indirect` returns zero.
 - **Fog.** Snapshots are taken before the view's fog pass, so readers see unfogged radiance, and a color read also takes
-  a depth snapshot ([where fog applies](sky.md#where-fog-applies)). The pass fogs a depth-writing reader at its own
+  a depth snapshot ([where fog applies](fog.md#where-fog-applies)). The pass fogs a depth-writing reader at its own
   depth. A refracting reader returns `apply_fog_refracted(...)` so its refracted sample is fogged to its own depth. A
   blended reader draws after the pass and composes `apply_fog(frame, position, apply_fog_refracted(...))`. A blended
   stage that does not refract calls `apply_fog` on its output. A custom twin of Standard matches it the same way: an
