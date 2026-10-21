@@ -30,8 +30,9 @@ world.set_ragdoll_mode(skin_node, SIMULATED);
 scene.get(skin_node, Ragdoll).weight = 1;
 ```
 
-`skeleton` is the skin's `Skeleton`. The `ragdoll` example and `examples/ragdoll_bones.c3` build a twelve-bone rig
-for the humanoid in `examples/assets/quaternius`; run the example with `python3 scripts/build.py --example ragdoll`.
+`skeleton` is the skin's `Skeleton`. The `ragdoll` example and `addons/c3d_physics.c3l/examples/ragdoll_bones.c3` build a
+twelve-bone rig for the humanoid in `examples/assets/quaternius` (repository root); run the example with
+`python3 scripts/build.py --example ragdoll`.
 
 ## Concepts
 
@@ -68,7 +69,8 @@ for the humanoid in `examples/assets/quaternius`; run the example with `python3 
 `RagdollDesc.filter` is the `CollisionFilter` of every bone shape (default `FILTER_ALL`); `collide_adjacent` lets
 neighbouring bones collide (default false). `build_ragdoll` faults `NO_SKIN`, `RAGDOLL_EXISTS`,
 `c3d::INVALID_ARGUMENT` (no bones, a bad joint index, a duplicate joint, a child listed before its parent bone, a
-missing leaf `length` or a zero hinge axis), `c3d::UNSUPPORTED` (a scaled skin node) and `c3d::CAPACITY_EXCEEDED`.
+missing leaf `length`, a zero hinge axis or a bone `kind` other than `SPHERICAL` or `REVOLUTE`), `c3d::UNSUPPORTED`
+(a scaled skin node) and `c3d::CAPACITY_EXCEEDED`.
 
 ## Frame order
 
@@ -98,7 +100,8 @@ RagdollFacing facing = world.recover_ragdoll(skin_node, character_node)!;
 anim::update(&assets, &scene, delta);
 scene.update_world();
 world.update(delta);
-if (scene.get(skin_node, Ragdoll).weight == 0) {
+Ragdoll* ragdoll = scene.get(skin_node, Ragdoll);
+if (ragdoll.weight == 0 && ragdoll.recovery_status().participating > 0) {
     if (catch excuse = world.finish_ragdoll_recovery(skin_node)) {
         if (excuse != physics::RECOVERY_NOT_READY) return excuse~;
     }

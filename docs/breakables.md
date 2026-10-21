@@ -20,7 +20,12 @@ while (running) {
     scene.update_world();
     world.update(delta);
     foreach (event : world.breaks()) {
-        on_break(event.root, event.piece_a, event.piece_b, event.point);
+        on_break(
+            root:    event.root,
+            piece_a: event.piece_a,
+            piece_b: event.piece_b,
+            point:   event.point,
+        );
     }
     scene.flush_removals();
     scene.update_world();
@@ -28,7 +33,7 @@ while (running) {
 ```
 
 `on_break` is application code. Node pointers in `BreakEvent` are frame borrows: consume them before
-`flush_removals`. The `breakable` example builds a wall from a glTF model; run it with
+`flush_removals`. The `breakable` example builds a wall of box pieces, or loads one with `--model <file>`; run it with
 `python3 scripts/build.py --example breakable`.
 
 ## Concepts
@@ -67,7 +72,7 @@ transform space on every node between a piece and the root; the root itself may 
 two distinct live descendants are required and no piece is an ancestor of another. Each piece has at least one live hull
 and any number of render children; material boundaries do not create physical pieces. A glTF primitive becomes a
 `Mesh` node, so group several primitives into one piece with explicit body parents. The supplied
-`examples/assets/fractured_wall.gltf` has 64 separate one-primitive pieces with narrow seams.
+`addons/c3d_physics.c3l/examples/assets/fractured_wall.gltf` has 64 separate one-primitive pieces with narrow seams.
 
 Hull geometry stays in the asset store: it is needed again when a world is rebuilt. Hulls cook on preparation, so
 `SOURCE_UNAVAILABLE` reports a hull whose CPU data was released with no cooked entry.
@@ -93,9 +98,11 @@ Two pieces connect when the smallest distance between any of their hulls is at o
 pair's closest points select the weld anchor; exact ties keep the first pair in caller hull order. Each unordered pair
 of pieces has at most one weld. Edge and corner contacts count; the rule does not measure shared face area, and overlap
 is accepted. In the example wall, 0.5 m cubes sit on a 0.508 m pitch: face gaps are below the default 0.01 m,
-diagonal gaps are above it. Deriving the graph tests every piece pair; `PhysicsWorld.set_parallel` spreads those tests
-over the application's workers with the same result for any worker count. Explicit recipes carry their own welds and
-derive none.
+diagonal gaps are above it. Deriving the graph tests every piece pair, so its cost grows with the square of the piece count. It reserves 24 bytes of
+temporary memory per pair (n(n-1)/2 pairs) for the candidate list, on the serial path too, and faults
+`c3d::CAPACITY_EXCEEDED` when the reservation cannot be made or the pair count exceeds `uint::max`.
+`PhysicsWorld.set_parallel` spreads the tests over the application's workers with the same result for any worker count.
+Explicit recipes carry their own welds and derive none.
 
 ## Explicit recipes
 
@@ -168,8 +175,8 @@ derives the same ordered graph.
 
 ## Wake and release
 
-A hit by a dynamic body wakes an intact assembly when `mass * approach_speed >= break_force * fixed_dt` and the speed
-passes the world's `hit_speed_threshold`. This heuristic is separate from weld evaluation. Only one qualifying hit per
+A hit by a dynamic body wakes an intact assembly when the visitor's mass times `approach_speed` is at least
+`break_force * fixed_dt` and the speed passes the world's `hit_speed_threshold`. This heuristic is separate from weld evaluation. Only one qualifying hit per
 assembly and step replays. Automatic wake starts from the native assembly pose; `wake_breakable` starts from the root's
 authored pose. Fragments inherit the assembly's linear and angular motion, and the visitor's relative normal speed is
 restored after a successful wake, which approximates first contact one step later. It is not an exact collision-history
@@ -216,7 +223,14 @@ replaces the owned native handles, so reacquire body and joint handles afterward
 ```c3
 scene.update_world();
 world.update(dt);
-foreach (event : world.breaks()) on_break(event.root, event.piece_a, event.piece_b, event.point);
+foreach (event : world.breaks()) {
+    on_break(
+        root:    event.root,
+        piece_a: event.piece_a,
+        piece_b: event.piece_b,
+        point:   event.point,
+    );
+}
 scene.flush_removals();
 scene.update_world();
 ```
@@ -251,16 +265,17 @@ authored bodies for the application. Removing the root subtree releases everythi
 | --- | --- |
 | `BREAKABLE_EXISTS`, `BODY_EXISTS` | An overlapping breakable, or an existing body in the subtree. |
 | `c3d::INVALID_ID` | A dead piece, hull or anchor target. |
-| `c3d::INVALID_ARGUMENT` | Empty hull lists, duplicate or non-descendant pieces, fewer than two pieces, a conflicting joint or ragdoll role, a displaced piece, a malformed weld or anchor frame, an anchor target that is not a static body of this world, or an invalid descriptor value. |
+| `c3d::INVALID_ARGUMENT` | Empty hull lists, duplicate or non-descendant pieces, fewer than two pieces, a conflicting joint or ragdoll role, a displaced piece, a malformed weld or anchor frame, an anchor target whose authored or built body is not static or belongs to another world, or an invalid descriptor value. |
 | `c3d::UNSUPPORTED` | A skinned, morphed or non-rigid piece, a non-`PARENT` path in an assembly, or an invalid captured rest frame. |
 | `SOURCE_UNAVAILABLE` | A hull source whose CPU data was released with no cooked entry. |
-| `c3d::CAPACITY_EXCEEDED` | Snapshot slots, recipe allocation or the parallel candidate list. |
+| `c3d::CAPACITY_EXCEEDED` | Snapshot slots, recipe allocation or the pair candidate list. |
 | `NO_BODY` | An anchor target has no built body, or `wake_breakable` ran before the form was live. |
 
 Native constructor and hull faults (`b3::INVALID_DEFINITION`, `b3::INVALID_HANDLE`, `b3::DEGENERATE_GEOMETRY`) pass
-through. Every failed creation or attachment adds nothing. Automatic failures on a new world enter `build_failures()`;
-a failed form needs an explicit reset with ready inputs or recreation. Source failures follow the revision retry
-policy of ordinary bodies.
+through. Every failed creation or attachment adds nothing. On a new world, `PIECES` bodies stay disabled until every
+surviving unbroken weld binds; a binding failure marks the breakable `FAILED` and lists it in `build_failures()`. A failed
+form needs an explicit reset with ready inputs or recreation. Source failures follow the revision retry policy of
+ordinary bodies.
 
 ## Fracture generation
 
