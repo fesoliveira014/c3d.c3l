@@ -65,7 +65,6 @@ const float CAPSULE_FINAL_YAW @private = 0.72f; // radians at the end of the run
 const float CAPSULE_TURN_RATE @private = 2.3f; // radians per second about the vertical axis through its centre
 const float ROUNDING_SLACK @private = 1e-6f; // metres; single-precision positions near 3 m differ by a few of 2.4e-7
 const float CONTACT_REACH_MARGIN @private = 1e-3f; // metres; a particle this close to a shape's reach is in contact
-const float SHAPE_NEIGHBOURHOOD @private = 0.3f; // metres from a shape's surface; particles this close belong to it
 
 struct Fixture @private {
     AssetStore     assets;
@@ -407,7 +406,6 @@ struct TwinResult @private {
     float effect;   // metres the least effective of the controls differs from the host twin
     float inside;   // metres the deepest device particle lies inside a shape's reach, zero if none
     uint  contacts; // device particles within CONTACT_REACH_MARGIN of a shape's reach
-    float[2] near_worst; // worst twin deviation among the particles closest to the sphere, then to the capsule
 }
 
 // The owner sways and turns along a period of MOTION_PERIOD steps; a skinned owner stays and its rig does.
@@ -436,10 +434,8 @@ fn float distance_to_segment(Vec3 point, Vec3 start, Vec3 end) @private {
     return (point - start - axis * along).length();
 }
 
-// Folds one particle's distances to the host's shapes into the result: depth inside a reach, contacts, nearest shape.
-fn void measure_shapes(TwinResult* result, ClothState* host_state, Vec3 device_position, float deviation) @private {
-    float nearest = float::max;
-    sz nearest_shape;
+// Folds one particle's distances to the host's shapes into the result: depth inside a reach, and contacts.
+fn void measure_shapes(TwinResult* result, ClothState* host_state, Vec3 device_position) @private {
     foreach (shape_index, &shape : host_state.shapes) {
         float distance = distance_to_segment(
             device_position,
@@ -449,15 +445,7 @@ fn void measure_shapes(TwinResult* result, ClothState* host_state, Vec3 device_p
         float gap = distance - shape.radius - host_state.desc.thickness;
         result.inside = math::max(result.inside, -gap);
         if (gap < CONTACT_REACH_MARGIN) result.contacts++;
-        if (distance - shape.radius < nearest) {
-            nearest = distance - shape.radius;
-            nearest_shape = shape_index;
-        }
     }
-    if (nearest >= SHAPE_NEIGHBOURHOOD) return;
-
-    usz bucket = host_state.shapes[nearest_shape].kind == ColliderKind.SPHERE ? 0 : 1;
-    result.near_worst[bucket] = math::max(result.near_worst[bucket], deviation);
 }
 
 fn TwinResult compare_twins(Fixture* fixture, Node* host, Node* device, Vec3[] initial) @private {
@@ -470,11 +458,10 @@ fn TwinResult compare_twins(Fixture* fixture, Node* host, Node* device, Vec3[] i
     float ground = TWIN_GROUND + host_state.desc.thickness;
     foreach (index, host_position : host_state.positions) {
         Vec3 device_position = { device_positions[index].x, device_positions[index].y, device_positions[index].z };
-        float deviation = (device_position - host_position).length();
-        result.worst = math::max(result.worst, deviation);
+        result.worst = math::max(result.worst, (device_position - host_position).length());
         result.travel = math::max(result.travel, (host_position - initial[index]).length());
         if (host_position.y - ground < CONTACT_TOLERANCE) result.touching++;
-        measure_shapes(&result, host_state, device_position, deviation);
+        measure_shapes(&result, host_state, device_position);
     }
     return result;
 }
@@ -610,11 +597,9 @@ fn FlagOptions collider_options() @private {
 
 fn void report_colliders(String name, TwinResult result) @private {
     io::printfn(
-        "%s worst %.3e m (sphere side %.3e, capsule side %.3e), travel %.3f m, effect %.3e m, inside %.3e m, contacts %d",
+        "%s worst %.3e m, travel %.3f m, effect %.3e m, inside %.3e m, contacts %d",
         name,
         result.worst,
-        result.near_worst[0],
-        result.near_worst[1],
         result.travel,
         result.effect,
         result.inside,
@@ -1101,6 +1086,37 @@ fn void test_dispatches_per_step_follow_the_step_shape() @test {
     assert(fixture.renderer.stats.dispatches == passes + 2); // the first step initializes in a pass of its own
     run_frame(&fixture, true)!!;
     assert(fixture.renderer.stats.dispatches == passes + 1);
+}
+
+fn void test_cloth_whose_first_frame_is_aborted_steps_in_the_next_frames() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    GeometryId geometry = add_flag_geometry(&fixture, SMALL_CELLS)!!;
+    Node* flag = add_flag(&fixture, geometry, SMALL_CELLS, ClothExecution.GPU)!!;
+    ClothState* state = fixture.scene.get(flag, Cloth).state;
+    Renderer* renderer = &fixture.renderer;
+
+    fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    fixture.physics.update_cloths();
+    fixture.scene.update_world();
+    renderer.begin_frame({ .time = 1, .delta = physics::DEFAULT_FIXED_DT })!!;
+    cloth_gpu::update(&fixture.cloths, renderer, &fixture.assets, &fixture.scene)!!;
+    render::abort_frame(renderer);
+
+    @pool() {
+        Vec3 pinned = state.positions[0];
+        Vec3 hanging = state.positions[state.positions.len - 1];
+        Observation observation = { .cloth = flag.id, .positions = alloc::new_array(tmem, Vec4, state.positions.len) };
+        for (uint frame = 0; frame <= 2 * render::FRAMES_IN_FLIGHT; frame++) {
+            run_frame(&fixture, true, &observation)!!;
+        }
+        assert(!observation.failure);
+        usz last = observation.positions.len - 1;
+        Vec3 swung = { observation.positions[last].x, observation.positions[last].y, observation.positions[last].z };
+        assert((swung - hanging).length() > FEATURE_FLOOR);
+        assert((Vec3){ observation.positions[0].x, observation.positions[0].y, observation.positions[0].z } == pinned);
+    };
 }
 
 fn void test_positions_are_not_ready_until_frames_in_flight_pass() @test {
