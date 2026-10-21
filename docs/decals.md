@@ -7,6 +7,9 @@ Decals are scene components in `c3d::scene`; the renderer applies them on the fo
 ## Quick start
 
 ```c3
+import c3d;
+import c3d::scene;
+
 DecalDesc desc = scene::default_decal_desc(material_id);
 desc.size = { 2, 1, 0.5f };
 desc.decal.weights = { .base_color = 1 };
@@ -33,7 +36,7 @@ normal faces local +Z, within the fade angle ([Volume and projection](#volume-an
 ## Create a decal
 
 `scene::default_decal_desc(material)` returns a unit-size description with full channel weights, every receiver layer,
-order zero and `DEFAULT_DECAL_FADE_ANGLE` (80 degrees, stored in radians).
+order zero and `scene::DEFAULT_DECAL_FADE_ANGLE` (80 degrees, stored in radians).
 
 `Scene.add_decal(desc, parent, name)` copies `desc.size` to the new node's local scale and adds the component.
 `Scene.add(node, decal)` attaches a component to an existing node. Direct component edits must keep the same weight and
@@ -78,10 +81,10 @@ provide RGB and opacity. The metallic-roughness map supplies G roughness and B m
 ### Angular fade
 
 The fade compares the receiver's geometric normal with the normalized world image of local +Z, including under shear.
-With `c = cos(fade_angle)`, the cosine band is `min(DECAL_FADE_BAND, 1 - c)`, where `DECAL_FADE_BAND` is 0.1. A nonzero
-band gives `clamp((facing - c) / band, 0, 1)`: zero at the cutoff, full weight at facing 1. When the band is zero,
-including at an angle of zero, the rule is `facing >= 1 ? 1 : 0`. That hard limit needs exact alignment. Useful narrow
-fades start around one degree.
+With `c = cos(fade_angle)`, the cosine band is `min(shader::DECAL_FADE_BAND, 1 - c)`, where `shader::DECAL_FADE_BAND` is
+0.1. A nonzero band gives `clamp((facing - c) / band, 0, 1)`: zero at the cutoff, full weight at facing 1. When the band
+is zero, including at an angle of zero, the rule is `facing >= 1 ? 1 : 0`. That hard limit needs exact alignment. Useful
+narrow fades start around one degree.
 
 ### Normal maps
 
@@ -94,7 +97,7 @@ normal scale and degenerate-frame behavior match mesh normal maps. Scale zero di
 
 ## Budget and ownership
 
-- Each view keeps at most `MAX_DECALS` (256) eligible decals after culling and ordering. The budget keeps the
+- Each view keeps at most `shader::MAX_DECALS` (256) eligible decals after culling and ordering. The budget keeps the
   lowest-order entries and drops higher-order overlays first. `Stats.decals_dropped` counts the drops.
 - `add_decal` does not validate the material. Preparation and rendering skip dead or non-Standard source materials and
   count them in `Stats.dangling_refs`. Keep shared assets alive while a decal uses them.

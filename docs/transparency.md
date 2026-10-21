@@ -12,7 +12,7 @@ and Physical transmission. A material chooses its alpha mode and blend mode
 | Cutout | `AlphaMode.MASK` | None; depth tested and written | Foliage, fences, wire meshes |
 | Sorted blend | `AlphaMode.BLEND`, `PREMULTIPLIED_ALPHA` | Per object, back to front | Few, separate translucent objects |
 | Weighted blend | Same material, view with `TransparencyMode.WEIGHTED` | None | Overlapping or intersecting translucent surfaces, particles |
-| Additive blend | `AlphaMode.BLEND`, `BlendMode.ADDITIVE` | None needed; the sum is order independent | Sparks, glows, light shafts |
+| Additive blend | `AlphaMode.BLEND`, `BlendMode.ADDITIVE` | Sorted with the other blended draws; the result does not depend on the order | Sparks, glows, light shafts |
 | Transmission | Physical material with `transmission` above 0 | Back to front in the scene-read list | Glass and liquids that refract the opaque scene |
 
 ## Sorted blending
@@ -51,6 +51,9 @@ Transparency" (2013), so a nearer surface dominates only through that weight, an
 evenly whichever is in front.
 
 ```c3
+import c3d;
+import c3d::render;
+
 ViewDesc desc = render::default_view_desc();
 desc.transparency = TransparencyMode.WEIGHTED;
 ViewId view = render::create_view(&renderer, desc)!;
@@ -110,7 +113,7 @@ has no capacity to overflow, so `Stats.sort_overflows` does not count its batche
   bloom. A glint or emissive highlight brighter than that flattens at 64. A `SORTED` view keeps the full range.
 - **Saturation.** About 21 layers of full weight (coverage 1, color at the cap, view depth under about 0.3) fill the
   half-float accumulation. Past that the sum clamps, the average drifts toward the cap, and the result stays finite.
-- **Faint surfaces.** A coverage under about 0.014 at a view depth of 200 or more (a larger coverage nearer) rounds to
+- **Faint surfaces.** A coverage under about 0.014 at a view depth of 200 or more (a smaller coverage nearer) rounds to
   zero in the color sum. It adds no reliable color but still dims what lies behind it by its coverage.
 - **Custom stages.** A weighted form composes correctly only if it writes through `write_blend_output`. Nothing checks
   this at runtime.

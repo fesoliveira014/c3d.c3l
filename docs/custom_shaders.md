@@ -20,7 +20,6 @@ A material with one parameter, a tint color, and an optional base map in slot 0:
 #version 460
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
-#include "descriptor_heap.glsl"
 #include "custom_material.glsl"
 #include "pre_exposure.glsl"
 
@@ -51,6 +50,7 @@ Compile it to SPIR-V for Vulkan 1.3 and SPIR-V 1.5 (see [Shader packages](shader
 [In-process compilation](#in-process-compilation)), embed the result and register it:
 
 ```c3
+import c3d;
 import c3d::asset;
 import c3d::material;
 import std::math;
@@ -78,10 +78,11 @@ Node* node = scene.add_mesh(geometry, tint_material)!;
   payload bytes, up to `MAX_CUSTOM_TEXTURE_SLOTS` (8) texture slots, up to `MAX_CUSTOM_MATERIAL_REFERENCES` (4)
   [Standard material references](#material-references) and the `MaterialCommon` state. Many materials share one shader
   and its pipelines.
-- **Stages and forms.** A shader has one required fragment stage. Every other stage is optional and is the same source
-  compiled with defines: a G-buffer stage, vertex forms (shaded, depth, instanced, velocity), traced and weighted
-  fragment forms, a prepass stage and trace-pose stages. A form is drawn only when the shader supplies it. The
-  [reference](custom_shaders_reference.md#shaderdesc-forms) lists each form, its define and its requirements.
+- **Stages and forms.** A shader has one required fragment stage. Every other stage is optional. The vertex forms
+  (shaded, depth, instanced, velocity) and the traced and weighted fragment forms are one source compiled with defines.
+  The G-buffer and prepass stages are separate fragment sources, and the trace-pose stages are compute sources. A form
+  is drawn only when the shader supplies it. The [reference](custom_shaders_reference.md#shaderdesc-forms) lists each
+  form, its define and its requirements.
 - **Payload.** The payload layout is yours. Write a C3 struct that matches the std430 layout the shader declares and
   pass its bytes through `material::@as_bytes`.
 - **Camera-relative positions.** World-position shader values use [camera-relative coordinates](large_world.md).
@@ -176,13 +177,15 @@ of writing the loop.
   `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` set when slot `i` is present, bit
   `i + CUSTOM_MAP_UV1_SHIFT` when it reads UV1), `slots[8]` as `TextureMapGpu`, `parameters` (the payload address) and
   `references` (the heap addresses of up to four referenced Standard blocks, zero when unused).
-- `custom_material.glsl` supplies `custom_slot_present`, `custom_slot_texture`, `custom_map_uv`, `sample_custom_map` and
-  `custom_reference`. `material_alpha.glsl` supplies `material_output`, which premultiplies for `BLEND`.
+- `custom_material.glsl` supplies `custom_slot_present`, `custom_slot_texture`, `custom_map_uv`, `sample_custom_map`,
+  `custom_reference` and the `material_mip_bias` global that `sample_standard_material` reads. `material_alpha.glsl`
+  supplies `material_output`, which premultiplies for `BLEND`.
 - The fragment inputs are the varyings of `mesh_vertex.glsl`, locations 0 to 6, 8 and 9 (and 7 in velocity passes). See
   [Varyings](custom_shaders_reference.md#varyings). The shared includes read only `FrameRoot` through `DrawRoot.frame`.
 - A slot can hold an `R16_UINT` texture ([Textures](textures.md#sixteen-bit-single-channel-data)). The stage reads it
-  with `gpu_fetch_uint(material.slots[i].texture_index, texel, 0)`, never `sample_custom_map`. Slot 0 of a masked
-  material cannot hold one: the material faults `UNSUPPORTED` when uploaded.
+  with `gpu_fetch_uint(material.slots[i].texture_index, texel, 0)` (from gpu.c3l's `descriptor_heap.glsl`, which
+  `custom_material.glsl` includes), never `sample_custom_map`. Slot 0 of a masked material cannot hold one: the material
+  faults `UNSUPPORTED` when uploaded.
 - A masked custom material (`alpha_mode == MASK`) discards in its own fragment stage. The shadow atlas reads the same
   header and uses slot 0's alpha against `alpha_cutoff` as the caster coverage. A custom caster's `DrawRoot.material` is
   always its `CustomMaterialGpu`, so a custom depth vertex form can read the payload.
@@ -296,8 +299,8 @@ In GLSL, `custom_reference(material, index)` returns the `index`-th referenced b
 entry is address zero, so a stage reads only the entries its material sets. Sample each layer with
 `sample_standard_material`, blend the samples, and pass the blend to `shade_standard_surface` from `main`, or to
 `write_gbuffer` in a G-buffer stage. This stage blends two layers by slot 1's red channel. It includes
-`descriptor_heap.glsl`, `vertex_pull.glsl`, `custom_material.glsl` and `standard_shading.glsl`, and declares the inputs
-at locations 0 to 4 and the push block of the [Quick start](#quick-start):
+`vertex_pull.glsl`, `custom_material.glsl` and `standard_shading.glsl`, and declares the inputs at locations 0 to 4 and
+the push block of the [Quick start](#quick-start):
 
 ```glsl
 StandardMaterialSample sample_layer(StandardMaterialGpu layer, GeometryRoot geometry, vec3 view_direction) {
@@ -448,8 +451,9 @@ same source compiled with `VELOCITY` (and `INSTANCED`). The `pulse` example's bo
   still node. At frozen time and rest its velocity equals the camera velocity. The previous displacement uses the
   current material parameters at the previous time, so a parameter edit shows no motion of its own.
 - Call `render::reset_view_history` after a jump in `FrameInfo.time` (a seek, a loaded save), as after a camera cut.
-  `jitter_time.z` and `previous_time` are floats: from 65,536 s (about 18 h) each rounds to within 1/256 s, so an
-  application that runs that long wraps its time and resets the history at the wrap.
+  `jitter_time.z` and `previous_time` are floats: from 65,536 s (about 18 h) each rounds to within 1/256 s, and their
+  difference is off by up to 1/128 s (about half of a 60 Hz step). An application that runs that long wraps its time and
+  resets the history at the wrap.
 - Without a velocity form, the velocity pass uses the built-in `mesh` variant and sees the undisplaced mesh. A velocity
   stage that does not include `mesh_vertex.glsl` follows the
   [stage rules](custom_shaders_reference.md#velocity-stages-without-mesh_vertexglsl).
@@ -469,10 +473,11 @@ the Standard model (the `pulse` example is diffuse only) differs from its G-buff
 that calls `shade_standard_surface` with the sample and weight its G-buffer stage writes matches that route, as the
 Standard twin does. `examples/shaders/custom/pulse_gbuffer.frag.glsl` is the reference.
 
-- `write_gbuffer` also packs `trace_proxy_skip_height` into the upper 16 bits of the flags output
-  (`GBUFFER_PROXY_SKIP_SHIFT`, in steps of `GBUFFER_PROXY_SKIP_UNIT`). A stage that writes location 4 itself keeps those
-  bits for the lighting resolve and the traced effects. A material whose traced stand-in can sit above its surface
-  raises the height before shading ([trace proxies](scene_trace.md#trace-proxies)). It stays zero otherwise.
+- `write_gbuffer` also packs the `trace_proxy_skip_height` global (from `trace_surface.glsl`, declared through the
+  include) into the upper 16 bits of the flags output (`GBUFFER_PROXY_SKIP_SHIFT`, in steps of
+  `GBUFFER_PROXY_SKIP_UNIT`). A stage that writes location 4 itself keeps those bits for the lighting resolve and the
+  traced effects. A material whose traced stand-in can sit above its surface raises the height before shading
+  ([trace proxies](scene_trace.md#trace-proxies)). It stays zero otherwise.
 - On a `DEFERRED` view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the stage writes the multisample
   G-buffer. The stage source does not change, and it still shades once per pixel and primitive.
 - `CustomMaterialGpu.capabilities` carries `CUSTOM_CAPABILITY_GBUFFER` when the stage is present. A rejected G-buffer
@@ -524,9 +529,9 @@ on the pair.
   own layer.
 - **Memory.** A view whose frame draws no reader copies nothing. Each image is allocated at the view's working extent
   the first time a frame needs it and kept until the view's images are released. `scene_color` is `RGBA16_FLOAT` (8
-  bytes per pixel). Its mip chain is filled only by [Physical transmission](transparency.md#physical-transmission); the
-  helpers below read mip zero. `scene_depth` is `R32_FLOAT` and holds the reverse-Z depth bit for bit (4 bytes per
-  pixel).
+  bytes per pixel at mip zero; its mip chain adds about a third). Only
+  [Physical transmission](transparency.md#physical-transmission) fills the mip chain; the helpers below read mip zero.
+  `scene_depth` is `R32_FLOAT` and holds the reverse-Z depth bit for bit (4 bytes per pixel).
 - **MSAA.** On a view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE`, the snapshots and the scene-read
   list record after the resolve: a reader samples single-sample color and depth and draws single-sample. A custom stage
   in the opaque list runs in the multisample pass and still shades once per pixel.

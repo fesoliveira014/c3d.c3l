@@ -17,6 +17,7 @@ All parameters, defaults and ranges are in the [Materials reference](materials_r
 ## Quick start
 
 ```c3
+import c3d;
 import c3d::asset;
 import c3d::geometry;
 import c3d::light;
@@ -112,6 +113,10 @@ other geometry. A width of 0, the default, adds no draw and no pipeline.
   structures, so ray-traced effects and the path tracer do not see outlines.
 - **Motion.** Under TAA, motion blur or screen-space GI, a moved outlined draw redraws its hull in the velocity pass, so
   a moving outline does not trail.
+- **Depth.** The hull always tests `GREATER` and writes depth, also in a pass that shades with `EQUAL`, so outline
+  pixels are in the depth that later passes read.
+- **Winding.** The hull culls the faces that are front-facing in its own view, so a mirror view outlines the correct
+  side.
 - **Counts.** The hull is a second draw: `Stats.draws` and `Stats.triangles` count it.
 - **Geometry.** A mesh with hard edges has split vertices that each move along their own face normal, so its outline
   opens at those edges. Smooth normals keep it continuous. An open surface has no back faces to extrude and shows no
@@ -162,7 +167,7 @@ params.anisotropy_rotation = (float)math::PI / 4;
 ```
 
 Anisotropy stretches the specular lobe along a tangent-space direction, as on brushed metal. The direction uses the
-frame of the normal map ([Tangent frames](materials_reference.md#tangent-frames)). Clearcoat and sheen stay isotropic.
+tangent frame ([Tangent frames](materials_reference.md#tangent-frames)). Clearcoat and sheen stay isotropic.
 
 #### Physical transmission
 

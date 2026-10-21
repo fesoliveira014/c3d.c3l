@@ -7,17 +7,18 @@ compilation.
 
 ## ShaderDesc forms
 
-Each form is the same source compiled with a define, and a shader supplies only the forms it needs. A form that is empty
-is not drawn.
+The vertex forms and the traced and weighted fragment forms are one source compiled with defines. `gbuffer` and `depth`
+are separate fragment sources, and `trace_pose` stages are compute sources. A shader supplies only the forms it needs.
+An empty form is not drawn.
 
 | `ShaderDesc` field | Compiled with | Requires | Drawn |
 | --- | --- | --- | --- |
-| `fragment` | none | Always | Forward draws; the fallback for every other fragment form |
-| `gbuffer` | none | No `scene_reads` | Opaque and masked draws on `DEFERRED` views ([G-buffer stage](custom_shaders.md#g-buffer-stage)) |
-| `depth` | none | Nothing | Depth prepass of a `FORWARD` view with ray-traced AO ([Prepass stage](#prepass-stage)) |
+| `fragment` | none | Always | Forward and sorted draws; drawn where `gbuffer` or the view's traced form is empty |
+| `gbuffer` | separate source | No `scene_reads` | Opaque and masked draws on `DEFERRED` views ([G-buffer stage](custom_shaders.md#g-buffer-stage)) |
+| `depth` | separate source | Nothing | Depth prepass of a `FORWARD` view with ray-traced AO; without it the core depth fragment draws ([Prepass stage](#prepass-stage)) |
 | `traced_fragment.hardware` | `RT_SHADOWS` | Nothing | Views that trace shadows, on renderers with ray queries ([Traced shadows](#traced-shadows)) |
 | `traced_fragment.software` | `RT_SHADOWS`, `SCENE_TRACE_BVH` | Nothing | Views that trace shadows, on renderers without ray queries |
-| `weighted_fragment.shaded` | `WEIGHTED_BLEND` | Nothing | `WEIGHTED` views that trace no shadows ([Weighted form](#weighted-form)) |
+| `weighted_fragment.shaded` | `WEIGHTED_BLEND` | Nothing | `WEIGHTED` views that trace no shadows; a view that needs a missing weighted form draws the item sorted, through `traced_fragment` or `fragment` ([Weighted form](#weighted-form)) |
 | `weighted_fragment.traced.hardware` | `WEIGHTED_BLEND`, `RT_SHADOWS` | Nothing | `WEIGHTED` views that trace shadows, with ray queries |
 | `weighted_fragment.traced.software` | `WEIGHTED_BLEND`, `RT_SHADOWS`, `SCENE_TRACE_BVH` | Nothing | `WEIGHTED` views that trace shadows, without ray queries |
 | `vertex.shaded` | none | `vertex.depth` | Forward pass |
@@ -26,8 +27,8 @@ is not drawn.
 | `vertex.instanced_depth` | `INSTANCED`, `DEPTH_ONLY` | `vertex.instanced_shaded` | Instanced batches, shadow atlas |
 | `vertex.velocity` | `VELOCITY` | `vertex.shaded` | Velocity pass ([Velocity form](custom_shaders.md#velocity-form)) |
 | `vertex.instanced_velocity` | `VELOCITY`, `INSTANCED` | `vertex.instanced_shaded` and `vertex.velocity` | Velocity pass, instanced batches |
-| `trace_pose.single` | compute stage | `vertex.shaded` | Poses a mesh's trace geometry ([Trace pose](#trace-pose)) |
-| `trace_pose.instanced` | compute stage with `INSTANCED` | `vertex.instanced_shaded` | Poses one instance of a batch |
+| `trace_pose.single` | separate compute source | `vertex.shaded` | Poses a mesh's trace geometry ([Trace pose](#trace-pose)) |
+| `trace_pose.instanced` | compute source with `INSTANCED` | `vertex.instanced_shaded` | Poses one instance of a batch |
 | `trace_pose.reads_time` | flag | Nothing | Re-poses every frame |
 | `trace_pose_grid` | flag | Nothing | Declares that the pose stages index through `trace_pose_index` |
 | `scene_reads` | `SceneReads` bits `color`, `depth` | No `gbuffer` | [Scene reads](custom_shaders.md#scene-reads) |
@@ -47,6 +48,12 @@ prelude alone. The build checks that on every run by compiling one probe per row
 `shaders/variants.json`. A probe that fails stops the shaders step with `public include <name> is not self-contained`
 and glslang's output. The other files of the embedded set resolve too but can change without notice.
 
+The includes of gpu.c3l under `shaders/gpu/` follow its own shader ABI and are not part of this contract. Among them,
+`descriptor_heap.glsl` supplies `gpu_fetch_uint`, `sample_texture_2d`, `load_storage_texture` and
+`store_storage_texture`, which [custom shaders](custom_shaders.md#fragment-contract) and
+[compute stages](compute.md#textures) use. `custom_material.glsl` includes it, so a material stage that includes
+`custom_material.glsl` has these functions. A compute stage that uses them includes `descriptor_heap.glsl` itself.
+
 | Include | Public surface |
 | --- | --- |
 | `constants.glsl` | `PI` |
@@ -54,14 +61,14 @@ and glslang's output. The other files of the embedded set resolve too but can ch
 | `material_alpha.glsl` | `material_output` |
 | `blend_output.glsl` | `write_blend_output`, the `out_color` output and, under `WEIGHTED_BLEND`, the `out_revealage` output ([weighted form](#weighted-form)); includes `pre_exposure.glsl` |
 | `pre_exposure.glsl` | `pre_exposed` ([pre-exposure](custom_shaders.md#pre-exposure)); fragment and compute stages |
-| `custom_material.glsl` | `sample_custom_map` (the plain and biased overloads, each with or without the frame), `custom_reference` |
+| `custom_material.glsl` | `sample_custom_map` (the plain and biased overloads, each with or without the frame), `custom_reference`, and the `material_mip_bias` global (set it from `frame.mip_bias`) |
 | `normal_mapping.glsl` | `decode_normal`, `tangent_normal`, `derivative_normal`, `derivative_tangent`, `surface_tangent_frame` |
 | `noise.glsl` | `interleaved_gradient_noise`, `pcg_hash`, `hash_unit` |
 | `texture_fetch.glsl` | `fetch_texture_2d`, `texture_extent`, `sample_texture_2d_lod` |
 | `gbuffer.glsl` | `reconstruct_world_position`, `view_distance`, `BACKGROUND_VIEW_DISTANCE`, `encode_octahedral`, `decode_octahedral` |
 | `brdf.glsl` | `StandardSurface`, `prepare_surface`, `prepare_standard_surface`, `apply_anisotropy`, `apply_surface_anisotropy`, `evaluate_standard_lobes`, `evaluate_standard_brdf`, `fresnel_schlick` |
 | `lights.glsl` | `LightArray`, `LightList`, `LightSample`, `select_lights`, `flat_lights`, `selected_light_index`, `sample_light`, `light_casts_shadow`, `standard_view_direction`, `evaluate_standard_light` |
-| `shadows.glsl` | `shadow_visibility`, `shadow_transmittance`. Both include the [cloud layer's shadow](sky.md#cloud-shadows) and the [media's sun column](sky.md#medium-volumes) for the sun, and a sun without shadow layers gets both through the `light_casts_shadow` gate. `shadow_transmittance` keeps the column's channels, and `shadow_visibility` takes their mean |
+| `shadows.glsl` | `shadow_visibility`, `shadow_transmittance`, and `ray_shadow_visibility` (`RT_SHADOWS` only). The first two include the [cloud layer's shadow](sky.md#cloud-shadows) and the [media's sun column](sky.md#medium-volumes) for the sun, and a sun without shadow layers gets both through the `light_casts_shadow` gate. `shadow_transmittance` keeps the column's channels, and `shadow_visibility` takes their mean |
 | `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance` (with or without an `irradiance_direction`), `evaluate_environment` (both), `evaluate_environment_lobes` (with or without an `irradiance_direction` and a `ReflectionSelection`), `environment_lobe_radiance`, `environment_tables` |
 | `probe_classification.glsl` | `probe_classification(ProbeVolumeGpu, uvec3)` reads a valid probe's live provisional, eligible or excluded state; fragment and compute stages |
 | `reflection_probe.glsl` | `ReflectionSelection`, `reflection_probe_select`, `reflection_probe_weight`, `reflection_box_direction`, `reflection_probe_radiance`, `ENVIRONMENT_GGX_CUBE`, `ENVIRONMENT_CHARLIE_CUBE`; fragment and compute stages |
@@ -69,15 +76,15 @@ and glslang's output. The other files of the embedded set resolve too but can ch
 | `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
 | `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `apply_material_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) and [medium volumes](sky.md#medium-volumes) ([sky](sky.md#custom-stages)); fragment and compute stages |
 | `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](custom_shaders.md#scene-reads)) |
-| `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material`, `MaterialUvGrad`, `sample_standard_material_grad` ([explicit gradients](custom_shaders.md#explicit-gradients-and-tangents)) |
+| `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material`, `MaterialUvGrad`, `sample_standard_material_grad` ([explicit gradients](custom_shaders.md#explicit-gradients-and-tangents)), and the `material_mip_bias` global (set it from `frame.mip_bias`) |
 | `decals.glsl` | `apply_decals` ([decals](decals.md#decals-in-custom-shaders)) |
 | `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
-| `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |
-| `proxy_skip_output.glsl` | `write_proxy_skip` and the `out_proxy_skip` output at location 0 ([prepass stage](#prepass-stage)) |
+| `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4, and the `trace_proxy_skip_height` global (raise it before shading; [G-buffer stage](custom_shaders.md#g-buffer-stage)) |
+| `proxy_skip_output.glsl` | `write_proxy_skip`, the `out_proxy_skip` output at location 0 and the `trace_proxy_skip_height` global ([prepass stage](#prepass-stage)) |
 | `vertex_pull.glsl` | `pull_vec2`, `pull_vec3`, `pull_vec4`, `pull_triangle`, `GEOMETRY_*` |
 | `view_clip.glsl` | `view_clip_distance` and the redeclaration of `gl_ClipDistance` as a one-element array ([clip plane](views.md#clip-plane)); vertex stages only |
 | `instance_effects.glsl` | `instance_anchor`, `instance_fade_scale`, `sway_height_weight`, `sway_offset` ([sway and fade](instancing.md#sway-and-distance-fade); the blocks are `c3d_abi.glsl`'s `InstanceEffectsGpu` and `SwayGpu`); vertex and compute stages |
-| `mesh_vertex.glsl` | The push block, the [varyings](#varyings), `view_clip_distance` (through `view_clip.glsl`), `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`; starts from the view's retained base positions of a [`vertex_motion`](post.md#edited-vertices) mesh), `instance_source`, `world_instance`, `instance_bend_weight` and `apply_instance_effects` (`INSTANCED`), `previous_world_model` and `apply_previous_instance_effects` (`VELOCITY` with `INSTANCED`) |
+| `mesh_vertex.glsl` | The push block, the [varyings](#varyings), `view_clip_distance` (through `view_clip.glsl`), `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`; starts from the view's retained base positions of a [`vertex_motion`](post.md#edited-vertices) mesh), `instance_source` and `world_instance` (`INSTANCED`), `instance_bend_weight` and `apply_instance_effects` (every form), `previous_world_model` (`VELOCITY` with `INSTANCED`) and `apply_previous_instance_effects` (`VELOCITY`) |
 | `instance_record.glsl` | `pack_instance_record(model, color, seed)`, which fills an `InstanceGpu` the way host batches pack theirs ([device batches](instancing.md#device-batches)); compute stages only |
 | `quadtree_morph.glsl` | `quadtree_range`, `quadtree_morph`, `quadtree_world_scale`, `quadtree_selection_orthographic` ([quadtree morph](#quadtree-morph); the blocks are `c3d_abi.glsl`'s `QuadtreeGpu` and `QuadtreeLevelGpu`); vertex and compute stages |
 | `trace_pose.glsl` | The compute push block and group size, `TracePoseVertex`, `trace_pose_index`, `trace_pose_vertex`, `trace_pose_write`, `trace_pose_instance` ([trace pose](#trace-pose)); compute stages only |
@@ -89,6 +96,8 @@ The probes cover these variants:
 - `shadows.glsl` and `standard_shading.glsl` plain, with `RT_SHADOWS`, with `RT_SHADOWS` and `SCENE_TRACE_BVH`, and each
   of those two with `RT_SHADOWS_HARD`.
 - `lights.glsl` in fragment and vertex stages.
+- `pre_exposure.glsl`, `probe_classification.glsl`, `reflection_probe.glsl` and `fog.glsl` in fragment and compute
+  stages.
 - `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`.
 - `instance_effects.glsl` and `quadtree_morph.glsl` in vertex and compute stages.
 - `instance_record.glsl` and `trace_pose.glsl` in compute stages.
@@ -116,7 +125,8 @@ The depth and velocity forms do not write locations 0 to 2 and 9.
 Locations 8 and 9 are reserved by `mesh_vertex.glsl`. A stage that includes it and declares its own output at either
 location does not compile. Extra varyings start at location 10, in the vertex and the fragment stage. A custom vertex
 stage that writes its outputs itself instead of calling `write_mesh_outputs` must write locations 8 and 9 before it is
-paired with a fragment that reads them, including the built-in fragments that read `v_shading_pos`.
+paired with a fragment that reads them. The built-in Standard, Physical, Toon, terrain and water fragments read
+`v_shading_pos`.
 
 ### Billboard varying
 
@@ -170,7 +180,7 @@ the [velocity form](custom_shaders.md#velocity-form).
 - **Sway and fade.** In `INSTANCED` forms `write_mesh_outputs` applies the batch's
   [sway and fade](instancing.md#sway-and-distance-fade) in world space after the instance matrix, the sway first and
   then the collapse. Under `SwayWeight.VERTEX_ALPHA` it writes `v_color.a = 1` before the instance tint. A stage that
-  writes its outputs itself calls the `INSTANCED` helpers `world_instance`, `instance_bend_weight` and
+  writes its outputs itself calls `world_instance` (`INSTANCED`), then `instance_bend_weight` and
   `apply_instance_effects` on the world position and, in velocity forms, `apply_previous_instance_effects` on the
   previous world position. It sets `v_color.a = 1` when `DRAW_SWAY_VERTEX_ALPHA` is set. A stage supplies its own bend
   weight by writing `vertex.color.a` before `write_mesh_outputs` and selecting `VERTEX_ALPHA`.

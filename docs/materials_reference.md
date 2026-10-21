@@ -115,10 +115,11 @@ Standard surface.
 | Field | Default | Range |
 | --- | --- | --- |
 | `standard` | `STANDARD_PARAMS_DEFAULT` | As Standard |
-| `clearcoat`, `clearcoat_roughness` | 0 | [0, 1] |
+| `clearcoat` | 0 | [0, 1] |
+| `clearcoat_roughness` | 0 | [0, 1]; shading floors the perceptual roughness at 0.045 and keeps the authored value |
 | `clearcoat_normal_scale` | 1 | Finite; may be negative |
 | `sheen_color` | black RGB | [0, 1] per channel |
-| `sheen_roughness` | 0 | [0, 1] |
+| `sheen_roughness` | 0 | [0, 1]; shading floors the perceptual roughness at 0.045 and keeps the authored value |
 | `ior` | 1.5 | Finite, at least 1 |
 | `specular` | 1 | [0, 1] |
 | `specular_color` | white RGB | Finite, at least 0 |
@@ -167,10 +168,11 @@ factor is zero: clearcoat maps at `clearcoat` 0, sheen maps when every `sheen_co
   base color. The defaults reproduce the Standard reflectance of 0.04. Zero `specular` removes the dielectric specular
   lobe under direct and environment lighting and leaves the diffuse lobe unweighted. Clearcoat keeps its own fixed
   reflectance.
-- **Anisotropy.** The direction lives in the frame the normal map uses (see [Tangent frames](#tangent-frames)). A
-  degenerate frame renders isotropic. Direct lighting uses the anisotropic GGX distribution and visibility. Environment
-  reflections bend the reflection normal toward the stretch direction, which is an approximation. Clearcoat and sheen
-  stay isotropic. Zero strength reproduces the isotropic lobe exactly.
+- **Anisotropy.** The direction lives in the tangent frame. Supplied tangents are authoritative. Without them, filled
+  triangles derive the frame from world-position and anisotropy-map UV derivatives (UV0 when the map is absent), as in
+  [Tangent frames](#tangent-frames). A degenerate frame renders isotropic. Direct lighting uses the anisotropic GGX
+  distribution and visibility. Environment reflections bend the reflection normal toward the stretch direction, which is
+  an approximation. Clearcoat and sheen stay isotropic. Zero strength reproduces the isotropic lobe exactly.
 - **Transmission.** With `attenuation_distance` above 0, radiance crossing the volume is multiplied by
   `attenuation_color ^ (distance / attenuation_distance)`. See [Transparency](transparency.md#physical-transmission) for
   how the renderer samples the scene.
@@ -194,7 +196,7 @@ factor is zero: clearcoat maps at `clearcoat` 0, sheen maps when every `sheen_co
 - `uv_set` is 0 or 1. The color space of a map belongs to the texture asset, not the slot ([Textures](textures.md)).
 - Normal encoding follows the texture asset's `TextureDesc.semantic`: `COLOR` and `NORMAL_RGB` use RGB, `NORMAL_RG`
   reconstructs positive Z from RG. Render-target normal maps always use RGB. `TextureSlot` has no encoding override.
-- Built-in slots cannot hold a `VIEW` reference.
+- Built-in slots cannot hold a `VIEW` reference; preparation returns `c3d::UNSUPPORTED`.
 
 ## Tangent frames
 
@@ -233,7 +235,7 @@ or UV derivatives, keep the geometry normal. A decoded zero-length map normal us
 | --- | --- |
 | `c3d::CAPACITY_EXCEEDED` | `AssetStore.add_material` when the material pool is full |
 | `c3d::INVALID_ARGUMENT` | `add_material` for a duplicate key; preparation for a `uv_set` above 1 or a comparison sampler in any slot |
-| `c3d::UNSUPPORTED` | Preparation or rendering for a live cube texture or an `R16_UINT` texture in a built-in slot, an unusable Toon gradient source, or an active normal map or anisotropy that needs tangents on non-triangle or wireframe geometry |
+| `c3d::UNSUPPORTED` | Preparation or rendering for a `VIEW` reference in a built-in slot, a live cube texture or an `R16_UINT` texture in a built-in slot, an unusable Toon gradient source, or an active normal map or anisotropy that needs tangents on non-triangle or wireframe geometry |
 
 `AssetStore.replace_material` and `mark_material_dirty` return no fault. A pairing fault from the cases above can still
 appear at draw time, as with `add_material`, because a material cannot see which geometries draw it.

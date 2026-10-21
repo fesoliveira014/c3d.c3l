@@ -48,6 +48,7 @@ The module reads the generated constants and registers the shader:
 ```c3
 module c3d::landscape::terrain;
 
+import c3d::asset;
 import c3d::landscape @public;
 
 ShaderDesc desc = {
@@ -105,6 +106,7 @@ module c3d::landscape;
 
 import c3d::asset;
 
+...
 const char[*] TERRAIN_FRAGMENT_SPIRV @private = $embed("../shaders/spv/terrain_fragment.spv");
 const char[*] TERRAIN_FRAGMENT_RT_SHADOWS_SPIRV @private = $embed("../shaders/spv/terrain_fragment_rt_shadows.spv");
 ...

@@ -41,6 +41,7 @@ void main() {
 ```
 
 ```c3
+import c3d;
 import c3d::asset;
 import c3d::material;
 import c3d::render;
@@ -172,6 +173,9 @@ vec4 color = load_storage_texture(textures.slots[1].texture_index, ivec2(coord))
 store_storage_texture(textures.slots[1].texture_index, ivec2(coord), mix(color, fog, amount));
 ```
 
+These functions come from gpu.c3l's `descriptor_heap.glsl`. A compute stage includes it after the ABI headers
+([public includes](custom_shaders_reference.md#public-includes)).
+
 - A zero sampler id selects the renderer's linear clamp sampler.
 - Before the dispatch the renderer moves each declared image into its declared state. A target rendered by an earlier
   view, a texture uploaded this frame, or an image written by an earlier dispatch is readable without further
@@ -287,7 +291,7 @@ revision that is rejected skips its dispatches until the shader is replaced. See
 
 ## Limits
 
-- At most 64 buffers and 8 declared textures per dispatch.
+- At most `BUFFER_CAPACITY` (64) buffers per renderer and `MAX_DISPATCH_TEXTURES` (8) declared textures per dispatch.
 - Geometry writes cover positions, normals and tangents only.
 - Indirect dispatch is not supported, and `read_buffer` works on `READBACK` buffers only.
 - A stage that reads the view image sees pre-exposed values.
