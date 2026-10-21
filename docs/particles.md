@@ -38,6 +38,8 @@ particle::update(&scene, delta_seconds, wind_velocity);
 // render every camera afterwards
 ```
 
+![Smoke, stretched sparks and mesh debris](images/particles.png)
+
 `register_particles` runs once per scene. It can fault `CAPACITY_EXCEEDED`; destroy the scene after a partial registration failure. `add_particle_system` is atomic: it validates the descriptor, allocates one pool, and creates the emitter plus one draw child (and a trail child when [trails](#trails) are on), rolling back on failure. An invalid descriptor returns `INVALID_ARGUMENT`; a full scene returns `CAPACITY_EXCEEDED`.
 
 ## Concepts
