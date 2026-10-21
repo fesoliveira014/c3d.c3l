@@ -59,7 +59,7 @@ so it does not depend on the launch directory. Both geometry variants and all
 referenced textures are prepared before interaction. Its private map editor can
 change each slot without modifying shared UV streams; scalar and mapped presets
 make the difference visible. See [the example controls](materials.md#interactive-example)
-and [fixture provenance](../csrc/README.md#standard-material-fixtures).
+and [fixture provenance](../test/fixtures/README.md#standard-material-fixtures).
 
 ## Generated alpha coverage
 
@@ -419,7 +419,7 @@ Container loaders split the faults that image decoders report together:
 DDS and KTX1 readers ignore advisory fields (DDS flags, pitch and caps other than the cube and volume bits; KTX1
 `glTypeSize` and `glBaseInternalFormat`) and bytes after the last level. KTX2 is read strictly. Device support for a
 format is still checked at upload, which reports the backend fault, such as `gpu::UNSUPPORTED_FEATURE`. Fixture
-provenance: [texture container fixtures](../csrc/README.md#texture-container-fixtures).
+provenance: [texture container fixtures](../test/fixtures/README.md#texture-container-fixtures).
 
 ## Select and transform UVs
 
@@ -716,7 +716,7 @@ green, blue and white quadrants. Alpha is zero where both coordinates fall in
 `[24, 40)`, and 255 elsewhere. It was generated with Python `struct` and `zlib`:
 write an 8-bit RGBA PNG IHDR, prefix each top-first row with filter byte zero,
 zlib-compress the rows into IDAT, and CRC each chunk. The chunk writer is shown
-in [the decoder fixture provenance](../csrc/README.md#test-fixtures). No image
+in [the decoder fixture provenance](../test/fixtures/README.md#decoder-fixtures). No image
 encoder runs during a build.
 
 ## Frame ordering
@@ -759,7 +759,7 @@ wheel zooms, and Escape release quits. It prints format, mip count and the
 fault rather than displaying a converted replacement.
 
 Both examples retain CPU sources and use full validation. Their committed
-fixtures are project-authored; see [fixture provenance](../csrc/README.md#cube-and-compressed-fixtures).
+fixtures are project-authored; see [fixture provenance](../test/fixtures/README.md#cube-and-compressed-fixtures).
 
 
 ## Bounded initial preparation
