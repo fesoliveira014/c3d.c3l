@@ -20,7 +20,12 @@ In an application, create the panel once and run it inside the GUI frame:
 
 ```c3
 GuiPanelState selection;
-PhysicsPanel panel = gui::create_physics_panel(mem, &physics, &scene, &selection);
+PhysicsPanel panel = gui::create_physics_panel(
+    allocator: mem,
+    physics:   &physics,
+    scene:     &scene,
+    selection: &selection,
+);
 defer gui::destroy_physics_panel(&panel);
 gui::expose_physics_components();
 
@@ -35,7 +40,12 @@ scene.flush_removals();
 sink.clear();
 panel.debug_draw(&sink);
 gui_renderer.finish_frame();
-renderer.render_view(&scene, camera_node, view, debug: &sink)!;
+renderer.render_view(
+    scene:       &scene,
+    camera_node: camera_node,
+    view:        view,
+    debug:       &sink,
+)!;
 ```
 
 Call `expose_physics_components` after `register_physics` and `create_gui_renderer`. `sink` is the application's

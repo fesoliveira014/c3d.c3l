@@ -128,7 +128,7 @@ shift. The full order is in [origin rebasing](origin_rebasing.md).
 ## Limits
 
 - One fluid per world.
-- Each body floats by the bounds of its density-carrying hull, sphere and capsule colliders. A body with no such collider
+- Each body floats by the bounds of its density-carrying box, hull, sphere and capsule colliders. A body with no such collider
   has no solid volume and receives nothing.
 - The fluid is sampled at eight points per body and step, which is coarse over a body much longer than a wave.
 - The explicit step limit weakens drag on light bodies at high relative speed.

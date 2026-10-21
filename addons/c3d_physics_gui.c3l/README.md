@@ -23,7 +23,12 @@ dependencies, and enable `C3D_PHYSICS_GUI` in the target's features. With `C3D_P
 
 ```c3
 GuiPanelState selection;
-PhysicsPanel panel = gui::create_physics_panel(mem, &physics, &scene, &selection);
+PhysicsPanel panel = gui::create_physics_panel(
+    allocator: mem,
+    physics:   &physics,
+    scene:     &scene,
+    selection: &selection,
+);
 defer gui::destroy_physics_panel(&panel);
 gui::expose_physics_components();
 
