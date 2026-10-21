@@ -1,11 +1,11 @@
 # Ray-traced shadows
 
-A light can resolve its shadow with rays instead of atlas layers: one ray per shaded pixel toward the light, or several
-toward a light with a size, which gives a soft penumbra. Ray-traced shadows apply no depth bias or normal offset and
-need no atlas layers. They use hardware ray queries when the renderer was created with `RendererDesc.ray_queries`,
-and the software walk of [scene tracing](scene_trace.md) otherwise. The switches are `ShadowSettings.ray_traced` and
-`Light.source_radius` / `source_angle` (`c3d::light`) and `ViewDesc.ray_tracing` (`c3d::render`). The atlas path is
-described in [shadows](shadows.md).
+A light can resolve its shadow with rays instead of atlas layers: one ray per shaded pixel toward the light, or
+several toward a light with a size, which gives a soft penumbra. Ray-traced shadows ignore `bias` and the
+normal-offset settings and need no atlas layers. They use hardware ray queries when the renderer was created with
+`RendererDesc.ray_queries` or `ray_tracing_pipelines`, and the software walk of [scene tracing](scene_trace.md)
+otherwise. The switches are `ShadowSettings.ray_traced` and `Light.source_radius` / `source_angle` (`c3d::light`) and
+`ViewDesc.ray_tracing` (`c3d::render`). The atlas path is described in [shadows](shadows.md).
 
 ## Quick start
 
@@ -31,17 +31,17 @@ example's panels set the light's source extent and the shadow samples, and swap 
 - **When a light traces.** A light traces when `shadow.enabled`, `shadow.ray_traced` and the view's
   `ray_tracing.shadows` are all set. Every other light keeps the atlas, so one view can mix both. A traced light holds
   no atlas layer in that view.
-- **Ray queries and the software walk.** `RendererDesc.ray_queries` requests ray queries. With no adapter that
-  supports them, `create_renderer` faults `c3d::UNSUPPORTED`. A renderer created without them traces through the
-  software walk, which costs substantially more per ray; see
-  [benchmarking](benchmarking.md#traced-effects-in-software-and-on-ray-queries).
+- **Ray queries and the software walk.** `RendererDesc.ray_queries` requests ray queries, and
+  `RendererDesc.ray_tracing_pipelines` enables them too. With no adapter that supports them, `create_renderer` faults
+  `c3d::UNSUPPORTED`. A renderer created with neither traces through the software walk, which costs substantially more
+  per ray; see [benchmarking](benchmarking.md#traced-effects-in-software-and-on-ray-queries).
 - **Ray origin.** The ray starts `TRACE_SURFACE_OFFSET` (0.02 world units, shared with every traced effect) along the
   receiver's normal. The offset hides self-intersection at the cost of a small gap where a caster meets its receiver.
   On a forward view with `msaa` above `ONE`, the built-in forward stages take the receiver's position at the pixel's
   centroid (`v_shading_pos`, [custom shaders](custom_shaders.md#shading-position-varying)), because the pixel centre
-  can lie outside the triangle and a ray started there can begin below a neighbouring surface. A material may raise
-  `trace_proxy_skip_height` so that hits on a [trace proxy](scene_trace.md#trace-proxies) near the surface are
-  ignored; terrain does.
+  can lie outside the triangle and a ray started there can begin below a neighbouring surface. A fragment stage may
+  raise the `trace_proxy_skip_height` global ([custom shaders](custom_shaders.md)) so that hits on a
+  [trace proxy](scene_trace.md#trace-proxies) near the surface are ignored; terrain does.
 - **Ray length.** `bias`, the normal offsets and `max_distance` do not apply. Directional rays stop at `RT_SHADOW_FAR`
   (10,000 world units) and punctual rays at the light.
 - **Casters.** Casters are the traced scene (see [what traces](scene_trace.md#what-traces)). `cast_shadow = false` keeps
@@ -54,7 +54,8 @@ example's panels set the light's source extent and the shadow samples, and swap 
 
 ## Enable ray-traced shadows
 
-1. Create the renderer with `ray_queries = true` for hardware tracing, or leave it off for the software walk.
+1. Create the renderer with `ray_queries = true` (or `ray_tracing_pipelines = true`) for hardware tracing, or leave
+   both off for the software walk.
 2. Set `shadow.ray_traced = true` on each light that should trace, with `shadow.enabled` on.
 3. Set `ViewDesc.ray_tracing.shadows = true` on each view that should trace, between frames.
 
@@ -112,7 +113,7 @@ desc.ray_tracing.shadow_samples = 8;
 
 | Setting | Where | Default | Meaning |
 | --- | --- | --- | --- |
-| `ray_queries` | `RendererDesc` | false | Request hardware ray queries; faults `c3d::UNSUPPORTED` without an adapter that supports them |
+| `ray_queries`, `ray_tracing_pipelines` | `RendererDesc` | false | Request hardware ray queries (pipelines enable them too); fault `c3d::UNSUPPORTED` without an adapter that supports them |
 | `shadow.ray_traced` | `Light` | false | The light traces in views that enable traced shadows |
 | `ray_tracing.shadows` | `ViewDesc` | false | The view traces the lights that ask to |
 | `ray_tracing.shadow_samples` | `ViewDesc` | 0 (reads 1) | Rays per pixel toward a light with an extent, 1 to 16 |

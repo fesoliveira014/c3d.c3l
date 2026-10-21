@@ -20,6 +20,7 @@ PrepareId prepare = renderer.begin_prepare_model(model)!;
 
 // Each frame, while the preparation is open:
 renderer.begin_frame()!;
+defer catch render::abort_frame(&renderer);
 PrepareReport report = renderer.advance_prepares_within({
     .staged_bytes = render::PREPARE_FRAME_BUDGET_BYTES,
     .generated_texels = 1 << 20,
@@ -38,9 +39,10 @@ if (progress.state == PrepareState.READY) {
 ## One-shot preparation
 
 - `prepare_scene(scene)` uploads every asset the scene references, creates the mesh, shadow and snapshot pipelines,
-  and the display and effect pipelines of every live view, then waits. It requires no open frame.
+  and the display and effect pipelines of every live view, then waits.
 - `prepare_model(model)` does the same for a stored model (`ModelId`) before it is instantiated, and prepares the
   depth-only variants unconditionally.
+- Both must run with no frame open.
 - Views created afterwards prepare their pipelines on first render.
 
 A mesh's pipelines follow the live views, so configure the views before preparing. The forms prepared per view are:
@@ -116,8 +118,9 @@ Partial work stays private. The frame that records a preparation's final copy in
 later on the same queue. An aborted frame restores the previous mirror and the last committed progress. Advancing
 never submits a frame itself, and a submission stays committed after a later presentation fault.
 
-Each step reacquires its source by identity and revision, and a relevant change restarts the record; repeated mutation
-can prevent completion. Released required source data fails the record with `c3d::ASSET_DATA_UNAVAILABLE` unless the
+Each step reacquires its source by identity and revision, and a relevant change restarts the record. A restart
+recomputes and resets the totals, so a progress display must not cache them; repeated mutation can prevent
+completion. Released required source data fails the record with `c3d::ASSET_DATA_UNAVAILABLE` unless the
 job already owns everything it still needs. Ordinary draws or synchronous uploads can make a mirror current and
 supersede a private candidate.
 
@@ -126,7 +129,7 @@ Record-local asset and shader faults fail that record. Device and capacity fault
 
 ### Finish
 
-`end_prepare(id)` needs no open frame. It cancels the preparation, frees its CPU data and retires unpublished
+`end_prepare(id)` must run with no frame open. It cancels the preparation, frees its CPU data and retires unpublished
 candidates after their last submission completes. Published mirrors stay cached. It faults `c3d::INVALID_ID` for a
 stale id.
 

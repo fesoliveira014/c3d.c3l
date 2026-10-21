@@ -45,15 +45,16 @@ c3c build views --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROF
 
 - **Output.** A `WINDOW` view writes the swapchain image; a `TEXTURE` view writes a render target. A headless
   renderer's window views hold no images and record nothing.
-- **Working extent.** A view renders at `working_extent(viewport, output, render_scale)`, at least one pixel per
-  dimension. `render_scale` below 1 renders cheaper than the viewport and above 1 supersamples, up to
+- **Working extent.** A view renders at `working_extent(viewport, output_width, output_height, render_scale)`, at least
+  one pixel per dimension. `render_scale` below 1 renders cheaper than the viewport and above 1 supersamples, up to
   `MAX_RENDER_SCALE` (2.0). The view owns its working images at that extent: `hdr_color`, `depth`, scene snapshots,
-  sky tables, post and effect images. [Images per setting](views_reference.md#images-per-setting) lists them.
+  post and effect images. A raster view also owns fixed-size sky tables ([sky](sky.md)).
+  [Images per setting](views_reference.md#images-per-setting) lists them.
 - **History.** A view keeps the camera, poses and accumulated state of its last rendering for temporal effects. The
-  history is keyed by scene identity, so replacing a scene needs no reset. `reset_view_history(view)` is the camera
-  cut: it forgets the previous pose, adapted exposure and focus, and the fog and cloud history. Every
-  `configure_view` and every resize resets the history except the [adapted exposure](post.md#auto-exposure) and
-  [adapted focus](post.md#auto-focus), which a resize or a parameter edit keeps.
+  history is keyed by scene identity, so replacing a scene needs no reset. `render::reset_view_history(&renderer,
+  view)`, called with no frame open, is the camera cut: it forgets the previous pose, adapted exposure and focus, and
+  the fog and cloud history. Every `configure_view` and every resize resets the history except the [adapted
+  exposure](post.md#auto-exposure) and [adapted focus](post.md#auto-focus), which a resize or a parameter edit keeps.
 - **Frame order.** The application orders the views inside a frame. A producer view renders before the view that
   samples its target. There is no render graph.
 - **Frame origin.** Set `FrameInfo.reference_position` to the current absolute camera position when rendering far from
@@ -133,8 +134,9 @@ renderer.end_frame()!;
   retries; render nothing until a `begin_frame` succeeds. A swapchain rebuilt at a zero extent (a minimized window)
   leaves the window views as they are, so their images stay allocated while the window is minimized.
 - `Renderer.render(scene, camera)` is the default-view convenience for one frame.
-- `set_view_overlay(view, list)` gives a view an overlay list of items anchored in the world; `finish_view` draws it
-  over the view's output after post, tested against the view's depth ([world-space items](overlay.md#world-space-items)).
+- `set_view_overlay(view, list)` gives a view an overlay list of items anchored in the world for one frame;
+  `finish_view` draws it over the view's output after post, tested against the view's depth ([world-space
+  items](overlay.md#world-space-items)).
 
 ### Frame queries
 
@@ -143,8 +145,9 @@ renderer.end_frame()!;
   and for a frame more than `FRAMES_IN_FLIGHT` indices behind `frame_index`. Commit CPU state that mirrors GPU work
   only when it is true.
 - `Renderer.view_depth_frame(view)` returns the index of the last submitted frame whose rendering of the view wrote its
-  depth image. It faults `render::NOT_READY` before the first such frame and after a `configure_view` that recreates
-  the images, and `c3d::INVALID_ID` for a dead view. A path-traced rendering never sets it. A dispatch that names
+  depth image. It faults `render::NOT_READY` before the first such frame and after a resize or a `configure_view` that
+  recreates the images, and `c3d::INVALID_ID` for a dead view. A path-traced rendering never sets it; a view switched
+  to `PATH_TRACED` in place keeps reporting its last raster frame. A dispatch that names
   `read_view_depth(view)` before the view's `render_view` of the open frame reads the depth of the frame this reports,
   so a reader that kept that frame's camera knows the two belong together. A view the application does not render
   every frame reports an older frame; the reader decides whether that depth still serves.
@@ -153,7 +156,7 @@ renderer.end_frame()!;
 
 `render_to(scene, camera, target, color = LINEAR_HDR, info = {})` renders and finishes one frame into a target through
 a view it creates and destroys, without touching the window. It waits for completion, so it is a bake path, not a
-per-frame one. It takes a view slot and needs no open frame.
+per-frame one. It takes a view slot and must run with no frame open.
 
 ## Sample a target in a material
 

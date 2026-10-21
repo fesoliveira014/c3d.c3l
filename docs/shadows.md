@@ -118,8 +118,9 @@ scene.update_world();
 - The renderer snaps a stable receiver projection to shadow texels and extends its depth coverage for off-camera
   casters, so camera movement can preserve the shadow grid while the light, lens and coverage settings stay fixed.
   Changing those settings can change the projection.
-- Receivers filter with a 3x3 comparison, and a receiver exactly at a split selects the nearer cascade. Each cascade
-  except the last ends in a blend band: over the final `cascade_blend` fraction of its depth span a
+- Receivers filter with a 3x3 comparison. A receiver exactly at a split selects the nearer cascade; with a band its
+  blend weight there is one, so it shows the next cascade's visibility. Each cascade except the last ends in a blend
+  band: over the final `cascade_blend` fraction of its depth span a
   receiver samples that cascade and the next and interpolates their visibility linearly with depth. The next
   cascade's receiver fit extends back over the band, which costs the coarser map some resolution, and a receiver in a
   band takes 18 comparisons instead of 9. `cascade_blend = 0` selects one cascade exactly. There is no fade at the
@@ -143,17 +144,20 @@ bias.
   value, set by hand.
 - **Direction of the offset.** Forward shading moves the point along the face-corrected vertex normal. Deferred
   shading moves it along a face normal rebuilt from depth: on each image axis, the neighbour on the side whose two
-  texels continue the centre's depth in a straight line, turned toward the camera. Neither reads the normal map. A
-  forward impostor moves along its baked normal, a deferred one along the face of the depth it writes. On curved
-  surfaces the two directions differ slightly.
+  texels continue the centre's depth in a straight line, turned toward the camera. The rebuild reads up to eight extra
+  depth texels a pixel. Neither reads the normal map. A forward impostor moves along its baked normal, a deferred one
+  along the face of the depth it writes. On curved surfaces the two directions differ slightly.
 
-The offset costs two things, and both grow with the cascade:
+The offset costs two things, and both grow with the cascade. Four cascades over 400 m at 2048 texels, with a 60 degree
+vertical, 16:9 camera and a 0.1 near plane, have texels of about 2.6, 5.3, 12 and 48 cm and so offsets of about 5, 11,
+24 and 96 cm.
 
-- A caster thinner than the offset casts no shadow on the surface it rests on.
+- A caster thinner than the offset casts no shadow on the surface it rests on: a 4 cm board on the ground in the first
+  cascade, a 90 cm crate in the last.
 - A shadow's tip moves toward its caster by the offset divided by the tangent of the sun's elevation.
 
 A box standing on the ground keeps its contact shadow. Where either loss shows, use
-[ray-traced shadows](ray_traced_shadows.md), which apply no offset.
+[ray-traced shadows](ray_traced_shadows.md), which ignore `bias` and the normal-offset settings.
 
 ## Choose casters and receivers
 
@@ -174,15 +178,16 @@ illumination without shadow attenuation, or cast onto another mesh without recei
   alpha factor, base map, selected UV set, UV transform, sampler and alpha cutoff, so cut-outs follow the same
   semantics as the visible surface. Double-sided and reflected-model face handling are preserved.
 - A `BLEND` mesh, batch or LOD part casts no shadow, whatever its family, unless [colored shadows](#colored-shadows)
-  are on. A custom `MASK` material casts through its own stage ([custom shaders](custom_shaders.md)).
+  are on. A custom `MASK` material casts through its own depth vertex stage, when it has one, and the built-in depth
+  fragment stage, which tests slot 0's alpha against `alpha_cutoff` ([custom shaders](custom_shaders.md)).
 - A shadow-only draw resolves the geometry and, for `MASK`, its base map. It does not need the normal,
   metallic-roughness, occlusion or emissive sources. `prepare_scene` still prepares every mesh and material; an
   application that prepares selected assets uses the explicit upload operations.
 - Texture and sampler revisions refresh shadow bindings without a material edit; material edits still need
   `mark_material_dirty`. A current uploaded backing stays usable after explicit CPU source release. A needed upload with
   no source faults `c3d::ASSET_DATA_UNAVAILABLE`. An invalid alpha-map UV selection or a comparison sampler faults
-  `c3d::INVALID_ARGUMENT`, and a cube alpha map `c3d::UNSUPPORTED`. A missing or stale texture reference reads as the
-  absent map.
+  `c3d::INVALID_ARGUMENT`. A cube or `R16_UINT` alpha map and a view-texture reference fault `c3d::UNSUPPORTED`; a
+  live render target is accepted. A missing or stale texture reference reads as the absent map.
 - `extract_lights` does not fault: it validates enabled shadow settings as programming contracts. Renderer entry points
   and `prepare_scene` stay optional because GPU, material, asset-source and command-recording faults propagate.
 
@@ -224,9 +229,9 @@ renderer.render_view(&scene, camera_node, renderer.default_view)!;
 
 A borrowed cascade fits the shadow camera's frustum, not the reading view's. A receiver outside every cascade reads lit,
 so a borrowed shadow can end at a straight edge. For planar mirrors, horizontal mirrors (water, floors) are valid: the
-main camera's cascades hold the reflected receivers in almost every pose and the coarser cascades hold the rest. Wall
-mirrors are valid only while the reflected receivers lie inside the shadow camera's shadow range. See
-[planar reflections](views.md#planar-reflections).
+main camera's cascades hold the reflected receivers in every pose except a steep look-down, where the coarser
+cascades hold the rest. Wall mirrors are valid only while the reflected receivers lie inside the shadow camera's shadow
+range. See [planar reflections](views.md#planar-reflections).
 
 ## Colored shadows
 
@@ -246,7 +251,7 @@ renderer.set_colored_shadows(true);
 - A Basic, Standard, Physical or Toon `BLEND` mesh, batch or LOD part with `cast_shadow` casts into them too.
   `ADDITIVE` materials emit light rather than block it, so they stay out unless they are transmissive.
 - A custom `BLEND` material never casts: its alpha is the stage's own, which the shadow pass cannot know.
-- Every other `OPAQUE` and `MASK` caster casts as before.
+- Every other `OPAQUE` and `MASK` caster casts into the opaque atlas.
 
 With the switch off, a transmissive `OPAQUE` or `MASK` Physical caster still casts an opaque shadow and a `BLEND` one
 casts nothing.
@@ -271,7 +276,9 @@ float form and ignores the tint, as do volumetric fog, probe updates and the sta
 
 **Passes and memory.** Each layer that holds a visible translucent caster records two extra passes after its opaque
 depth, inside the `SHADOW_ATLAS` timing: a translucent depth pass and a transmittance pass that multiplies each
-caster's `T` into the texel. Their draws count in `Stats.draws`; a layer without a translucent caster records neither.
+caster's `T` into the texel. Their draws count in `Stats.draws`. A layer without a translucent caster records neither;
+its `ShadowGpu.colored_transmittance`, `colored_depth` and `colored_sampler` stay 0 and `shadow_transmittance` returns
+the opaque visibility, which custom receivers can rely on.
 Single-sided casters cull back faces as the light sees them, and a double-sided caster draws both faces, so a closed
 double-sided mesh tints twice. The pipelines are built at first use, and `prepare_scene` does not build them. The
 `RGBA8_UNORM` transmittance image and the `D32_FLOAT` translucent depth are atlas-shaped, `shadow_resolution² * 8` bytes
@@ -316,14 +323,14 @@ validation. Enabled directional settings need a finite positive `max_distance`, 
 Enabled punctual settings need a finite nonnegative `bias` and `punctual_normal_bias`, a finite nonnegative range, a
 positive finite `max_distance` when the range is zero, and the spot cone rule above.
 
-`RendererDesc`: `shadow_resolution` (default 2048) and `max_shadow_layers` (default 4); `ray_queries` for
-[ray-traced shadows](ray_traced_shadows.md).
+`RendererDesc`: `shadow_resolution` (default 2048) and `max_shadow_layers` (default 4); `ray_queries` or
+`ray_tracing_pipelines` for [ray-traced shadows](ray_traced_shadows.md).
 
 ### Shadow counters
 
 | Counter | Meaning |
 | --- | --- |
-| `Stats.shadow_layers` | Layer passes recorded this frame |
+| `Stats.shadow_layers` | Opaque layer passes recorded this frame; the colored passes are not counted (they count in `Stats.draws`) |
 | `Stats.shadow_requests_dropped` | Complete requests rejected by atlas capacity |
 | `Stats.shadow_sets_recorded`, `Stats.shadow_sets_shared` | The frame's raster views by what they did; each view adds one to exactly one |
 | `Stats.shadow_lights_unshared` | Lights drawn unshadowed because the bound set lacks them, in views whose shadow camera is not their own |
@@ -338,9 +345,9 @@ original view id, the light entity, its `kind`, a zero-based local `layer_index`
 are cascades, a spot's index zero is its sole projection, and point indices follow the six-face order above. A shared
 atlas is timed once, under the recording view's id. Results arrive when the owning frame slot completes and retain all
 measured layers across views for `Stats.gpu_frame_index`; a later view without shadows does not erase an earlier
-view's layers. The renderer owns the slice and replaces it when a newer completed summary publishes. Without
-timestamp support the slice is empty, and a truncated summary is partial. The aggregate shadow pass stays in
-`gpu_pass_ms`.
+view's layers. The renderer owns the slice, replaces it when a newer completed summary publishes and invalidates it on
+destruction. Without timestamp support the slice is empty, and a truncated summary is partial. The aggregate shadow
+pass stays in `gpu_pass_ms`.
 
 ## Limits
 

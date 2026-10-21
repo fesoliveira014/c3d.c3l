@@ -79,7 +79,7 @@ surface, and once per sample where they do not.
 
 `create_view` and `configure_view` check every image the view needs at the working extent; a fault changes nothing.
 Changing `msaa`, velocity use, traced reflections or the ambient occlusion kind reallocates only the multisample
-images.
+images, and on a `DEFERRED` view a changed `msaa` also reallocates the G-buffer.
 
 ## Memory
 

@@ -47,10 +47,12 @@ need no dirty call. Call `scene.update_world()` after transform changes, before 
   range sphere lies outside the view frustum are culled first. The first remaining lights in the scene's dense
   component order fill the budget and the rest are dropped. Removing components can change that order; selection
   is neither brightness ranked nor stable under insertion order. Directional and range-zero lights are never
-  frustum culled.
+  frustum culled. Traced reflections, the path tracer and probe updates fill the same budget without the frustum
+  cull; probe updates also ignore camera layers.
 - **Receiver mask.** `Light.layers` selects which mesh-node layers the light illuminates. It is independent of the
   camera mask, so a mesh seen through camera layer 1 with node layers `1|2` can receive a light whose mask is
-  only 2. Ambient and emissive terms ignore it. Traced hits (reflections, probe updates and the path tracer) apply
+  only 2. The constructors set `layers = uint::max`; a zero-initialized `Light` has mask 0 and lights nothing.
+  Ambient and emissive terms ignore it. Traced hits (reflections, probe updates and the path tracer) apply
   the same mask through the hit row's node layers.
 - **Selection.** `FLAT` evaluates every selected light at every shaded point. `CLUSTERED` evaluates the lights of
   the point's grid cell plus the globals. Selection changes which lights a pixel visits, not the budget, the
@@ -69,7 +71,7 @@ need no dirty call. Call `scene.update_world()` after transform changes, before 
   cutoff with a smooth window inside it and zero contribution at and beyond it. Range 0 is unbounded.
 - A spot has full angular weight inside the inner cone, zero at the outer cone, and a smooth ramp between. The
   renderer floors the inner-to-outer cosine difference at 0.001, so a very narrow cone can lose some weight inside
-  its inner angle.
+  its inner angle. The GUI shows spot angles in degrees.
 - `Light.volumetric` makes the light scatter in the [volumetric fog](sky.md#volumetric-fog) of a view that has one
   and does nothing else. The three constructors set it; set it to false to opt a light out. A zero-initialized
   `Light` does not scatter.
@@ -118,8 +120,8 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 
 - `CLUSTERED` needs nonzero dimensions and capacity, a positive finite `far_distance` and representable storage
   sizes, else `c3d::INVALID_ARGUMENT`. A grid beyond the device's compute dispatch limits faults
-  `c3d::UNSUPPORTED`.
-- `FLAT` neither validates nor allocates from `clusters`, even when its fields are zero.
+  `c3d::UNSUPPORTED`. Allocation, recording and wait faults propagate from `create_view` and `configure_view`.
+- `FLAT` neither validates nor allocates from `clusters`, even when its fields are zero or invalid.
 - A zero-initialized `ViewDesc` has no cluster defaults. Start from a constructor, or assign
   `default_cluster_desc()` next to `lights = CLUSTERED`.
 - `PATH_TRACED` views reject `CLUSTERED` with `c3d::INVALID_ARGUMENT`.
@@ -152,17 +154,22 @@ fixed-capacity index segments, and an overflow counter. It uses no application `
 does not. Switching to `FLAT`, resizing or destroying a view, and renderer teardown retire the buffer after
 submitted work completes.
 
-The index segment dominates: `tiles_x * tiles_y * depth_slices * lights_per_cluster * 4` bytes, 884,736 at the
-default grid of 3,456 cells. Decal storage adds 256 records, 8 indices per cell and a range per cell (175 KiB at
-the default grid), and the pruning bound adds 4 bytes per tile whether pruning is on or off.
+The buffer holds, with `cells = tiles_x * tiles_y * depth_slices` (3,456 at the default grid):
+
+- the selected-light copy, `max_lights * 80` bytes;
+- light ranges, 8 bytes per cell (27,648 at the default grid);
+- light indices, `cells * lights_per_cluster * 4` bytes, the dominant term (884,736 at the default grid);
+- decal storage: 256 records of 160 bytes, a range of 8 bytes per cell and 8 indices of 4 bytes per cell (175 KiB at
+  the default grid);
+- the pruning bound, 4 bytes per tile whether pruning is on or off, and a 16-byte overflow counter.
 
 ### Decals
 
-Decals use the same grid and the same cull. The per-view limit is `MAX_DECALS` (256) and each cell stores at most
-`MAX_CLUSTER_DECALS` (8) indices. Indices keep the complete decal array's `(order, entity)` order. Past the per-view
-limit, selection keeps the lowest-order base layers and drops higher-order overlays first. A cell over its decal
-capacity, inactive coverage or a position outside the grid uses the complete ordered decal list. Decal and light
-overflow are independent. `FLAT` views upload the selected decal records through the frame ring and allocate no
+Decals use the same grid and the same cull. The per-view limit is `shader::MAX_DECALS` (256) and each cell stores at
+most `shader::MAX_CLUSTER_DECALS` (8) indices. Indices keep the complete decal array's `(order, entity)` order. Past
+the per-view limit, selection keeps the lowest-order base layers and drops higher-order overlays first. A cell over
+its decal capacity, inactive coverage or a position outside the grid uses the complete ordered decal list. Decal and
+light overflow are independent. `FLAT` views upload the selected decal records through the frame ring and allocate no
 cluster regions. See [decals](materials.md#decals).
 
 ### Depth pruning
@@ -201,18 +208,21 @@ contribution. The hierarchy lives in frame-upload storage, is rebuilt every rend
 light budget. An empty or all-global list uses the flat path, as do degenerate ranges (subnormal squared range,
 non-finite bounds).
 
-Cluster construction builds the same hierarchy over the packed finite lights of a clustered view when the list is
-large and its ranges overlap little; otherwise it tests every light against each cell. Raster `FLAT` selection, the
-public `LightList` helpers, transmitting Physical lighting and the fog selector do not use it.
+Cluster construction builds its own hierarchy over a clustered view's packed finite lights when the list is far larger
+than the default budget and its ranges overlap little; otherwise it tests every light against each cell. Raster
+`FLAT` selection, the public `LightList` helpers, transmitting Physical lighting and the fog selector do not use a
+hierarchy.
 
 ## Diagnostics
 
-- `Stats.lights` and `Stats.lights_dropped` sum the packed lights and budget drops over the recorded views and reset
-  at `begin_frame`. `ViewStats.lights` and `ViewStats.lights_dropped` describe one view.
+- `Stats.lights` sums the packed lights over the recorded views. `Stats.lights_dropped` sums the budget drops over the
+  recorded views and probe updates. Both reset at `begin_frame`. `ViewStats.lights` and `ViewStats.lights_dropped`
+  describe one view.
 - `Stats.cluster_view`, `cluster_count`, `cluster_overflows`, `cluster_skipped` and `decal_overflows` are completed
   results read when the reused frame slot completes, `FRAMES_IN_FLIGHT` frames late, with or without GPU
   timestamps. `cluster_view` names the view they describe; with several clustered views read the same fields on
-  `ViewStats`. The readback adds no wait to `render_view`.
+  `ViewStats`, which keeps the view's last completed cluster result, also after the view switches to `FLAT`. The
+  readback adds no wait to `render_view`.
 - `cluster_count` is the grid's cell total. `cluster_overflows` and `decal_overflows` count overflowing cells, not
   dropped lights. `cluster_skipped` counts cells depth pruning skipped and is not part of `cluster_overflows`.
 - `Pass.LIGHT_CULL` times the cull, including the tile-depth reduction on a pruned view. Decal sampling is timed in
@@ -226,8 +236,8 @@ the completed `LIGHT_CULL` and opaque pass times. Dense overlap and overflow fal
 [benchmarking](benchmarking.md#headless-many-light-rendering) and [profiling](profiling.md#capture-gpu-work).
 
 Run `python3 scripts/build.py --example many_lights`. It lights a procedural hall with 64 to 4096 point lights; its
-panel switches selection mode, light range, cell capacity and depth pruning. The benchmark mode takes `--mode`,
-`--lights`, `--range`, `--capacity` and `--depth-pruning`.
+panel switches selection mode, light range, cell capacity and depth pruning. With `--benchmark` it takes `--mode`,
+`--lights`, `--range`, `--capacity`, `--depth-pruning` and `--shading`.
 
 ## Limits
 

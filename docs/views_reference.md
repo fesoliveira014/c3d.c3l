@@ -7,8 +7,8 @@ values vertex stages read. Everything is in `c3d::render`.
 ## ViewDesc
 
 Both constructors fill the defaults below. `default_view_desc()` is a full-window `DISPLAY_LDR` view.
-`texture_view_desc(target, color = LINEAR_HDR)` covers a target with the same defaults. A zero-initialized `ViewDesc`
-has none of them: start from a constructor.
+`texture_view_desc(target, color = LINEAR_HDR)` covers a target with the same defaults, except `color`. A
+zero-initialized `ViewDesc` has none of them: start from a constructor.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -17,7 +17,7 @@ has none of them: start from a constructor.
 | `viewport` | zero (whole output) | `PixelRect` in output pixels; a zero extent covers the whole output |
 | `render_scale` | 1 | Working resolution relative to the viewport, in `(0, MAX_RENDER_SCALE]` (2.0) |
 | `lod_bias` | 0 | Finite log2 bias for [whole-object LOD](lod.md); positive adds detail |
-| `color` | `DISPLAY_LDR` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color in physical units whatever the view's [pre-exposure](post.md#pre-exposure) |
+| `color` | `DISPLAY_LDR` / `LINEAR_HDR` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color in physical units whatever the view's [pre-exposure](post.md#pre-exposure) |
 | `post` | `default_post_stack()` | The view's `PostStack` ([post-processing](post.md)); FXAA is on |
 | `shading` | `FORWARD` | `FORWARD`, `DEFERRED` ([shading paths](shading_paths.md)) or `PATH_TRACED` ([path tracing](path_tracing.md)) |
 | `depth_prepass` | true | A `FORWARD` view draws its opaque set into depth first and shades it once |
@@ -57,9 +57,9 @@ has none of them: start from a constructor.
 
 | Condition | Fault |
 | --- | --- |
-| Dead view (`configure_view`, `destroy_view`) or dead `target` | `c3d::INVALID_ID` |
+| Dead view (`configure_view`, `destroy_view`), dead `target` or dead `post.grade.lut` | `c3d::INVALID_ID` |
 | `LINEAR_HDR` on a window view or on an RGBA8 target | `c3d::INVALID_ARGUMENT` |
-| Viewport outside the output, `render_scale` outside its range, non-finite `lod_bias`, invalid `post` stack or LUT | `c3d::INVALID_ARGUMENT` |
+| Viewport outside the output, `render_scale` outside its range, non-finite `lod_bias`, invalid `post` stack or a LUT whose descriptor is invalid | `c3d::INVALID_ARGUMENT` |
 | `clip_plane` other than the zero plane with a normal that is not unit length or a `d` that is not finite | `c3d::INVALID_ARGUMENT` |
 | `transmission_layers` above `MAX_TRANSMISSION_LAYERS`, `shadow_samples` above `MAX_SHADOW_SAMPLES` | `c3d::INVALID_ARGUMENT` |
 | `pre_exposure_override` other than zero or a power of two in range | `c3d::INVALID_ARGUMENT` |
@@ -128,9 +128,9 @@ the table 1,024 by default, so a store filled past about 1,000 uploaded textures
 
 `resize_render_target`, `configure_view` and the window resize in `begin_frame` allocate every new image before they
 release an old one, so a fault changes nothing. They need room for the old and the new images at once, and near
-capacity they fault where releasing first would have fit. Leave room for the largest single resize: a target plus the
-images of every view on it for `resize_render_target`, the images of every window view for a window resize, or one
-view's full image set for `configure_view`.
+capacity they fault where releasing first would have fit. Leave room for the largest single resize in the texture
+table, the heap and the attachment table: a target plus the images of every view on it for `resize_render_target`, the
+images of every window view for a window resize, or one view's full image set for `configure_view`.
 
 Per-frame cost grows with `max_render_targets`: `begin_frame` and each view's preparation visit every target slot,
 and `begin_frame` also visits every view slot to snapshot and count its images.
@@ -226,8 +226,8 @@ truncated summary is partial. See [profiling](profiling.md) for the build featur
 ## Selection camera
 
 `FrameRoot.selection_camera` holds the camera that selected a pass's [quadtree](instancing.md#quadtree-selection)
-levels: `xyz` is its position relative to the frame origin and `w` its pixel scale, `working_height / (2 * tan(fov_y / 2))`
-for a perspective camera and `working_height / ortho_height` for an orthographic one. The working height includes
+levels: `xyz` is its position relative to the frame origin and `w` its pixel scale, `working_height / (2 * tan(fov_y /
+2))` for a perspective camera and `working_height / ortho_height` for an orthographic one. The working height includes
 `render_scale`. `FrameRoot.previous_selection_camera` is the same camera one rendering earlier. A vertex stage that
 morphs a quadtree batch reads both, so the surface it draws agrees with the selection and, for motion vectors, with
 the previous rendering's surface.
