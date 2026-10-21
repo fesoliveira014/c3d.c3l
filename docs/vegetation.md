@@ -42,7 +42,7 @@ renderer.render_view(&scene, camera, view)!;
 
 - `register_foliage` runs once per scene. It registers `Foliage` and `FoliageRuntime` and installs the authoring and runtime removal hooks.
 - `add_foliage` attaches a layer to a node without `Foliage`. The node's world matrix must be current and hold a translation and a rotation about Y only. It checks the desc, scatters every cell and adds the cell nodes, all or nothing: a fault leaves the node, scene, store and allocator as they were. It runs once, at load.
-- `update` runs every frame after `terrain::update`. The terrain's refresh log tells foliage which cells an edit touched, and `terrain::update` writes it, so a layer re-places one frame late if `update` runs first. A fault from one layer does not stop the others; the first fault returns after the loop.
+- `update` runs every frame after `terrain::update`. The terrain's refresh log tells foliage which cells an edit touched, and `terrain::update` writes it, so a layer re-places one frame late if `update` runs first. A fault from one layer does not stop the others; the first fault returns after the loop. It invalidates `InstancedMesh` and `FoliageRuntime` pointers when cells or a `Foliage` were removed.
 - `attach_foliage`, `is_prepared`, `prepare` and `prepare_subtree(scene, assets, root = null)` split authoring and runtime. Prepare the ground terrain first; otherwise they return `terrain::NOT_PREPARED` and keep the foliage pending. Pending foliage draws nothing and `update` skips it. [Owner readiness](owner_readiness.md) states the shared rules; the [landscape package README](../addons/c3d_landscape.c3l/README.md) lists the landscape ownership rules.
 
 ## Concepts
@@ -150,7 +150,12 @@ Seed, scatter rules and terrain produce the same placements as the single-mesh p
 A layer's whole scatter can run as ranges on any scheduler: at load for a pending layer, or after a pose or density change for a prepared one. The owner thread takes a snapshot, any thread runs the ranges, and the owner thread publishes. `add_foliage`, `prepare` and `update` stay serial and unchanged; the library never imports `c3d_job`. The [job pool](jobs.md) drives the ranges.
 
 ```c3
-ScatterJob job = foliage::scatter_job(&scene, &assets, layer.id, scratch)!;
+ScatterJob job = foliage::scatter_job(
+    scene:   &scene,
+    assets:  &assets,
+    layer:   layer.id,
+    scratch: scratch,
+)!;
 // count_range over disjoint ranges of [0, job.cell_count()), on any threads, joined
 job.reserve_output(transforms, colors)!; // each of job.instance_count() slots
 // place_range over disjoint ranges of the same cells, on any threads, joined
@@ -167,7 +172,7 @@ foliage::commit_scatter(&scene, &assets, &job)!;
 ## Budgets
 
 - **Scene nodes.** Each non-empty cell is one node, so a layer needs up to `cells_per_side²` nodes, with `cells_per_side = ceil((texels − 1) · terrain cell_size / cell_size)`. `add_foliage` and every re-scatter check the scene's free nodes. Size `SceneDesc.max_nodes` for every layer's cells plus the rest of the scene. At a 2049 map with 1 m texels: 4,096 cells at 32 m and 1,024 at 64 m; at 4097, 16,384 and 4,096.
-- **Renderer batch slots** (`RendererDesc.max_instance_batches`, 1,024 by default). A cell holds a slot while a view or shadow layer drew it within the last `INSTANCE_ABSENCE_FRAMES + 1` frames; a cell wholly past its fade band is skipped and releases its slot. Per layer and view camera, a faded layer holds at most `(ceil(2R / cell_size) + 1)²` slots, with `R = fade.end + m + v`: `m` is how far an instance reaches past its cell (the geometry's horizontal radius at `max_scale` plus the sway amplitude) and `v` the camera travel over `INSTANCE_ABSENCE_FRAMES + 1` frames. Casting cells fall within the same `R`. A layer without fade can hold every cell. Past the limit `render_view` faults `CAPACITY_EXCEEDED`. The safe setting is every cell of every layer plus the scene's other batches, at about 120 bytes of CPU per slot and no GPU memory until a slot is used.
+- **Renderer batch slots** (`RendererDesc.max_instance_batches`, 1,024 by default). A cell holds a slot while a view or shadow layer drew it within the last `INSTANCE_ABSENCE_FRAMES + 1` frames; a cell wholly past its fade band is skipped and releases its slot. Per layer and view camera, a faded layer holds at most `(ceil(2R / cell_size) + 1)²` slots, with `R = fade.end + m + v`: `m` is how far an instance reaches past its cell (the geometry's horizontal radius at `max_scale` plus the sway amplitude) and `v` the camera travel over `INSTANCE_ABSENCE_FRAMES + 1` frames. Casting cells fall within the same `R`. A layer without fade can hold every cell. Past the limit `render_view` faults `CAPACITY_EXCEEDED`. The safe setting is every cell of every layer plus the scene's other batches, at about 270 bytes of CPU per slot (a 264-byte record and a lookup entry) and no GPU memory until a slot is used.
 - **Traced layers.** Every instance of a traced cell is an entry of the scene trace: `RendererDesc.max_trace_instances` (4,096 by default) must hold them with the scene's other traced instances, or traced views fault `CAPACITY_EXCEEDED`. With `trace_sway`, instances also take posed slots.
 - **CPU memory.** 8 bytes per grid cell for the runtime's table, about 56 bytes per instance of capacity, and a scene node per non-empty cell.
 

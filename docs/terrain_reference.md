@@ -20,7 +20,7 @@ Reference for the `c3d::landscape::terrain` module: the desc rules, tile-set typ
 | `triplanar_sharpness` | Exponent of the plane weights, `MIN_TRIPLANAR_SHARPNESS` (1) to `MAX_TRIPLANAR_SHARPNESS` (64), finite; read and checked only under `TRIPLANAR` |
 | `cast_shadow`, `receive_shadow` | Copied onto the batch at every `update`; `cast_shadow` also onto the trace grid |
 | `trace` | Adds a trace-only grid, so [scene traces](scene_trace.md) see the terrain; baked at preparation |
-| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel. Stays below the map's level count (1 at 257 texels, 3 at 1025); read and checked only with `trace`, baked at preparation |
+| `trace_level` | Grid cells span `2^trace_level` texels: 0 is one vertex per texel. Stays below the map's level count (at most 1 at 257 texels, 3 at 1025); read and checked only with `trace`, baked at preparation |
 
 ## Tile-set types
 
@@ -35,7 +35,7 @@ Reference for the `c3d::landscape::terrain` module: the desc rules, tile-set typ
 
 ## Tile rules
 
-`prepare` checks a tile that carries `TerrainTile` and faults `INVALID_ARGUMENT` on any mismatch, leaving it pending and never linked. A tile must:
+`prepare` checks a tile that carries `TerrainTile` and faults `INVALID_ARGUMENT` on any mismatch, leaving it pending and never linked. `add_terrain` faults the same way and removes the `Terrain` it attached. A tile must:
 
 - be a direct child of a node that carries `TerrainSet`;
 - have a height map of exactly the set's `texels`, and the set's `cell_size` and `height_scale`;
@@ -110,6 +110,7 @@ A tile shades its edge texels from central differences, so it needs the texel ju
 | `add_terrain` | `c3d::CAPACITY_EXCEEDED` | Store pool full or an allocation failed |
 | `TerrainSet.neighbour` | `NOT_FOUND` | The tile is not linked, or has no linked neighbour in the direction |
 | `TerrainSet.propagate_edit` | `c3d::INVALID_ARGUMENT` | The tile is not linked |
+| `TerrainSet.propagate_edit` | `c3d::INVALID_ID`, `c3d::UNSUPPORTED`, `c3d::INVALID_ARGUMENT` | As `height_view`, for the edited tile's own height map: dead, failing the checks, or of another side |
 | `mark_dirty` | `c3d::INVALID_ID` | The height map was removed |
 | `mark_dirty` | `c3d::INVALID_ARGUMENT` | A replacement of another side length is in place |
 | `update` | `c3d::INVALID_ID` | The height map was removed |

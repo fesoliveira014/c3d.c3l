@@ -34,7 +34,7 @@ renderer.render_view(&scene, camera, view)!;
 
 - `register_terrain` runs once per scene. It registers `Terrain`, `TerrainRuntime`, `TerrainSet` and `TerrainTile` and installs their remove hooks. The store outlives the scene, and the scene stays at its address because the tile hooks hold it.
 - `add_terrain` attaches a terrain to an existing node without `InstancedMesh` or `Terrain`. It builds the bounds tree, the owned material and the `InstancedMesh` with one instance per quadtree node, all or nothing: a fault leaves the node and the store as they were.
-- `update` takes no camera and no output size, because the views select their own levels. On a still frame it uploads nothing. A fault from one terrain does not stop the others; `update` returns the first one.
+- `update` takes no camera and no output size, because the views select their own levels. On a still frame it uploads nothing. A fault from one terrain does not stop the others; `update` returns the first one. It invalidates `InstancedMesh` and `TerrainRuntime` pointers when a `Terrain` was removed.
 - `attach_terrain`, `is_prepared`, `prepare` and `prepare_subtree(scene, assets, root = null)` split `add_terrain` into authoring and runtime. A pending terrain draws nothing and `update` skips it. [Owner readiness](owner_readiness.md) states the shared rules.
 
 ## Concepts
@@ -53,7 +53,7 @@ The [reference](terrain_reference.md) lists the `TerrainDesc` rules, the tile-se
 
 With `slope_projection = TOP` every layer samples its maps at terrain-local x and z, so a steep slope stretches textures along the fall line. `TRIPLANAR` projects the layers along the terrain's three axes and blends the results by the surface normal.
 
-- The planes are X (`uv` = local z, y), Y (local x, z) and Z (local x, y), in terrain-local metres. A layer's `TextureSlot` transforms apply to each plane as they do to `uv0`.
+- The planes are X (`uv` = local z, y), Y (local x, z) and Z (local x, y), in terrain-local metres. A layer's `TextureSlot` transforms apply to each plane as they do to `uv0`. The projection replaces both UV sets, so each map's UV-set selection is ignored.
 - The plane weights are the components of the smooth local normal raised to `triplanar_sharpness` (1 to 64, default 4) and normalised. At 4 the transition between two planes spans about 30 degrees of slope, at 64 about 2 degrees. A flat surface weighs only the Y plane.
 - Each plane has its own tangent frame, so normal maps keep their orientation.
 - `TRIPLANAR` samples every layer on three planes in every pixel, three times the layer samples of `TOP`.
@@ -105,7 +105,12 @@ TerrainHeightRange range = terrain::height_range(&scene, ground.id)!;
 
 ```c3
 // write texels in place, then:
-terrain::mark_dirty(&scene, &assets, ground, { .x = x, .z = z, .columns = columns, .rows = rows })!;
+terrain::mark_dirty(
+    scene:  &scene,
+    assets: &assets,
+    node:   ground,
+    rect:   { .x = x, .z = z, .columns = columns, .rows = rows },
+)!;
 ```
 
 - `mark_dirty` marks the rectangle as a region of the height map. It advances the height map's revision once and unions the rectangle into the terrain's pending one. The union must cover every texel written since the last `update`. It faults `INVALID_ID` when the height map was removed and `INVALID_ARGUMENT` when a replacement of another side length is in place.
@@ -136,7 +141,7 @@ foreach (tile : tiles) {
 }
 ```
 
-`prepare` (and so `add_terrain`) checks a tile against its set and faults `INVALID_ARGUMENT` on a mismatch, leaving the tile pending and unlinked ([tile rules](terrain_reference.md#tile-rules)). A tile that passes links to its present neighbours, edges and diagonals. A neighbour that prepares later links to the tiles already there, so load order does not matter. `TerrainSet.is_linked(tile)` and `TerrainSet.neighbour(tile, direction)` read the links, with eight `TerrainNeighbour` directions (north is toward lower z) and `NOT_FOUND` for a missing neighbour.
+`prepare` checks a tile against its set and faults `INVALID_ARGUMENT` on a mismatch, leaving the tile pending and unlinked ([tile rules](terrain_reference.md#tile-rules)). `add_terrain` faults the same way and leaves the node without `Terrain`. A tile that passes links to its present neighbours, edges and diagonals. A neighbour that prepares later links to the tiles already there, so load order does not matter. `TerrainSet.is_linked(tile)` and `TerrainSet.neighbour(tile, direction)` read the links, with eight `TerrainNeighbour` directions (north is toward lower z) and `NOT_FOUND` for a missing neighbour.
 
 - Tiles duplicate their shared edge row and column, so the edge texels of two neighbours are equal. Cut tiles from one map with an overlap of one row or column. Nothing checks the texels; `propagate_edit` keeps them equal across an edit.
 - Removing a tile's node, its `TerrainTile` or its `Terrain` unlinks it. Removing the `TerrainSet` frees the table and leaves the tiles as ordinary terrains.
@@ -162,7 +167,7 @@ foreach (direction : TerrainNeighbour::values) {
 }
 ```
 
-It copies the rectangle's edge rows and columns, corners included, into the duplicated texels of each neighbour, marks the copied strips dirty (so only the strips upload) and refreshes the border rings that read them. The result is a mask: bit `n` is set when the neighbour of `TerrainNeighbour` ordinal `n` had texels change or its collider apron reads the rectangle. A live collider is not re-cooked: mark the windows of the edited tile and of each tile in the mask, and of no other tile. A tile that is not linked faults `INVALID_ARGUMENT`; a neighbour whose map does not conform is skipped.
+It copies the rectangle's edge rows and columns, corners included, into the duplicated texels of each neighbour, marks the copied strips dirty (so only the strips upload) and refreshes the border rings that read them. The result is a mask: bit `n` is set when the neighbour of `TerrainNeighbour` ordinal `n` had texels change or its collider apron reads the rectangle. A live collider is not re-cooked: mark the windows of the edited tile and of each tile in the mask, and of no other tile. In a neighbour, mark the strip along its edge row or column across the shared side, over the rectangle's texels along that side; a neighbour flagged only because its collider apron reads the rectangle has no copied texels there, and the strip still marks its collider. A tile that is not linked faults `INVALID_ARGUMENT`. It faults like `height_view` when the edited tile's own map is dead, fails the checks or has another side. A neighbour whose map does not conform is skipped.
 
 ## Add a collider
 
@@ -177,7 +182,12 @@ A navigation grid reads terrain heights through a sampler callback over `terrain
 A terrain's whole bounds build can run as ranges on any scheduler: at load for a pending terrain, or after a height-map replacement or a revision advanced without `mark_dirty` for a prepared one. The owner thread takes a snapshot, any thread runs the ranges, and the owner thread publishes. `add_terrain`, `prepare` and `update` stay serial and unchanged; the library never imports `c3d_job`. The [job pool](jobs.md) drives the ranges.
 
 ```c3
-BoundsJob job = terrain::bounds_job(&scene, &assets, ground, scratch)!;
+BoundsJob job = terrain::bounds_job(
+    scene:   &scene,
+    assets:  &assets,
+    node:    ground,
+    scratch: scratch,
+)!;
 // run_range over disjoint ranges of [0, job.range_count()), on any threads, joined
 terrain::commit_bounds(&scene, &assets, &job)!;
 ```
@@ -192,10 +202,10 @@ terrain::commit_bounds(&scene, &assets, &job)!;
 
 Traced shadows, reflections, ambient occlusion, probe updates and path tracing read the [scene trace](scene_trace.md), not the drawn chunks. Without `trace`, ridges do not shadow valleys under traced shadows (other objects still cast onto the terrain), and ray-traced ambient occlusion, reflections, probes and path tracing do not see the terrain. With `trace` set, `prepare` adds one trace-only grid of the whole extent, built from the same height map and independent of any view.
 
-- **The grid.** A child node named `terrain_trace` carries a `Mesh` with `trace` and `trace_only` set, the terrain's material and `cast_shadow`, and the node's layers. It has one vertex per `2^trace_level` texels along each side (`trace_level` 0 is one vertex per texel and must be below the map's level count). Its triangles split like the drawn chunks and the physics height field. Each tile of a set owns its grid. The grid follows the terrain node's visibility, and a rejected revision hides it with the batch.
+- **The grid.** A child node named `terrain_trace` carries a `Mesh` with `trace` and `trace_only` set, the terrain's material and `cast_shadow`, and the node's layers. It has one vertex per `2^trace_level` texels along each side (`trace_level` 0 is one vertex per texel; it must be below the map's level count, so at most 1 at 257 texels and 3 at 1025). Its triangles split like the drawn chunks and the physics height field. Each tile of a set owns its grid. The grid follows the terrain node's visibility, and a rejected revision hides it with the batch.
 - **Updates.** The trace pose reads no time, so the grid poses again only when the height map, the border ring or the material changes.
 - **Error bound.** The grid leaves the drawn surface by a vertical gap. `TerrainRuntime.trace_error` is the largest gap in metres (0 at `trace_level` 0), and `TerrainRuntime.drawn_deviation` is the gap of each coarser drawn level. The shader raises the trace proxy skip height to the larger of the two, so a traced ray ignores the grid's hits less than that above the surface it left. The terrain's occlusion lower than that is lost; its shadows from taller ridges and the contact shadows of other objects stay.
-- **Cost.** One posed slot, one bottom level or tree copy and one dispatch with a thread per vertex. A finer `trace_level` costs more: the posed streams hold 24 bytes per vertex, 1.6 MB at 257 vertices a side and 25 MB at 1025. `Stats.trace_posed_bytes` totals the slots. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace.md#custom-trace-poses)).
+- **Cost.** One posed slot, one bottom level or tree copy and one dispatch with a thread per vertex. A finer `trace_level` costs more: the posed streams hold 24 bytes per vertex, 1.6 MB at 257 vertices a side and 25 MB at 1025. `Stats.trace_posed_bytes` totals the slots. The rest geometry of the grid, shared by every terrain of one side length in a store, takes about 48 bytes per vertex on the CPU and the same on the GPU, about 800 MB each at `trace_level` 0 on a 4097-texel map. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace.md#custom-trace-poses)).
 - **Hits.** Traced terrain shades grey and ignores layers, the control map and decals, like any custom material hit.
 - **Lifetime.** The grid is runtime-owned and never serialized; `prepare` creates it again after a read.
 

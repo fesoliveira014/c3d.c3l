@@ -60,7 +60,7 @@ renderer.render_view(&scene, camera, view)!;
   | `SIMULATED` | A damped wave equation over the built grid | 1 cm; `residual` is 0 |
   | `SPECTRAL` | A JONSWAP sea, evolved and inverse-transformed on the GPU | A statistical bound, `WaterRuntime.spectral_bound` |
 
-- **Library-owned nodes and assets.** The grid, the material, the medium node and the mirror camera nodes belong to the body. Do not edit or remove them. Remove the `Water` component or the node to remove the body.
+- **Library-owned nodes and assets.** The material, the medium node and the mirror camera nodes belong to the body; do not edit or remove them. A built grid is shared per shape and stays in the store after the body goes, and application geometry stays the application's. Remove the `Water` component or the node to remove the body.
 - **Pending and prepared.** `attach_water` validates a desc and attaches `Water` without creating the mesh, material, medium or mirror cameras; `prepare` completes it. `add_water` does both. [Owner readiness](owner_readiness.md) states the shared rules for pending owners and their retry behavior. `update` skips pending water.
 - **Time.** The vertex stage reads `FrameInfo.time` as a float. `sample_surface` and `update` take a `double` and narrow it the way the frame does, so queries see the time the surface is drawn at. Float time rounds visibly after 65,536 s (about 18 hours): wrap the application's clock and call `render::reset_view_history` at the wrap.
 
@@ -69,8 +69,8 @@ renderer.render_view(&scene, camera, view)!;
 - `register_water(scene, assets)` runs once per scene. It registers `Water`, `WaterRuntime` and `WaterMirror` and installs the remove hook with the store, which outlives the scene.
 - `add_water(scene, assets, node, desc)` needs a node without `Mesh`, `InstancedMesh`, `Water` or `WaterRuntime`, with a current world matrix. It adds the shared shader, the grid, the owned double-sided material, the medium node, `max_mirrors` mirror camera nodes and the node's `Mesh` (an `InstancedMesh` for an ocean). It is all or nothing: a fault leaves the node, the scene and the store as they were.
 - `attach_water`, `is_prepared`, `prepare` and `prepare_subtree(scene, assets, root = null)` split the same work. Publish world matrices before preparation.
-- `set_desc(scene, assets, node, desc)` is the only way to change a prepared body. It checks the new desc first; a fault keeps the old state. `WaterRuntime.desc` holds the checked copy that `update`, the mirror and the queries read, so editing `Water.desc` directly has no effect. `set_desc` ends a running sea-state blend and writes the medium again. An ocean keeps its `mode`, `extent` and `cell_size`; a simulated or spectral body keeps its `extent` and `cell_size`; a spectral body keeps its `spectrum`; every body keeps its `wave_model`. A change faults `INVALID_ARGUMENT`.
-- `update(scene, assets, wind_velocity, time)` runs every frame. It removes the parts of removed bodies, scrolls the ripples, advances sea-state blends, steps simulated bodies, advances spectral clocks and blends, and re-anchors oceans whose node moved. It takes no camera and places no mirror.
+- `set_desc(scene, assets, node, desc)` is the only way to change a prepared body. It checks the new desc first; a fault keeps the old state. `WaterRuntime.desc` holds the checked copy that `update`, the mirror and the queries read, so editing `Water.desc` directly has no effect. `set_desc` ends a running Gerstner sea-state blend (a spectral blend runs on) and writes the medium again. Every body keeps its `mode` and `wave_model`; an ocean, a simulated body and a spectral body also keep their `extent` and `cell_size`, and a spectral body keeps its `spectrum`. A change faults `INVALID_ARGUMENT`. It invalidates `Camera` pointers when `max_mirrors` shrinks.
+- `update(scene, assets, wind_velocity, time)` runs every frame. It removes the parts of removed bodies, scrolls the ripples, advances sea-state blends, steps simulated bodies, advances spectral clocks and blends, and re-anchors oceans whose node moved. It takes no camera and places no mirror. It invalidates `Mesh`, `InstancedMesh` and `WaterRuntime` pointers when a `Water` was removed.
 - Remove the `Water` component or the node. The next `update` removes the `Mesh` (or `InstancedMesh`), the medium node, `WaterRuntime` and the mirror nodes of a body whose `Water` is gone. Call `update` between removing and re-adding water on one node. Removing `WaterRuntime` or a mirror node directly is unsupported. Destroy the scene before the store.
 
 The [reference](water_reference.md) lists every `WaterDesc` field with its rule, the constants and the faults.
@@ -91,6 +91,7 @@ WaterSample sample = water::sample_surface_detail(
 - `surface_view` copies the body's waves and pose into a value. It requires a node with translation and rotation about Y only, and faults `INVALID_ID` for a dead node, a node without prepared water or a removed material. A `GERSTNER` or `SPECTRAL` view is a value that several threads may query. A `SIMULATED` view borrows the body's grid and answers the surface of the last `update`: take it after `update` and use it on the thread that steps.
 - `sample_surface` returns the world height of the drawn surface on the vertical through a point. `sample_surface_detail` also returns the unit `normal`, the `velocity` of the surface point in m/s (the orbital velocity of the water) and `residual`. A point outside the rest rectangle faults `NOT_FOUND`.
 - A Gerstner wave shifts points horizontally, so a query inverts the shift with fixed-point steps until a step is shorter than `WATER_QUERY_TOLERANCE` (0.1 mm) or `MAX_INVERSION_ITERATIONS` (8) steps ran. Validation keeps the mean steepness below 1, which makes the steps converge. `residual` is the length of the last step in metres.
+- During a sea-state blend, `velocity` is that of the blended waves at the frame, not the rate at which the blend itself reshapes the surface.
 - A simulated body ignores `time` and interpolates the drawn heights on the mesh's own triangles.
 - Take the view again after `update`, after `set_desc` and after an origin shift.
 
@@ -106,9 +107,9 @@ water::set_sea_state(
 )!;
 ```
 
-`set_sea_state` sets the waves to the sea a wind raises. `wind_velocity` is world m/s along x and z; the waves travel along it. The sea depends on the wind speed (capped at 25 m/s) and the fetch, which is the length of the rest rectangle along the wind: at 14 m/s a 120 m lake raises waves of about 0.08 m (significant height) and a 2 km body about 0.32 m. The four waves take fixed shares of the significant height and peak wavelength, and wavelengths floor at two cells of a built grid, four cells of an ocean's finest level, or 1 m for application geometry. The sea is sized in world metres, so a scaled node draws the same sea.
+`set_sea_state` sets the waves to the sea a wind raises. `wind_velocity` is world m/s along x and z; the waves travel along it. The sea depends on the wind speed (capped at 25 m/s) and the fetch, which is the length of the rest rectangle along the wind: at 14 m/s a 120 m lake raises waves of about 0.08 m (significant height) and a 2 km body about 0.32 m. The four waves take fixed shares of the significant height and peak wavelength, and wavelengths floor at the larger of 1 m and two cells of a built grid or four cells of an ocean's finest level (1 m for application geometry). The sea is sized in world metres, so a scaled node draws the same sea.
 
-The call writes the target into `Water.desc` and `WaterRuntime.desc` and returns. The next `update` starts a blend over `transition_seconds`; zero switches at once. A second call during a blend starts from the waves drawn then. The blend keeps the wave phase continuous. A saved scene keeps the target, not the blend.
+For a Gerstner body the call writes the target into `Water.desc` and `WaterRuntime.desc` and returns. The next `update` starts a blend over `transition_seconds`; zero switches at once. A second call during a blend starts from the waves drawn then. The blend keeps the wave phase continuous. A saved scene keeps the target, not the blend. A spectral body keeps its wind in the prepared state only and writes neither desc: a saved scene does not keep the wind, and a loaded body starts from `DEFAULT_SPECTRAL_WIND`.
 
 | Body | Result |
 | --- | --- |
@@ -121,9 +122,9 @@ It faults `INVALID_ID` for a dead node or one without `Water`, and `INVALID_ARGU
 
 ## Ripples and wind
 
-`WaterDesc.ripples` is a `STANDARD` material whose normal map the shader samples twice, at two crossing scales, and adds to the wave normal. Other maps of that material are ignored. `update` turns the wind into two scroll velocities (`ripple_drift` m/s per m/s of wind) and starts a new scroll segment when they change, so the ripples never jump. A steady wind uploads nothing. The wind scrolls ripples only; the waves follow `set_sea_state`.
+`WaterDesc.ripples` is a `STANDARD` material whose normal map the shader samples twice, at two crossing scales, through the reference's own UV transform, sampler and `normal_scale`, and adds to the wave normal. `uv0` is the rest position in metres, so the transform's scale sets the tile size (a `scale` of 0.25 repeats the map every 4 m). Other maps of that material are ignored. `update` turns the wind into two scroll velocities (`ripple_drift` m/s per m/s of wind) and starts a new scroll segment when they change, so the ripples never jump. A steady wind uploads nothing. The wind scrolls ripples only; the waves follow `set_sea_state`.
 
-The ripple map has `COLOR` semantics with a linear encoding of `0.5 + 0.5 · n` in `RGBA16_FLOAT` or `RGBA32_FLOAT`. The shader reads the length of the stored vector at the sampled mip to widen the specular lobe where a minified map averaged slopes away; only that format keeps the length. An sRGB map is not valid, and `RGBA8_UNORM` or `NORMAL_*` semantics widen nothing and sparkle more.
+The ripple map has `COLOR` semantics with a linear encoding of `0.5 + 0.5 · n` in `RGBA16_FLOAT` or `RGBA32_FLOAT`. The shader reads the length of the stored vector at the sampled mip to widen the specular lobe where a minified map averaged slopes away; only that format keeps the length. An sRGB map is not valid. `NORMAL_*` semantics widen nothing and sparkle more. In `RGBA8_UNORM` the 8-bit rounding reads as shortening and roughens random texels.
 
 ## The mirror
 
@@ -131,7 +132,7 @@ The library places the mirror cameras and the application renders them. A body h
 
 `update_mirror(scene, body, slot, viewing_camera)` sets the slot's camera node to the viewing camera reflected across the image of the node's local XZ plane. The mirror camera copies the viewing camera's lens and drops the water node's layers. The call also writes `WaterRuntime.clip_plane`, the rest plane lowered by the total wave amplitude (a simulated body's reach), so everything above the deepest trough stays in the reflection. It returns `PLACED`. The viewing camera must be a root node; `update_mirror` reads its `local`, so it may run before or after `update_world`.
 
-When the viewing camera is under the rest plane, `update_mirror` returns `BELOW`, leaves the pose and clip plane unchanged and puts the camera on no layer. Skip that mirror view and clear the view texture at the slot. The test is the rest plane, not the waves. `release_mirror(scene, body, slot)` frees a slot's camera for a viewing view that goes away; the next `update_mirror` of the slot adds it again.
+When the viewing camera is under the rest plane, `update_mirror` returns `BELOW`, leaves the pose and clip plane unchanged and puts the camera on no layer. Skip that mirror view and clear the view texture at the slot. The test is the rest plane, not the waves. `release_mirror(scene, body, slot)` frees a slot's camera for a viewing view that goes away and invalidates `Camera` pointers; the next `update_mirror` of the slot adds it again.
 
 Once per viewing view and body, create the mirror target and view, after `add_water` and a first `update_mirror`:
 
@@ -147,7 +148,7 @@ mirror_desc.clip_plane = scene.get(lake, WaterRuntime).clip_plane;
 ViewId mirror_view = render::create_view(renderer, mirror_desc)!;
 ```
 
-Every frame, after `update_mirror` and before `begin_frame`, follow the clip plane: `set_desc` and a moved lake change it, and `configure_view` resets that view's history, so write it only when it changed.
+Every frame, after `update_mirror` and before `begin_frame`, follow the clip plane. `set_desc`, a moved lake, the start and end of a sea-state blend, and a simulated body's reach or a spectral body's envelope all change it, and `configure_view` resets that view's history, so write it only when it changed.
 
 ```c3
 Plane clip_plane = scene.get(lake, WaterRuntime).clip_plane;
@@ -240,7 +241,7 @@ A body owns one child node, `WaterRuntime.medium_node` (named `water_medium`), t
 - `anisotropy = MEDIUM_ANISOTROPY` (0.6), forward-leaning;
 - the box is the rest rectangle, `WaterDesc.depth` deep (`DEFAULT_WATER_DEPTH`, 40 m).
 
-The fog pass cannot tell water from a submerged rock, so the box's top hangs `total amplitude + MEDIUM_SKIN` under the rest plane and no drawn surface falls inside it. Water not deeper than that has no medium. An `absorption_color` of 1 on every channel is clear water and writes no medium.
+The fog pass cannot tell water from a submerged rock, so the box's top hangs `total amplitude + MEDIUM_SKIN` under the rest plane and no drawn surface falls inside it. Water not deeper than that has no medium. Absorption and scattering are per world metre; the box's extents, `depth` and offset are in the node's frame. An `absorption_color` of 1 on every channel is clear water and writes no medium.
 
 - **Layers.** The medium node carries the body's layers; `update` and `set_desc` copy them again. A view that does not see the body does not take its medium.
 - **Lifecycle.** `add_water`, `prepare` and `set_desc` write the medium; a sea-state blend writes it when it starts and ends. The node is the library's. A `MediumVolume` the application puts on the body's own node is its own: it adds to the water's where they overlap and stays when the body goes. Serialization omits the medium node; a loaded body adds it on `prepare`.
@@ -251,7 +252,7 @@ The fog pass cannot tell water from a submerged rock, so the box's top hangs `to
 
 `WaterDesc.trace` puts the displaced grid of a `BODY` in [scene traces](scene_trace.md); an ocean is not traced. Ray-traced reflections and ambient occlusion, path-traced views, probe updates and global illumination then see the water surface, not the bed under it. Without `trace`, the water is absent from every trace.
 
-- The mesh is the drawn one, not a [trace proxy](scene_trace.md#trace-proxies). The shader's `trace_pose.single` form ([trace pose](custom_shaders.md#trace-pose)) poses the grid every frame the time moves, so the traced surface is the one drawn in the same frame. A frame at an unchanged time poses nothing.
+- The mesh is the drawn one, not a [trace proxy](scene_trace.md#trace-proxies). The shader's `trace_pose.single` form ([trace pose](custom_shaders.md#trace-pose)) poses the grid every frame the time moves, so the traced surface is the one drawn in the same frame. A frame at an unchanged time poses nothing. A built grid carries a normals stream; application geometry without one traces with face normals.
 - Cost: one posed slot, one dispatch with a thread per vertex and one refit or bottom-level update per traced body per frame. The cost follows the vertex count, so `cell_size` is its lever. A body that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow` ([capacity](scene_trace.md#custom-trace-poses)).
 - A hit on the water shades as any custom-material hit does: grey under Lambert lighting, with no foam, refraction, reflection or ripples.
 - The water casts no shadow, so traced sun shadows ignore it. Traced shadows on the water work.

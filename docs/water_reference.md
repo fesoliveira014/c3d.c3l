@@ -16,7 +16,7 @@ Reference for the `c3d::landscape::water` module: the desc rules, the API, the c
 | `simulation` | `DEFAULT_WAVE_SPEED` (3 m/s), `DEFAULT_DAMPING` (0.5/s) |
 | `spectrum` | `DEFAULT_SPECTRUM_SEED` (382), `DEFAULT_PATCH_SIZE` (256 m), `DEFAULT_CHOPPINESS` (1) |
 
-`add_water`, `attach_water` and `set_desc` check every rule below and fault `INVALID_ARGUMENT` (or `INVALID_ID` for a dead id) rather than assert, because descs also come from files.
+`attach_water`, `add_water`, `prepare`, `prepare_subtree` and `set_desc` check every rule below and fault `INVALID_ARGUMENT` (or `INVALID_ID` for a dead id) rather than assert, because descs also come from files.
 
 | Field | Rule |
 | --- | --- |
@@ -29,7 +29,7 @@ Reference for the `c3d::landscape::water` module: the desc rules, the API, the c
 | `roughness` | In [0, 1] |
 | `refraction_strength`, `reflection_distortion` | Non-negative: screen uv per unit of normal tilt |
 | `foam_depth` | Non-negative metres of water under which shore foam shows; 0 turns shore foam off |
-| `foam_crest` | In [0, 1): the crest factor above which wave foam shows |
+| `foam_crest` | In [0, 1): the crest factor above which wave foam shows. The crest factor of the Gerstner map is `clamp(1 − det J, 0, 1)`, with `J` the Jacobian of the horizontal shift; simulated and spectral surfaces have none |
 | `ripple_drift` | Non-negative: ripple scroll in m/s per m/s of wind |
 | `ripples`, `foam` | Zero, or a live `STANDARD` material |
 | `march_reflections` | The screen-space march in views that provide no reflection slot |
@@ -52,7 +52,7 @@ A built grid has two counter-clockwise triangles per cell facing +Y, and is shar
 | Type | Role |
 | --- | --- |
 | `Water` | Authored component: `desc`. Edit through `set_desc` |
-| `WaterRuntime` | Written by the library: the checked `desc`, the owned `material`, `grid`, `mirrors` by slot, `medium_node`, `clip_plane`, `rest_min` and `rest_max`, and `spectral_bound` |
+| `WaterRuntime` | Written by the library: the checked `desc`, the owned `material`, the `grid` (shared per shape, or the desc's geometry), `mirrors` by slot, `medium_node`, `clip_plane`, `rest_min` and `rest_max`, and `spectral_bound` |
 | `WaterMirror` | Marks a mirror camera node the library owns; names its water node and slot |
 
 `WaterRuntime.rest_min` and `rest_max` are the node-local XZ extent of the rest surface.
@@ -115,19 +115,21 @@ A `WaterSample` holds `height`, `normal`, `velocity` and `residual`. For a Gerst
 | `SPECTRAL_PERIOD` | 1000 s | Repeat period of the field |
 | `DEFAULT_SPECTRAL_WIND` | (8, 0) m/s | Wind before a sea state is set |
 | `DEFAULT_SPECTRUM_SEED`, `DEFAULT_PATCH_SIZE`, `DEFAULT_CHOPPINESS` | 382, 256 m, 1 | Spectrum defaults |
-| `DISPATCHES_PER_BODY` | 18 | Compute dispatches `water_gpu::update` records per spectral body |
+| `water_gpu::DISPATCHES_PER_BODY` | 18 | Compute dispatches `water_gpu::update` records per spectral body; exists under `C3D_LANDSCAPE_GPU` |
 
 ## Faults
 
 | Where | Fault | When |
 | --- | --- | --- |
 | `register_water` | `c3d::CAPACITY_EXCEEDED` | No component type slot left |
-| `add_water`, `attach_water`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included); application geometry off y = 0; an ocean with geometry, with `trace`, wider than `MAX_OCEAN_CHUNKS` chunks, or with a wave under four finest cells; a reference that is not `STANDARD`; a shared key naming another asset kind |
+| `attach_water`, `add_water`, `prepare`, `prepare_subtree`, `set_desc` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included); application geometry off y = 0; an ocean with geometry, with `trace`, wider than `MAX_OCEAN_CHUNKS` chunks, or with a wave under four finest cells; a reference that is not `STANDARD` |
 | same | `c3d::INVALID_ARGUMENT` | `SIMULATED` with an ocean or application geometry, outside 16 to 256 cells per side, with a speed or damping that is not positive and finite, or a speed that needs more than `MAX_SIMULATION_SUBSTEPS`; a `ground` without `Terrain`; `SPECTRAL` with a bad `patch_size` or `choppiness` |
 | same | `c3d::INVALID_ID` | A dead geometry, reference or `ground` |
-| `add_water`, `prepare` | `c3d::UNSUPPORTED` | A `SPECTRAL` body in a build without `C3D_LANDSCAPE_GPU` |
-| `add_water`, `prepare`, `set_desc` | `c3d::CAPACITY_EXCEEDED` | A store pool is full, or no scene node is left for the medium or the mirrors |
-| `set_desc` | `c3d::INVALID_ARGUMENT` | A `wave_model`, an ocean's `mode`, `extent` or `cell_size`, a simulated or spectral body's `extent` or `cell_size`, or a spectral body's `spectrum` that differs from the prepared body's |
+| `add_water`, `prepare`, `prepare_subtree`, `set_desc` | `c3d::INVALID_ARGUMENT` | A shared key (the shader or a built grid) that names another asset kind |
+| `add_water`, `prepare`, `prepare_subtree` | `c3d::UNSUPPORTED` | A `SPECTRAL` body in a build without `C3D_LANDSCAPE_GPU` |
+| `add_water`, `prepare`, `prepare_subtree` | `c3d::CAPACITY_EXCEEDED` | A store pool is full, or no scene node is left for the medium or the mirrors |
+| `set_desc` | `c3d::CAPACITY_EXCEEDED` | A changed shape needs a new grid and the store is full |
+| `set_desc` | `c3d::INVALID_ARGUMENT` | A `mode` or `wave_model`, an ocean's, simulated body's or spectral body's `extent` or `cell_size`, or a spectral body's `spectrum` that differs from the prepared body's |
 | `set_sea_state` | `c3d::INVALID_ID` | A dead entity, no `Water`, or pending water whose geometry was removed |
 | `set_sea_state` | `c3d::INVALID_ARGUMENT` | A non-finite wind, or a negative or non-finite transition |
 | `set_sea_state` | `c3d::UNSUPPORTED` | A `SIMULATED` body, or `SPECTRAL` water that is still pending |

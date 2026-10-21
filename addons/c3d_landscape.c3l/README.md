@@ -16,7 +16,7 @@ The scene modules import the standard library and core (`c3d`). `foliage` and `w
 
 ## Select the package
 
-List `c3d_landscape` next to `c3d` and core's dependencies in `project.json`; the [release guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/release.md) lists the names. Applications that connect water to physics or terrain to navigation also select `c3d_physics` and `b3`, or `c3d_nav`; the package imports neither.
+List `c3d_landscape` next to `c3d` and core's dependencies in `project.json`; the [release guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/release.md) lists the names. Applications that give terrain a collider or connect water to physics also select `c3d_physics` and `b3`; a terrain navigation grid selects `c3d_nav`. The package imports neither.
 
 | Feature | Effect | Also select |
 | --- | --- | --- |
@@ -72,10 +72,10 @@ c3c test landscape_test --path addons/c3d_landscape.c3l
 python3 scripts/build.py --example vegetation
 ```
 
-The [development guide](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/development.md) covers the build and the acceptance projects.
+The [development guide](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/development.md) covers the build and the acceptance projects.
 
 ## Guides
 
-- [Terrain](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/terrain.md) and its [reference](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/terrain_reference.md)
-- [Vegetation](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/vegetation.md) and [whole-object LOD](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/lod.md)
-- [Water](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/water.md), its [wave models](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/water_wave_models.md) and [reference](https://github.com/fesoliveira14/c3d.c3l/blob/main/docs/water_reference.md)
+- [Terrain](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain.md), its [reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain_reference.md) and [terrain with physics and navigation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain_integration.md)
+- [Vegetation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/vegetation.md) and [whole-object LOD](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/lod.md)
+- [Water](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/water.md), its [wave models](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/water_wave_models.md) and [reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/water_reference.md)

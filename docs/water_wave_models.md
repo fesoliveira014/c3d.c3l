@@ -15,7 +15,7 @@ For a rest point `p` in the node's local XZ and shader time `t`, wave `i` of `N`
 - phase `θ = 2π · fract(dot(d, p) / λ − t · c / λ + φ)`;
 - height `y = Σ a · sin θ`;
 - horizontal shift `D = Σ s · λ / (2π · N) · d · cos θ`;
-- drawn point `(p.x + D.x, y, p.y + D.y)`, with the normal from the Jacobian of that map.
+- drawn point `(p.x + D.x, y, p.y + D.y)`, with the normal from the Jacobian `J` of that map and the crest factor `clamp(1 − det J, 0, 1)`, which drives wave foam.
 
 The waves of a `BODY` are node-local: node scale scales wavelengths and amplitudes, node rotation turns directions. An ocean evaluates the same sum with `φ` carrying the node's absolute position, so crests stay where they are in the world when the node moves.
 
