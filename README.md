@@ -12,18 +12,16 @@ The target platforms are linux-x64 and windows-x64, with C3 0.8.3 exactly. The V
 - **Scene and assets.** A fixed-capacity [node hierarchy](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/scene.md) over an ECS; an [asset store](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/assets.md) with typed generational ids; [glTF and FBX import](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/models.md); [CPU picking](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/picking.md); [camera-relative large worlds](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/large_world.md).
 - **Rendering.** [Views and render targets](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/views.md) with forward, deferred and path-traced [shading paths](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/shading_paths.md); [materials](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/materials.md) and [custom shaders](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/custom_shaders.md); [lights](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/lights.md) and [shadows](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/shadows.md); [sky, fog](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/sky.md) and clouds; [display processing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/post.md); traced [reflections](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/reflections.md) and [path tracing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/path_tracing.md); [instancing](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/instancing.md) and [LOD](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/lod.md).
 - **Animation.** [Clips, layers, blend spaces and root motion](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/animation.md), [inverse kinematics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/animation_ik.md) and [crowds](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/crowds.md).
-- **Add-ons.** [Physics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics.md), [navigation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/navigation.md), [terrain](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain.md), [particles](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/particles.md), [UI](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/ui.md), [audio](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/audio.md), a [job pool](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/jobs.md), [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md) and a [profiler](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/profiling.md). Each is a separate package that an application selects in `project.json`; core never imports one. The [index](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/README.md#add-on-packages) links each package's README.
+- **Add-ons.** [Physics](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/physics.md), [navigation](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/navigation.md), [terrain](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/terrain.md), [particles](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/particles.md), [UI](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/ui.md), [audio](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/audio.md), a [job pool](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/jobs.md), [serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md) and a [profiler](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/profiling.md). Each is a separate package that an application selects in `project.json`; core imports none of them, except the profiler through bridges gated by the `C3D_PROFILE_*` features. The [index](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/README.md#add-on-packages) links each package's README.
 
 ## Requirements
 
-c3c 0.8.3, Python 3.10 or newer, `glslangValidator` on `PATH`, the Vulkan loader, a C compiler and git. The build script
-downloads SDL3, Dear ImGui and the other native libraries. The
+c3c 0.8.3, Python 3.10 or newer, `glslangValidator` on `PATH`, the Vulkan loader and its validation layer, a C compiler
+and git. The build script downloads SDL3, Dear ImGui and the other native libraries. The
 [getting-started page](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/getting-started.md#requirements) has the
 details and the Windows setup.
 
 ## Build
-
-The checkout directory must keep the name `c3d.c3l`.
 
 ```bash
 git clone --recurse-submodules https://github.com/fesoliveira014/c3d.c3l
@@ -62,7 +60,7 @@ fn int main() {
 
     GeometryId box_geometry;
     @pool() {
-        Geometry box = geometry::box(tmem, 1, 1, 1);
+        Geometry box = geometry::box(allocator: tmem, width: 1, height: 1, depth: 1);
         box_geometry = assets.add_geometry(&box, "box")!!;
     };
     MaterialId red = assets.add_material(material::basic({ .color = { 0.9f, 0.2f, 0.2f, 1 } }), "red")!!;
@@ -102,6 +100,7 @@ shows a project that builds this program against a checkout and explains the fra
 
 Read [CONTRIBUTING.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/CONTRIBUTING.md), then
 [AGENTS.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/AGENTS.md) and
-[docs/style.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/style.md). c3d is MIT licensed (`LICENSE`). The
-glyph shader port is covered by `LICENSE-slug.txt`; test fixture and example asset notices are in
-[`test/fixtures/LICENSES.md`](https://github.com/fesoliveira014/c3d.c3l/blob/main/test/fixtures/LICENSES.md).
+[docs/style.md](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/style.md). c3d is MIT licensed (`LICENSE`). The glyph shader port is covered by `LICENSE-slug.txt`. Third-party notices sit beside
+the files they cover: [`test/fixtures/LICENSES.md`](https://github.com/fesoliveira014/c3d.c3l/blob/main/test/fixtures/LICENSES.md)
+for the texture fixtures, each fixture set's README, and the asset READMEs listed in the
+[examples](https://github.com/fesoliveira014/c3d.c3l/blob/main/examples/README.md#example-assets).

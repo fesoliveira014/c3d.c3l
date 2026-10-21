@@ -31,10 +31,10 @@ These rules apply to every set below and are not repeated in the set READMEs.
 | [`lod_v1/`](lod_v1/README.md) | LodGroup v1 streams | project-authored |
 | [`trace_fields_legacy/`](trace_fields_legacy/README.md) | Mesh v1, InstancedMesh v1 and LodGroup v2 streams | project-authored |
 | [`animation_contact/`](animation_contact/README.md) | FBX with a translation stack and a scale stack, for profiled import | project-authored |
-| `animation_events/` | glTF and FBX specimens with authored animation events | glTF CC0 1.0, FBX project-authored |
+| [`animation_events/`](animation_events/README.md) | glTF and FBX specimens with authored animation events | glTF CC0 1.0, FBX project-authored |
 | [`import_fidelity/`](import_fidelity/README.md) | glTF and FBX tangent specimens | CC0 1.0 (`LICENSE.txt`) |
-| `tangent_space/` | Tangent generation input and expected payloads | CC0 1.0, and a pinned MikkTSpace corpus |
-| `fbx/` | Real-tool FBX files copied from ufbx | MIT or Unlicense |
+| [`tangent_space/`](tangent_space/README.md) | Tangent generation input and expected payloads | CC0 1.0, and a pinned MikkTSpace corpus |
+| [`fbx/`](fbx/README.md) | Real-tool FBX files copied from ufbx | MIT or Unlicense |
 | [`fonts/`](fonts/README.md) | Noto Sans and Noto Sans CJK subsets | SIL OFL 1.1 (`OFL.txt`) |
 | `gltf/` | Small glTF documents written by `generate.py`, plus `lod.gltf` and `lod_animated.gltf` | project-authored |
 | `texture/` | DDS, KTX and KTX2 containers | mixed; [LICENSES.md](LICENSES.md) |

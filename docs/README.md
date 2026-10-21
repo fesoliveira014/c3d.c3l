@@ -33,7 +33,8 @@ a reference page beside it (`<topic>_reference.md`) with the tables of fields, d
 | Draw text, overlays and game UI | [text](text.md), [overlay](overlay.md), [UI](ui.md), [GUI](gui.md) |
 | Play sound | [audio](audio.md) |
 | Save and load a scene | [serialization](serialization.md) |
-| Measure performance | [profiling](profiling.md), [benchmarking](benchmarking.md), [job pool](jobs.md) |
+| Run work on worker threads | [job pool](jobs.md) and its [`ParallelFor` hook](jobs.md#parallelfor-hook) |
+| Measure performance | [profiling](profiling.md), [benchmarking](benchmarking.md) |
 | Extend c3d | [custom asset kinds](custom_assets.md), [type descriptions](type_descriptions.md), [custom shaders reference](custom_shaders_reference.md) |
 
 ## By subsystem

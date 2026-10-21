@@ -182,7 +182,7 @@ other project marked yes, copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` (L
 `lib/shaderc.c3l/windows/shaderc_shared.dll` (Windows) next to the built `testrun` executable before running. Build
 without running by adding `--suppress-run`: `c3c test acceptance --path test/gpu/render --suppress-run`.
 
-Each project's README, where it has one, lists what it covers and what it cannot show: [render](../test/gpu/render/README.md), [profile](../test/gpu/profile/README.md), [animated crowd](../test/gpu/animated_crowd/README.md) and [animation authoring](../test/gpu/animation_authoring/README.md). The CPU tests have the [describe](../test/describe/README.md) README, and their committed inputs are in the [fixtures](../test/fixtures/README.md) README.
+Each project's README, where it has one, lists what it covers and what it cannot show: [render](../test/gpu/render/README.md), [profile](../test/gpu/profile/README.md), [animated crowd](../test/gpu/animated_crowd/README.md) and [animation authoring](../test/gpu/animation_authoring/README.md). The [describe](../test/describe/README.md) README covers the `c3d::describe` test consumers, and the CPU tests' committed inputs are in the [fixtures](../test/fixtures/README.md) README.
 
 ## Headless and WSL runs
 

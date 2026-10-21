@@ -21,9 +21,9 @@ python3 scripts/build.py --target many_lights --opt O3
 
 - The core binaries are in `examples/build/`, add-on binaries in `addons/<package>/build/`. On Windows they end in
   `.exe`.
-- `custom_shader`, `custom_compute`, `compute_textures` and `asset_reload` read their GLSL and glTF files through paths
-  relative to the working directory, which must be `examples/build`. `--example` starts a program in `examples/`, where
-  those paths do not resolve; build the target and run the binary from `examples/build`:
+- `custom_shader`, `custom_compute`, `compute_textures`, `shading_paths`, `software_rt` and `asset_reload` read their GLSL
+  and glTF files through paths relative to the working directory, which must be `examples/build`. `--example` starts a
+  program in `examples/`, where those paths do not resolve; build the target and run the binary from `examples/build`:
 
   ```bash
   python3 scripts/build.py --target custom_shader
@@ -34,17 +34,20 @@ python3 scripts/build.py --target many_lights --opt O3
   `--example` starts them in the package directory; run the binary from there too when you pass options, for example
   `cd addons/c3d_physics.c3l && ./build/cloth --scene contacts`.
 - The other examples locate their files from their source path and run from any directory.
-- Examples that render need a Vulkan device. Interactive runs create it with validation on; benchmark modes leave it off
-  unless `--validation` is given. Drag to orbit and use the wheel to zoom in most windowed examples; releasing Escape
-  quits. Each example lists its other keys in its panel or in a start-up message.
-- A combination of options that an example does not accept prints its usage line and exits with status 1.
+- Examples that render need a Vulkan device and the Khronos validation layer. Interactive runs create the device with
+  validation on. In benchmark modes, the examples that accept `--validation` leave it off unless it is given; the others
+  keep it on. Drag to orbit and use the wheel to zoom in most windowed examples; releasing Escape quits. Each example
+  lists its other keys in its panel or in a start-up message.
+- An option or combination of options that an example does not accept makes it print an error or its usage line and exit
+  with status 1.
 - The Sponza scene used by `ambient_occlusion`, `probe_volume` and `software_rt` is fetched once with
   `python3 scripts/fetch_benchmark_assets.py`; see [benchmarking](../docs/benchmarking.md#scene-benchmark).
 
 ### Common options
 
 - `--gpu-timings` records per-pass GPU timings and needs the profiler add-on in the binary. A binary built without it
-  exits with the build command. Build the target with the add-on selected, then run the binary:
+  exits with an error that names the build command (`deferred` points to [views](../docs/views.md) instead). Build the
+  target with the add-on selected, then run the binary:
 
   ```bash
   python3 scripts/build.py --target views --lib c3d_profile --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL
@@ -52,7 +55,7 @@ python3 scripts/build.py --target many_lights --opt O3
   ```
 
   `lod`, `overlay`, `text`, `skinned_crowd`, `particles` and `cloth` select the add-on in their project target already.
-  See [profiling](../docs/profiling.md).
+  They always record GPU timings and reject `--gpu-timings`. See [profiling](../docs/profiling.md).
 - `--benchmark` runs a fixed script without input and prints timings. `many_lights`, `gltf_viewer` and `instancing`
   share one set of benchmark options, listed in [benchmarking](../docs/benchmarking.md#options-of-every-benchmark-example).
 - `--frames=N` or `--frames N` ends a run after N frames. Where an example accepts it, the row names the flag.
@@ -87,7 +90,8 @@ These run in a terminal. `upload` creates a device but no window.
 
 `overlay` options:
 
-Each of the first six options starts the matching panel toggle on.
+`--stress`, `--target`, `--transform`, `--shapes`, `--gradients`, `--backdrop` and `--world` each start the matching panel
+toggle on.
 
 | Option | Effect |
 | --- | --- |
@@ -125,13 +129,18 @@ Each of the first six options starts the matching panel toggle on.
 
 | Option | Effect |
 | --- | --- |
-| `--benchmark [model]` | Fixed offscreen scene; the options below apply to it. |
-| `--mode flat\|clustered`, `--lights N`, `--capacity N`, `--range R`, `--shading forward\|deferred\|path-traced` | Light selection, light count, per-cell capacity, light range and shading path. |
-| `--shadows on\|off\|traced` | Sun shadows from the atlas, none, or traced. |
-| `--probe-volumes N`, `--probe-counts X,Y,Z`, `--probe-fill environment\|scene`, `--probe-window N`, `--probe-rays N` | [Probe volume](../docs/probe_volumes.md) count, grid, fill source, update window and rays. |
+| `--benchmark [model]` | Fixed offscreen scene. Without a model it renders Sponza, fetched as described above. The options below apply to it. |
+| `--mode flat\|clustered`, `--lights N`, `--capacity N`, `--range R`, `--shading forward\|deferred\|path-traced` | Light selection, light count, per-cell capacity, light range as a fraction of the largest horizontal extent (0.08 by default) and shading path. |
+| `--shadows on\|off\|traced` | Sun shadows from the atlas (`on`, the default), none, or traced. `traced` makes an automatic run request ray queries. |
+| `--probe-volumes 0\|1\|8` | No [probe volume](../docs/probe_volumes.md), one over the model bounds, or one per octant. |
+| `--probe-counts X,Y,Z` | Probes per volume; 16,8,8 by default. |
+| `--probe-fill environment\|scene` | Fill from the environment (the default) or trace the scene every frame; the trace kind follows `--trace`. |
+| `--probe-window N` | Probes per update; 0 updates every probe. |
+| `--probe-rays N` | Rays per probe, 32 to 256; 128 by default. |
 | `--point-shadows on\|off` | Shadows on the point lights. |
-| `--reflection-probes N`, `--reflection-probe-placement inside\|outside` | [Reflection probes](../docs/reflection_probes.md) and where their boxes sit. |
-| `--environment-refresh on\|off` | Regenerates the environment every frame. |
+| `--reflection-probes 0\|1\|2\|16` | [Reflection probes](../docs/reflection_probes.md) with distinct solid-color environments: none, one box over the model bounds, two overlapping boxes, or a 4 x 2 x 2 grid. The asset store holds 32 environments when probes are on. |
+| `--reflection-probe-placement inside\|outside` | `outside` sinks every box below the model, so each pixel tests every box and lies in none. |
+| `--environment-refresh on\|off` | Marks the studio source texture dirty before every frame, so each frame regenerates the environment. |
 
 ## Materials, lights and shaders
 
@@ -157,7 +166,7 @@ Each of the first six options starts the matching panel toggle on.
 | `--mode flat\|clustered` | Light selection. |
 | `--lights N`, `--capacity N`, `--range R` | Light count, per-cell capacity and light range. |
 | `--shading forward\|deferred\|path-traced` | Shading path of the measured view. |
-| `--depth-pruning on\|off` | [Depth pruning](../docs/lights.md#depth-pruning) of cluster cells. |
+| `--depth-pruning on\|off` | [Depth pruning](../docs/lights.md#depth-pruning) of cluster cells; off by default. |
 
 The shared benchmark options of `many_lights`, `gltf_viewer` and `instancing` are in
 [benchmarking](../docs/benchmarking.md#options-of-every-benchmark-example): `--frames`, `--warmup`, `--width`,
@@ -186,11 +195,11 @@ The shared benchmark options of `many_lights`, `gltf_viewer` and `instancing` ar
 | `--fog on\|off` | Height fog; on by default. |
 | `--volumetric-fog`, `--fog-quality low\|medium\|high`, `--fog-temporal` | A fog volume on the main and mirror views, its grid and its temporal accumulation. |
 | `--clouds`, `--cloud-temporal` | A cloud layer over a procedural weather map, and its temporal accumulation. |
-| `--local-lights N`, `--lamp-range METRES`, `--lamps-in-fog on\|off` | Up to 128 point and spot lamps along the camera path, their range and whether the fog scatters them. |
+| `--local-lights N`, `--lamp-range METRES`, `--lamps-in-fog on\|off` | Up to 128 point and spot lamps along the camera path, their range (14 m by default) and whether the fog scatters them. |
 | `--shading forward\|deferred`, `--shadows atlas\|traced`, `--ssgi`, `--taa` | Shading path, shadow kind, screen-space GI and TAA. |
 | `--reflections on\|off` | Traced reflections on the main view; needs `--shading deferred`. |
 | `--path-traced` | Path-traced main view; rejects `--clouds` and `--reflections`. |
-| `--auto-exposure`, `--pre-exposure off\|FACTOR` | Auto exposure instead of the exposure table; a forced pre-exposure. |
+| `--auto-exposure`, `--pre-exposure off\|FACTOR` | Auto exposure instead of the exposure table; a forced pre-exposure: `off` is 1 and FACTOR must be a power of two, or view creation faults `INVALID_ARGUMENT`. |
 | `--preset noon\|twilight\|dusk\|nautical\|valley\|pan\|orbit\|time-lapse` | Camera and sun pose. |
 | `--benchmark [frames]`, `--validation`, `--width N`, `--height N`, `--gpu-timings` | Offscreen scripted benchmark and device options; see [the sky benchmark](../docs/benchmarking.md#sky-benchmark). |
 
@@ -201,7 +210,7 @@ These need a device with ray queries or ray-tracing pipelines, except where a so
 | Example | Shows | Options | Page |
 | --- | --- | --- | --- |
 | `rt_shadows` | Traced shadows against the atlas: `T` toggles them, `M` swaps the box between opaque and masked. | `--software`, `--atlas-shadows`, `--twin-ground`, `--point-lamp`, `--taa`, `--extent X`, `--shadow-samples N`, `--gpu-timings`, `--benchmark FRAMES` (needs `--gpu-timings`) | [ray-traced shadows](../docs/ray_traced_shadows.md) |
-| `rt_effects` | A mirror floor, a roughness ramp and Physical spheres beside their traced reflections; `A` cycles ambient occlusion, `R` reflections, `S` forward and deferred. | `--software`, `--forward`, `--no-reflections`, `--pre-exposure off\|V`, `--reflection-rays N`, `--reflection-resolution full\|half`, `--reflection-history`, `--gpu-timings`, `--benchmark FRAMES` (needs `--gpu-timings`) | [reflections](../docs/reflections.md) |
+| `rt_effects` | A mirror floor, a roughness ramp and Physical spheres beside their traced reflections; `A` cycles ambient occlusion, `R` reflections, `S` forward and deferred. | `--software`, `--forward`, `--no-reflections`, `--pre-exposure off\|P` (P a power of two from 2^-16 to 2^16), `--reflection-rays N`, `--reflection-resolution full\|half`, `--reflection-history`, `--gpu-timings`, `--benchmark FRAMES` (needs `--gpu-timings`) | [reflections](../docs/reflections.md) |
 | `path_tracer` | A Cornell-style room rendered progressively; `Space` toggles the lamp. | `--headless`, `--samples N`, `--width W`, `--height H`, `--out FILE.png` | [path tracing](../docs/path_tracing.md) |
 | `software_rt` | Sponza with the right half of the view replaced by one traced primary ray per pixel; `M` cycles distance, geometric normal and instance colors. | `--hardware` uses ray queries, `--gpu-timings`, `--benchmark FRAMES` (needs `--gpu-timings`) | [scene trace](../docs/scene_trace.md) |
 
@@ -214,7 +223,7 @@ still, writes the PNG and exits.
 | --- | --- | --- | --- |
 | `animation` | Two instances of a glTF model, each playing a different clip, with cross-fades, a quarter-weight action and pause. The bundled Fox is the default; `BoxAnimated.glb` shows node animation and `AnimatedMorphCube.glb` morph targets. | `[model]`, `--frames=N`, `--acceptance`, `--gpu-timings` | [animation](../docs/animation.md) |
 | `animation_authoring` | A crowd and an animator with a 2D blend space, feathered and multiplicative overlays, generalized jog and inertial turns. | | [animation](../docs/animation.md) |
-| `mixamo` | An FBX character retargeted by name to Mixamo animation files, with masked and additive waves over locomotion. `1`-`9` cross-fade, `W`/`S` blend walk and run, `R` applies root motion, `Q` sets quarter weight, Space pauses, `G` and `A` toggle the waves. | `[character.fbx walk.fbx run.fbx ...]`, `--frames=N`, `--capture=PATH`, `--acceptance`, `--benchmark`, `--gpu-timings` | [animation](../docs/animation.md), [models](../docs/models.md) |
+| `mixamo` | An FBX character retargeted by name to Mixamo animation files, with masked and additive waves over locomotion. `1`-`9` cross-fade, `W`/`S` blend walk and run, `R` applies root motion, `Q` sets quarter weight, Space pauses, `G` and `A` toggle the waves. | `[character.fbx walk.fbx run.fbx ...]`, `--frames=N`, `--capture=PATH`, `--acceptance`, `--benchmark` (needs `--lib c3d_profile --define C3D_PROFILE_CPU --define C3D_PROFILE_INTERNAL` at build), `--gpu-timings` | [animation](../docs/animation.md), [models](../docs/models.md) |
 | `retarget` | A Mixamo walk on the Quaternius rig in each retargeting mode. | `--frames=N` | [retargeting](../docs/animation_retargeting.md) |
 | `ik` | Feet, look-at and a reaching hand on two characters on a moving support. | `--limits`, `--legacy`, `--frames=N` | [inverse kinematics](../docs/animation_ik.md) |
 | `skinned_crowd` | 512 instances of the committed character through six clips; `B` switches to 512 animators for comparison, `K` toggles compute skinning, `F` freezes every other instance, Space pauses. | `--baseline`, `--compute-skinning`, `--traced-shadows`, `--ray-queries`, `--compress`, `--shared-phases`, `--frozen-percent=P`, `--compare` | [crowds](../docs/crowds.md) |
@@ -228,7 +237,7 @@ that directory.
 | Example | Shows | Options | Page |
 | --- | --- | --- | --- |
 | `picking` | Mouse picking with bounds or triangle precision; a glTF model instantiated twice, and a pick through a monitor's capture camera. | `[model]`, `--crowd` starts with a crowd of boxes and an instance batch shown, `--gpu-timings` | [picking](../docs/picking.md) |
-| `instancing` | Three colored cubes in one batch, a 4,096-prop batch and eight pulsing spheres through a custom vertex stage; a click reports the picked batch and instance. | own and benchmark options below | [instancing](../docs/instancing.md) |
+| `instancing` | Three colored cubes in one batch, a 99,856-prop batch, a blended glass cloud and eight pulsing spheres through a custom vertex stage; a click reports the picked batch and instance. | own and benchmark options below | [instancing](../docs/instancing.md) |
 | `lod` | One baked prototype drawn as 5,000 placements with three mesh levels and a terminal impostor; near, middle and far camera buttons. | `--frames N`; `--benchmark` runs offscreen at three camera positions and prints counters and per-pass timings | [LOD](../docs/lod.md), [impostors](../docs/impostors.md) |
 
 `instancing` options:
@@ -262,11 +271,11 @@ Package: [c3d_physics](../addons/c3d_physics.c3l/README.md). Overview: [physics]
 | --- | --- | --- | --- |
 | `physics` | Thrown boxes on ramps and a moving kinematic platform, contact highlights, ray picks and debug draw. | | [physics](../docs/physics.md) |
 | `physics_instanced` | The same scene with every box drawn from one instanced batch. | | [physics](../docs/physics.md) |
-| `physics_components` | A level and bodies built from components: wind, forces, explosions, surface materials and joints. | `--stress`, `--debug-draw`, `--workers N`, `--benchmark N` | [physics](../docs/physics.md) |
+| `physics_components` | A level and bodies built from components: wind, forces, explosions, surface materials and joints. | `--stress`, `--benchmark N`, `--debug-draw` and `--workers N` (both need `--benchmark N`) | [physics](../docs/physics.md) |
 | `vehicle` | A chassis on wheel joints with steering, suspension and a drive motor. | | [physics](../docs/physics.md) |
 | `ragdoll` | Simulated and animated bones, blending and physical get-up recovery. | `--acceptance DIR [--case supine\|prone\|blocked\|neighbour]`, `--cpu-observation` | [ragdolls](../docs/ragdoll.md) |
-| `breakable` | A fractured wall with anchors, sampled strengths and reset; left click throws, right drag orbits. | `--model FILE`, `--walls N`, `--workers N`, `--frames=N`, `--capture=PATH`, `--pieces`, `--anchors`, `--sampled`, `--acceptance`, `--benchmark` | [breakables](../docs/breakables.md) |
-| `cloth` | Flags, capes, contacts, self-contact, crowds and tearing. | `--scene flag\|cape\|both\|contacts\|fold\|fast\|field\|crowd\|densities`, `--still`, `--tear`, `--hold` (field), `--count N` (field, crowd), `--workers N`, `--frames N`, `--benchmark` | [cloth](../docs/cloth.md#example) |
+| `breakable` | A fractured wall with anchors, sampled strengths and reset; left click throws, right drag orbits. | `--model FILE`, `--walls N`, `--workers N`, `--frames=N`, `--capture=PATH`, `--pieces`, `--anchors`, `--sampled`, `--reset-at=N`, `--capture-before-reset=PATH`, `--acceptance`, `--benchmark` | [breakables](../docs/breakables.md) |
+| `cloth` | Flags, capes, contacts, self-contact, crowds and tearing. | `--scene flag\|cape\|both\|contacts\|fold\|fast\|field\|crowd\|densities`, `--still`, `--tear`, `--hold` (field), `--count N` (field, crowd), `--workers N`, `--frames N`, `--publish whole\|streams`, `--capture FILE`, `--benchmark`; with `--benchmark` only: `--cells N`, `--ragdoll` (cape and both scenes), `--cpu-only`, `--validation`, `--trace software\|hardware` | [cloth](../docs/cloth.md#example) |
 | `collision_math` | World-free collision queries on prepared shapes. | `--acceptance [--frames=N] [--capture=PATH]`, `--benchmark` | [collision queries](../docs/collision_queries.md) |
 | `physics_inspector`, `physics_inspector_character` | The physics panel and component inspectors over a ragdoll; the second adds the characters table. | `--demo`, `--draw-all`, `--replay-default-mixes`, `--frames N` | [physics inspector](../docs/physics_inspector.md) |
 
@@ -290,16 +299,16 @@ Package: [c3d_landscape](../addons/c3d_landscape.c3l/README.md).
 
 | Example | Shows | Options | Page |
 | --- | --- | --- | --- |
-| `terrain` | A generated ridged height map edited under a collider, with tile sets. | `--tiles 2x2`, `--size N`, `--layers 1\|4`, `--lod-threshold X`, `--morph`, `--triplanar`, `--shading forward\|deferred`, `--shadows atlas\|traced`, `--sky`, `--volumetric-fog`, `--benchmark [frames]`, `--workers N`, `--capture FILE`, `--gpu-timings`, `--validation` | [terrain](../docs/terrain.md) |
-| `vegetation` | Grass and trees scattered over the terrain example's ground. | `--foliage both\|grass\|none`, `--tree-fade-end X`, `--shading forward\|deferred`, `--shadows atlas\|traced`, `--sky`, `--volumetric-fog`, `--benchmark [frames]`, `--workers N`, `--capture FILE`, `--gpu-timings`, `--validation` | [vegetation](../docs/vegetation.md) |
-| `water` | A lake, an ocean and floating crates. | `--waves gerstner\|simulated`, `--reflection planar\|march\|env`, `--ocean`, `--sea-state`, `--ripples on\|off`, `--wind SPEED`, `--shading forward\|deferred`, `--sky`, `--volumetric-fog`, `--benchmark [frames]`, `--shot FILE`, `--gpu-timings`, `--validation` | [water](../docs/water.md) |
+| `terrain` | A generated ridged height map edited under a collider, with tile sets. | `--tiles 2x2`, `--size N`, `--layers 1\|4`, `--lod-threshold X`, `--morph`, `--triplanar`, `--shading forward\|deferred`, `--shadows atlas\|traced`, `--hide-terrain`, `--trace-level N`, `--collision-window N`, `--sky`, `--volumetric-fog`, `--benchmark [frames]`, `--workers N`, `--capture FILE`, `--gpu-timings`, `--validation`; `--tiles` and `--capture` reject `--benchmark` | [terrain](../docs/terrain.md) |
+| `vegetation` | Grass and trees scattered over the terrain example's ground. | `--foliage both\|grass\|none`, `--tree-fade-end X`, `--size N`, `--shading forward\|deferred`, `--shadows atlas\|traced`, `--trace-sway` (needs traced shadows and `--foliage both`), `--trace-software` (needs traced shadows), `--sky`, `--volumetric-fog`, `--benchmark [frames]`, `--workers N`, `--capture FILE`, `--gpu-timings`, `--validation` | [vegetation](../docs/vegetation.md) |
+| `water` | A lake, an ocean and floating crates. | `--waves gerstner\|simulated`, `--reflection planar\|march\|env`, `--ocean`, `--sea-state`, `--ripples on\|off`, `--wind SPEED`, `--crates 16\|256`, `--current X,Z`, `--dive [SHARE]`, `--split`, `--traced`, `--ssgi`, `--size N`, `--mirror-scale 0.5\|1`, `--shading forward\|deferred`, `--sky`, `--volumetric-fog`, `--benchmark [frames]`, `--shot FILE`, `--gpu-timings`, `--validation`; `--waves simulated` rejects `--ocean` and `--sea-state` | [water](../docs/water.md) |
 | `water_gpu` | The `water` example built with `C3D_LANDSCAPE_GPU`, which adds the spectral wave model. | as `water`, plus `--waves spectral` | [water wave models](../docs/water_wave_models.md) |
 
 ### Particles, UI, audio and jobs
 
 | Example | Shows | Options | Page |
 | --- | --- | --- | --- |
-| `particles` | Smoke, additive sparks, mesh debris and embers. | `--sparks`, `--smoke`, `--embers`, `--trails`, `--lit-smoke`, `--collide`, `--drop-oldest`, `--workers N`, `--frames N`, `--benchmark [--views 1\|2] [--capacity N]`, `--stress` | [particles](../docs/particles.md) |
+| `particles` | Smoke, additive sparks, mesh debris and embers. | `--sparks`, `--smoke`, `--embers`, `--trails`, `--lit-smoke [--lighting NAME] [--normal NAME]`, `--collide`, `--debris-shadows`, `--drop-oldest` (needs `--stress` or `--benchmark`), `--workers N`, `--frames N`, `--stress`, `--benchmark [--views 1\|2] [--capacity N] [--capture-rgba PATH]` | [particles](../docs/particles.md) |
 | `particles_gpu` | The `particles` example built with `C3D_PARTICLE_GPU`; `--gpu` selects device-stepped systems. | as `particles`, plus `--gpu` | [GPU particles](../docs/particles_gpu.md) |
 | `ui` | A HUD and an inventory with drag and drop; the options add windows, rich text and transitions documents. | `--windows [N]`, `--rich-text`, `--transitions`, `--reload-scroll`, `--reduced-motion`, `--frames N`, `--benchmark --frames F [--labels N] [--windows N] [--rich N] [--transitions]` | [UI](../docs/ui.md) |
 | `audio` | A looping emitter circling the listener, streamed music and one-shots. `1` and `2` play one-shots, `M` and `N` set music and effects volume, `S` toggles the orbiter. | `--null-device`, `--headless --frames N` | [audio](../docs/audio.md) |
@@ -308,6 +317,8 @@ Package: [c3d_landscape](../addons/c3d_landscape.c3l/README.md).
 
 ## Example assets
 
-Each asset directory under `examples/assets/` keeps its source and licence in its own README: [glTF models](assets/gltf/README.md),
+Five asset directories under `examples/assets/` keep their source and licence in a README: [glTF models](assets/gltf/README.md),
 [HDR environments](assets/ibl/README.md), [fonts](assets/fonts/README.md), the [Quaternius character and
-animations](assets/quaternius/README.md) and the [Mixamo downloads](assets/mixamo/README.md) that are not committed.
+animations](assets/quaternius/README.md) and the [Mixamo downloads](assets/mixamo/README.md) that are not committed. The
+`cube`, `lut`, `pbr` and `reload` directories have no README. The recipes for the `cube` and `pbr` files are in the
+[fixtures README](../test/fixtures/README.md), and `reload/generate.py` writes the files of `asset_reload`.

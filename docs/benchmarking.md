@@ -300,7 +300,9 @@ looking along the long axis. Shadow casting dominates the draw count. The option
 [`gltf_viewer`](../examples/README.md#assets-and-models). `--range R` is a fraction of the largest horizontal extent
 (0.08 by default). With `--reflection-probes`, the probe-sampling cost shows in `gpu_opaque_ms` (forward) or
 `gpu_lighting_ms` (deferred). With `--environment-refresh on`, the environment regenerates every frame and is reported as
-`gpu_environment_ms` and its stage columns ([environments](environments.md#preparation-and-edits)).
+`gpu_environment_ms` and its stage columns ([environments](environments.md#preparation-and-edits)). The LUTs record only
+in the first prepared frame, and sheen only for a model with sheen. The upload's CPU mip generation lands in
+`cpu_record_ms`.
 
 The banner printed to standard error repeats the effective settings.
 
@@ -352,8 +354,8 @@ check the regeneration policy: the time-lapse expects `floor(sweep / period)` re
 `step`, and none without an atmosphere; `steady_sky` expects none after the first frame of `noon`;
 `ascent_regenerations` expects none after the first frame of `ascent`. A failed gate exits 1.
 
-The options of the benchmark are the `sky` options listed in the [examples](../examples/README.md#sky-post-processing-and-effects).
-The `FOG_SCATTERING` and `FOG_INTEGRATION` lines report the froxel volume, and the `CLOUDS` and `CLOUD_SHADOWS` lines
+The options of the benchmark are the `sky` options listed in the [examples](../examples/README.md#sky-post-processing-and-effects);
+`--fog off --atmosphere off` is the baseline. The `FOG_SCATTERING` and `FOG_INTEGRATION` lines report the froxel volume, and the `CLOUDS` and `CLOUD_SHADOWS` lines
 report the cloud layer.
 
 ## Post-processing benchmark

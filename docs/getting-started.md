@@ -12,22 +12,23 @@ build pipeline in full is [development](development.md); the packages and their 
 | Python | 3.10 or newer | Standard library only. |
 | glslang | any | `glslangValidator` on `PATH`, from `glslang-tools` or a Vulkan SDK; or pass `--glslang`. |
 | Vulkan loader | any | `libvulkan.so.1` or `vulkan-1.dll`. Every c3d executable imports it at start. |
+| Khronos validation layer | any | Needed whenever `validation` is on, as in every program below: `vulkan-validationlayers` or the Vulkan SDK. |
 | C compiler | any | c3c compiles the vendored C sources (`csrc/`, cgltf, ufbx, clay, miniaudio) with it; MSVC on Windows. |
 | git | any | Fetches the dependency submodules. |
 
 The Vulkan device must support `shaderClipDistance`; `create_renderer` faults `UNSUPPORTED` without it. The target
-platforms are linux-x64 and windows-x64. SDL3, Dear ImGui and the other native libraries need no install: `--init-deps`
+platforms are linux-x64 and windows-x64; the Linux natives need glibc 2.35 or newer. SDL3, Dear ImGui and the other native libraries need no install: `--init-deps`
 downloads them.
 
 On Debian or Ubuntu:
 
 ```bash
-sudo apt-get install -y glslang-tools libvulkan1 libgl1-mesa-dev build-essential
+sudo apt-get install -y glslang-tools libvulkan1 vulkan-validationlayers libgl1-mesa-dev build-essential
 ```
 
 ## Install and build
 
-The checkout directory must keep the name `c3d.c3l`; the example and test projects resolve the library by that name.
+Keep the `lib/c3d.c3l` symlink: the example and test projects resolve the library through it (see Windows).
 
 ```bash
 git clone --recurse-submodules https://github.com/fesoliveira014/c3d.c3l
@@ -36,10 +37,11 @@ python3 scripts/build.py --init-deps --skip-build
 python3 scripts/build.py --example hello
 ```
 
-`--init-deps` updates the submodules, then downloads the native libraries of sdl3, c3imgui, box3d, shaderc, vma and
-spvreflect from each repository's release at the pinned tag, and checks each against that release's `SHA256SUMS`. It
-compiles nothing and later builds download nothing. With `--skip-build` the run stops after verifying the generated files
-and compiling the shaders. Without `--recurse-submodules`, run `git submodule update --init --recursive` first.
+`--init-deps` initializes the submodules itself, so a clone without `--recurse-submodules` works too. It then downloads
+the native libraries of sdl3, c3imgui, box3d, shaderc, vma and spvreflect from each repository's release at the pinned
+tag, and checks each against that release's `SHA256SUMS`. The natives are prebuilt and later builds download nothing. With
+`--skip-build` the run stops after verifying the generated files, which builds gpu.c3l's `gpu_shaders` generator on first
+use, and compiling the shaders.
 
 `--example hello` builds one target and runs it. It prints the library version and opens no window. These commands cover
 the rest:
@@ -133,7 +135,7 @@ fn int main() {
 
     GeometryId box_geometry;
     @pool() {
-        Geometry box = geometry::box(tmem, 1, 1, 1);
+        Geometry box = geometry::box(allocator: tmem, width: 1, height: 1, depth: 1);
         box_geometry = assets.add_geometry(&box, "box")!!;
     };
     MaterialId red = assets.add_material(
@@ -175,8 +177,9 @@ Build and run it with `c3c run first_scene` from the project directory. Releasin
 - **Ids.** `add_geometry` and `add_material` return typed generational ids. Nodes reference assets by id, so one geometry
   serves any number of nodes. See [assets](assets.md) and [scene](scene.md).
 - **Faults.** Every operational failure is a fault. The example unwraps with `!!` and exits on the first one; an
-  application usually handles the faults of file loading and capacity limits. `validation` turns on the Vulkan
-  validation layer, which every development run of the repository's examples uses.
+  application usually handles the faults of file loading and capacity limits. `validation` requests the Khronos
+  validation layer, which every development run of the repository's examples uses. Without the layer installed,
+  creation faults `UNSUPPORTED_FEATURE`; set it to `false` to run without.
 - **Lights.** A `Light` is a component on a node and a directional light points along the node's negative Z axis. See
   [lights](lights.md).
 - **Preparation.** `prepare_scene` uploads the assets the scene references and builds the pipelines, so the first frame
@@ -189,13 +192,15 @@ above runs these steps:
 
 1. `window.poll()` drains events, updates `window.input` and the clock, and returns false when the application should
    quit.
-2. The application reads input, edits nodes and components, and calls the systems it uses: the animation update, the
-   physics step, navigation and particles each have a documented place in the order ([animation](animation.md),
-   [physics](physics.md), [particles](particles.md)).
-3. `scene.update_world()` publishes world matrices and visibility. Call it after the last edit and before anything reads
-   them.
-4. `platform::sync_window` hands the window's pixel size to the renderer, so a resize takes effect on the next frame.
-5. `renderer.render` records, submits and presents the frame for the default view and one camera.
+2. The application reads input and edits nodes and components. Systems that write node transforms, such as the animation
+   update, run here.
+3. `scene.update_world()` publishes world matrices and visibility. Call it after edits and before anything reads them.
+4. Systems that read world matrices (physics, navigation and particles) run after it. Each writer (animation, physics and
+   IK) is followed by another `update_world` before rendering; [animation](animation.md#update-sequence) gives the full
+   order, and [physics](physics.md), [navigation](navigation.md) and [particles](particles.md) state theirs.
+5. `platform::sync_window` hands the window's pixel size and minimized state to the renderer, so a resize takes effect
+   on the next frame.
+6. `renderer.render` records, submits and presents the frame for the default view and one camera.
 
 `render` is shorthand for four calls. Use them directly when a frame has several views or render targets:
 
@@ -218,7 +223,8 @@ the layers fit together.
 | `c3c 0.8.3 required, found ...` | Install c3c 0.8.3; the build refuses other versions. |
 | `'glslangValidator' not found on PATH` | Install `glslang-tools` or a Vulkan SDK, or pass `--glslang <path>`. |
 | `missing dependencies under lib/` or `missing c3imgui native archive` | Run `python3 scripts/build.py --init-deps`. |
-| `create_renderer` faults `UNSUPPORTED` | The device lacks `shaderClipDistance`. Use a different device or driver. |
+| `create_renderer` faults `UNSUPPORTED` | The device lacks `shaderClipDistance`, or the description asks for GPU timings in a build without `C3D_PROFILE_GPU`. |
+| `create_window_renderer` faults `UNSUPPORTED_FEATURE` with `validation` on | The validation layer is missing. Install `vulkan-validationlayers` or the Vulkan SDK, or set `.validation = false`. |
 | `Failed to load '.../shaders/spv/...'` in your project | Run `python3 scripts/build.py --skip-build` in the checkout. |
 
 ## See also
