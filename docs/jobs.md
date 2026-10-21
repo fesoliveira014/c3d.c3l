@@ -283,8 +283,8 @@ The pool does not check these. A range that breaks them races.
 ## ParallelFor hook
 
 Core declares `c3d::ParallelFor` (`src/c3d/parallel.c3`), a caller-supplied fork-join over index ranges. Packages that
-parallelize their own work take a `ParallelFor`: `PhysicsWorld.set_parallel` stages [cloth](cloth.md#parallel-staging),
-and `particle::update` and `particle::step` take a trailing parameter ([particles](particles.md#parallel-update)). Those
+parallelize their own work take a `ParallelFor`: `PhysicsWorld.set_parallel` stages [cloth](cloth.md),
+and `particle::update` and `particle::step` take a trailing parameter ([particles](particles.md)). Those
 packages import no job library; the hook is their only coupling.
 
 | Item | Meaning |
@@ -401,6 +401,6 @@ saved. `--compress` quantizes the clips first and prints their bytes and the lar
 ## See also
 
 - [Profiling](profiling.md): the recorder that receives worker ranges.
-- [Cloth](cloth.md#parallel-staging) and [particles](particles.md#parallel-update): consumers of the `ParallelFor` hook.
+- [Cloth](cloth.md) and [particles](particles.md): consumers of the `ParallelFor` hook.
 - [Benchmarking](benchmarking.md): the runner and the profiling configurations.
 - [Development](development.md#test-targets): the `job_test` and `job_profile_test` targets.

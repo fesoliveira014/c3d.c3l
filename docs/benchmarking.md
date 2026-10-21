@@ -378,7 +378,7 @@ python3 scripts/build.py --target effects --opt O3 --define C3D_PROFILE_GPU --de
 `effects --benchmark FRAMES` renders the interactive example's scene offscreen through the shared benchmark loop, at
 1920 x 1080 after 30 warmup frames. Bloom, depth of field, motion blur and FXAA are on, and the cube spins at the loop's
 fixed frame time. It needs `--gpu-timings`, prints no CSV, and prints the mean over the frames of each [post
-stage](post.md#timings) and of the whole post chain. The stages are parts of the post chain, so their sum is at most its
+stage](post.md) and of the whole post chain. The stages are parts of the post chain, so their sum is at most its
 mean. The other benchmark examples report the same stages as the `gpu_bloom_ms`, `gpu_dof_ms` and `gpu_motion_blur_ms`
 columns when their view enables the effects.
 
