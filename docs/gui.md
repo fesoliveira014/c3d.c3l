@@ -1,233 +1,162 @@
 # GUI overlay
 
-`c3d::gui` provides an application-owned Dear ImGui overlay with scene, Basic material and
-statistics panels. `cube_gui.c3` adds the overlay to the same scene as the first-mesh
-`cube.c3` example. Run either example independently:
+`c3d::gui` is the Dear ImGui adapter. It owns one ImGui context, feeds it the window's input and records its draw data into
+the renderer's overlay over the composed window. It is the only module that imports `imgui`; its backend submodule imports
+`gpu`. The built-in scene, material, post, stats and targets panels are in [GUI panels](gui_panels.md).
 
-```bash
-python3 scripts/build.py --example cube
-python3 scripts/build.py --example cube_gui
-c3c build cube_gui --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
-./examples/build/cube_gui --gpu-timings
+## Quick start
+
+```c3
+import c3d::gui;
+import c3d::platform;
+import c3d::render;
+import imgui;
+
+GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
+defer (void)gui::destroy_gui_renderer(&gui_renderer);
+
+GuiPanelState panels;
+while (window.poll()) {
+    gui_renderer.new_frame();
+
+    if (imgui::begin("Controls", null, {})) imgui::checkbox("Spin", &spin);
+    imgui::end();
+    gui::scene_panel(&scene, &panels);
+    gui::stats_panel(&renderer)!;
+
+    scene.update_world();
+    gui_renderer.finish_frame();
+
+    platform::sync_window(&window, &renderer);
+    renderer.begin_frame(info)!;
+    if (renderer.has_output) {
+        renderer.render_view(&scene, camera_node, renderer.default_view)!;
+        renderer.finish_view(renderer.default_view)!;
+
+        OverlayContext overlay = renderer.begin_overlay()!;
+        gui_renderer.record(&overlay)!;
+        renderer.end_overlay(&overlay)!;
+    }
+    renderer.end_frame()!;
+}
 ```
 
-In `cube_gui`, Spin starts off. Enabling it rotates from the current pose; pausing preserves
-that pose for editing. Select a node in the scene tree to edit its local position, rotation in degrees,
-nonzero scale, visibility and layer mask. The material panel edits the selected mesh's RGB
-color; it advances the asset revision only after a change.
+Run the worked example with `python3 scripts/build.py --example cube_gui`. The same scene without a GUI is `cube`.
 
-## Described components
+## Concepts
 
-A component registered with `c3d::describe` appears in the Scene panel without a
-separate `gui::expose` call. An explicit custom inspector takes precedence over
-its description; a description takes precedence over an exposed reflected
-default. Existing built-in inspectors retain their output.
+- **Ownership.** `GuiRenderer` owns the ImGui context, the font atlas texture and view and a pipeline cache, and uses an
+  interned linear clamp sampler. It borrows the renderer and the window. Both stay at stable addresses until the GUI is destroyed. The supplied allocator owns
+  c3d-side cache storage; ImGui keeps its native allocation policy.
+- **Fonts.** ImGui's built-in font atlas is uploaded once at creation as an RGBA8 texture. The font is not an asset-store
+  texture and `FontId` fonts do not apply to ImGui.
+- **Input.** The adapter reads the window's translated event list, size, pixel density and clock. Nothing is forwarded by the
+  application. ImGui receives keys with modifiers, text, mouse, wheel and focus events; gamepad events are not forwarded.
+  ImGui copy and paste go through the platform clipboard. The adapter writes no `imgui.ini`.
+- **Capture flags.** `new_frame()` sets `window.input.mouse_captured_by_gui` and `keyboard_captured_by_gui` independently
+  from ImGui. Apply them before application controls: mouse capture suppresses orbit and wheel actions; keyboard capture
+  suppresses keyboard controls such as movement, camera switches and quit keys. Native window close stays effective. A control that releases
+  on a key, such as Escape, should remember whether the GUI held capture when the key went down, so cancelling a text edit
+  does not also quit.
+- **Text input.** `new_frame()` writes ImGui's text input want to `window.input.text_input_wanted_by_gui`. Other GUI layers,
+  such as the game UI add-on, OR their own want into it after `new_frame()`. `finish_frame()` applies the combined want once
+  through `Window.set_text_input`, so OS text input toggles only when the combined want changes. See
+  [Windows and input](platform.md#gui-capture-flags).
 
-Descriptions supply display names, clamped numeric ranges, units, enum choices
-and typed references. Transient fields are omitted. Arrays and slices expose
-existing elements without changing their lengths; strings and references are
-read-only. Value-local reconstruction runs after actual edits, once per changed
-value with children before parents. Hook faults appear inline and retain the
-edit. A type needing an external dirty mark or ownership change keeps a custom
-inspector. See [type descriptions](type_descriptions.md) for setup and lifetimes.
+## Create and destroy
 
-## LOD inspection
+`gui::create_gui_renderer(allocator, &renderer, &window)` needs a renderer with a configured window output and no open frame.
+It uploads the font through the renderer and waits for the upload.
 
-The built-in `LodGroup` inspector displays placement mode/count, thresholds,
-part geometry/material IDs, bounds mode, sway and fade. Installed impostors show
-the atlas ID, frame/cell dimensions, radius and terminal threshold. Descriptors
-are read-only.
-The Stats panel labels ordinary object counts as current CPU values and displays
-GPU selected/visible placement counts and fallbacks with their completed frame ID.
-The six count slots include a terminal impostor when installed; its index follows
-that group's mesh levels. Missing-atlas fallback is a separate current CPU count.
-See [whole-object LOD](lod.md).
+`gui::destroy_gui_renderer(&gui)` waits for renderer submissions before it releases GPU objects. Call it before destroying the
+renderer or the window, with no GUI frame and no renderer frame open. If the wait fails, the optional result keeps ownership
+with the caller to retry.
 
-## Decal inspection
+| Fault | Raised by |
+| --- | --- |
+| `CONTEXT_CREATE_FAILED` | `create_gui_renderer` when ImGui cannot create a context. |
+| `FONT_BUILD_FAILED` | `create_gui_renderer` when ImGui cannot build the font atlas. |
+| `UNSUPPORTED_INDEX_WIDTH` | `create_gui_renderer` when ImGui's index type is neither 16 nor 32 bits. |
+| `gpu` and shader faults | Resource, pipeline and upload creation in `create_gui_renderer`; the wait in `destroy_gui_renderer`. |
 
-The built-in `Decal` inspector displays the borrowed material id and edits
-`DecalWeights` through Albedo, Normal, Roughness and Metallic sliders in [0, 1].
-It also edits Fade angle in [0, 90] degrees, Receiver layers (`receiver_layers`)
-and Order. Transform, visibility and camera-layer edits remain on the node.
-These component edits need no material dirty call; shared source material edits
-use the ordinary asset revision rule. See [decals](decals.md).
+## Frame sequence
 
-## Profiler panel
-
-The optional `c3d_profile_gui` add-on extends `c3d::gui` with an owned
-`ProfilerPanel`. Select `C3D_PROFILE_GUI` with at least one of
-`C3D_PROFILE_CPU` or `C3D_PROFILE_GPU`, and select both `c3d_profile_gui` and
-`c3d_profile`. Run the worked scene in any compiled mode:
-
-```bash
-python3 scripts/build.py --example profile_gui_cpu
-python3 scripts/build.py --example profile_gui_internal
-python3 scripts/build.py --example profile_gui_gpu
-python3 scripts/build.py --example profile_gui
-```
-
-The example keeps capture and rendering active while the Profiler window is
-hidden. Its panel supplies Pause and Resume, retained-frame selection and
-explicit reselection of a frozen source frame. It uses the same GUI frame and
-renderer overlay order as `cube_gui`; `gui::profiler_panel(&panel)` runs after
-`new_frame()` and before `finish_frame()`.
-
-Create the recorder before its renderer and keep both at stable addresses.
-Create the panel after the GUI renderer. Destroy the panel before the GUI,
-destroy the GUI before the renderer, and destroy the recorder only after the
-renderer has drained and detached. One thread owns the recorder, its producers
-and panel. The complete capture states, measured-span axes and frozen-snapshot
-behavior are described in [Profiling](profiling.md#inspect-captures-with-imgui).
-
-## Physics inspector
-
-The optional `c3d_physics_gui` add-on adds a physics panel and the physics component inspectors; see
-[Physics inspector](physics_inspector.md).
-
-## Creation and ownership
-
-Create the window, asset store and renderer first, then call
-`gui::create_gui_renderer(allocator, &renderer, &window)`. The renderer must have a configured
-window output and no open frame. Both borrowed objects stay at stable addresses until the
-GUI is destroyed.
-
-The adapter owns its ImGui context, SDL backend, fixed font atlas texture/view and pipeline
-cache. Creation uploads the RGBA8 font through the renderer and waits for that upload.
-The supplied allocator owns c3d-side cache storage; ImGui and SDL retain their native
-allocation policy. The font is not an asset-store texture.
-
-Call `gui::destroy_gui_renderer(&gui)` before destroying the renderer or window. It waits
-for renderer submissions before releasing GPU objects. If waiting fails, the optional result
-preserves ownership for the caller to retry. Finish any open GUI frame before destruction.
-
-## Input and frame order
-
-The adapter owns its ImGui platform side. `new_frame()` reads the window's translated event
-list (`window.events()`), size, pixel density and clock, and feeds ImGui keys, modifiers, text,
-mouse and focus from them; nothing is forwarded by the application. `new_frame()` writes ImGui's
-text input want to `window.input.text_input_wanted_by_gui`; other GUI layers, such as the game UI
-add-on, OR their own want into it after `new_frame()`, and `finish_frame()` applies the combined
-want once through `Window.set_text_input`, so OS text input toggles only when the combined want
-changes. ImGui copy and paste go through the platform clipboard wrappers. The platform helper does
-not import or own GUI.
-
-Call `new_frame()` after polling. It sets `window.input.mouse_captured_by_gui` and
-`keyboard_captured_by_gui` independently. Apply these gates before application controls:
-mouse capture suppresses orbit/wheel actions; keyboard capture suppresses movement, lens
-switches and keyboard quit actions. The example retains capture ownership from Escape down through its release, so cancelling
-a text edit does not also quit. Native window close remains effective.
-
-The frame sequence is:
-
-1. Poll; begin the GUI frame.
+1. Poll the window, then call `new_frame()`.
 2. Apply controls and automatic motion, then draw GUI panels.
 3. Call `scene.update_world()` so edits reach the current output.
-4. Call `gui.finish_frame()` to finalize native draw data.
-5. Begin the renderer frame. When `renderer.has_output`, record
-   `render_view(scene, camera, renderer.default_view)` and `finish_view(renderer.default_view)`,
-   then `begin_overlay()`, `gui.record(&overlay)` and `end_overlay(&overlay)`. The view writes the
-   window inside `finish_view`; the overlay draws over it.
+4. Call `finish_frame()` to finalize ImGui's draw data.
+5. Hand the window size to the renderer (`platform::sync_window`) and begin the renderer frame. When `renderer.has_output`,
+   record `render_view` and `finish_view`, then `begin_overlay()`, `gui.record(&overlay)` and `end_overlay(&overlay)`. The view
+   writes the window inside `finish_view`; the overlay draws over it.
 6. End the renderer frame.
 
-Always call `finish_frame()` after `new_frame()`, including dormant/minimized windows and
-an early exit. GPU recording consumes finalized draw data; it does not close the GUI frame.
-The `cube_gui.c3` example's private `draw_gui_frame` helper demonstrates error cleanup through
-`render::abort_frame`.
-
-`begin_overlay()` opens a color LOAD pass over the composed window. Its `OverlayContext`
-borrows commands and frame allocation access until `end_overlay()`. Storage obtained through
-`overlay.alloc()` survives until GPU completion. The adapter must not free those slices,
-reset the frame arena, submit or present.
+Always call `finish_frame()` after `new_frame()`, including for dormant or minimized windows and on an early exit.
+`GuiRenderer.record` consumes finalized draw data; it does not close the GUI frame. The `cube_gui` example wraps the renderer
+frame in a helper that calls `render::abort_frame` on error.
 
 [Overlay lists](overlay.md) record in the same overlay before the GUI. Call `OverlayContext.draw_list` first and
-`GuiRenderer.record` after it, so ImGui draws on top; the ImGui backend rebinds its own pipeline and state, so the
-list leaves nothing for it to restore.
+`GuiRenderer.record` after it, so ImGui draws on top; the ImGui backend rebinds its own pipeline and state, so the list leaves
+nothing for it to restore.
 
-## Drawing contract
+`begin_overlay()` opens a color pass that loads the composed window. Its `OverlayContext` borrows commands and frame
+allocation access until `end_overlay()`. Storage obtained through `overlay.alloc()` survives until GPU completion. A recorder
+must not free those slices, reset the frame arena, submit or present.
 
-The backend copies ImGui's 20-byte vertices and native-width indices into frame storage.
-Each command retains its own vertex/index offset, texture and clip rectangle. Display origin
-and framebuffer scale come from ImGui draw data; they are not interchangeable with the
-platform's framebuffer-pixel mouse coordinates.
+## Textures and callbacks
 
-Texture references must name live ordinary 2D sampled views on this renderer. The adapter
-registers its fixed font view itself. Dynamic font/texture updates and multiple platform
-viewports are not enabled. HDR, depth and cube images require an explicit visualization
-path before use as ordinary GUI images.
+- The backend copies ImGui's 20-byte vertices and native-width indices into frame storage. Each command keeps its own
+  vertex and index offset, texture and clip rectangle. Display origin and framebuffer scale come from ImGui's draw data; they
+  are not interchangeable with the platform's framebuffer-pixel mouse coordinates.
+- A texture reference names a live, ordinary 2D sampled view on this renderer, by its view index. The adapter registers its
+  own font view. HDR, depth and cube images need an explicit visualization path, such as the
+  [targets panel](gui_panels.md#targets-and-cluster-panel), before they serve as ordinary GUI images.
+- Draw callbacks run in command order, and the backend restores its graphics state afterward. ImGui's legacy reset-state
+  marker restores the state without being invoked. A list holding only callbacks still runs. The newer standard callback slots
+  in ImGui's platform interface are not registered. Callbacks borrow their list and command and must not submit or present.
 
-The backend invokes ordinary draw callbacks and restores its graphics state afterward.
-It also supports ImGui's legacy reset-state marker without invoking that sentinel. Callback-only
-lists run even when they contain no geometry. The newer standard callback slots in PlatformIO
-are not registered. Callbacks borrow their list/command and must not submit or present.
+## Rebuild the native archive
 
-## Statistics
+The adapter links the c3imgui native archive: `lib/c3imgui.c3l/linked-libs/linux-x64/libdcimgui.a` on Linux and
+`windows-x64/dcimgui.lib` on Windows. `python3 scripts/build.py --init-deps` downloads it from the c3imgui release at the
+submodule's pinned tag. The Linux release archive is built on Ubuntu 22.04 and references no glibc symbol newer than 2.35.
 
-Draw totals include composition and GUI. Indirect draws count batch draws issued through
-indirect commands, every pass included. Triangle totals include mesh and GUI geometry.
-Upload bytes count the frame's asset and instance record uploads; they are not GPU resident memory.
-Preparation reports GPU-bound staged bytes, generated mip texels, CPU-only copied bytes,
-pipeline creation calls and their driver nanoseconds. Cache lookups and hits are separate. Object,
-view and allocation creation calls count actual API work; sampler interning does not expose native
-creation. The frame's preparation work and the renderer's cumulative counters retain work spent
-before a propagated fault or frame abort. Progress reports resource completion separately; see
-[Budgeted preparation](preparation.md#budgeted-preparation).
-Scene snapshots count the images copied this frame for [scene readers](custom_shaders.md#scene-reads);
-each copy is also one draw.
-Ring usage reports the previous frame slot's head/capacity and overflow allocation count separately;
-a dormant frame can also be the previous slot.
+On Linux, rebuild the archive on a host with an older glibc, where linking the release archive fails with undefined libc
+symbols, or to change the Dear ImGui build. Install `clang`, `cmake`, a build tool, Python 3 with `venv`, `git` and the OpenGL
+development headers (`libgl-dev`). Then, from `lib/c3imgui.c3l`:
 
-Decals and Decals dropped sum current CPU selection counts across recorded views.
-Completed decal overflows counts cells that exceeded their decal list capacity;
-those cells use the complete ordered list, so overflow does not discard decals.
-It follows the completed cluster view, not a sum across views. The view statistics
-table includes Decals, Decals dropped and Decal overflows separately for each view.
-Counts and overflow can refer to different frames because GPU readback is delayed.
+```bash
+bash scripts/bootstrap.sh
+bash scripts/generate.sh
+git clone --depth 1 --branch release-3.4.16 https://github.com/libsdl-org/SDL.git vendor/sdl-src
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang \
+    -DSDL3_INCLUDE_DIR="$PWD/vendor/sdl-src/include"
+cmake --build build --parallel
+mkdir -p linked-libs/linux-x64
+cp build/libdcimgui.a linked-libs/linux-x64/libdcimgui.a
+```
 
-GPU timings are disabled by default and enabled at renderer creation with
-`RendererDesc.gpu_timings`, or by the `cube_gui` example's `--gpu-timings` flag. Values come
-from completed frame slots and may lag CPU counters. Build with the
-[GPU profiling features](profiling.md#capture-gpu-work) before requesting them.
-The panel shows the completed GPU frame, N/A for absent measurements and partial
-status for truncated summaries; pass buckets sum all recorded views. Timestamp overhead
-can be significant on WSL2 dzn; also compare ordinary rendering with timing disabled rather than subtracting
-a fixed overhead. The memory panel displays the device's advisory per-heap usage, budget,
-allocation and block sizes.
+Then, from the c3d root, run `python3 scripts/build.py --test` to check that everything links against the new archive.
 
-## Cluster diagnostics
+- `bootstrap.sh` fetches Dear ImGui at `v1.92.8-docking` and `dear_bindings` at a pinned revision into `vendor/`;
+  `generate.sh` writes the C API sources into `generated/`. Both directories and `build/` are ignored by the submodule.
+- The build needs the Vulkan headers. Install `libvulkan-dev`, or pass `-DVULKAN_INCLUDE_DIR=<Vulkan-Headers>/include` to
+  `cmake -S . -B build`.
+- Keep the C3 declarations of the pinned package. Do not patch symbols or edit the generated bindings to work around a libc
+  mismatch.
+- `--init-deps` downloads the release archive again and overwrites the local one. Rebuild and copy it afterward on that host.
 
-Call `gui::targets_panel` before `begin_frame`: its Forward/Deferred and Flat/Clustered controls
-apply changes through `configure_view`. Configuration can propagate invalid-argument, unsupported,
-allocation, recording and wait faults; do not treat the panel as an infallible display.
-The [view contract](lights.md#select-lights-with-clusters) describes the editable cluster settings.
+## Limits
 
-For a clustered view, `Cluster slice` starts at zero and is clamped to the current slice
-count. Expand `clusters` to see that depth slice's tile occupancy. Color is based on
-stored finite-light count divided by per-cell capacity: blue is empty, intermediate
-values add green, red is full, and **magenta marks overflow**. Dark grey marks a cell that
-[depth pruning](lights.md#depth-pruning) skipped. Globals are excluded.
-This is a selected-slice heatmap, not the occupancy at visible surfaces or a readback
-of the depth image. Overflow uses complete flat lighting, so magenta does not mean
-lights were dropped.
+- One ImGui context per `GuiRenderer`; the adapter enables no dynamic font or texture updates and no multiple platform
+  viewports.
+- Gamepad input does not reach ImGui.
 
-Slice-depth labels use the active last-rendered camera mapping. Changing lighting mode,
-depth-slice count or clustering far distance invalidates those labels; they read
-`unavailable` until a successful render publishes matching depth data. An unchanged
-configuration retains its labels. Inactive or unavailable cluster data clears the
-preview instead of showing stale grid contents. A `VIEW_CLUSTERS` request requires a
-live clustered view and an in-range slice (`PreviewSource.level`); a dead view faults
-`INVALID_ID`, and a flat view or invalid slice faults `INVALID_ARGUMENT`.
+## See also
 
-The statistics panel labels cluster view, cell count and overflowing-cell count as
-**Completed**, the skipped-cell count included. They arrive after frame-slot completion, can lag current controls and
-CPU counters, and work with GPU timestamps disabled. With multiple views they follow
-the [cluster counter policy](lights.md#diagnostics), not an aggregate. Timestamp-enabled
-runs also show completed `LIGHT_CULL` and opaque GPU times. Cull time includes private
-light upload/reset (an unpruned view only), the tile-depth reduction (a pruned view only),
-assignment and counter copy; opaque time alone is not total cost.
-The dispatch also assigns decals; sampling is timed in the receiver's draw pass,
-including `FORWARD_OPAQUE` and `GBUFFER`. The occupancy heatmap still displays
-finite-light counts, not decal counts.
-Opening a preview adds work, so close it for the main timing comparison.
-
-The [many-lights example](lights.md#diagnostics) combines these panels with fixed workload
-presets, range/capacity controls, camera reset and separate wall-interval reporting.
+- [GUI panels](gui_panels.md) for the built-in panels and what the stats panel counts.
+- [Windows and input](platform.md) for capture flags and text input.
+- [Overlay list](overlay.md) for application-drawn 2D items that draw before the GUI.
+- [Profiling](profiling.md#inspect-captures-with-imgui) for the profiler panel, and the
+  [physics inspector](physics_inspector.md) for the physics panel.
+- [Development](development.md#native-libraries) for the other native libraries.

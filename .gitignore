@@ -7,7 +7,7 @@ openspec/
 # c3c output directories, including the gpu.c3l ABI generator build.
 build/
 
-# Local checkouts for building native dependencies by hand (docs/gui_native_build.md).
+# Local checkouts for building native dependencies by hand.
 .deps/
 
 # Python bytecode from the build scripts.
