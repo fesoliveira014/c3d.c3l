@@ -201,7 +201,7 @@ of the whole extent, built from the same height map and independent of any view.
   1025 map. The software kind adds a copy of the tree's nodes and the hardware kind a bottom level;
   `Stats.trace_posed_bytes` totals the slot. The shared rest geometry adds about 48 B per vertex on the CPU and on the
   GPU. A terrain that finds no posed slot is left out of the trace and counted in `Stats.trace_deform_overflow`
-  ([capacity](scene_trace.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
+  ([capacity](scene_trace_reference.md#custom-trace-poses)). `update` does one error pass over the texels of the chunks it
   refreshes for the grid and one for each coarser level; at preparation that is every chunk, so preparing a traced
   terrain costs one pass over the map per level.
 - **Proxy skip.** The grid is a [trace proxy](scene_trace.md#trace-proxies). A traced ray still starts a fixed 0.02 m
@@ -365,7 +365,7 @@ point outside it is `NOT_FOUND`. Each tile keeps its own collider, height map re
 an edit of one tile does not reach its neighbours' texels.
 
 Serialization stores the set's `texels`, `cell_size` and `height_scale` and each tile's coordinates; the links are
-rebuilt when the tiles prepare (see [serialization](serialization.md#landscape-particle-and-audio-adapters)).
+rebuilt when the tiles prepare (see [serialization](serialization_reference.md#landscape)).
 
 ## Height queries
 
@@ -732,7 +732,7 @@ the collider, then the terrain.
    `GridCache.shift_origin(offset)`, which rebuilds no tile. Subtract the offset from `sampler.origin`; the view it reads
    is the one retaken in step 4, at the same address. A later `set_source` takes `GridCache.source_origin()` as its origin.
 
-See [large worlds](large_world.md#navigation-grid-caches) for the rebase order and offsets.
+See [large worlds](origin_rebasing.md#navigation-grid-caches) for the rebase order and offsets.
 
 ## Removal
 
@@ -878,7 +878,7 @@ C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading fo
 rebuild the bounds again through the [job API](#detached-bounds-in-the-example)), `--validation` and `--sky`
 (an [atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the
 pass lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a
-[froxel volume](sky.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`).
+[froxel volume](fog.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`).
 Interactive runs always validate; benchmark runs validate only with `--validation`.
 
 ### Detached bounds in the example

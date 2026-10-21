@@ -67,7 +67,7 @@ through accumulated corner tangents, the last committed tangent, the rest tangen
 reference triangle's current frame, and a world-axis projection. `Mesh.trace` is the
 application's choice. A traced cloth takes a vertex-motion posed slot: each simulation revision copies
 positions and normals into the slot and refits the trace data instead of rebuilding it, and the top level still
-rebuilds every revision. See `docs/scene_trace.md`, "Vertex-motion slots".
+rebuilds every revision. See `docs/scene_trace_reference.md`, "Vertex-motion slots".
 
 ### Attachments and dihedral bending
 
