@@ -58,7 +58,7 @@ The mapped `pbr` example loads four committed fixtures relative to its source fi
 so it does not depend on the launch directory. Both geometry variants and all
 referenced textures are prepared before interaction. Its private map editor can
 change each slot without modifying shared UV streams; scalar and mapped presets
-make the difference visible. See [the example controls](materials.md#interactive-example)
+make the difference visible. See the `pbr` example
 and [fixture provenance](../test/fixtures/README.md#standard-material-fixtures).
 
 ## Generated alpha coverage
