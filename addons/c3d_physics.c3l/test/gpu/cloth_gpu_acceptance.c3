@@ -814,7 +814,48 @@ fn Node*? add_collider_flag(
     );
 }
 
-// The flags share one place, which no cloth contact separates, and list different colliders.
+// The flags hang in one place, where cloths do not meet. The last variant lists nothing and is what the others' effect is read against.
+fn void check_collider_batch(Fixture* fixture, FlagOptions[] variants) @private {
+    add_movers(fixture)!!;
+    GeometryId geometry = add_flag_geometry(fixture, SMALL_CELLS, hanging: true)!!;
+    Node*[] hosts = alloc::new_array(tmem, Node*, variants.len);
+    Node*[] devices = alloc::new_array(tmem, Node*, variants.len);
+    Vec3[][] initials = alloc::new_array(tmem, Vec3[], variants.len);
+    foreach (index, options : variants) {
+        hosts[index] = add_collider_flag(fixture, geometry, ClothExecution.CPU, options)!!;
+        devices[index] = add_collider_flag(fixture, geometry, ClothExecution.GPU, options)!!;
+        ClothState* state = fixture.scene.get(hosts[index], Cloth).state;
+        initials[index] = alloc::new_array(tmem, Vec3, state.positions.len);
+        initials[index][..] = state.positions[..];
+    }
+
+    for (uint step = 0; step < TWIN_STEPS; step++) {
+        pose_movers(fixture, step + 1);
+        run_frame(fixture, true)!!;
+        assert(fixture.renderer.stats.dispatches == 1);
+    }
+    for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(fixture, false)!!;
+
+    ClothState* bare = fixture.scene.get(hosts[variants.len - 1], Cloth).state;
+    foreach (index, host : hosts) {
+        TwinResult result = compare_twins(fixture, host, devices[index], initials[index]);
+        ClothState* listed = fixture.scene.get(host, Cloth).state;
+        foreach (particle, position : listed.positions) {
+            result.effect = math::max(result.effect, (position - bare.positions[particle]).length());
+        }
+        io::printfn(
+            "colliders batch cloth %d worst %.3e m, effect %.3e m, inside %.3e m",
+            index,
+            result.worst,
+            result.effect,
+            result.inside,
+        );
+        assert(result.worst <= COLLIDER_TOLERANCE);
+        assert(result.inside <= cloth::DEFAULT_CONTACT_TOLERANCE + ROUNDING_SLACK);
+        assert(index == variants.len - 1 || result.effect >= FEATURE_FLOOR);
+    }
+}
+
 fn void test_small_flags_listing_different_colliders_step_in_one_dispatch() @test {
     Fixture fixture;
     create_fixture(&fixture)!!;
@@ -829,44 +870,37 @@ fn void test_small_flags_listing_different_colliders_step_in_one_dispatch() @tes
         variants[1].capsule = true;
         variants[2].sphere = true;
         variants[2].capsule = true;
-        add_movers(&fixture)!!;
-        GeometryId geometry = add_flag_geometry(&fixture, SMALL_CELLS, hanging: true)!!;
-        Node*[4] hosts;
-        Node*[4] devices;
-        Vec3[][4] initials;
-        foreach (index, options : variants) {
-            hosts[index] = add_collider_flag(&fixture, geometry, ClothExecution.CPU, options)!!;
-            devices[index] = add_collider_flag(&fixture, geometry, ClothExecution.GPU, options)!!;
-            ClothState* state = fixture.scene.get(hosts[index], Cloth).state;
-            initials[index] = alloc::new_array(tmem, Vec3, state.positions.len);
-            initials[index][..] = state.positions[..];
-        }
+        check_collider_batch(&fixture, variants[..]);
+    };
+}
 
-        for (uint step = 0; step < TWIN_STEPS; step++) {
-            pose_movers(&fixture, step + 1);
-            run_frame(&fixture, true)!!;
-            assert(fixture.renderer.stats.dispatches == 1);
-        }
-        for (uint frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) run_frame(&fixture, false)!!;
+fn void test_small_flags_listing_colliders_and_soft_attachments_step_in_one_dispatch_of_the_full_stage() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
 
-        ClothState* bare = fixture.scene.get(hosts[3], Cloth).state;
-        foreach (index, host : hosts) {
-            TwinResult result = compare_twins(&fixture, host, devices[index], initials[index]);
-            ClothState* listed = fixture.scene.get(host, Cloth).state;
-            foreach (particle, position : listed.positions) {
-                result.effect = math::max(result.effect, (position - bare.positions[particle]).length());
-            }
-            io::printfn(
-                "colliders batch cloth %d worst %.3e m, effect %.3e m, inside %.3e m",
-                index,
-                result.worst,
-                result.effect,
-                result.inside,
-            );
-            assert(result.worst <= COLLIDER_TOLERANCE);
-            assert(result.inside <= cloth::DEFAULT_CONTACT_TOLERANCE + ROUNDING_SLACK);
-            assert(index == 3 || result.effect >= FEATURE_FLOOR);
-        }
+    @pool() {
+        FlagOptions plain = collider_options();
+        plain.sphere = false;
+        plain.capsule = false;
+        FlagOptions[3] variants = { plain, plain, plain };
+        variants[0].sphere = true;
+        variants[1].sphere = true;
+        variants[1].soft = true; // a featured member makes the batch run the full stage
+        check_collider_batch(&fixture, variants[..]);
+    };
+}
+
+fn void test_large_flag_in_a_breeze_pushed_by_colliders_matches_its_cpu_twin_in_the_full_fused_stage() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+
+    @pool() {
+        FlagOptions options = collider_options();
+        options.wind = true; // a feature besides the shapes, so the cloth runs the full stage
+        TwinResult result = twin_run(&fixture, LARGE_CELLS, ClothStepShape.FUSED, options, controlled: true);
+        report_colliders("colliders and wind fused", result);
     };
 }
 
