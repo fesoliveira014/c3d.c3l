@@ -34,8 +34,8 @@ zero-initialized `ViewDesc` has none of them: start from a constructor.
 | `fog_temporal` | false | Accumulates the fog volume over frames ([temporal accumulation](fog.md#temporal-accumulation)); needs `volumetric_fog`; keeps a second volume |
 | `cloud_temporal` | false | Accumulates the cloud layer over frames ([cloud temporal accumulation](clouds.md#cloud-temporal-accumulation)); keeps a second pair of cloud images |
 | `share_shadows` | true | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own |
-| `transmission_layers` | 0 (reads 1) | Scene-read snapshots, so glass can see glass behind it ([transmission layers](materials.md#transmission-layers)); up to `MAX_TRANSMISSION_LAYERS` (4) |
-| `transparency` | `SORTED` | `SORTED` orders blended surfaces by object; `WEIGHTED` accumulates them without ordering ([weighted transparency](materials.md#weighted-transparency)) |
+| `transmission_layers` | 0 (reads 1) | Scene-read snapshots, so glass can see glass behind it ([transmission layers](transparency.md#transmission-layers)); up to `MAX_TRANSMISSION_LAYERS` (4) |
+| `transparency` | `SORTED` | `SORTED` orders blended surfaces by object; `WEIGHTED` accumulates them without ordering ([weighted transparency](transparency.md#weighted-transparency)) |
 | `pre_exposure_override` | 0 (follow the camera) | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a power of two from 2^-16 to 2^16 |
 | `msaa` | `ONE` (off) | `MsaaSamples`: samples per pixel of the opaque scene passes ([MSAA](msaa.md)) |
 

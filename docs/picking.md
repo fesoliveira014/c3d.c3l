@@ -87,7 +87,7 @@ current pose and morph weights. Bounds survive `release_geometry_cpu`, so bounds
 gone.
 
 `TRIANGLES` tests triangles only for static retained geometry: positions still present, `TRIANGLES` topology, no morph
-targets, no skin binding, no bounds override and no [geometry write](custom_shaders.md#geometry-writes) since the last CPU
+targets, no skin binding, no bounds override and no [geometry write](compute.md#geometry-writes) since the last CPU
 revision. Such a mesh is hit only where a triangle is, at the nearest one; when two triangles lie at the same distance, the
 lower triangle index wins. Every other mesh reports its bounds hit with `triangle_hit == false`; rest-pose triangles are
 never presented as an animated surface. Released geometry needs an explicit reload before a triangle query sees it again.

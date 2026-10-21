@@ -82,7 +82,7 @@ view returns to `FORWARD`. Together they take 28 bytes per working pixel.
   [colored shadows](shadows.md#colored-shadows) and traced shadows. It offsets shadow lookups along a face normal
   rebuilt from depth; see [normal offset](shadows.md#normal-offset).
 - **Decals.** Standard and Physical receivers apply decals to their material sample before `write_gbuffer`, and the
-  resolve does not apply them again ([decals](materials.md#decals)).
+  resolve does not apply them again ([decals](decals.md)).
 - **Effects.** Ambient occlusion, screen-space GI and traced reflections on a deferred view read the G-buffer's normal
   channel, and traced reflections its specular weight. Ray-traced ambient occlusion and traced reflections also read
   the flags channel for the proxy skip height. Under [MSAA](msaa.md) they read the sample-0 copies.

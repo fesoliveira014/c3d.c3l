@@ -166,7 +166,7 @@ visibility tests, and its shadows reuse those selections, including offscreen ca
   with the inverse transpose for normals. Placement and part reflections both affect front faces.
 - **Blended parts.** Blended parts share a far-to-near list by object center within each level and parity bin. Triangles
   across parts and separate parity ranges do not interleave. In a view with `transparency = WEIGHTED`, a level whose
-  blended parts all join the [weighted pass](materials.md#weighted-transparency) takes no sorted list and no sort keys.
+  blended parts all join the [weighted pass](transparency.md#weighted-transparency) takes no sorted list and no sort keys.
 - **Motion vectors.** Fresh and incompatible LOD pixels write 1 into velocity alpha, and stable compatible pixels write
   0. Velocity xy and previous depth z keep their meaning. TAA, screen-space GI, temporal ambient occlusion and the
 reflection history reject the flagged pixels without discarding view history. Custom stages that use

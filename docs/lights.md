@@ -144,7 +144,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 Standard, Toon and non-transmitting Physical materials use the selector, including ordinary alpha-blended
 surfaces. Physical materials with nonzero transmission use the flat list for their whole direct-light loop,
 because the exit point can lie outside the surface cell. Custom shaders stay flat until they opt in; see the
-[shared light selector](custom_shaders.md#light-selection).
+[shared light selector](custom_shaders_reference.md#light-selection).
 
 ### Storage
 
@@ -170,7 +170,7 @@ most `shader::MAX_CLUSTER_DECALS` (8) indices. Indices keep the complete decal a
 the per-view limit, selection keeps the lowest-order base layers and drops higher-order overlays first. A cell over
 its decal capacity, inactive coverage or a position outside the grid uses the complete ordered decal list. Decal and
 light overflow are independent. `FLAT` views upload the selected decal records through the frame ring and allocate no
-cluster regions. See [decals](materials.md#decals).
+cluster regions. See [decals](decals.md).
 
 ### Depth pruning
 
@@ -253,5 +253,5 @@ panel switches selection mode, light range, cell capacity and depth pruning. Wit
 - [Views](views.md) for `ViewDesc` and `configure_view`.
 - [Shadows](shadows.md) and [ray-traced shadows](ray_traced_shadows.md).
 - [Materials](materials.md) for how light terms combine with material factors.
-- [Custom shaders](custom_shaders.md#light-selection) for the light selector helpers.
+- [Custom shaders](custom_shaders_reference.md#light-selection) for the light selector helpers.
 - [Environments](environments.md) for image-based lighting.

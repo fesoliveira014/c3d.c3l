@@ -330,7 +330,7 @@ A dead `view` or `camera` faults `c3d::INVALID_ID`, and a `camera` node without 
 `c3d::INVALID_ARGUMENT`, both before any dispatch is recorded.
 
 **Which depth.** `update` records before `render_view`, so a dispatch that names `read_view_depth(view)` reads the view's
-previous rendering, one frame old (see [dispatch textures](custom_shaders.md#textures)). The package derives the
+previous rendering, one frame old (see [dispatch textures](compute.md#textures)). The package derives the
 camera's matrices with `camera::derive_matrices` from the camera node's world matrix relative to the frame origin and
 the view's working extent, the same inputs the view renders with, and keeps them with the frame index. The matrices
 commit once `Renderer.frame_was_submitted` confirms the frame, so an aborted frame never replaces the camera of an
@@ -664,7 +664,7 @@ and core's rules for instanced batches apply to them:
 - Setting either field outside MESH mode fails `INVALID_ARGUMENT`.
 
 `add_particle_shader` creates a shared fragment-only shader using core's depth
-snapshot, with its [weighted form](custom_shaders.md#weighted-transparency), so source-over
+snapshot, with its [weighted form](custom_shaders_reference.md#weighted-form), so source-over
 particles take part in a view with `transparency = WEIGHTED`. `add_particle_material` copies a 32-byte payload and creates a blended,
 depth-tested, double-sided material with depth writes off. Slot 0 is an optional
 sprite map. `ParticleMaterialParams.color` multiplies particle/texture colour.
@@ -746,7 +746,7 @@ billboard material restrictions are documented separately.
 
 Core sorts the instances of a blended batch within that batch, not across batches, so overlapping smoke and
 sparks systems draw in scene order. A view with `transparency = WEIGHTED` records source-over particle batches in the
-[weighted pass](materials.md#weighted-transparency) and skips their sort, because the particle shader has a weighted
+[weighted pass](transparency.md#weighted-transparency) and skips their sort, because the particle shader has a weighted
 form; additive batches, such as sparks and embers, keep their sort in that view. There is no global sort across
 batches.
 
