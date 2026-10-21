@@ -225,7 +225,7 @@ fn uint grid_cells(float extent, float cell_size) @local {
     return side * side;
 }
 
-// Cells a faded layer can hold records for per view camera; docs/vegetation.md derives it.
+// Cells a faded layer can hold records for per view camera; docs/vegetation.md, Budgets, derives it.
 fn uint batch_formula(
     float fade_end,
     float reach,
