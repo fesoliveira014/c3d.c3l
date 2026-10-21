@@ -256,7 +256,7 @@ light loop is markedly slower below `main`. The caller fills the sample:
 
 - `world_position` selects the probes and the lights, sets the light direction and starts the traced shadow ray. A
   forward stage passes [`v_shading_pos`](custom_shaders_reference.md#shading-position-varying), not `v_world_pos`, so
-  that on a view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the ray starts inside the triangle.
+  that on a view with [`msaa`](msaa.md) above `ONE` the ray starts inside the triangle.
 - `specular_weight` is 1 for Standard and 0 for a diffuse-only surface, the value a G-buffer stage passes to
   `write_gbuffer`.
 - `pixel` is `ivec2(gl_FragCoord.xy)`. Ambient occlusion and [screen-space GI](screen_space_gi.md) follow the draw flags
@@ -478,7 +478,7 @@ Standard twin does. `examples/shaders/custom/pulse_gbuffer.frag.glsl` is the ref
   `GBUFFER_PROXY_SKIP_UNIT`). A stage that writes location 4 itself keeps those bits for the lighting resolve and the
   traced effects. A material whose traced stand-in can sit above its surface raises the height before shading
   ([trace proxies](scene_trace.md#trace-proxies)). It stays zero otherwise.
-- On a `DEFERRED` view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE` the stage writes the multisample
+- On a `DEFERRED` view with [`msaa`](msaa.md) above `ONE` the stage writes the multisample
   G-buffer. The stage source does not change, and it still shades once per pixel and primitive.
 - `CustomMaterialGpu.capabilities` carries `CUSTOM_CAPABILITY_GBUFFER` when the stage is present. A rejected G-buffer
   stage leaves the forward stage of the same shader drawing.
@@ -532,7 +532,7 @@ on the pair.
   bytes per pixel at mip zero; its mip chain adds about a third). Only
   [Physical transmission](transparency.md#physical-transmission) fills the mip chain; the helpers below read mip zero.
   `scene_depth` is `R32_FLOAT` and holds the reverse-Z depth bit for bit (4 bytes per pixel).
-- **MSAA.** On a view with [`msaa`](views.md#multisample-anti-aliasing) above `ONE`, the snapshots and the scene-read
+- **MSAA.** On a view with [`msaa`](msaa.md) above `ONE`, the snapshots and the scene-read
   list record after the resolve: a reader samples single-sample color and depth and draws single-sample. A custom stage
   in the opaque list runs in the multisample pass and still shades once per pixel.
 - **Extent and jitter.** The snapshots have the view's working extent and share the frame's jittered matrices, so render

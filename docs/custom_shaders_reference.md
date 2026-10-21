@@ -142,7 +142,7 @@ blend weight toward the next cell of a [sprite sheet](billboards.md#sprite-sheet
 `write_mesh_outputs` writes the world position that feeds `v_world_pos` to `v_shading_pos`. The depth and velocity forms
 leave it out, as they leave out `v_world_pos`. The built-in billboard, ribbon, terrain and water stages write it too.
 
-Under [multisample anti-aliasing](views.md#multisample-anti-aliasing) a forward fragment runs once per pixel when any
+Under [multisample anti-aliasing](msaa.md) a forward fragment runs once per pixel when any
 sample is covered and interpolates `v_world_pos` at the pixel center, which can lie outside the triangle. A traced
 shadow ray started there can begin below the neighboring surface and hit it, which draws as speckle on finely
 tessellated terrain. `centroid` interpolates inside the covered samples. On a view without MSAA it is the pixel center,
@@ -250,10 +250,10 @@ through.
 A custom forward stage receives ray-traced shadows through `ShaderDesc.traced_fragment`. `hardware` is the forward
 source compiled with `RT_SHADOWS`, drawn on renderers with ray queries. `software` is the same source compiled with
 `RT_SHADOWS` and `SCENE_TRACE_BVH`, drawn on renderers without them (see
-[ray-traced shadows](shadows.md#ray-traced-shadows) and [scene tracing](scene_trace.md)). `shadows.glsl` defines
+[ray-traced shadows](ray_traced_shadows.md) and [scene tracing](scene_trace.md)). `shadows.glsl` defines
 `SCENE_TRACE_RAY_QUERY` under `RT_SHADOWS` unless `SCENE_TRACE_BVH` is set, so one source serves all three forms. In a
 fragment stage `shadow_visibility`, `shadow_transmittance` and `ray_shadow_visibility` cast the view's
-[soft shadow](shadows.md#soft-shadows) rays at a light with a source extent. A traced form under forward MSAA should
+[soft shadow](ray_traced_shadows.md#soft-shadows) rays at a light with a source extent. A traced form under forward MSAA should
 pass them [`v_shading_pos`](#shading-position-varying) as the receiver position.
 
 A traced form includes the soft-shadow code by default and draws on every view that traces shadows, whether or not a
@@ -283,7 +283,7 @@ evaluation and the material lighting. The returned indices preserve the original
 The selector includes global lights once and falls back to the complete list outside coverage or on cell overflow. Do
 not append globals yourself. Use `flat_lights(frame)` when one loop evaluates lighting away from the supplied position,
 as Physical transmission does for its exit point. The same helpers work in custom vertex stages, with the position and
-depth that suit the stage. [Lights](lights.md) describes grid coverage and ownership.
+depth that suit the stage. [Lights](lights.md#select-lights-with-clusters) describes grid coverage and ownership.
 
 ## Prepass stage
 
@@ -392,7 +392,7 @@ An orthographic selecting view has no distance term and takes the size rule, so 
 in `FrameRoot.flags`, not `frame.proj`: a shadow layer's `proj` is the light's, orthographic for every directional
 cascade whatever the view is. Draws in shadow layers and the depth prepass read the owning view's camera from
 `FrameRoot.selection_camera` and its projection kind from the flag, so their surface matches the shaded one
-([selection camera](views.md#selection-camera)).
+([selection camera](views_reference.md#selection-camera)).
 
 ## Trace pose
 

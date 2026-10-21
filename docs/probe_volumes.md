@@ -83,7 +83,7 @@ rotates its ray set by a rotation drawn from the frame index.
   Every light with shadows enabled traces one shadow ray per hit that it can reach (facing, in range and
   cone), toward a point of its source when it has an extent; the shadow atlas is not used. Up to `RendererDesc.max_lights` lights; drops count in
   `Stats.lights_dropped`. Each scene update owns a separate no-frustum
-  [spatial lookup](many_lights.md#spatial-light-lookup) for this packed list; camera views do not
+  [spatial lookup](lights.md#spatial-light-lookup) for this packed list; camera views do not
   supply or share its candidates.
 - **Fog.** A hit takes the scene's height fog and, behind it, its atmosphere over the ray from the probe, and a
   miss takes the height fog to infinity; the fog is the first valid `HeightFog` on a visible node of any layer

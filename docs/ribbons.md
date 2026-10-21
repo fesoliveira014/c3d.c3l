@@ -152,4 +152,4 @@ single-point batches create no upload and no draw.
 ## Serialization
 
 `c3d.RibbonBatch` is a core codec at version 1. It carries the material, the capacity and the live points, and applies the
-point rules above on read and write. See [serialization](serialization.md).
+point rules above on read and write. See [serialization](serialization_reference.md#core-values-and-batches).
