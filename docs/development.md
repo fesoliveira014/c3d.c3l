@@ -40,15 +40,15 @@ The steps run in this order and stop at the first failure.
 
 | Step | What it does |
 | --- | --- |
-| tools | Checks Python, c3c 0.8.3 and glslang. |
+| tools | Checks Python and c3c 0.8.3, and glslang unless `--skip-shaders` is given. |
 | deps | Checks that the submodules under `lib/` exist and that the ImGui native archive is present. With `--init-deps`, first updates the submodules and fetches the natives. |
 | abi | Runs `scripts/gen_abi.py` to verify the C3 and GLSL twins of `abi/c3d.abi`. The first run builds gpu.c3l's `gpu_shaders` generator. |
-| shaders | Runs `scripts/build_shaders.py`: compiles every stage to SPIR-V and verifies the committed generated tables. |
+| shaders | Runs `scripts/build_shaders.py --check`: compiles every stage, probe and shader package, then verifies the committed generated tables. |
 | build | Builds every target of `examples/project.json` and every add-on example, or only `--target`. Places the shaderc shared library next to the executables. |
 | test | With `--test`: runs the unit tests of the scripts (`scripts/test_*.py`), then every test target below. |
 | run | With `--example`: runs that example. |
 
-`--regen` makes the abi and shaders steps rewrite the committed generated files instead of verifying them. An example name
+`--regen` makes the abi and shaders steps rewrite the committed generated files instead of verifying them (the shaders step then runs `build_shaders.py` without `--check`). An example name
 resolves to its package project through the `ADDON_EXAMPLES` table in `scripts/build.py`.
 
 Examples that use Vulkan open a window and a device. GPU examples set `validation = true` in their renderer description, so
@@ -63,8 +63,8 @@ directories of the submodule. Nothing is compiled.
 
 - SDL3 and Dear ImGui link statically on Linux and Windows.
 - shaderc is a shared library. The build copies `libshaderc_shared.so.1` (Linux) or `shaderc_shared.dll` (Windows) next to the
-  example and test executables; on Linux its manifest sets the runpath to `$ORIGIN`. Only targets that enable
-  `C3D_SHADER_COMPILER` link it.
+  example and test executables; on Linux its manifest sets the runpath to `$ORIGIN`. Many projects list shaderc as a dependency, but only an
+  executable with code under `C3D_SHADER_COMPILER` needs the library at run time.
 - To build the ImGui natives locally instead of downloading them, see [GUI native build](gui_native_build.md).
 
 ## Shader pipeline
@@ -77,13 +77,17 @@ GLSL sources live in `shaders/` as `<name>.<stage>.glsl`; shared includes are pl
 that custom and package stages may rely on. `scripts/build_shaders.py` does the following in one run:
 
 1. Compiles every entry to `shaders/spv/<name>.spv`. SPIR-V is build output and is not committed.
-2. Writes `src/c3d/shader/variants.c3` (the `ShaderName` enum, flags and the embedded SPIR-V table) and
-   `src/c3d/shader/includes.c3` (the GLSL include set, which the in-process compiler resolves without a filesystem).
-3. Compiles one probe per public include after the two ABI headers alone, so each public include includes everything it uses.
-4. Builds every shader package: a directory under `addons/*/` or `test/` with `shaders/shaders.json` (module, output file,
+2. Compiles one probe per `public_includes` row (include, stage and defines) after the two ABI headers alone, so each public
+   include includes everything it uses.
+3. Builds every shader package: a directory under `addons/*/` or `test/` with `shaders/shaders.json` (module, output file,
    flags, entries). A package compiles against core's include roots plus its own `shaders/include/<name>/`, and writes SPIR-V
    to its own `shaders/spv/` and a C3 file holding the `$embed` constants and, when it has includes, a public
-   `<NAME>_SHADER_INCLUDES` table. The packages are `addons/c3d_landscape.c3l`, `addons/c3d_particle.c3l` and `test/shaders`.
+   `<NAME>_SHADER_INCLUDES` table. The packages are `addons/c3d_landscape.c3l`, `addons/c3d_particle.c3l` and `test`
+   (manifest `test/shaders/shaders.json`).
+4. Verifies the committed tables, or writes them when `--check` is absent: `src/c3d/shader/variants.c3` (the `ShaderName`
+   enum, flags and the embedded SPIR-V table), `src/c3d/shader/includes.c3` (the GLSL include set, which the in-process
+   compiler resolves without a filesystem), the `shaders/gpu/` copy and each package's output file. `build.py` passes
+   `--check` unless `--regen` is given. Without `--check`, the script refreshes the `shaders/gpu/` copy before the compiles.
 
 Shared layouts live in `abi/c3d.abi`. `scripts/gen_abi.py` generates `src/c3d/shader/abi.c3` and
 `shaders/generated/c3d_abi.glsl` from it. The generated C3 and GLSL files are committed and verified on every build; never
@@ -143,7 +147,8 @@ These targets never create a GPU device and run in CI. Each package keeps its te
 | `addons/c3d_audio.c3l` | `audio_test`, `audio_serial_test`, `audio_serial_policy_test` |
 
 The feature targets enable the flags described in [architecture.md](architecture.md#feature-flags) in their `project.json`; the serialization adapter targets are described in [AGENTS.md](../AGENTS.md) section 1.3. The serial package's `serial_lookup_bench` and `serial_claims_bench` stay outside `--test`.
-A new package test target is added to the matching `*_TEST_TARGETS` tuple in `scripts/build.py`.
+A new package test target is added to the matching `*_TEST_TARGETS` tuple in `scripts/build.py`. A direct
+`c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package.
 
 Run one target, or one test, directly:
 
@@ -158,9 +163,9 @@ Acceptance projects exercise the renderer and the GPU add-on modules on a real V
 run under `--test` or in CI, and they create a device with validation enabled. Build the repository once first, so
 `shaders/spv/` and the generated tables exist.
 
-| Project | Targets | Output directory | Needs the shaderc library |
+| Project | Targets | Output directory | Needs the shaderc library at run time |
 | --- | --- | --- | --- |
-| `test/gpu/render` | `acceptance`; benchmarks `origin_bench`, `posed_trace_bench` | `build/render_acceptance` | yes |
+| `test/gpu/render` | `acceptance`; executables `origin_bench` and `posed_trace_bench`, built with `c3c build` and run with `c3c run` | `build/render_acceptance` | yes |
 | `test/gpu/profile` | `acceptance` | `build/profile_gpu` | yes; `build.py` places it |
 | `test/gpu/animated_crowd` | `acceptance` | `test/gpu/animated_crowd/build` | yes |
 | `test/gpu/animation_authoring` | `acceptance` | `test/gpu/animation_authoring/build` | yes |
@@ -170,9 +175,10 @@ run under `--test` or in CI, and they create a device with validation enabled. B
 | `addons/c3d_ui.c3l/test/gpu` | `ui_acceptance` | `build/ui_acceptance` | no |
 
 Run a project with `c3c test <target> --path <project>`, for example `c3c test acceptance --path test/gpu/render`;
-`--test-filter <name>` selects one test. Projects that enable `C3D_SHADER_COMPILER` link shaderc. `build.py` places the
-shaderc library only in the output directory of `test/gpu/profile` (when it builds the default set or the `profile_gpu`
-example), so for every other project in the table, copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` (Linux) or
+`--test-filter <name>` selects one test. Every project lists shaderc as a dependency, but only an executable with code under
+`C3D_SHADER_COMPILER` needs the library at run time; the last column marks those projects. `build.py` places the library
+only in the output directory of `test/gpu/profile`, when it builds the default set or the `profile_gpu` example. For every
+other project marked yes, copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` (Linux) or
 `lib/shaderc.c3l/windows/shaderc_shared.dll` (Windows) next to the built `testrun` executable before running.
 
 Each project's README, where it has one, lists what it covers and what it cannot show.
@@ -223,5 +229,6 @@ a hardware run.
 - [AGENTS.md](../AGENTS.md): the verification policy for changes.
 - [architecture.md](architecture.md): packages, feature flags and the directory map.
 - [style.md](style.md): the code style baseline.
+- [REVIEW.md](../REVIEW.md): how a change is reviewed, including the runs a reviewer performs.
 - [release.md](release.md): packages, dependencies and how to cut a release.
 - [benchmarking.md](benchmarking.md) and [profiling.md](profiling.md): measurement tools.

@@ -11,7 +11,7 @@ the layers, the modules, the add-on packages, the feature flags and the director
 | --- | --- | --- |
 | Scene | `c3d`, `c3d::maths`, `c3d::ecs`, `c3d::describe`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::debug` and the CPU add-ons | CPU data and systems. Holds no GPU object and runs without a device. |
 | Platform | `c3d::platform` | Window, input, events, gamepads and actions over SDL3. |
-| Render | `c3d::render`, `c3d::render::post`, `c3d::shader`, `c3d::gui` | Owns every GPU object. Reads the scene and the asset store; mirrors assets in renderer-owned records. |
+| Render | `c3d::render`, `c3d::render::post`, `c3d::shader`, `c3d::gui`, and the gated add-on modules `c3d::particle::gpu` and `c3d::landscape::water_gpu` | Owns every GPU object. Reads the scene and the asset store; mirrors assets in renderer-owned records. The two gated modules import `c3d::render` under their flags and create no GPU object. |
 | UI | `c3d::ui` (add-on) | Draws game UI into the renderer's overlay list. |
 
 Data flows one way. The application edits the scene and the asset store, and calls systems (animation update, physics step,
@@ -39,7 +39,7 @@ camera-relative origins; see [large worlds](large_world.md).
 | `c3d::camera`, `c3d::material`, `c3d::light` | Camera, material and light descriptions, including atmosphere, fog, cloud layers, medium volumes and probes. |
 | `c3d::anim`, `anim::ik`, `anim::retarget` | Clips, animators, blending, skinning, inverse kinematics and retargeting. |
 | `c3d::model` | Model instantiation, crowds and animated LOD. |
-| `c3d::spatial`, `spatial::bvh` | Bounding volume trees, the scene index, CPU picking and LOD selection. |
+| `c3d::spatial`, `spatial::bvh` | Bounding volume trees, the scene index, CPU picking, and the liveness, bounds and part matrices of LOD groups. The renderer selects the level. |
 | `c3d::debug` | The `DebugDraw` line list. |
 | `c3d::platform` | Window, input, events, gamepads and actions over SDL3. |
 | `c3d::render`, `render::post` | The renderer, its passes and display post-processing. |
@@ -69,8 +69,9 @@ Which module may import which library is the table in [AGENTS.md](../AGENTS.md) 
 ## Add-on packages
 
 An add-on is a packed library under `addons/<name>.c3l/` with its own `manifest.json`, `project.json`, sources, tests and
-examples. Applications select it explicitly in `project.json`. Core never imports an add-on and has no flag for one. The
-import sets are in [AGENTS.md](../AGENTS.md) section 1; the dependencies to list per package are in [release.md](release.md).
+examples. Applications select it explicitly in `project.json`. Core never imports an add-on and has no flag for one, except
+the profiler, which core reaches only through the gated bridges described in [AGENTS.md](../AGENTS.md) section 1.3. The
+import sets are in the same section; the dependencies to list per package are in [release.md](release.md).
 
 | Package | Modules | Owned targets (see [development.md](development.md)) | Detail |
 | --- | --- | --- | --- |
@@ -91,12 +92,14 @@ Module notes:
 
 - A module with faults of its own declares them in its `faults.c3`: `c3d::physics`, `physics::cloth`, `c3d::nav`,
   `c3d::character`, `c3d::ui`, `c3d::profile`, the profiler panel, `c3d::serial`, `c3d::landscape` and `landscape::terrain`.
-  The other add-on modules use the root faults of `c3d`.
+  The other add-on modules return the root faults of `c3d`, faults of the standard library (`c3d::job` returns `NOT_FOUND`
+  and `thread::INIT_FAILED`), faults of `c3d::describe` and faults of a sibling module (`landscape::STALE`,
+  `terrain::NOT_PREPARED`).
 - `c3d::physics::collide` is world-free; it shares the names `Sweep`, `Manifold` and `ManifoldPoint` with `b3`, so a module
   importing both qualifies them. `physics::cloth` opens `c3d::physics` with `@public` for its private helpers.
 - `c3d::landscape` holds the generated constants of the package's shader package, the shared `STALE` fault and the hash and
-  Gaussian helpers its submodules share; they read it with `import c3d::landscape @public;`. `foliage` and `water` open
-  `terrain` with `@public` for its placement and query predicates. `terrain` declares `NOT_PREPARED`.
+  Gaussian helpers its submodules share, which they import. `foliage` and `water` open `terrain` with `@public` for its
+  placement and query predicates. `terrain` declares `NOT_PREPARED`. The import sets are in [AGENTS.md](../AGENTS.md) section 1.3.
 - `c3d::job` declares its libc and kernel32 externs in `src/affinity_linux.c3` (`@feat(LINUX)`) and `src/affinity_win32.c3`
   (`@feat(WIN32)`). Under `C3D_PROFILE_CPU`, `src/profile.c3` alone imports `c3d::profile`.
 - `c3d::character` under `C3D_CHARACTER_NAV` adds `NavDriven` and `drive_characters` in `src/nav/`.
@@ -108,8 +111,12 @@ Module notes:
   consumers select no backend dependencies; GPU-enabled consumers select them explicitly. Standalone CPU collector builds
   need no native or shader setup.
 - A package's examples and tests may select packages its sources never import: `c3d_job` for worker options, `c3d_physics`
-  for collision options, `c3d_profile` for GPU timing, `c3d_nav` and `c3d_physics` in the landscape setup tests. Each
-  `project.json` lists what its targets select.
+  for collision options, `c3d_profile` for GPU timing, and `c3d_physics` and `c3d_nav` in the landscape tests
+  (`terrain_test.c3` and the setup tests). Only the `terrain` and `vegetation` examples of the landscape package select
+  `c3d_job`; `bounds_job` and `scatter_job` run on any scheduler the application drives. Each `project.json` lists what
+  its targets select.
+- `serial_all_test` selects every serialization adapter and checks all registered policies, alongside the independent
+  package inventories.
 - An add-on that ships GLSL keeps `shaders/shaders.json`, its sources and `shaders/include/<name>/` under its own
   `shaders/`, and a generated, committed `src/shaders.c3`. See [development.md](development.md).
 
@@ -122,9 +129,9 @@ A feature gates optional modules, or optional code in a module. Select one with 
 | --- | --- | --- |
 | `C3D_SHADER_COMPILER` | `c3d::shader::compile`, the in-process GLSL compiler | `shaderc`, and its shared library beside the executable |
 | `C3D_PROFILE_CPU` | CPU capture in `c3d_profile`; core's `c3d::instrumentation` scopes (with `C3D_PROFILE_INTERNAL`); worker range records in `c3d_job` | `c3d_profile` |
-| `C3D_PROFILE_GPU` | GPU capture in `c3d_profile`, `c3d::render::profile_gpu`, core's `render/profile.c3` bridge | `c3d_profile`, `gpu`, `vk`, `vma`, `spvreflect` |
-| `C3D_PROFILE_INTERNAL` | Library scopes inside the renderer; needs `C3D_PROFILE_CPU` or `C3D_PROFILE_GPU` | `c3d_profile` |
-| `C3D_PROFILE_GUI` | The profiler panel in `c3d_profile_gui`; needs `C3D_PROFILE_CPU` or `C3D_PROFILE_GPU` | `c3d_profile_gui`, `c3d_profile`, `c3imgui`, `sdl3`, `vk` |
+| `C3D_PROFILE_GPU` | GPU capture in `c3d_profile`, `c3d::render::profile_gpu`, core's `render/profile.c3` bridge, the renderer's GPU pass timings (`render/renderer.c3`, `render/stats.c3`, `render/views.c3`) and their display in `gui/stats_panel.c3` and `gui/view_stats_table.c3` | `c3d_profile`, `gpu`, `vk`, `vma`, `spvreflect` |
+| `C3D_PROFILE_INTERNAL` | Library scopes in the renderer, `anim.update` and `scene.update_world`; needs `C3D_PROFILE_CPU` or `C3D_PROFILE_GPU` | `c3d_profile` |
+| `C3D_PROFILE_GUI` | The profiler panel in `c3d_profile_gui`; needs `C3D_PROFILE_CPU` or `C3D_PROFILE_GPU` | `c3d_profile_gui`, `c3d_profile`, `c3imgui`, `sdl3`, `vk`; with `C3D_PROFILE_GPU`, also `gpu`, `vma`, `spvreflect` |
 | `C3D_PHYSICS_SERIAL` | The `src/serial/` adapter of `c3d_physics` | `c3d_serial` |
 | `C3D_PHYSICS_GUI` | The physics panel and component inspectors in `c3d_physics_gui` | `c3d_physics_gui`, `c3d_physics`, `b3` |
 | `C3D_PHYSICS_GUI_CHARACTER` | The `src/character/` additions of `c3d_physics_gui`; needs `C3D_PHYSICS_GUI` | `c3d_character` |
@@ -153,7 +160,8 @@ Each contract is stated once, on the page named. Contracts that no package page 
   project, which depends on c3d. The physics package keeps the generic authored pieces, multi-hull collision, preparation,
   welds and read-only authoring views; core keeps store-free glTF source inspection. See [fracture](fracture.md) and
   [glTF source inspection](gltf_source.md).
-- **Type descriptions.** `c3d::describe` imports only the standard library and core. Struct descriptions are registered
+- **Type descriptions.** `c3d::describe` imports only the standard library and core, never GUI, serialization or backend
+  libraries. Struct descriptions are registered
   explicitly, and only component descriptions use ECS slots. `register_core_components` installs the built-in component
   descriptions idempotently. The serialization add-on reads descriptions through its own codec registry. See
   [type descriptions](type_descriptions.md).
@@ -173,23 +181,28 @@ Each contract is stated once, on the page named. Contracts that no package page 
 ```
 c3d.c3l/
 ├── manifest.json            the core package manifest
-├── AGENTS.md                the agent contract (also .claude/CLAUDE.md, a gitignored symlink)
+├── AGENTS.md                the agent contract; the bootstrap links it as .claude/CLAUDE.md (.claude/ is gitignored)
 ├── CONTRIBUTING.md          the human entry point
+├── REVIEW.md                the review procedure
 ├── README.md  LICENSE  LICENSE-slug.txt
 ├── .github/workflows/       ci.yml (build and test, Linux and Windows) and release.yml
 ├── abi/c3d.abi              shared C3 and GLSL layouts
 ├── addons/<name>.c3l/       one directory per add-on package, as listed above
 │   ├── manifest.json  project.json  README.md   (most packages have a README)
+│   ├── lib/<name>.c3l       a symlink to the package itself, in eight packages (c3d_profile, c3d_physics, c3d_nav,
+│   │                        c3d_character, c3d_physics_gui, c3d_job, c3d_landscape, c3d_serial)
 │   ├── src/                 the package sources; src/serial/ holds the serialization adapter
-│   ├── test/  examples/     CPU tests and example executables; serial_test/ and serial_policy_test/ where it has an adapter
+│   ├── test/  examples/     CPU tests and example executables (c3d_serial has no examples/: its tests and benchmarks
+│   │                        are in test*/ and bench*/); serial_test/ and serial_policy_test/ where it has an adapter
 │   ├── test/gpu/            the manual acceptance project, where the package has one
 │   └── shaders/             the shader package, where the package ships GLSL
 ├── csrc/                    stb_image and stb_truetype sources
 ├── docs/                    guides and references; style.md is the code style baseline
 ├── examples/                project.json, src/ (one file or small group per executable), common/, shaders/ and assets/
 ├── lib/                     dependency submodules, plus symlinks to this repository and its add-ons so consumers resolve them
-├── linked-libs/             empty; every dependency ships its own native libraries
-├── scripts/                 build.py, gen_abi.py, build_shaders.py, package_release.py, benchmark.py and their tests
+├── linked-libs/             .gitkeep placeholders only; every dependency ships its own native libraries
+├── scripts/                 build.py, gen_abi.py, build_shaders.py, package_release.py, benchmark.py,
+│                            fetch_benchmark_assets.py; unit tests for build_shaders and package_release
 ├── shaders/                 GLSL sources, variants.json, common/, generated/ and gpu/; spv/ is build output
 ├── src/c3d/
 │   ├── c3d.c3  types.c3  faults.c3  parallel.c3  pool.c3  instrumentation.c3
