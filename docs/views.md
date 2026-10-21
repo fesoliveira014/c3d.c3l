@@ -65,10 +65,10 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `screen_space_gi` | `ScreenSpaceGiDesc`; zero is off (see [screen-space GI](screen_space_gi.md)) |
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
-| `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
-| `fog_quality` | `FogQuality`, the froxel size and slice count of the fog volume: `LOW`, `MEDIUM` or `HIGH` (see [volumetric fog](sky.md#volumetric-fog)); `MEDIUM` is the zero value, so an unset desc keeps its grid; a change reallocates the volume |
-| `fog_temporal` | Accumulates the fog volume over frames with a jittered sample and the previous frame's reprojected value (see [temporal accumulation](sky.md#temporal-accumulation)); off in both constructors; needs `volumetric_fog` and keeps a second volume |
-| `cloud_temporal` | Accumulates the view's cloud layer over frames with a jittered march and the previous frame's reprojected radiance (see [cloud temporal accumulation](sky.md#cloud-temporal-accumulation)); off in both constructors; keeps a second pair of cloud images |
+| `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](fog.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
+| `fog_quality` | `FogQuality`, the froxel size and slice count of the fog volume: `LOW`, `MEDIUM` or `HIGH` (see [volumetric fog](fog.md#volumetric-fog)); `MEDIUM` is the zero value, so an unset desc keeps its grid; a change reallocates the volume |
+| `fog_temporal` | Accumulates the fog volume over frames with a jittered sample and the previous frame's reprojected value (see [temporal accumulation](fog.md#temporal-accumulation)); off in both constructors; needs `volumetric_fog` and keeps a second volume |
+| `cloud_temporal` | Accumulates the view's cloud layer over frames with a jittered march and the previous frame's reprojected radiance (see [cloud temporal accumulation](clouds.md#cloud-temporal-accumulation)); off in both constructors; keeps a second pair of cloud images |
 | `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
 | `transparency` | How premultiplied-alpha blended surfaces compose: `SORTED` (default, both constructors) orders them by object, `WEIGHTED` accumulates them without ordering into two extra images, 10 bytes per pixel, allocated on the first frame with a participating draw (see [weighted transparency](materials.md#weighted-transparency)); custom `BLEND` materials stay sorted in a `WEIGHTED` view, a current limit |
 | `pre_exposure_override` | Forces the view's [pre-exposure](post.md#pre-exposure) factor, a power of two from 2^-16 to 2^16; zero, the default, follows the camera exposure. Any other value faults `INVALID_ARGUMENT` |
@@ -98,7 +98,7 @@ whose device lacks sample-rate shading, faults `UNSUPPORTED`; a full pool faults
 The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
 [weighted transparency](materials.md#weighted-transparency) accumulation and revealage images, the
 [sky](sky.md)'s 192 × 108 sky-view table and 32³ aerial perspective volume (418 KiB) on raster views, its
-[fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (`ceil(w / px) × ceil(h / px) × slices × 8` bytes, set by `fog_quality`, twice that with `fog_temporal`), post and
+[fog volume](fog.md#volumetric-fog) when `volumetric_fog` is on (`ceil(w / px) × ceil(h / px) × slices × 8` bytes, set by `fog_quality`, twice that with `fog_temporal`), post and
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
 reallocates them; every configuration resets the view's history except its
@@ -206,7 +206,7 @@ the depth the prepass resolved from sample 0, and a sample farther than its tile
 cell and takes the flat list.
 
 The reduction needs depth before any pass reads the cell lists, so on a pruned view the
-reduction, the cull and the [volumetric fog](sky.md#volumetric-fog) volume run right after the
+reduction, the cull and the [volumetric fog](fog.md#volumetric-fog) volume run right after the
 depth prepass. On a deferred view that is between the prepass and the G-buffer pass, whose
 stages read the decal lists. Views without pruning keep the cull before every other pass of
 the view. A forward view with no depth prepass (`depth_prepass` false, and no AO or SSGI, which
@@ -287,7 +287,7 @@ for the required build features and capture configuration.
 views and reset at `begin_frame`. Hidden, culled and collapsed decals are not
 budget drops. `ViewStats.decals` and `decals_dropped` describe one view's selection.
 
-`Stats.media_dropped` counts, per view, the visible [medium volumes](sky.md#medium-volumes) past the nearest four
+`Stats.media_dropped` counts, per view, the visible [medium volumes](fog.md#medium-volumes) past the nearest four
 (`shader::MAX_VIEW_MEDIA`) and resets at `begin_frame`. A view that keeps a medium is fogged like one with an
 atmosphere or a fog: it records the fog pass and the split, takes the depth snapshot with every colour snapshot
 and draws blended items after the split. A view that keeps none costs what it did before.
@@ -387,7 +387,7 @@ write it with `image::write_png`. Every render target carries transfer-source us
 | --- | --- | --- |
 | `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 9 KiB |
 | `max_render_targets` | `DEFAULT_MAX_RENDER_TARGETS`, 8 | at most the resolved `texture_capacity`, else `create_renderer` faults `c3d::INVALID_ARGUMENT` |
-| `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | `2 × max_posed_trace_instances + 32 + 16 × max_views` must fit the device's 4,096-entry allocation table and, with ray queries or ray-tracing pipelines, `max_posed_trace_instances + 32` its 4,096-entry acceleration structure table, else `create_renderer` faults `c3d::INVALID_ARGUMENT`; at most 1,968 at the default 8 views. Content shares both tables uncounted and can still fault `gpu::SLOT_TABLE_FULL` mid-frame ([scene trace](scene_trace.md#posed-instances)). A slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams; on the RTX 4090 one mannequin of two posed meshes holds 483,032 B of posed data in software and 1,088,920 B in hardware, about 242 KB and 544 KB per slot, and bottom-level sizes are driver-specific |
+| `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | `2 × max_posed_trace_instances + 32 + 16 × max_views` must fit the device's 4,096-entry allocation table and, with ray queries or ray-tracing pipelines, `max_posed_trace_instances + 32` its 4,096-entry acceleration structure table, else `create_renderer` faults `c3d::INVALID_ARGUMENT`; at most 1,968 at the default 8 views. Content shares both tables uncounted and can still fault `gpu::SLOT_TABLE_FULL` mid-frame ([scene trace](scene_trace_reference.md#posed-instances)). A slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams; on the RTX 4090 one mannequin of two posed meshes holds 483,032 B of posed data in software and 1,088,920 B in hardware, about 242 KB and 544 KB per slot, and bottom-level sizes are driver-specific |
 | `texture_capacity` | `gpu::DEFAULT_TEXTURE_CAPACITY`, 1,024 | 65,536 (`gpu::MAX_SHADER_HEAP_CAPACITY`), else `gpu::INVALID_ARGUMENT` |
 | `texture_heap_capacity` | `gpu::DEFAULT_TEXTURE_HEAP_CAPACITY`, 4,096 | 65,536, else `gpu::INVALID_ARGUMENT`; past the device's descriptor limits no adapter qualifies and `create_renderer` faults `c3d::UNSUPPORTED` |
 
@@ -568,9 +568,9 @@ renderer.render_view(&scene, camera_node, main_view)!;
   ([World-space items](overlay.md#world-space-items)).
 - Water from the landscape add-on places its mirror cameras and clip plane for you and reads each reflection from a
   view texture; see [water](water.md#the-mirror).
-- Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
+- Under [fog or an atmosphere](fog.md#where-fog-applies) a mirror view fogs only the path behind its plane,
   from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
-  reflection carries the reflected path's fog once. Its [medium volumes](sky.md#medium-volumes) follow the same cut.
+  reflection carries the reflected path's fog once. Its [medium volumes](fog.md#medium-volumes) follow the same cut.
   The mirror view owns its own sky tables.
 
 Every mesh vertex stage declares `ClipDistance`, so the device must support `shaderClipDistance`;
@@ -924,7 +924,7 @@ again when a blended draw reads the scene, transparency (a `WEIGHTED` view with 
 records `FORWARD_TRANSPARENT` into its accumulation images, then `TRANSPARENT_COMPOSITE` into
 `hdr_color`, then the sorted blended draws: additive and every custom blended material),
 velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A view with
-[fog, an atmosphere or a medium](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
+[fog, an atmosphere or a medium](fog.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
 depth prepass when its scene has an atmosphere, and splits before the transparent draws: the snapshot for
 blended readers, the SSGI colour copy, then `FOG`, then transparency. With `volumetric_fog` the view also
 records `FOG_SCATTERING` and `FOG_INTEGRATION` after the sky tables. Dielectric F0 in the resolve is

@@ -128,7 +128,7 @@ Limits:
   the field without a fault, and so does a forward view with traced reflections: its thin
   reflection prepass is both the depth producer and a reader of the decal lists. Deferred
   views always have depth.
-- On a pruned view the reduction, the cull and the [volumetric fog](sky.md#volumetric-fog)
+- On a pruned view the reduction, the cull and the [volumetric fog](fog.md#volumetric-fog)
   volume are recorded after the depth prepass instead of before every other pass: on a
   deferred view between the prepass and the G-buffer pass, whose stages read the decal lists.
 - The reduction maps pixels to tiles as cluster selection does, from the unjittered view.

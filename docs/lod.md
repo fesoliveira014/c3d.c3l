@@ -355,7 +355,7 @@ Traced animated groups use level-zero geometry and distinct
 scene/owner/incarnation/logical-part/source-slot keys. Traced skinned or morphed
 sources consume posed slots; rigid-only parts use the rest-geometry path at their
 sampled affine. Capacity/overflow, same-frame sharing, still-pose reuse and
-software/hardware behavior follow [posed instances](scene_trace.md#posed-instances).
+software/hardware behavior follow [posed instances](scene_trace_reference.md#posed-instances).
 The raster-selected coarse level never changes the base trace representation.
 Untraced groups do no posed trace work. [Compute skinning](animation.md#compute-skinning) leaves animated
 parts on vertex skinning at every level: one binding posing every source at every level would undo the

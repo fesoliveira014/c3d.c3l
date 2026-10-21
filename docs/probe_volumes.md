@@ -87,7 +87,7 @@ rotates its ray set by a rotation drawn from the frame index.
   supply or share its candidates.
 - **Fog.** A hit takes the scene's height fog and, behind it, its atmosphere over the ray from the probe, and a
   miss takes the height fog to infinity; the fog is the first valid `HeightFog` on a visible node of any layer
-  ([fog at hits](sky.md#where-fog-applies)).
+  ([fog at hits](fog.md#where-fog-applies)).
 - **First sweep.** A new atlas is cleared (zero irradiance) in the frame it is created, and each probe's first
   visit replaces its texels instead of blending. Views keep the SH until every probe holds an estimate; with
   `probes_per_frame = 0` that is the first frame, with a window `ceil(count / window)` frames. Bounces during
