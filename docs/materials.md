@@ -203,9 +203,9 @@ Physical adds ten more slots for its layers ([Physical](materials_reference.md#p
 - A zero or stale texture id makes the slot absent. Absent maps keep the scalar factor, and an absent normal map keeps
   the geometry normal.
 - Normal encoding belongs to the texture asset (`TextureDesc.semantic`), not the slot.
-- A built-in slot can reference a render target with `{ .kind = RENDER_TARGET, .target = id }`. A custom material slot
-  can take a texture the drawing view supplies, `{ .kind = VIEW, .view_slot = n }`
-  ([Custom shaders](custom_shaders.md#view-provided-slots)).
+- A built-in slot can reference a render target: set `slot.texture` to `{ .kind = RENDER_TARGET, .target = id }`. A
+  custom material slot can take a texture the drawing view supplies: set `slot.texture` to
+  `{ .kind = VIEW, .view_slot = n }` ([Custom shaders](custom_shaders.md#view-provided-slots)).
 - Without a tangent stream, filled triangles derive the normal-map frame from UV derivatives. Supply tangents, or
   generate them with `geometry::create_tangent_geometry`, for an authored basis
   ([Tangent frames](materials_reference.md#tangent-frames)).
