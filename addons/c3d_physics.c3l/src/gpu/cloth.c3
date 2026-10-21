@@ -31,7 +31,7 @@ const uint MAX_GPU_CLOTHS = 65_535;
 <*
  Budgets that fit a handful of flags or capes.
 *>
-const GpuClothsDesc GPU_CLOTHS_DEFAULT = { .max_cloths = 64, .max_particles = 65_536, .table_bytes = 4 * 1024 * 1024 }; // 7.2 MiB of device state, 4 MiB of tables, 3 MiB of host copies of the positions and 2.2 MiB of staging; three of the renderer's 64 buffers
+const GpuClothsDesc GPU_CLOTHS_DEFAULT = { .max_cloths = 64, .max_particles = 65_536, .table_bytes = 4 * 1024 * 1024 }; // 7.3 MiB of device state, 4 MiB of tables, 3 MiB of host copies of the positions and 2.2 MiB of staging; three of the renderer's 64 buffers
 
 <*
  How a step lays its passes over dispatches.
@@ -121,7 +121,7 @@ fn void destroy_gpu_cloths(GpuCloths* cloths, Renderer* renderer) {
 }
 
 <*
- Record the due steps of every prepared GPU cloth.
+ Record the due steps of every prepared GPU cloth, resolving the output geometry of each.
  An aborted frame is replayed; one followed by FRAMES_IN_FLIGHT frames without an update counts as applied.
  A fault that closes the frame ends the update and is returned.
  @param [&inout] cloths : "Retires the ranges of cloths it no longer sees."

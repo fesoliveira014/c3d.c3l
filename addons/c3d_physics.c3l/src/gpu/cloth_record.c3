@@ -293,6 +293,7 @@ fn void? step_cloth(GpuCloths* cloths, Renderer* renderer, Scene* scene, ClothSl
     state.device.steps = 0;
     if (state.desc.substeps > uint::max / steps) return c3d::CAPACITY_EXCEEDED~;
 
+    renderer.upload_geometry(slot.geometry)!;
     ClothRoot root = step_root(cloths, renderer, scene, slot, steps)!;
     if (slot.shape == ClothStepShape.SINGLE) {
         cloths.batch.add(slot, root);
