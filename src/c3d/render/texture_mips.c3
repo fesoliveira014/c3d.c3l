@@ -554,7 +554,7 @@ fn double encode_srgb(double linear) @private {
       : SRGB_SCALE * math::pow(linear, 1.0 / SRGB_EXPONENT) - SRGB_OFFSET;
 }
 
-// c3c 0.8.3 ships no half-precision compiler-rt builtins on windows-x64, so no float16 cast may reach the linker.
+// c3c 0.8.5_1 ships no half-precision compiler-rt builtins on windows-x64, so no float16 cast may reach the linker.
 fn float half_to_float(ushort bits) @private {
     return asset::decode_texture_half(bits);
 }

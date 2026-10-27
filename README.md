@@ -21,7 +21,7 @@ chooses.
 
 ## Requirements and status
 
-The current release targets **C3 0.8.3** exactly, on `linux-x64` and `windows-x64`. The Vulkan device must support
+The current release targets **C3 0.8.5_1** exactly, on `linux-x64` and `windows-x64`. The Vulkan device must support
 `shaderClipDistance`; `create_renderer` faults `UNSUPPORTED` without it.
 
 Other tools are Python 3.10 or newer, `glslangValidator` on `PATH`, the Vulkan loader and validation layer, a C compiler

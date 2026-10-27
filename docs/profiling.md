@@ -5,7 +5,7 @@ bounded capture storage, exports them as JSON and, with the renderer's cooperati
 `c3d_profile_gui`, in `addons/c3d_profile_gui.c3l`, is an optional ImGui panel for those captures. It extends `c3d::gui`
 and imports only neutral capture values, ImGui and the standard library; neither the collector nor core invokes it.
 
-CPU-only use of `c3d::profile` needs C3 0.8.3 and its standard library: no core, device, SDL or ImGui. The GPU module
+CPU-only use of `c3d::profile` needs C3 0.8.5_1 and its standard library: no core, device, SDL or ImGui. The GPU module
 (`c3d::render::profile_gpu`) uses gpu.c3l and is compiled only under `C3D_PROFILE_GPU`. Core never depends on the
 packages unconditionally; an application selects them and the features it needs. The reference tables (features, library
 scopes, descriptors, JSON schema and statistics fields) are in [profiling_reference.md](profiling_reference.md).

@@ -8,7 +8,7 @@ build pipeline in full is [development](development.md); the packages and their 
 
 | Tool | Version | Notes |
 | --- | --- | --- |
-| c3c | 0.8.3 | `scripts/build.py` refuses any other version. |
+| c3c | 0.8.5_1 | `scripts/build.py` refuses any other version. |
 | Python | 3.10 or newer | Standard library only. |
 | glslang | any | `glslangValidator` on `PATH`, from `glslang-tools` or a Vulkan SDK; or pass `--glslang`. |
 | Vulkan loader | any | `libvulkan.so.1` or `vulkan-1.dll`. Every c3d executable imports it at start. |
@@ -58,7 +58,7 @@ python3 scripts/build.py --example cube   # build and run the first-mesh example
 ### Windows
 
 - Install Visual Studio 2022 with the C++ desktop workload, Git for Windows, the Vulkan SDK (`glslangValidator` and the
-  loader), Python 3.10 or newer and c3c 0.8.3 on `PATH`. Use `python` where this page says `python3`.
+  loader), Python 3.10 or newer and c3c 0.8.5_1 on `PATH`. Use `python` where this page says `python3`.
 - Clone under a short path with symlinks enabled. `lib/c3d.c3l` is a symlink that the projects resolve through, and Git
   creates a real link only with Developer Mode on or in an elevated shell:
 
@@ -220,7 +220,7 @@ the layers fit together.
 
 | Message or symptom | Cause and fix |
 | --- | --- |
-| `c3c 0.8.3 required, found ...` | Install c3c 0.8.3; the build refuses other versions. |
+| `c3c 0.8.5_1 required, found ...` | Install c3c 0.8.5_1; the build refuses other versions. |
 | `'glslangValidator' not found on PATH` | Install `glslang-tools` or a Vulkan SDK, or pass `--glslang <path>`. |
 | `missing dependencies under lib/` or `missing c3imgui native archive` | Run `python3 scripts/build.py --init-deps`. |
 | `create_renderer` faults `UNSUPPORTED` | The device lacks `shaderClipDistance`, or the description asks for GPU timings in a build without `C3D_PROFILE_GPU`. |

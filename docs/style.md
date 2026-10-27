@@ -2,7 +2,7 @@ The code style baseline, mandatory for every `.c3`, `.c3i` and `.glsl` file in t
 
 # 1. Language target
 
-C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3-expert` skill, not memory.
+C3 0.8.5_1. C3 is pre-1.0; check syntax against the installed compiler and the `c3-expert` skill, not memory.
 
 # 2. Modules and files
 
