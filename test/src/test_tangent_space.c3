@@ -52,7 +52,7 @@ fn void TangentFaultAllocator.release(&self, void* pointer, bool aligned) @dynam
 }
 
 fn sz tangent_allocation_bytes(TrackingAllocator* tracker, void* pointer) @local {
-    foreach (allocation : tracker.allocations_tlist(tmem)) {
+    foreach (allocation : tracker.allocations_tlist()) {
         if (allocation.ptr == pointer) return allocation.size;
     }
 

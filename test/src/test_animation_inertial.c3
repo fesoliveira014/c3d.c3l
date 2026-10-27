@@ -541,7 +541,7 @@ fn void test_animation_inertial_storage_failed_acquisition_leaves_no_owner() @te
 
 fn bool inertial_owner_allocation_is_live(TrackingAllocator* tracker, void* pointer) @local {
     @pool() {
-        foreach (allocation : tracker.allocations_tlist(tmem)) {
+        foreach (allocation : tracker.allocations_tlist()) {
             if (allocation.ptr == pointer) return true;
         }
     };
@@ -1523,7 +1523,7 @@ fn ClipId request_translation_clip(
 }
 
 fn RequestBlockSnapshot[] request_snapshot_blocks(TrackingAllocator* tracker) @local {
-    Allocation[] allocations = tracker.allocations_tlist(tmem);
+    Allocation[] allocations = tracker.allocations_tlist();
     RequestBlockSnapshot[] snapshot = alloc::new_array(tmem, RequestBlockSnapshot, allocations.len);
     foreach (index, allocation : allocations) {
         snapshot[index].pointer = allocation.ptr;
@@ -1534,7 +1534,7 @@ fn RequestBlockSnapshot[] request_snapshot_blocks(TrackingAllocator* tracker) @l
 }
 
 fn void request_assert_blocks_unchanged(TrackingAllocator* tracker, RequestBlockSnapshot[] snapshot) @local {
-    Allocation[] current = tracker.allocations_tlist(tmem);
+    Allocation[] current = tracker.allocations_tlist();
     assert(current.len == snapshot.len);
     foreach (saved : snapshot) {
         bool present;
