@@ -6,7 +6,7 @@ merge) is [AGENTS.md](../AGENTS.md) section 5. Layers, packages and feature flag
 
 ## Requirements
 
-- c3c 0.8.3, exactly. The build refuses any other version.
+- c3c 0.8.5_1, exactly. The build refuses any other version.
 - Python 3.10 or newer. The scripts use the standard library only.
 - `glslangValidator` on `PATH` (a Vulkan SDK, or `glslang-tools` on Ubuntu), or pass `--glslang`.
 - The system Vulkan loader. Every c3d executable, test binaries included, imports it at process start.
@@ -40,7 +40,7 @@ The steps run in this order and stop at the first failure.
 
 | Step | What it does |
 | --- | --- |
-| tools | Checks Python and c3c 0.8.3, and glslang unless `--skip-shaders` is given. |
+| tools | Checks Python and c3c 0.8.5_1, and glslang unless `--skip-shaders` is given. |
 | deps | Checks that the submodules under `lib/` exist and that the ImGui native archive is present. With `--init-deps`, first updates the submodules and fetches the natives. |
 | abi | Runs `scripts/gen_abi.py` to verify the C3 and GLSL twins of `abi/c3d.abi`. The first run builds gpu.c3l's `gpu_shaders` generator. |
 | shaders | Runs `scripts/build_shaders.py --check`: compiles every stage, probe and shader package, then verifies the committed generated tables. |
@@ -218,7 +218,7 @@ a hardware run.
 `.github/workflows/ci.yml` runs on every pull request and on pushes to `main`, on Ubuntu 24.04 and Windows 2022:
 
 1. Check out with submodules.
-2. Install c3c 0.8.3, glslang and the Vulkan loader (and the Vulkan SDK on Windows).
+2. Install c3c 0.8.5_1, glslang and the Vulkan loader (and the Vulkan SDK on Windows).
 3. `python3 scripts/build.py --init-deps --skip-abi --skip-shaders --skip-build` to fetch the natives.
 4. `python3 scripts/build.py --test`.
 

@@ -8,7 +8,7 @@ Profiler contracts are in [profiling](profiling.md).
 
 ## Quick start
 
-Build with the pinned dependencies, C3 0.8.3 and `-O3`, which enables C3's unsafe release mode. Compare runs only when
+Build with the pinned dependencies, C3 0.8.5_1 and `-O3`, which enables C3's unsafe release mode. Compare runs only when
 they use the same optimization and safety settings.
 
 ```bash

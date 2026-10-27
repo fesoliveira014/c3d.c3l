@@ -22,6 +22,7 @@ struct ExposureViews @local {
 
 fn ExposureViews create_exposure_views() @local {
     Renderer* renderer = mem::new(Renderer);
+    renderer.allocator = mem;
     renderer.views = pool::create_pool{ViewRecord, ViewId}(mem, 2);
     renderer.targets = pool::create_pool{TargetRecord, RenderTargetId}(mem, 1);
     RenderTargetId target = renderer.targets.add({ .format = PixelFormat.RGBA16_FLOAT })!!;

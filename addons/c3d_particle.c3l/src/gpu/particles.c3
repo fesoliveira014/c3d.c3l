@@ -341,7 +341,7 @@ fn void? step_system(
 ) @private {
     GpuSystemSlot* slot = claim_slot(particles, entity)!;
     slot.stamp = particles.stamp;
-    usz slot_index = slot - particles.slots.ptr;
+    usz slot_index = (usz)(slot - particles.slots.ptr);
 
     GpuStepState* state = particle::gpu_step_state(system);
     bool settled = renderer.frame_was_submitted(state.pending.frame)
@@ -444,7 +444,7 @@ fn void? step_system(
 }
 
 fn SystemAddresses system_addresses(GpuParticles* particles, Renderer* renderer, GpuSystemSlot* slot) @private {
-    usz slot_index = slot - particles.slots.ptr;
+    usz slot_index = (usz)(slot - particles.slots.ptr);
     return {
         .base = (ulong)renderer.buffer_address(slot.buffer),
         .counters = (ulong)renderer.buffer_address(particles.counters) + slot_index * COUNTER_BYTES,

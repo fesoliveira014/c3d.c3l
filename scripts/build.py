@@ -98,7 +98,7 @@ SERIAL_TEST_TARGETS = ("serial_test", "serial_order_forward", "serial_order_reve
 UI_TEST_TARGETS = ("ui_test",)
 AUDIO_TEST_TARGETS = ("audio_test", "audio_serial_test", "audio_serial_policy_test")
 
-REQUIRED_C3C_VERSION = "0.8.3"
+REQUIRED_C3C_VERSION = "0.8.5_1"
 SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l", "clay.c3l", "miniaudio.c3l")
 # Submodules whose native libraries are built in their repository's CI and published only in its releases.
 RELEASE_NATIVES = ("sdl3.c3l", "c3imgui.c3l", "box3d.c3l", "shaderc.c3l", "vma.c3l", "spvreflect.c3l")
@@ -205,7 +205,7 @@ def step_tools(options: Options) -> None:
     if c3c is None:
         raise BuildError(f"'{options.c3c}' not found on PATH (set --c3c or install C3 {REQUIRED_C3C_VERSION})")
     version_text = capture([c3c, "--version"], ROOT)
-    match = re.search(r"\d+\.\d+\.\d+", version_text)
+    match = re.search(r"\d+\.\d+\.\d+(?:_\d+)?", version_text)
     version = match.group(0) if match else "unknown"
     if version != REQUIRED_C3C_VERSION:
         raise BuildError(f"c3c {REQUIRED_C3C_VERSION} required, found {version}")

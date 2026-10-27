@@ -101,7 +101,7 @@ struct Showcase @local {
     float    morph_error;
 }
 
-fn float Random.next(&self) @local {
+fn float Random.next(&self) {
     self.state = self.state * 1664525 + 1013904223;
     return (float)(self.state >> 8) / (float)(1 << 24);
 }
