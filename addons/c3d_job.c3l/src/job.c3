@@ -212,6 +212,7 @@ fn JobId? JobPool.try_run(
     uint free_places = state.background_workers - state.running_background;
     state.lock.unlock();
     if (catch excuse = id) return excuse~;
+
     switch (job_class) {
         case FRAME:
             wake_frame_workers(state, request.range_count);
@@ -659,9 +660,9 @@ fn void bind_worker(Worker* worker) @private {
 fn int run_worker(void* argument) @private {
     Worker* worker = argument;
     JobPoolState* state = worker.state;
+    ConditionVariable* available = worker.background_only ? &state.background_available : &state.work_available;
     if (state.power_throttling_opt_out) native_opt_out_power_throttling();
     bind_worker(worker);
-    ConditionVariable* available = worker.background_only ? &state.background_available : &state.work_available;
     @pool_init(state.allocator, (sz)state.worker_temp_bytes) {
         state.lock.lock();
         while (true) {

@@ -12,7 +12,7 @@ import c3d::job;
 
 const uint OVERHEAD_RANGES @local = 1024; // the gate's workload: one run of 1024 empty ranges
 const uint[3] FIXED_WORKER_COUNTS @private = { 0, 1, 3 }; // inline, one worker and the CI runners' three
-const uint[4] WAKE_WORKER_COUNTS @local = { 1, 4, 16, 31 }; // up to the 31 workers of a 32-processor host; more than the host has oversubscribes
+const uint[4] WAKE_WORKER_COUNTS @local = { 1, 4, 16, 31 }; // 31 workers fill a 32-processor host
 const uint KERNEL_MULTIPLIES @local = 16; // 64 multiply-adds each; 262 144 items cost 268M multiply-adds a pass
 const uint[3] ITEM_COUNTS @local = { 16384, 65536, 262144 };
 const uint[2] FIXED_BATCHES @local = { 64, 1024 };
