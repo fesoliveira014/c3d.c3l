@@ -23,6 +23,7 @@ const uint  PATH_QUEUE_SLOTS @private = nav::PATH_REQUESTS_PER_UPDATE;
 const usz   SMALL_PATH @private = 64;
 const uint  SMALL_REQUESTS @private = 3;
 const uint  EQUIVALENCE_UPDATES @private = 120;
+const float WALKED_DISTANCE @private = 1; // metres; the agents have left their starts
 const uint  LONG_PATH_TILES @private = 12; // tiles wide, so the search outlasts several default-budget updates
 const uint  LONG_PATH_UPDATE_LIMIT @private = 600;
 const uint  RAISED_PATH_ITERATIONS @private = 1000; // above the iterations the longest path needs
@@ -426,16 +427,17 @@ fn void test_scene_free_crowd_matches_a_scene_bound_crowd() @test {
     for (uint update = 0; update < EQUIVALENCE_UPDATES; update++) {
         bound.update(CROWD_STEP);
         scene_free.update(CROWD_STEP);
-        foreach (index, start : CROSSING_STARTS) {
-            CrowdAgent* expected = bound.agent((uint)index);
-            CrowdAgent* actual = scene_free.agent((uint)index);
+        for (uint index = 0; index < CROSSING_STARTS.len; index++) {
+            CrowdAgent* expected = bound.agent(index);
+            CrowdAgent* actual = scene_free.agent(index);
             assert(same_bits(actual.position, expected.position), "agent %d position at update %d", index, update);
             assert(same_bits(actual.velocity, expected.velocity), "agent %d velocity at update %d", index, update);
         }
     }
 
-    foreach (index, start : CROSSING_STARTS) {
-        assert(xz_distance(scene_free.agent((uint)index).position, start) > 1, "agent %d walked", index);
+    for (uint index = 0; index < CROSSING_STARTS.len; index++) {
+        float walked = xz_distance(scene_free.agent(index).position, CROSSING_STARTS[index]);
+        assert(walked > WALKED_DISTANCE, "agent %d walked %f", index, walked);
     }
 }
 

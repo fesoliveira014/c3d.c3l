@@ -30,7 +30,7 @@ const uint CROWD_PATH_QUEUE_NODES = 4096;
 const uint CROWD_PATH_ITERATIONS = 100;
 
 <* Search steps of a move request's first search; mirrors updateMoveRequest's MAX_ITER. *>
-const uint QUICK_SEARCH_ITERATIONS = 20;
+const uint QUICK_SEARCH_ITERATIONS = 20; // spent on the crowd's query for each new move request, before it queues
 
 <* Agents enqueued per update, and the path queue's slots; mirrors updateMoveRequest's PATH_MAX_AGENTS. *>
 const uint PATH_REQUESTS_PER_UPDATE = 8; // each slot holds a CROWD_MAX_PATH result, 2 KiB
