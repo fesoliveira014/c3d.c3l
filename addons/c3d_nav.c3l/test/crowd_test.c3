@@ -19,6 +19,15 @@ const float SIDEWAYS_SHARE @private = 0.1f; // of the speed; a smaller sideways 
 const uint  QUEUE_ITERATIONS @private = 100;
 const uint  QUEUE_UPDATE_LIMIT @private = 100;
 const uint  CROWD_AGENTS @private = 8;
+const uint  PATH_QUEUE_SLOTS @private = nav::PATH_REQUESTS_PER_UPDATE;
+const usz   SMALL_PATH @private = 64;
+const uint  SMALL_REQUESTS @private = 3;
+const uint  EQUIVALENCE_UPDATES @private = 120;
+const uint  LONG_PATH_TILES @private = 12; // tiles wide, so the search outlasts several default-budget updates
+const uint  LONG_PATH_UPDATE_LIMIT @private = 600;
+const uint  RAISED_PATH_ITERATIONS @private = 1000; // above the iterations the longest path needs
+const Vec3[] CROSSING_STARTS @private = { { 2, 0, 2 }, { 17, 0, 2 }, { 2, 0, 17 }, { 17, 0, 17 } };
+const Vec3[] CROSSING_TARGETS @private = { { 17, 0, 17 }, { 2, 0, 17 }, { 17, 0, 2 }, { 2, 0, 2 } }; // opposite corners
 const float CROWD_STEP @private = 1.0f / 60.0f;
 const uint  ARRIVAL_UPDATES @private = 600;
 const float STOPPED_SPEED @private = 0.05f; // metres per second
@@ -152,15 +161,21 @@ fn void test_path_queue_answers_requests_over_updates() @test {
     defer destroy_level(fixture);
     add_stripes(fixture, 2);
     build_level(fixture);
-    PathQueue queue = nav::create_path_queue(mem, PATH_CAPACITY, QUERY_NODES, &fixture.level.mesh)!!;
+    PathQueue queue = nav::create_path_queue(
+        allocator:     mem,
+        max_path_size: PATH_CAPACITY,
+        max_nodes:     QUERY_NODES,
+        max_requests:  PATH_QUEUE_SLOTS,
+        mesh:          &fixture.level.mesh,
+    )!!;
     defer nav::destroy_path_queue(&queue);
     float side = fixture.level.builder.tile_world_size * 2;
     Vec3 start = { 1, 0, 1 };
     PolyRef start_ref = nearest(fixture, start).ref;
-    Vec3[nav::MAX_PATH_QUEUE] goals;
-    PathQueueRef[nav::MAX_PATH_QUEUE] requests;
+    Vec3[PATH_QUEUE_SLOTS] goals;
+    PathQueueRef[PATH_QUEUE_SLOTS] requests;
     foreach (index, &goal : goals) {
-        *goal = { side - 1, 0, 1 + index * (side - 2) / (nav::MAX_PATH_QUEUE - 1) };
+        *goal = { side - 1, 0, 1 + index * (side - 2) / (PATH_QUEUE_SLOTS - 1) };
         requests[index] = queue.request(
             start_ref: start_ref,
             end_ref:   nearest(fixture, *goal).ref,
@@ -178,11 +193,11 @@ fn void test_path_queue_answers_requests_over_updates() @test {
         filter:    &fixture.filter,
     );
     // Results are collected as they finish, since an uncollected result is dropped after two updates.
-    bool[nav::MAX_PATH_QUEUE] collected;
+    bool[PATH_QUEUE_SLOTS] collected;
     uint collected_count;
     uint updates;
     PolyRef[PATH_CAPACITY] queued_path;
-    while (collected_count < nav::MAX_PATH_QUEUE && updates < QUEUE_UPDATE_LIMIT) {
+    while (collected_count < PATH_QUEUE_SLOTS && updates < QUEUE_UPDATE_LIMIT) {
         queue.update(QUEUE_ITERATIONS);
         updates++;
         foreach (index, ref : requests) {
@@ -197,7 +212,7 @@ fn void test_path_queue_answers_requests_over_updates() @test {
     }
 
     assert(overflow == (PathQueueRef)0, "every slot was taken");
-    assert(collected_count == nav::MAX_PATH_QUEUE);
+    assert(collected_count == PATH_QUEUE_SLOTS);
     assert(updates > 1, "the iteration budget spreads the requests over updates");
     foreach (ref : requests) assert(queue.request_state(ref) == FAILED, "collected requests leave the queue");
 }
@@ -340,4 +355,121 @@ fn void test_partial_target_walks_to_the_closest_polygon() @test {
     assert(agent.corridor.last_poly() != top.ref && agent.position.y < PLATFORM_SIZE.y * 0.5f, "on the floor");
     assert(arrived(agent, agent.corridor.target), "not arrived after %d updates", updates);
     assert(gap < ISLAND_EDGE_GAP, "%f m from the island", gap);
+}
+
+fn bool same_bits(Vec3 first, Vec3 second) @private {
+    return bitcast(first.x, uint) == bitcast(second.x, uint)
+        && bitcast(first.y, uint) == bitcast(second.y, uint)
+        && bitcast(first.z, uint) == bitcast(second.z, uint);
+}
+
+fn void add_crossing_agents(Crowd* crowd) @private {
+    foreach (index, start : CROSSING_STARTS) {
+        uint agent = crowd.add_agent(start, nav::default_nav_agent_params())!!;
+        send_agent(crowd, agent, CROSSING_TARGETS[index]);
+    }
+}
+
+// A floor wider than one build budget of tiles.
+fn void build_large_level(QueryFixture* fixture) @private {
+    NavSyncResult result;
+    do {
+        result = build_everything(fixture.level);
+    } while (result.pending > 0);
+    assert(result.failed == 0);
+    fixture.query = nav::create_nav_query(mem, &fixture.level.mesh, QUERY_NODES)!!;
+}
+
+// Updates until the agent's request has a path, or the limit passes; the updates taken.
+fn uint updates_until_path(QueryFixture* fixture, uint path_iterations_per_update) @private {
+    Crowd crowd = nav::create_crowd(
+        allocator: mem,
+        desc:      {
+            .max_agents                 = CROWD_AGENTS,
+            .max_agent_radius           = nav::default_nav_agent_params().radius,
+            .path_iterations_per_update = path_iterations_per_update,
+        },
+        mesh:      &fixture.level.mesh,
+        scene:     null,
+    )!!;
+    defer nav::destroy_crowd(&crowd);
+    float far_side = fixture.level.builder.tile_world_size * LONG_PATH_TILES - 1;
+    uint index = crowd.add_agent({ 1, 0, 1 }, nav::default_nav_agent_params())!!;
+    send_agent(&crowd, index, { far_side, 0, far_side });
+    CrowdAgent* agent = crowd.agent(index);
+
+    uint updates;
+    while (updates < LONG_PATH_UPDATE_LIMIT && agent.target_state != VALID) {
+        crowd.update(CROWD_STEP);
+        updates++;
+    }
+    return updates;
+}
+
+fn void test_scene_free_crowd_matches_a_scene_bound_crowd() @test {
+    QueryFixture* fixture = floor_level(2);
+    defer destroy_level(fixture);
+    add_stripes(fixture, 2);
+    build_level(fixture);
+    Crowd bound = create_test_crowd(fixture);
+    defer nav::destroy_crowd(&bound);
+    Crowd scene_free = nav::create_crowd(
+        allocator: mem,
+        desc:      { .max_agents = CROWD_AGENTS, .max_agent_radius = nav::default_nav_agent_params().radius },
+        mesh:      &fixture.level.mesh,
+        scene:     null,
+    )!!;
+    defer nav::destroy_crowd(&scene_free);
+    add_crossing_agents(&bound);
+    add_crossing_agents(&scene_free);
+
+    for (uint update = 0; update < EQUIVALENCE_UPDATES; update++) {
+        bound.update(CROWD_STEP);
+        scene_free.update(CROWD_STEP);
+        foreach (index, start : CROSSING_STARTS) {
+            CrowdAgent* expected = bound.agent((uint)index);
+            CrowdAgent* actual = scene_free.agent((uint)index);
+            assert(same_bits(actual.position, expected.position), "agent %d position at update %d", index, update);
+            assert(same_bits(actual.velocity, expected.velocity), "agent %d velocity at update %d", index, update);
+        }
+    }
+
+    foreach (index, start : CROSSING_STARTS) {
+        assert(xz_distance(scene_free.agent((uint)index).position, start) > 1, "agent %d walked", index);
+    }
+}
+
+fn void test_raised_path_iterations_finish_a_long_path_sooner() @test {
+    QueryFixture* fixture = floor_level(LONG_PATH_TILES);
+    defer destroy_level(fixture);
+    add_stripes(fixture, LONG_PATH_TILES);
+    build_large_level(fixture);
+
+    uint default_updates = updates_until_path(fixture, 0);
+    uint raised_updates = updates_until_path(fixture, RAISED_PATH_ITERATIONS);
+
+    assert(default_updates < LONG_PATH_UPDATE_LIMIT, "the default budget finishes");
+    assert(raised_updates < default_updates, "%d updates raised, %d default", raised_updates, default_updates);
+}
+
+fn void test_scene_free_crowd_creates_and_destroys_without_a_scene() @test {
+    NavMesh mesh = nav::create_nav_mesh(mem, { .tile_width = 8, .tile_height = 8, .max_tiles = 1 })!!;
+    defer nav::destroy_nav_mesh(&mesh);
+
+    Crowd crowd = nav::create_crowd(
+        allocator: mem,
+        desc:      {
+            .max_agents               = CROWD_AGENTS,
+            .max_agent_radius         = nav::default_nav_agent_params().radius,
+            .max_path                 = SMALL_PATH,
+            .path_requests_per_update = SMALL_REQUESTS,
+        },
+        mesh:      &mesh,
+        scene:     null,
+    )!!;
+    defer nav::destroy_crowd(&crowd);
+
+    assert(crowd.scene == null && crowd.removals == null && crowd.orphan_scratch.len == 0, "no scene state");
+    assert(crowd.path_scratch.len == SMALL_PATH && crowd.agent(0).corridor.path.len == SMALL_PATH, "path sizes");
+    assert(crowd.path_queue.queue.len == SMALL_REQUESTS && crowd.path_requests.len == SMALL_REQUESTS, "slot counts");
 }

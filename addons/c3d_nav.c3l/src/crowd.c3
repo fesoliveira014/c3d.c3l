@@ -18,7 +18,7 @@ const uint MAX_AVOIDANCE_PARAMS = 8;
 const uint MAX_CROWD_FILTERS = 16;
 
 <* Polygons a crowd corridor holds; mirrors m_maxPathResult. *>
-const usz CROWD_MAX_PATH = 256; // 2 KiB per agent; a target further away in polygons is reached partially
+const usz CROWD_MAX_PATH = 256; // 4 KiB per agent; a target further away in polygons is reached partially
 
 <* Search nodes of the crowd's shared query; mirrors MAX_COMMON_NODES. *>
 const uint CROWD_QUERY_NODES = 512;
@@ -28,6 +28,12 @@ const uint CROWD_PATH_QUEUE_NODES = 4096;
 
 <* Path queue iterations per update; mirrors MAX_ITERS_PER_UPDATE. *>
 const uint CROWD_PATH_ITERATIONS = 100;
+
+<* Search steps of a move request's first search; mirrors updateMoveRequest's MAX_ITER. *>
+const uint QUICK_SEARCH_ITERATIONS = 20;
+
+<* Agents enqueued per update, and the path queue's slots; mirrors updateMoveRequest's PATH_MAX_AGENTS. *>
+const uint PATH_REQUESTS_PER_UPDATE = 8; // each slot holds a CROWD_MAX_PATH result, 2 KiB
 
 <* Agents a crowd may hold; its proximity grid indexes cell entries with 16 bits. *>
 const uint MAX_CROWD_AGENTS = 16383;
@@ -44,9 +50,7 @@ const uint  AVOIDANCE_SEGMENTS @local = 8; // mirrors dtCrowd::init: walls the s
 const uint  GRID_ITEMS_PER_AGENT @local = 4; // mirrors dtCrowd::init: an agent's bounds cover up to four cells
 const float GRID_CELL_RADII @local = 3; // mirrors dtCrowd::init: grid cells three max agent radii wide
 const Vec3  PLACEMENT_RADII @local = { 2, 1.5f, 2 }; // mirrors dtCrowd::init; wider than an agent to recover strays
-const uint  QUICK_SEARCH_ITERATIONS @local = 20; // mirrors updateMoveRequest's MAX_ITER
 const usz   QUICK_SEARCH_POLYS @local = 32; // mirrors updateMoveRequest's MAX_RES
-const usz   PATH_REQUESTS_PER_UPDATE @local = 8; // mirrors updateMoveRequest's PATH_MAX_AGENTS
 const usz   CHECK_LOOKAHEAD @local = 10; // mirrors checkPathValidity: corridor polygons checked every update
 const float TARGET_REPLAN_DELAY @local = 1.0f; // seconds; mirrors checkPathValidity
 const float TOPOLOGY_OPTIMIZATION_TIME @local = 0.5f; // seconds; mirrors OPT_TIME_THR
@@ -161,10 +165,15 @@ struct CrowdDebugInfo {
     usz               sample_count;
 }
 
-<* Capacity of a crowd. *>
+<* Capacity and path budgets of a crowd; a zero budget selects its default. *>
 struct CrowdDesc {
     uint  max_agents;
     float max_agent_radius;
+    uint  max_path;                      // polygons per corridor and path result; default CROWD_MAX_PATH
+    uint  path_queue_nodes;              // search nodes of the path queue; default CROWD_PATH_QUEUE_NODES
+    uint  path_iterations_per_update;    // search steps the path queue spends per update; default CROWD_PATH_ITERATIONS
+    uint  quick_search_iterations;       // steps of a move request's first search; default QUICK_SEARCH_ITERATIONS
+    uint  path_requests_per_update;      // agents enqueued per update and queue slots; default PATH_REQUESTS_PER_UPDATE
 }
 
 <* Crowd slots whose nodes lost their mirror since the last crowd_update; the remove hook's context. *>
@@ -176,9 +185,9 @@ struct AgentRemovalQueue {
 <* Agents steered together over one mesh; mirrors dtCrowd. *>
 struct Crowd {
     Allocator                                     allocator;
-    Scene*                                        scene;              // carries the CrowdAgentRuntime remove hook
-    AgentRemovalQueue*                            removals;
-    Entity[]                                      orphan_scratch;     // max_agents
+    Scene*                                        scene;              // carries the remove hook; null when scene-free
+    AgentRemovalQueue*                            removals;           // null without a scene
+    Entity[]                                      orphan_scratch;     // max_agents; empty without a scene
     uint                                          max_agents;
     CrowdAgent[]                                  agents;
     CrowdAgent*[]                                 active;
@@ -187,7 +196,10 @@ struct Crowd {
     ObstacleAvoidanceParams[MAX_AVOIDANCE_PARAMS] avoidance_params;
     ObstacleAvoidanceQuery                        avoidance;
     ProximityGrid                                 grid;
-    PolyRef[]                                     path_scratch;       // CROWD_MAX_PATH
+    PolyRef[]                                     path_scratch;       // max_path
+    CrowdAgent*[]                                 path_requests;      // path_requests_per_update
+    uint                                          path_iterations_per_update;
+    uint                                          quick_search_iterations;
     Vec3                                          placement_half_extents;
     QueryFilter[MAX_CROWD_FILTERS]                filters;
     float                                         max_agent_radius;
@@ -420,12 +432,14 @@ fn Vec3 Crowd.query_half_extents(&self) => self.placement_half_extents;
 
 <*
  Crowd for max_agents over the mesh, with every array allocated here; mirrors dtCrowd::init.
- One crowd per scene: it owns the CrowdAgentRuntime remove hook.
+ A scene belongs to one crowd, which installs the CrowdAgentRuntime remove hook and serves crowd_update.
+ A null scene gives a crowd stepped only through Crowd.update, with no hook and no removal queue.
  @param [&in] mesh : "Outlives the crowd."
- @param [&inout] scene : "Gains the CrowdAgentRuntime remove hook; outlives the crowd."
+ @param [inout] scene : "Null, or a scene with CrowdAgentRuntime registered; outlives the crowd."
  @return? c3d::CAPACITY_EXCEEDED
  @require desc.max_agents > 0 && desc.max_agents <= MAX_CROWD_AGENTS, desc.max_agent_radius > 0
- @require scene.world.is_registered(CrowdAgentRuntime)
+ @require desc.max_path <= (uint)NULL_NODE, desc.path_queue_nodes < (uint)NULL_NODE
+ @require desc.path_requests_per_update <= MAX_CROWD_AGENTS
 *>
 fn Crowd? create_crowd(
     Allocator allocator,
@@ -433,16 +447,17 @@ fn Crowd? create_crowd(
     NavMesh* mesh,
     Scene* scene,
 ) {
-    AgentRemovalQueue*? removals = alloc::new_try(allocator, AgentRemovalQueue);
-    if (catch removals) return c3d::CAPACITY_EXCEEDED~;
     float radius = desc.max_agent_radius;
+    usz max_path = (usz)desc.max_path ?: CROWD_MAX_PATH;
+    uint path_requests = desc.path_requests_per_update ?: PATH_REQUESTS_PER_UPDATE;
     Crowd crowd = {
-        .allocator              = allocator,
-        .scene                  = scene,
-        .removals               = removals,
-        .max_agents             = desc.max_agents,
-        .max_agent_radius       = radius,
-        .placement_half_extents = PLACEMENT_RADII * radius,
+        .allocator                  = allocator,
+        .scene                      = scene,
+        .max_agents                 = desc.max_agents,
+        .max_agent_radius           = radius,
+        .placement_half_extents     = PLACEMENT_RADII * radius,
+        .path_iterations_per_update = desc.path_iterations_per_update ?: CROWD_PATH_ITERATIONS,
+        .quick_search_iterations    = desc.quick_search_iterations ?: QUICK_SEARCH_ITERATIONS,
     };
     defer catch destroy_crowd(&crowd);
 
@@ -451,16 +466,20 @@ fn Crowd? create_crowd(
     crowd.avoidance_params[..] = default_obstacle_avoidance_params();
     crowd.path_queue = create_path_queue(
         allocator:     allocator,
-        max_path_size: CROWD_MAX_PATH,
-        max_nodes:     CROWD_PATH_QUEUE_NODES,
+        max_path_size: max_path,
+        max_nodes:     desc.path_queue_nodes ?: CROWD_PATH_QUEUE_NODES,
+        max_requests:  path_requests,
         mesh:          mesh,
     )!;
     crowd.query = create_nav_query(allocator, mesh, CROWD_QUERY_NODES)!;
     crowd.filters[..] = default_query_filter();
 
-    PolyRef[]? path_scratch = alloc::new_array_try(allocator, PolyRef, (sz)CROWD_MAX_PATH);
+    PolyRef[]? path_scratch = alloc::new_array_try(allocator, PolyRef, (sz)max_path);
     if (catch path_scratch) return c3d::CAPACITY_EXCEEDED~;
     crowd.path_scratch = path_scratch;
+    CrowdAgent*[]? requests = alloc::new_array_try(allocator, CrowdAgent*, path_requests);
+    if (catch requests) return c3d::CAPACITY_EXCEEDED~;
+    crowd.path_requests = requests;
     CrowdAgent[]? agents = alloc::new_array_try(allocator, CrowdAgent, desc.max_agents);
     if (catch agents) return c3d::CAPACITY_EXCEEDED~;
     crowd.agents = agents;
@@ -470,37 +489,45 @@ fn Crowd? create_crowd(
     AgentAnimation[]? animations = alloc::new_array_try(allocator, AgentAnimation, desc.max_agents);
     if (catch animations) return c3d::CAPACITY_EXCEEDED~;
     crowd.animations = animations;
-    Entity[]? orphans = alloc::new_array_try(allocator, Entity, desc.max_agents);
-    if (catch orphans) return c3d::CAPACITY_EXCEEDED~;
-    crowd.orphan_scratch = orphans;
-    uint[]? queued = alloc::new_array_try(allocator, uint, desc.max_agents);
-    if (catch queued) return c3d::CAPACITY_EXCEEDED~;
-    removals.indices = queued;
-    foreach (&agent : agents) agent.corridor = create_path_corridor(allocator, CROWD_MAX_PATH)!;
+    foreach (&agent : agents) agent.corridor = create_path_corridor(allocator, max_path)!;
 
-    scene.set_remove_hook(CrowdAgentRuntime, &queue_removed_agent, removals);
+    if (scene) {
+        AgentRemovalQueue*? removals = alloc::new_try(allocator, AgentRemovalQueue);
+        if (catch removals) return c3d::CAPACITY_EXCEEDED~;
+        crowd.removals = removals;
+        Entity[]? orphans = alloc::new_array_try(allocator, Entity, desc.max_agents);
+        if (catch orphans) return c3d::CAPACITY_EXCEEDED~;
+        crowd.orphan_scratch = orphans;
+        uint[]? queued = alloc::new_array_try(allocator, uint, desc.max_agents);
+        if (catch queued) return c3d::CAPACITY_EXCEEDED~;
+        removals.indices = queued;
+        scene.set_remove_hook(CrowdAgentRuntime, &queue_removed_agent, removals);
+    }
     return crowd;
 }
 
 <*
- Clear the remove hook, then free every agent, the queue, the grid and the queries.
+ Clear the remove hook of a bound scene, then free every agent, the queue, the grid and the queries.
  @param [&inout] crowd : "Left zeroed."
 *>
 fn void destroy_crowd(Crowd* crowd) {
     Allocator allocator = crowd.allocator;
-    crowd.scene.set_remove_hook(CrowdAgentRuntime, null, null);
+    if (crowd.scene) crowd.scene.set_remove_hook(CrowdAgentRuntime, null, null);
     foreach (&agent : crowd.agents) destroy_path_corridor(&agent.corridor);
     destroy_path_queue(&crowd.path_queue);
     destroy_obstacle_avoidance_query(&crowd.avoidance);
     destroy_proximity_grid(&crowd.grid);
     destroy_nav_query(&crowd.query);
     alloc::free(allocator, crowd.path_scratch.ptr);
+    alloc::free(allocator, crowd.path_requests.ptr);
     alloc::free(allocator, crowd.agents.ptr);
     alloc::free(allocator, crowd.active.ptr);
     alloc::free(allocator, crowd.animations.ptr);
     alloc::free(allocator, crowd.orphan_scratch.ptr);
-    alloc::free(allocator, crowd.removals.indices.ptr);
-    alloc::free(allocator, crowd.removals);
+    if (crowd.removals) {
+        alloc::free(allocator, crowd.removals.indices.ptr);
+        alloc::free(allocator, crowd.removals);
+    }
     *crowd = {};
 }
 
@@ -612,13 +639,13 @@ fn void check_path_validity(Crowd* crowd, CrowdAgent*[] agents, float dt) @local
 
 // Mirrors updateMoveRequest: a quick search per new request, the path queue for the rest, then the results.
 fn void update_move_requests(Crowd* crowd) @local {
-    CrowdAgent*[PATH_REQUESTS_PER_UPDATE] queue;
+    CrowdAgent*[] queue = crowd.path_requests;
     usz queued;
     foreach (&agent : crowd.agents) {
         if (!agent.active || agent.state == INVALID || !follows_path(agent)) continue;
         if (agent.target_state == REQUESTING) start_move_request(crowd, agent);
         if (agent.target_state == WAITING_FOR_QUEUE) {
-            queued = insert_by_replan_time(queue[..], queued, agent);
+            queued = insert_by_replan_time(queue, queued, agent);
         }
     }
 
@@ -633,7 +660,7 @@ fn void update_move_requests(Crowd* crowd) @local {
         if (agent.target_path_request) agent.target_state = WAITING_FOR_PATH;
     }
 
-    crowd.path_queue.update(CROWD_PATH_ITERATIONS);
+    crowd.path_queue.update(crowd.path_iterations_per_update);
 
     foreach (&agent : crowd.agents) {
         if (!agent.active || agent.target_state != WAITING_FOR_PATH) continue;
@@ -668,7 +695,7 @@ fn void start_move_request(Crowd* crowd, CrowdAgent* agent) @local {
         end:       agent.target_position,
         filter:    filter,
     );
-    (void)crowd.query.update_sliced_find_path(QUICK_SEARCH_ITERATIONS);
+    (void)crowd.query.update_sliced_find_path(crowd.quick_search_iterations);
     // A replan keeps as much of the steady corridor as the search reached.
     PathResult? found = agent.target_replan
         ? crowd.query.finalize_sliced_find_path_partial(path, request_path[..])
