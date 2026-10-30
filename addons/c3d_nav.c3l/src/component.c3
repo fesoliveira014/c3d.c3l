@@ -221,7 +221,7 @@ fn void? Scene.add_nav_agent(&self, Node* node, NavAgentParams params) {
 
 <*
  Ask the node's agent to walk to a world position, snapped to the mesh at the next crowd_update.
- A target beyond CROWD_MAX_PATH polygons is reached partially.
+ A target beyond the crowd's max_path polygons is reached partially.
  @param [&in] node : "Carries a NavAgent."
  @require self.has(node, NavAgent)
 *>

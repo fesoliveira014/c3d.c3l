@@ -158,6 +158,20 @@ An application embeds `QueryFilter` as an `inline` first member of its own struc
 
 `create_crowd(allocator, desc, &mesh, scene)` creates a crowd for `CrowdDesc.max_agents` agents (at most `MAX_CROWD_AGENTS`, 16383) and a `max_agent_radius` that sizes its placement queries. One crowd serves a scene because it installs the remove hook of `CrowdAgentRuntime`. Destroy it before the scene.
 
+A null `scene` makes a scene-free crowd for applications that keep agent positions outside the scene, for example in a simulation stepped on a worker. It installs no remove hook and allocates no removal queue. Step it only through `Crowd.update`; `crowd_update` requires the crowd's own scene. Agents, requests and results follow the same API and produce the same positions and velocities as a scene-bound crowd.
+
+`CrowdDesc` also sets the path budgets. A zero field selects its default, so a desc that names only `max_agents` and `max_agent_radius` keeps the defaults:
+
+| Field | Default | Effect |
+| --- | --- | --- |
+| `max_path` | `CROWD_MAX_PATH` (256) | Polygons per agent corridor and per path result, at most 65,535 |
+| `path_queue_nodes` | `CROWD_PATH_QUEUE_NODES` (4096) | Search nodes of the path queue, below 65,535 |
+| `path_iterations_per_update` | `CROWD_PATH_ITERATIONS` (100) | Search steps the path queue spends in one `Crowd.update`, shared across its requests |
+| `quick_search_iterations` | `QUICK_SEARCH_ITERATIONS` (20) | Steps of a move request's first search, before it joins the queue |
+| `path_requests_per_update` | `PATH_REQUESTS_PER_UPDATE` (8) | Agents enqueued per update, and the queue's slots; at most `MAX_CROWD_AGENTS` |
+
+Raise `path_iterations_per_update` to finish long paths in fewer updates when the crowd steps at a low rate.
+
 Agents live on nodes:
 
 ```c3
@@ -171,7 +185,7 @@ nav::crowd_update(&scene, &crowd, delta_seconds);
 - `Scene.add_nav_agent(node, params)` authors a `NavAgent`; `AGENT_EXISTS` when the node has one. `set_nav_target(node, position)` asks the agent to walk to a world position, snapped to the mesh at the next update. `set_nav_velocity(node, velocity)` asks it to move at a velocity, and `clear_nav_target(node)` stops it.
 - `crowd_update(scene, crowd, dt, debug = null)` removes agents whose node lost its `NavAgent`, adds a crowd slot for each new `NavAgent` (counting the ones that did not fit in `crowd.unbound`), steps the crowd, and writes each non-driven node's position in parent space. `dt` is positive.
 - A `NavAgent` marked `driven` keeps its node's position. The crowd reads the position every update and steers through `CrowdAgent.velocity`; the application applies that velocity to the node itself.
-- A target farther than `CROWD_MAX_PATH` (256) polygons is reached partially. Each agent's corridor holds two `CROWD_MAX_PATH` `PolyRef` arrays (8 bytes per entry, 4 KiB), the second for atomic movement. An agent chooses one of the crowd's 16 query filters (`Crowd.filter(index)`) and 8 avoidance configurations (`set_obstacle_avoidance_params(index, params)`) by index in its params.
+- A target farther than `CrowdDesc.max_path` (`CROWD_MAX_PATH`, 256) polygons is reached partially. Each agent's corridor holds two `max_path` `PolyRef` arrays (8 bytes per entry, 4 KiB at the default), the second for atomic movement. An agent chooses one of the crowd's 16 query filters (`Crowd.filter(index)`) and 8 avoidance configurations (`set_obstacle_avoidance_params(index, params)`) by index in its params.
 - Removing an agent's node frees its slot at the next `crowd_update`.
 
 Applications that manage agents without nodes call `Crowd.add_agent`, `update_agent_params`, `remove_agent`, `request_move_target`, `request_move_velocity` and `reset_move_target`, then `Crowd.update(dt, debug)`.
@@ -197,10 +211,11 @@ Select `c3d_serial`, enable `C3D_NAV_SERIAL` and call `nav::register_serial_code
 ## Limits
 
 - The builder's bounds, tile size and tile count are fixed at creation. A mesh holds `max_tiles` tile slots; with `cache_layers` the builder reserves `expected_layers_per_tile` per tile.
-- One builder and one crowd serve a scene. A `NavQuery` runs one sliced search at a time.
+- One builder and one scene-bound crowd serve a scene. A `NavQuery` runs one sliced search at a time.
 - Obstacles need `cache_layers`.
 - Bounded detail and sub-cell clearance need strict floating-point math ([grid sources](navigation_grids.md#strict-floating-point-math)).
-- A corridor holds at most `CROWD_MAX_PATH` polygons per agent; a polygon whose border edge is split by many portals caps its local boundary contribution at 18 wall segments.
+- A corridor holds at most `CrowdDesc.max_path` polygons per agent. The crowd allocates `max_path` entries of 8 bytes twice per agent, once per path queue slot (`path_requests_per_update`) and once for the shared result.
+- A polygon whose border edge is split by many portals caps its local boundary contribution at 18 wall segments.
 - Snapshots and cached-layer queries handle at most 32 layers at one XZ tile coordinate.
 - Origin shifts are horizontal only.
 

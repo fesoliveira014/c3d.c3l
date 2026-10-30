@@ -7,7 +7,7 @@ import c3d::scene;
  @param [&inout] scene : "The crowd's scene; world matrices as left by the last update_world."
  @param [&inout] crowd : "Agents are added and removed to match the NavAgent components."
  @param [inout] debug : "Filled for the agent it names; null for none."
- @require dt > 0, crowd.scene == scene
+ @require dt > 0, scene != null, crowd.scene == scene
 *>
 fn void crowd_update(
     Scene* scene,

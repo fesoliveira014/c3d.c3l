@@ -6,9 +6,6 @@ import c3d;
 <* Handle to a queued path request; 0 is invalid. *>
 typedef PathQueueRef = uint;
 
-<* Requests a queue holds; mirrors MAX_QUEUE. *>
-const uint MAX_PATH_QUEUE = 8;
-
 const int MAX_KEEP_ALIVE @local = 2; // mirrors dtPathQueue::update: updates a finished result waits to be collected
 
 <* Progress of one queued request; mirrors the request's dtStatus. *>
@@ -36,12 +33,12 @@ struct PathRequest {
 
 <* Round-robin sliced path finder for a crowd; mirrors dtPathQueue. *>
 struct PathQueue {
-    Allocator                   allocator;
-    PathRequest[MAX_PATH_QUEUE] queue;
-    PathQueueRef                next_handle;
-    usz                         max_path_size;
-    uint                        head;
-    NavQuery                    query;
+    Allocator     allocator;
+    PathRequest[] queue;            // max_requests slots
+    PathQueueRef  next_handle;
+    usz           max_path_size;
+    uint          head;
+    NavQuery      query;
 }
 
 <*
@@ -50,8 +47,9 @@ struct PathQueue {
 *>
 fn void PathQueue.update(&self, uint max_iterations) {
     int iterations_left = (int)max_iterations;
-    for (uint visited = 0; visited < MAX_PATH_QUEUE; visited++) {
-        PathRequest* request = &self.queue[self.head % MAX_PATH_QUEUE];
+    uint slots = (uint)self.queue.len;
+    for (uint visited = 0; visited < slots; visited++) {
+        PathRequest* request = &self.queue[self.head % slots];
         if (!request.ref) {
             self.head++;
             continue;
@@ -154,20 +152,22 @@ fn PathResult? PathQueue.path_result(&self, PathQueueRef ref, PolyRef[] out_path
 *>
 fn void destroy_path_queue(PathQueue* queue) {
     foreach (&request : queue.queue) alloc::free(queue.allocator, request.path.ptr);
+    alloc::free(queue.allocator, queue.queue.ptr);
     destroy_nav_query(&queue.query);
     *queue = {};
 }
 
 <*
- Queue whose requests hold max_path_size polygons, searching with its own query of max_nodes.
+ Queue of max_requests slots holding max_path_size polygons each, searching with its own query of max_nodes.
  @param [&in] mesh : "Outlives the queue."
  @return? c3d::CAPACITY_EXCEEDED
- @require max_path_size > 0, max_nodes > 0 && max_nodes < (uint)NULL_NODE
+ @require max_path_size > 0, max_nodes > 0 && max_nodes < (uint)NULL_NODE, max_requests > 0
 *>
 fn PathQueue? create_path_queue(
     Allocator allocator,
     usz max_path_size,
     uint max_nodes,
+    uint max_requests,
     NavMesh* mesh,
 ) {
     PathQueue queue = {
@@ -177,6 +177,9 @@ fn PathQueue? create_path_queue(
         .query         = create_nav_query(allocator, mesh, max_nodes)!,
     };
     defer catch destroy_path_queue(&queue);
+    PathRequest[]? requests = alloc::new_array_try(allocator, PathRequest, max_requests);
+    if (catch requests) return c3d::CAPACITY_EXCEEDED~;
+    queue.queue = requests;
     foreach (&request : queue.queue) {
         PolyRef[]? path = alloc::new_array_try(allocator, PolyRef, (sz)max_path_size);
         if (catch path) return c3d::CAPACITY_EXCEEDED~;
