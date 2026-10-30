@@ -251,7 +251,8 @@ shutdown, call `gui::destroy_profiler_panel`, finish and destroy the GUI, destro
 detaches its GPU source), and then destroy the recorder. The recorder, its producers and the panel stay on one thread.
 
 - **Live** follows the greatest retained frame id whose compiled domains have settled. A newer pending frame appears in
-  the history without replacing the detail view.
+  the history without replacing the detail view. An expanded scope stays expanded across snapshots; the CPU and GPU
+  trees identify a scope by its label path, with repeated sibling labels told apart by their order.
 - **Pause**, or selecting any retained row (including a pending capture with a completed prefix), freezes an owned copy.
   The copy does not change when GPU publication completes or recorder slots are reused. **Reselect source frame**
   refreshes it from the same id; if that id was evicted, the panel keeps the copy and says so. **Resume** follows the
