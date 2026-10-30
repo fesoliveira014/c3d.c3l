@@ -383,6 +383,9 @@ header line that starts with `# <name>,`:
   serial output bit for bit. The exit status is 1 when any pooled output differs.
 - `background`: one background run of 1024 empty ranges at batch 1, from `try_run` until its last range has run, on the
   capped workers alone.
+- `wake`: one run of one empty range, frame (to `wait`) and background (from `try_run` until its range has run), at 1, 4,
+  16 and 31 workers whatever the host's processor count. The time grows with the workers only when a run wakes more
+  workers than it has ranges.
 - `loaded`: the same kernel idle and while a long background run keeps the default cap of workers busy.
 - `pinned`: the kernel with the frame workers bound to the performance cores against unbound, on a hybrid processor.
 - `recording`: the overhead workload with `set_recording(true)`, when built with

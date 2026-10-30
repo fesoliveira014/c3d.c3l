@@ -12,6 +12,7 @@ import c3d::job;
 
 const uint OVERHEAD_RANGES @local = 1024; // the gate's workload: one run of 1024 empty ranges
 const uint[3] FIXED_WORKER_COUNTS @private = { 0, 1, 3 }; // inline, one worker and the CI runners' three
+const uint[4] WAKE_WORKER_COUNTS @local = { 1, 4, 16, 31 }; // up to the 31 workers of a 32-processor host; more than the host has oversubscribes
 const uint KERNEL_MULTIPLIES @local = 16; // 64 multiply-adds each; 262 144 items cost 268M multiply-adds a pass
 const uint[3] ITEM_COUNTS @local = { 16384, 65536, 262144 };
 const uint[2] FIXED_BATCHES @local = { 64, 1024 };
@@ -97,7 +98,7 @@ fn void count_range(void* data, uint first, uint count) @local {
     ranges.add(1);
 }
 
-fn double time_background_run(JobPool* pool) @local {
+fn double time_background_run(JobPool* pool, uint range_count) @local {
     double[SAMPLES] samples;
     for (uint pass = 0; pass < PASSES; pass++) {
         Atomic{uint} ranges;
@@ -106,10 +107,10 @@ fn double time_background_run(JobPool* pool) @local {
             job_class: BACKGROUND,
             range:     &count_range,
             data:      &ranges,
-            count:     OVERHEAD_RANGES,
+            count:     range_count,
             batch:     1,
         )!!;
-        while (ranges.load() < OVERHEAD_RANGES) thread::yield();
+        while (ranges.load() < range_count) thread::yield();
         while (!pool.is_finished(id)) thread::yield();
         double elapsed = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND;
         if (pass >= WARMUP_SAMPLES) samples[pass - WARMUP_SAMPLES] = elapsed;
@@ -380,7 +381,25 @@ fn int main(String[] args) {
             workers,
             job::default_background_workers(workers),
             OVERHEAD_RANGES,
-            time_background_run(&pool) / OVERHEAD_RANGES,
+            time_background_run(&pool, OVERHEAD_RANGES) / OVERHEAD_RANGES,
+        );
+    }
+
+    io::printn("# wake,workers,frame_us_per_run,background_us_per_run");
+    foreach (workers : WAKE_WORKER_COUNTS) {
+        JobPool pool = create_bench_pool(workers);
+        defer job::destroy_job_pool(&pool);
+        io::printfn(
+            "wake,%d,%.2f,%.2f",
+            workers,
+            time_run(
+                pool:  &pool,
+                range: &empty_range,
+                data:  null,
+                count: 1,
+                batch: 1,
+            ),
+            time_background_run(&pool, 1),
         );
     }
 
