@@ -77,7 +77,7 @@ fn void? GuiRenderer.record(&self, OverlayContext* overlay) {
  Create a GUI adapter with an uploaded fixed font.
  @param [&inout] renderer : "Stable borrow; configured window output, no open frame."
  @param [&inout] window : "Stable borrow; outlives the adapter and renderer."
- @param settings_path : "Settings file loaded on first frame, saved on destroy; empty writes none."
+ @param settings_path : "Loaded on first frame, saved on destroy; empty writes none."
  @return? c3d::gui::backend::create_gui_backend!
  @return? CONTEXT_CREATE_FAILED, FONT_BUILD_FAILED
  @require !renderer.frame_open, renderer.swapchain.is_valid()
