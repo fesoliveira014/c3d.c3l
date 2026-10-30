@@ -52,7 +52,11 @@ Run the worked example with `python3 scripts/build.py --example cube_gui`. The s
   texture and `FontId` fonts do not apply to ImGui.
 - **Input.** The adapter reads the window's translated event list, size, pixel density and clock. Nothing is forwarded by the
   application. ImGui receives keys with modifiers, text, mouse, wheel and focus events; gamepad events are not forwarded.
-  ImGui copy and paste go through the platform clipboard. The adapter writes no `imgui.ini`.
+  ImGui copy and paste go through the platform clipboard.
+- **Settings file.** `create_gui_renderer` takes an optional `settings_path`. The default, an empty path, writes no
+  file. With a path, ImGui loads the file on the first `new_frame()`, saves it about every
+  5 seconds while window layout or other settings changed, and writes it again in `destroy_gui_renderer`. The adapter copies the path
+  and frees it on destroy. A path ImGui cannot read or write is silently ignored.
 - **Capture flags.** `new_frame()` sets `window.input.mouse_captured_by_gui` and `keyboard_captured_by_gui` independently
   from ImGui. Apply them before application controls: mouse capture suppresses orbit and wheel actions; keyboard capture
   suppresses keyboard controls such as movement, camera switches and quit keys. Native window close stays effective. A control that releases
@@ -65,8 +69,8 @@ Run the worked example with `python3 scripts/build.py --example cube_gui`. The s
 
 ## Create and destroy
 
-`gui::create_gui_renderer(allocator, &renderer, &window)` needs a renderer with a configured window output and no open frame.
-It uploads the font through the renderer and waits for the upload.
+`gui::create_gui_renderer(allocator, &renderer, &window, settings_path)` needs a renderer with a configured window output and no open frame.
+It uploads the font through the renderer and waits for the upload. `settings_path` is optional; see Settings file above.
 
 `gui::destroy_gui_renderer(&gui)` waits for renderer submissions before it releases GPU objects. Call it before destroying the
 renderer or the window, with no GUI frame and no renderer frame open. If the wait fails, the optional result keeps ownership

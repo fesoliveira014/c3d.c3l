@@ -82,7 +82,7 @@ These run in a terminal. `upload` creates a device but no window.
 | `fullscreen` | Draws a gradient with a fullscreen shader into the frame. | | [platform](../docs/platform.md) |
 | `actions` | One action map bound to keyboard and gamepad at once, with the bound values in a panel. | | [actions](../docs/actions.md) |
 | `cube` | The first scene: a spinning box and sphere, orbit camera, perspective and orthographic lens (`O`), arrow keys move the box, frame statistics on standard output. | | [getting-started](../docs/getting-started.md) |
-| `cube_gui` | The same scene with the ImGui overlay: scene tree, material editing, statistics and a Spin toggle that starts off. | `--gpu-timings` | [gui](../docs/gui.md) |
+| `cube_gui` | The same scene with the ImGui overlay: scene tree, material editing, statistics and a Spin toggle that starts off. | `--gpu-timings`, `--gui-settings PATH` | [gui](../docs/gui.md) |
 | `inspector` | The Fox model, sun, spot and point lights under the scene, material, statistics, targets and post panels. | `--gpu-timings` | [gui panels](../docs/gui_panels.md) |
 | `described_components` | A component with a registered type description in the Scene panel. | | [type descriptions](../docs/type_descriptions.md) |
 | `overlay` | Overlay lists of rectangles, glyphs, shapes, gradients, clips, transforms and backdrops over the frame, in a render target and in the world; a panel toggles each part. | see below | [overlay](../docs/overlay.md) |

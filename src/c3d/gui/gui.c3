@@ -15,6 +15,7 @@ struct GuiRenderer {
     platform::Window* window;
     imgui::Context context;
     GuiBackend backend;
+    ZString settings_path; // owned copy; ImGui keeps the pointer for the context's life
     bool frame_open;
     bool draw_ready;
 }
@@ -76,17 +77,26 @@ fn void? GuiRenderer.record(&self, OverlayContext* overlay) {
  Create a GUI adapter with an uploaded fixed font.
  @param [&inout] renderer : "Stable borrow; configured window output, no open frame."
  @param [&inout] window : "Stable borrow; outlives the adapter and renderer."
+ @param settings_path : "Settings file loaded on first frame, saved on destroy; empty writes none."
  @return? c3d::gui::backend::create_gui_backend!
  @return? CONTEXT_CREATE_FAILED, FONT_BUILD_FAILED
  @require !renderer.frame_open, renderer.swapchain.is_valid()
 *>
-fn GuiRenderer? create_gui_renderer(Allocator allocator, Renderer* renderer, platform::Window* window) {
+fn GuiRenderer? create_gui_renderer(
+    Allocator allocator,
+    Renderer* renderer,
+    platform::Window* window,
+    String settings_path = "",
+) {
+    ZString settings = settings_path.len ? settings_path.zstr_copy(allocator) : null;
+    defer catch alloc::free(allocator, settings);
+
     imgui::Context context = imgui::create_context((imgui::FontAtlas)null);
     if (!context) return CONTEXT_CREATE_FAILED~;
     defer catch imgui::destroy_context(context);
 
     imgui::set_current_context(context);
-    imgui::io_set_ini_filename(null);
+    imgui::io_set_ini_filename(settings);
     imgui::platform_io_set_clipboard_handlers(&clipboard_get, &clipboard_set, null);
 
     imgui::FontAtlas fonts = imgui::io_get_fonts();
@@ -120,6 +130,7 @@ fn GuiRenderer? create_gui_renderer(Allocator allocator, Renderer* renderer, pla
         .window = window,
         .context = context,
         .backend = backend,
+        .settings_path = settings,
     };
 }
 
@@ -135,6 +146,7 @@ fn void? destroy_gui_renderer(GuiRenderer* gui) {
 
     gui.window.set_text_input(false);
     imgui::destroy_context(gui.context);
+    alloc::free(gui.allocator, gui.settings_path);
 
     *gui = {};
 }
