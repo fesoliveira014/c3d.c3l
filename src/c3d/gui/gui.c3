@@ -169,6 +169,9 @@ fn void feed_event(imgui::Io io, platform::Event* event, float density) @local {
             imgui::io::add_focus_event(io, true);
         case FOCUS_LOST:
             imgui::io::add_focus_event(io, false);
+        case MOUSE_LEFT:
+            imgui::io::add_mouse_pos_event(io, -float::max, -float::max);
+        case MOUSE_ENTERED:
         case RESIZED:
         case QUIT:
         case GAMEPAD_CONNECTED:

@@ -343,6 +343,48 @@ fn void test_focus_resize_and_quit_are_listed() @test {
     assert(events[2].kind == EventKind.RESIZED && events[3].kind == EventKind.QUIT);
 }
 
+fn void test_mouse_enter_and_leave_track_the_cursor() @test {
+    platform::Window window = { .window_id = (sdl::WindowID)1, .pixel_density = 1 };
+    assert(!window.input.mouse_in_window);
+
+    sdl::Event enter = window_event(sdl::EventType.WINDOW_MOUSE_ENTER);
+    enter.window.window_id = (sdl::WindowID)1;
+    window.apply_event(&enter);
+    assert(window.input.mouse_in_window);
+    assert(window.events().len == 1 && window.events()[0].kind == EventKind.MOUSE_ENTERED);
+
+    sdl::Event leave = window_event(sdl::EventType.WINDOW_MOUSE_LEAVE);
+    leave.window.window_id = (sdl::WindowID)1;
+    window.apply_event(&leave);
+    assert(!window.input.mouse_in_window);
+    assert(window.events().len == 2 && window.events()[1].kind == EventKind.MOUSE_LEFT);
+
+    sdl::Event motion;
+    motion.motion.type = sdl::EventType.MOUSE_MOTION;
+    motion.motion.window_id = (sdl::WindowID)1;
+    window.apply_event(&motion);
+    assert(window.input.mouse_in_window, "motion marks the cursor as inside");
+
+    window.apply_event(&leave);
+    sdl::Event button;
+    button.button.type = sdl::EventType.MOUSE_BUTTON_DOWN;
+    button.button.window_id = (sdl::WindowID)1;
+    button.button.button = 1;
+    button.button.down = true;
+    window.apply_event(&button);
+    assert(window.input.mouse_in_window, "a button marks the cursor as inside");
+
+    sdl::Event focus_lost = window_event(sdl::EventType.WINDOW_FOCUS_LOST);
+    focus_lost.window.window_id = (sdl::WindowID)1;
+    window.apply_event(&focus_lost);
+    assert(!window.input.mouse_in_window, "focus loss clears the flag");
+
+    usz listed = window.events().len;
+    enter.window.window_id = (sdl::WindowID)2;
+    window.apply_event(&enter);
+    assert(!window.input.mouse_in_window && window.events().len == listed, "another window's enter changes nothing");
+}
+
 fn void test_mouse_delta_and_wheel_clear_each_frame() @test {
     platform::Window window = { .pixel_density = 1 };
 

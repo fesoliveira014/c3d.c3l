@@ -55,6 +55,7 @@ struct Input {
     bool[MOUSE_BUTTON_COUNT] mouse_pressed;
     Vec2                     mouse_position;
     Vec2                     mouse_delta;
+    bool                     mouse_in_window; // the cursor is over this window: set on enter, motion or button, cleared on leave or focus loss
     float                    wheel;
     bool                     mouse_captured_by_gui;
     bool                     keyboard_captured_by_gui;
