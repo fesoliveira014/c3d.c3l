@@ -99,8 +99,14 @@ fn void? run_gui(
     Node* cube,
     Node* camera_node,
     Orbit* orbit,
+    String settings_path,
 ) @local {
-    GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
+    GuiRenderer gui_renderer = gui::create_gui_renderer(
+        allocator: mem,
+        renderer: renderer,
+        window: window,
+        settings_path: settings_path,
+    )!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
     GuiPanelState panels = { .selected = cube.id };
@@ -182,8 +188,10 @@ fn void? run_gui(
 
 fn int main(String[] args) {
     bool gpu_timings;
+    String settings_path;
 
-    foreach (argument : args[1..]) {
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
         if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
@@ -191,6 +199,8 @@ fn int main(String[] args) {
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
             $endif
+        } else if (argument == "--gui-settings" && index + 1 < args.len) {
+            settings_path = args[++index];
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
@@ -243,6 +253,7 @@ fn int main(String[] args) {
         cube: cube,
         camera_node: camera_node,
         orbit: &orbit,
+        settings_path: settings_path,
     )) {
         io::printfn("GUI failed: %s", excuse);
         return 1;
