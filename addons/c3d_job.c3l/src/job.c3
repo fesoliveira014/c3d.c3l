@@ -600,19 +600,25 @@ fn uint? background_worker_run(JobPoolState* state) @private {
     return NOT_FOUND~;
 }
 
-fn void signal_workers(ConditionVariable* available, uint count) @private {
+// A run with as many ranges as the class has workers wakes them all, as one call instead of one per worker.
+fn void wake_workers(ConditionVariable* available, uint count, uint class_workers) @private {
+    if (!count) return;
+    if (count >= class_workers) {
+        available.broadcast();
+        return;
+    }
     for (uint signalled = 0; signalled < count; signalled++) available.signal();
 }
 
 fn void wake_frame_workers(JobPoolState* state, uint range_count) @private {
-    signal_workers(&state.work_available, min(range_count, state.shared_workers));
+    wake_workers(&state.work_available, range_count, state.shared_workers);
 }
 
 // free_places is read under the lock at queue time; capped workers that finish a range claim any remainder.
 fn void wake_background_workers(JobPoolState* state, uint range_count, uint free_places) @private {
     uint background_only_workers = (uint)state.workers.len - state.shared_workers;
-    signal_workers(&state.background_available, min(range_count, background_only_workers));
-    signal_workers(&state.work_available, min(range_count, free_places));
+    wake_workers(&state.background_available, range_count, background_only_workers);
+    wake_workers(&state.work_available, min(range_count, free_places), state.shared_workers);
 }
 
 fn void stop_workers(JobPoolState* state, uint count) @private {
