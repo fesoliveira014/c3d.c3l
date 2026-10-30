@@ -26,6 +26,10 @@ const uint  EQUIVALENCE_UPDATES @private = 120;
 const float WALKED_DISTANCE @private = 1; // metres; the agents have left their starts
 const uint  LONG_PATH_TILES @private = 12; // tiles wide, so the search outlasts several default-budget updates
 const uint  LONG_PATH_UPDATE_LIMIT @private = 600;
+const uint  BATCH_COLUMNS @private = 4;
+const uint  BATCH_AGENTS @private = BATCH_COLUMNS * BATCH_COLUMNS; // twice the default requests per update
+const uint  BATCH_TILES @private = 4; // tiles wide, so a path outlasts the first search
+const uint  BATCH_PATH_ITERATIONS @private = 4000; // above what sixteen searches over the batch floor need
 const uint  RAISED_PATH_ITERATIONS @private = 1000; // above the iterations the longest path needs
 const Vec3[] CROSSING_STARTS @private = { { 2, 0, 2 }, { 17, 0, 2 }, { 2, 0, 17 }, { 17, 0, 17 } };
 const Vec3[] CROSSING_TARGETS @private = { { 17, 0, 17 }, { 2, 0, 17 }, { 17, 0, 2 }, { 2, 0, 2 } }; // opposite corners
@@ -474,4 +478,38 @@ fn void test_scene_free_crowd_creates_and_destroys_without_a_scene() @test {
     assert(crowd.scene == null && crowd.removals == null && crowd.orphan_scratch.len == 0, "no scene state");
     assert(crowd.path_scratch.len == SMALL_PATH && crowd.agent(0).corridor.path.len == SMALL_PATH, "path sizes");
     assert(crowd.path_queue.queue.len == SMALL_REQUESTS && crowd.path_requests.len == SMALL_REQUESTS, "slot counts");
+}
+
+fn void test_requests_above_the_default_all_queue_in_one_update() @test {
+    QueryFixture* fixture = floor_level(BATCH_TILES);
+    defer destroy_level(fixture);
+    add_stripes(fixture, BATCH_TILES);
+    build_level(fixture);
+    Crowd crowd = nav::create_crowd(
+        allocator: mem,
+        desc:      {
+            .max_agents                 = BATCH_AGENTS,
+            .max_agent_radius           = nav::default_nav_agent_params().radius,
+            .path_iterations_per_update = BATCH_PATH_ITERATIONS,
+            .path_requests_per_update   = BATCH_AGENTS,
+        },
+        mesh:      &fixture.level.mesh,
+        scene:     null,
+    )!!;
+    defer nav::destroy_crowd(&crowd);
+    float far_side = fixture.level.builder.tile_world_size * BATCH_TILES - 1;
+    for (uint index = 0; index < BATCH_AGENTS; index++) {
+        float column = (float)(index % BATCH_COLUMNS);
+        float row = (float)(index / BATCH_COLUMNS);
+        uint agent = crowd.add_agent({ 1 + column, 0, 1 + row }, nav::default_nav_agent_params())!!;
+        send_agent(&crowd, agent, { far_side - column, 0, far_side - row });
+    }
+
+    crowd.update(CROWD_STEP);
+
+    uint valid;
+    for (uint index = 0; index < BATCH_AGENTS; index++) {
+        if (crowd.agent(index).target_state == VALID) valid++;
+    }
+    assert(valid == BATCH_AGENTS, "%d of %d requests have a path", valid, BATCH_AGENTS);
 }
