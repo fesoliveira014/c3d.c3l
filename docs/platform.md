@@ -89,11 +89,14 @@ Keys are named by `platform::Scancode`, SDL's scancode names and numbers with th
 | `Input.key_down(key)`, `key_pressed(key)`, `key_released(key)` | Held, went down this frame, went up this frame. |
 | `Input.button_down(button)`, `button_pressed(button)` | Held, went down this frame. |
 | `Input.mouse_position`, `mouse_delta` | Framebuffer pixels; the delta sums the frame's motion. |
+| `Input.mouse_in_window` | The cursor is over the window: set by enter, motion or a button, cleared by leave or focus loss. |
 | `Input.wheel` | Vertical wheel movement of the frame, as SDL reports it. |
 | `Input.modifiers` | `Keymod` of the last key event: `shift`, `ctrl`, `alt`, `gui`, `caps`, `num`. |
 
 The arrays behind these calls stay public and use the same indices: `Input.keys` holds `KEY_COUNT` (512) entries and
 `mouse_buttons` `MOUSE_BUTTON_COUNT` (8). Keys held when a window gains focus count as held, not pressed.
+
+`mouse_position` keeps its last value after the cursor leaves, so edge scrolling tests `mouse_in_window`.
 
 ## Events
 
@@ -104,7 +107,7 @@ The arrays behind these calls stay public and use the same indices: `Input.keys`
 | `MOUSE_MOTION` | `position`, `delta` |
 | `MOUSE_BUTTON_DOWN`, `MOUSE_BUTTON_UP` | `button`, `position` |
 | `MOUSE_WHEEL` | `scroll` with the direction normalized, `position` |
-| `FOCUS_GAINED`, `FOCUS_LOST`, `RESIZED`, `QUIT` | none |
+| `FOCUS_GAINED`, `FOCUS_LOST`, `MOUSE_ENTERED`, `MOUSE_LEFT`, `RESIZED`, `QUIT` | none |
 | `GAMEPAD_CONNECTED`, `GAMEPAD_DISCONNECTED` | `gamepad_slot` |
 | `GAMEPAD_BUTTON_DOWN`, `GAMEPAD_BUTTON_UP` | `gamepad_slot`, `gamepad_button` |
 | `GAMEPAD_AXIS_MOTION` | `gamepad_slot`, `gamepad_axis`, normalized `axis_value` |

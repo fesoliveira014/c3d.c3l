@@ -25,6 +25,8 @@ enum EventKind {
     MOUSE_WHEEL,
     FOCUS_GAINED,
     FOCUS_LOST,
+    MOUSE_ENTERED,
+    MOUSE_LEFT,
     RESIZED,
     QUIT,
     GAMEPAD_CONNECTED,

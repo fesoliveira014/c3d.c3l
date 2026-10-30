@@ -97,7 +97,16 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             push_event(self, { .kind = EventKind.FOCUS_GAINED });
         case EventType.WINDOW_FOCUS_LOST:
             if (event.window.window_id != self.window_id) break;
+            self.input.mouse_in_window = false;
             push_event(self, { .kind = EventKind.FOCUS_LOST });
+        case EventType.WINDOW_MOUSE_ENTER:
+            if (event.window.window_id != self.window_id) break;
+            self.input.mouse_in_window = true;
+            push_event(self, { .kind = EventKind.MOUSE_ENTERED });
+        case EventType.WINDOW_MOUSE_LEAVE:
+            if (event.window.window_id != self.window_id) break;
+            self.input.mouse_in_window = false;
+            push_event(self, { .kind = EventKind.MOUSE_LEFT });
         case EventType.KEY_DOWN:
         case EventType.KEY_UP:
             if (event.key.window_id != self.window_id) break;
@@ -129,6 +138,7 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             if (button >= MOUSE_BUTTON_COUNT) break;
             if (event.button.down && !self.input.mouse_buttons[button]) self.input.mouse_pressed[button] = true;
             self.input.mouse_buttons[button] = event.button.down;
+            self.input.mouse_in_window = true;
             self.input.mouse_position = (Vec2){ event.button.x, event.button.y } * self.pixel_density;
             push_event(self, {
                 .kind     = event.button.down ? EventKind.MOUSE_BUTTON_DOWN : EventKind.MOUSE_BUTTON_UP,
@@ -140,6 +150,7 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             Vec2 delta = (Vec2){ event.motion.xrel, event.motion.yrel } * self.pixel_density;
             self.input.mouse_position = (Vec2){ event.motion.x, event.motion.y } * self.pixel_density;
             self.input.mouse_delta += delta;
+            self.input.mouse_in_window = true;
             push_event(self, {
                 .kind     = EventKind.MOUSE_MOTION,
                 .position = self.input.mouse_position,
