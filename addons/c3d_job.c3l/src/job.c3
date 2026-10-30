@@ -106,6 +106,7 @@ struct JobPoolState @private {
     bool              power_throttling_opt_out;
     Mutex             lock;    // guards every field below
     ConditionVariable work_available;
+    ConditionVariable background_available; // background-only workers sleep here, so a frame wake never lands on them
     ConditionVariable run_finished;
     RunQueue          frame_queue;
     RunQueue          background_queue;
@@ -169,7 +170,7 @@ fn JobId JobPool.run(
         return {};
     }
     state.lock.unlock();
-    state.work_available.broadcast();
+    wake_frame_workers(state, request.range_count);
     return id;
 }
 
@@ -208,9 +209,16 @@ fn JobId? JobPool.try_run(
 
     state.lock.lock();
     JobId? id = queue_run(state, job_class, request);
+    uint free_places = state.background_workers - state.running_background;
     state.lock.unlock();
     if (catch excuse = id) return excuse~;
-    state.work_available.broadcast();
+
+    switch (job_class) {
+        case FRAME:
+            wake_frame_workers(state, request.range_count);
+        case BACKGROUND:
+            wake_background_workers(state, request.range_count, free_places);
+    }
     return id;
 }
 
@@ -398,6 +406,8 @@ fn JobPool? create_job_pool(Allocator allocator, JobPoolDesc desc) {
     defer catch state.lock.destroy();
     state.work_available.init()!;
     defer catch state.work_available.destroy();
+    state.background_available.init()!;
+    defer catch state.background_available.destroy();
     state.run_finished.init()!;
     defer catch state.run_finished.destroy();
 
@@ -421,6 +431,7 @@ fn void destroy_job_pool(JobPool* pool) {
     pool.wait_all();
     stop_workers(state, (uint)state.workers.len);
     state.run_finished.destroy();
+    state.background_available.destroy();
     state.work_available.destroy();
     state.lock.destroy();
 
@@ -590,11 +601,33 @@ fn uint? background_worker_run(JobPoolState* state) @private {
     return NOT_FOUND~;
 }
 
+// A run with as many ranges as the class has workers wakes them all, as one call instead of one per worker.
+fn void wake_workers(ConditionVariable* available, uint count, uint class_workers) @private {
+    if (!count) return;
+    if (count >= class_workers) {
+        available.broadcast();
+        return;
+    }
+    for (uint signalled = 0; signalled < count; signalled++) available.signal();
+}
+
+fn void wake_frame_workers(JobPoolState* state, uint range_count) @private {
+    wake_workers(&state.work_available, range_count, state.shared_workers);
+}
+
+// free_places is read under the lock at queue time; capped workers that finish a range claim any remainder.
+fn void wake_background_workers(JobPoolState* state, uint range_count, uint free_places) @private {
+    uint background_only_workers = (uint)state.workers.len - state.shared_workers;
+    wake_workers(&state.background_available, range_count, background_only_workers);
+    wake_workers(&state.work_available, min(range_count, free_places), state.shared_workers);
+}
+
 fn void stop_workers(JobPoolState* state, uint count) @private {
     state.lock.lock();
     state.stopping = true;
     state.lock.unlock();
     state.work_available.broadcast();
+    state.background_available.broadcast();
     foreach (worker : state.workers[:count]) worker.thread.join()!!;
 }
 
@@ -627,6 +660,7 @@ fn void bind_worker(Worker* worker) @private {
 fn int run_worker(void* argument) @private {
     Worker* worker = argument;
     JobPoolState* state = worker.state;
+    ConditionVariable* available = worker.background_only ? &state.background_available : &state.work_available;
     if (state.power_throttling_opt_out) native_opt_out_power_throttling();
     bind_worker(worker);
     @pool_init(state.allocator, (sz)state.worker_temp_bytes) {
@@ -638,7 +672,7 @@ fn int run_worker(void* argument) @private {
                 continue;
             }
             if (state.stopping) break;
-            state.work_available.wait(&state.lock);
+            available.wait(&state.lock);
         }
         state.lock.unlock();
     };

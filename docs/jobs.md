@@ -128,6 +128,9 @@ and uses several box3d workers lowers the job pool's `worker_count` to avoid ove
   ranges wrote is visible to the caller. A run's slot is released when its last range finishes, whether or not anyone
   waits or asks.
 - **`wait_all()`** returns once no run of either class is unfinished, running any unclaimed range meanwhile.
+- **Wakes.** A run wakes at most as many sleeping workers of a class as it has ranges. A frame run wakes shared workers.
+  A background run wakes background-only workers, and as many shared workers as the cap leaves free. A worker that is
+  already running claims further ranges without a wake.
 - **Zero and stale ids.** `run` returns the zero id when every range ran inside the call. `wait` on a zero or stale id
   returns at once and never waits on a later run in the same slot. `is_finished` reports both as finished. A slot's
   generation wraps after 2^32 - 1 runs, so an id that old may name a later run.
@@ -383,6 +386,9 @@ header line that starts with `# <name>,`:
   serial output bit for bit. The exit status is 1 when any pooled output differs.
 - `background`: one background run of 1024 empty ranges at batch 1, from `try_run` until its last range has run, on the
   capped workers alone.
+- `wake`: one run of one empty range, frame (to `wait`) and background (from `try_run` until its range has run), at 1, 4,
+  16 and 31 workers whatever the host's processor count. The time grows with the workers only when a run wakes more
+  workers than it has ranges.
 - `loaded`: the same kernel idle and while a long background run keeps the default cap of workers busy.
 - `pinned`: the kernel with the frame workers bound to the performance cores against unbound, on a hybrid processor.
 - `recording`: the overhead workload with `set_recording(true)`, when built with
