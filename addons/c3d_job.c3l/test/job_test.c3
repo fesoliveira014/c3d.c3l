@@ -2,6 +2,7 @@ module c3d_job_test;
 
 import std::thread;
 import std::atomic::types;
+import std::time;
 import c3d;
 import c3d::job;
 
@@ -44,6 +45,9 @@ const uint CAPPED_RANGES @local = TEST_WORKERS; // one more than the cap, so a r
 const uint ORDER_COUNT @local = 2;
 const uint PUMPED_RUNS @local = 3;
 const uint SPAWN_COUNT @local = 16;
+const uint WAKE_ITERATIONS @local = 200; // three parks an iteration, about 75 ms in all
+const uint WAKE_FAN_OUT @local = 8; // more ranges than the three shared workers, so every one of them must wake
+const long WAKE_PARK_MICROSECONDS @local = 50; // long enough for an idle worker to block on its condition variable
 
 struct Coverage @local {
     Atomic{uint}[] visits;
@@ -858,6 +862,67 @@ fn void test_background_only_workers_do_not_count_against_the_cap() @test {
     background_gate.open.store(1);
     spin_until_finished(&pool, frame);
     spin_until_finished(&pool, background);
+}
+
+fn void assert_matches_serial(Mixed* run, Mixed* reference) @local {
+    reference.salt = run.salt;
+    mix_range(reference, 0, (uint)run.output.len);
+    assert(run.output == reference.output[:run.output.len]);
+}
+
+fn void test_targeted_wakes_complete_mixed_runs_with_parked_workers() @test {
+    JobPoolDesc desc = job::default_job_pool_desc();
+    desc.worker_count = TEST_WORKERS;
+    desc.background_workers = 1;
+    desc.background_only_workers = 1;
+    JobPool pool = job::create_job_pool(mem, desc)!!;
+    defer job::destroy_job_pool(&pool);
+    Mixed frame = create_mixed(1, 0);
+    defer free(frame.output);
+    Mixed background = create_mixed(1, 0);
+    defer free(background.output);
+    Mixed fanned = create_mixed(WAKE_FAN_OUT, 0);
+    defer free(fanned.output);
+    Mixed reference = create_mixed(WAKE_FAN_OUT, 0);
+    defer free(reference.output);
+
+    ulong seed = STRESS_SEED;
+    for (uint iteration = 0; iteration < WAKE_ITERATIONS; iteration++) {
+        frame.salt = next_random(&seed);
+        background.salt = next_random(&seed);
+        fanned.salt = next_random(&seed);
+
+        thread::sleep(time::us(WAKE_PARK_MICROSECONDS))!!;
+        JobId frame_id = pool.run(
+            range: &mix_range,
+            data:  &frame,
+            count: 1,
+            batch: 1,
+        );
+        spin_until_finished(&pool, frame_id);
+        assert_matches_serial(&frame, &reference);
+
+        thread::sleep(time::us(WAKE_PARK_MICROSECONDS))!!;
+        JobId background_id = pool.try_run(
+            job_class: BACKGROUND,
+            range:     &mix_range,
+            data:      &background,
+            count:     1,
+            batch:     1,
+        )!!;
+        spin_until_finished(&pool, background_id);
+        assert_matches_serial(&background, &reference);
+
+        thread::sleep(time::us(WAKE_PARK_MICROSECONDS))!!;
+        JobId fanned_id = pool.run(
+            range: &mix_range,
+            data:  &fanned,
+            count: WAKE_FAN_OUT,
+            batch: 1,
+        );
+        spin_until_finished(&pool, fanned_id);
+        assert_matches_serial(&fanned, &reference);
+    }
 }
 
 fn void test_pool_survives_a_move_of_its_handle() @test {

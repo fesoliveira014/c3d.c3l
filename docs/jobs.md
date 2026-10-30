@@ -128,6 +128,9 @@ and uses several box3d workers lowers the job pool's `worker_count` to avoid ove
   ranges wrote is visible to the caller. A run's slot is released when its last range finishes, whether or not anyone
   waits or asks.
 - **`wait_all()`** returns once no run of either class is unfinished, running any unclaimed range meanwhile.
+- **Wakes.** A run wakes at most as many sleeping workers of a class as it has ranges. A frame run wakes shared workers.
+  A background run wakes background-only workers, and as many shared workers as the cap leaves free. A worker that is
+  already running claims further ranges without a wake.
 - **Zero and stale ids.** `run` returns the zero id when every range ran inside the call. `wait` on a zero or stale id
   returns at once and never waits on a later run in the same slot. `is_finished` reports both as finished. A slot's
   generation wraps after 2^32 - 1 runs, so an id that old may name a later run.
