@@ -109,15 +109,33 @@ fn void draw_gpu_axis(ProfilerPanel* panel, uint source, ulong renderer_frame) @
     imgui::dummy({.x = width, .y = (float)(maximum_depth + 1) * imgui::get_text_line_height_with_spacing()});
 }
 
-fn bool gpu_row_visible(profile::GpuSample[] samples, sz index) @private {
-    while (samples[index].has_parent) {
-        index = samples[index].parent_index;
-        imgui::push_id_int((int)index);
-        bool open = imgui::tree_node_get_open(imgui::get_id("##event"));
-        imgui::pop_id();
-        if (!open) return false;
+fn uint gpu_label_occurrence(profile::GpuSample[] samples, sz index) @private {
+    profile::GpuSample sample = samples[index];
+    sz first = sample.has_parent ? (sz)sample.parent_index + 1 : 0;
+    uint occurrence;
+    for (sz earlier = first; earlier < index; earlier++) {
+        profile::GpuSample candidate = samples[earlier];
+        bool sibling = candidate.source == sample.source
+            && candidate.renderer_frame == sample.renderer_frame
+            && candidate.has_parent == sample.has_parent
+            && (!sample.has_parent || candidate.parent_index == sample.parent_index);
+        if (sibling && candidate.label == sample.label) occurrence++;
     }
-    return true;
+    return occurrence;
+}
+
+fn ScopePath push_gpu_scope_path(profile::GpuSample[] samples, sz index) @private {
+    profile::GpuSample sample = samples[index];
+    ScopePath path = {.visible = true};
+    if (sample.has_parent) {
+        path = push_gpu_scope_path(samples, sample.parent_index);
+        path.visible = path.visible && imgui::tree_node_get_open(imgui::get_id("##event"));
+    }
+    if (!path.visible) return path;
+
+    push_scope_key(sample.label, gpu_label_occurrence(samples, index));
+    path.pushed++;
+    return path;
 }
 
 fn void draw_gpu_tree(ProfilerPanel* panel, uint source, ulong renderer_frame) @private {
@@ -130,13 +148,16 @@ fn void draw_gpu_tree(ProfilerPanel* panel, uint source, ulong renderer_frame) @
     imgui::table_headers_row();
     foreach (index, sample : samples) {
         if (sample.source != source || sample.renderer_frame != renderer_frame) continue;
-        if (!gpu_row_visible(samples, index)) continue;
+
+        ScopePath path = push_gpu_scope_path(samples, index);
+        defer pop_scope_path(path);
+        if (!path.visible) continue;
+
         bool has_children;
         foreach (child : samples) {
             if (child.has_parent && child.parent_index == index) has_children = true;
         }
-        imgui::push_id_int((int)index);
-        defer imgui::pop_id();
+
         imgui::table_next_row();
         (void)imgui::table_next_column();
         float indent = (float)panel.depths[index] * imgui::get_tree_node_to_label_spacing();
@@ -173,11 +194,7 @@ fn void draw_gpu_detail(ProfilerPanel* panel) @private {
     foreach (index, sample : samples) {
         if (!first_gpu_group(samples, index)) continue;
         imgui::push_id_int((int)sample.source);
-        push_frame_id(sample.renderer_frame);
-        defer {
-            pop_frame_id();
-            imgui::pop_id();
-        }
+        defer imgui::pop_id();
         imgui::separator();
         imgui::text("Source %u / renderer frame %llu", sample.source, sample.renderer_frame);
         draw_gpu_axis(panel, sample.source, sample.renderer_frame);

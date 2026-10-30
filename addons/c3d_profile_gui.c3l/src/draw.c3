@@ -22,6 +22,11 @@ struct IntervalInteraction @private {
     bool hovered;
 }
 
+struct ScopePath @private {
+    uint pushed;
+    bool visible;
+}
+
 fn void push_frame_id(ulong frame_id) @private {
     imgui::push_id_int((int)(uint)(frame_id >> ID_HALF_BITS));
     imgui::push_id_int((int)(uint)frame_id);
@@ -30,6 +35,15 @@ fn void push_frame_id(ulong frame_id) @private {
 fn void pop_frame_id() @private {
     imgui::pop_id();
     imgui::pop_id();
+}
+
+fn void push_scope_key(String label, uint occurrence) @private {
+    // A string push reads an empty range as NUL-terminated, past the end of the label.
+    imgui::push_id_int((int)imgui::internal::c_im_hash_data_ex(label.ptr, (usz)label.len, occurrence));
+}
+
+fn void pop_scope_path(ScopePath path) @private {
+    for (uint count = 0; count < path.pushed; count++) imgui::pop_id();
 }
 
 fn void draw_label(String label) @private {
@@ -349,15 +363,31 @@ fn void draw_cpu_axis(ProfilerPanel* panel) @private @feat(C3D_PROFILE_CPU) {
     imgui::dummy({.x = width, .y = (float)(scope_rows + lanes) * imgui::get_text_line_height_with_spacing()});
 }
 
-fn bool cpu_row_visible(profile::CpuSample[] samples, sz index) @private @feat(C3D_PROFILE_CPU) {
-    while (samples[index].has_parent) {
-        index = samples[index].parent_index;
-        imgui::push_id_int((int)index);
-        bool open = imgui::tree_node_get_open(imgui::get_id("##event"));
-        imgui::pop_id();
-        if (!open) return false;
+fn uint cpu_label_occurrence(profile::CpuSample[] samples, sz index) @private @feat(C3D_PROFILE_CPU) {
+    profile::CpuSample sample = samples[index];
+    sz first = sample.has_parent ? (sz)sample.parent_index + 1 : 0;
+    uint occurrence;
+    for (sz earlier = first; earlier < index; earlier++) {
+        profile::CpuSample candidate = samples[earlier];
+        bool sibling = candidate.has_parent == sample.has_parent
+            && (!sample.has_parent || candidate.parent_index == sample.parent_index);
+        if (sibling && candidate.label == sample.label) occurrence++;
     }
-    return true;
+    return occurrence;
+}
+
+fn ScopePath push_cpu_scope_path(profile::CpuSample[] samples, sz index) @private @feat(C3D_PROFILE_CPU) {
+    profile::CpuSample sample = samples[index];
+    ScopePath path = {.visible = true};
+    if (sample.has_parent) {
+        path = push_cpu_scope_path(samples, sample.parent_index);
+        path.visible = path.visible && imgui::tree_node_get_open(imgui::get_id("##event"));
+    }
+    if (!path.visible) return path;
+
+    push_scope_key(sample.label, cpu_label_occurrence(samples, index));
+    path.pushed++;
+    return path;
 }
 
 fn void draw_cpu_tree(ProfilerPanel* panel) @private @feat(C3D_PROFILE_CPU) {
@@ -370,13 +400,15 @@ fn void draw_cpu_tree(ProfilerPanel* panel) @private @feat(C3D_PROFILE_CPU) {
     imgui::table_setup_column("Self ms / completeness", {});
     imgui::table_headers_row();
     foreach (index, sample : samples) {
-        if (!cpu_row_visible(samples, index)) continue;
+        ScopePath path = push_cpu_scope_path(samples, index);
+        defer pop_scope_path(path);
+        if (!path.visible) continue;
+
         bool has_children;
         foreach (child : samples) {
             if (child.has_parent && child.parent_index == index) has_children = true;
         }
-        imgui::push_id_int((int)index);
-        defer imgui::pop_id();
+
         imgui::table_next_row();
         (void)imgui::table_next_column();
         float indent = (float)panel.depths[index] * imgui::get_tree_node_to_label_spacing();
@@ -511,8 +543,6 @@ fn void profiler_panel(ProfilerPanel* panel) {
     defer imgui::end_tab_bar();
     if (imgui::begin_tab_item("CPU", null, {})) {
         defer imgui::end_tab_item();
-        push_frame_id(panel.snapshot.frame_id);
-        defer pop_frame_id();
         imgui::push_id("cpu");
         defer imgui::pop_id();
         draw_cpu_status(panel.snapshot);
@@ -529,8 +559,6 @@ fn void profiler_panel(ProfilerPanel* panel) {
     }
     if (imgui::begin_tab_item("GPU", null, {})) {
         defer imgui::end_tab_item();
-        push_frame_id(panel.snapshot.frame_id);
-        defer pop_frame_id();
         $if $feat(C3D_PROFILE_GPU):
             draw_gpu_detail(panel);
         $else
@@ -539,8 +567,6 @@ fn void profiler_panel(ProfilerPanel* panel) {
     }
     if (imgui::begin_tab_item("Summary", null, {})) {
         defer imgui::end_tab_item();
-        push_frame_id(panel.snapshot.frame_id);
-        defer pop_frame_id();
         imgui::text_unformatted("Selected snapshot only. Inclusive sums may overlap.");
         imgui::separator_text("CPU");
         draw_cpu_status(panel.snapshot);
