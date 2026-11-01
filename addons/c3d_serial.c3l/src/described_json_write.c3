@@ -6,7 +6,19 @@ import c3d::describe;
 struct DescribedJsonWrite @private {
     JsonOutput* output;
     WriteContext* context;
-    bool root;
+    uint scopes;
+    TextPathPart[TEXT_MAX_DEPTH] path;
+    uint path_depth;
+}
+
+fn void push_value_path(DescribedJsonWrite* state, String name) @local {
+    JsonOutput* output = state.output;
+    uint scope = output.depth - 1;
+    state.path[state.path_depth++] = {
+        .array = !output.objects[scope],
+        .index = output.counts[scope],
+        .name = name,
+    };
 }
 
 fn void? write_described_json(
@@ -14,8 +26,9 @@ fn void? write_described_json(
     JsonOutput* output,
     WriteContext* context,
     void* value,
+    SerialDiagnostic* pointer_diagnostic = null,
 ) @private {
-    DescribedJsonWrite state = { .output = output, .context = context, .root = true };
+    DescribedJsonWrite state = { .output = output, .context = context };
     describe::Visitor visitor = {
         .mode = WRITE,
         .field = &described_json_field,
@@ -23,15 +36,20 @@ fn void? write_described_json(
         .end = &described_json_end,
         .user = &state,
     };
-    describe::walk_descriptor(type.descriptor, &visitor, value)!;
+    if (catch excuse = describe::walk_descriptor(type.descriptor, &visitor, value)) {
+        if (!pointer_diagnostic) return excuse~;
+        return report_value_error(
+            path: state.path[:state.path_depth],
+            cause: excuse,
+            diagnostic: pointer_diagnostic,
+        )~;
+    }
 }
 
 fn bool? described_json_begin(describe::Visitor* visitor, describe::Info* info, void* value) @local {
     DescribedJsonWrite* state = visitor.user;
-    if (state.root) {
-        state.root = false;
-        return true;
-    }
+    if (!state.scopes++) return true;
+    push_value_path(state, info.name);
     state.output.begin(info.name, info.kind == STRUCT)!;
     return true;
 }
@@ -39,12 +57,14 @@ fn bool? described_json_begin(describe::Visitor* visitor, describe::Info* info, 
 fn void? described_json_end(describe::Visitor* visitor, describe::Info* info, void* value) @local {
     DescribedJsonWrite* state = visitor.user;
     state.output.end()!;
+    if (--state.scopes) state.path_depth--;
 }
 
 fn bool? described_json_field(describe::Visitor* visitor, describe::Info* info, void* value) @local {
     DescribedJsonWrite* state = visitor.user;
     JsonOutput* output = state.output;
     char[TEXT_NUMBER_FORMAT_BYTES] scratch;
+    push_value_path(state, info.name);
     switch (info.kind) {
         case BOOL: output.boolean(info.name, *(bool*)value)!;
         case ICHAR: output.signed(info.name, *(ichar*)value)!;
@@ -88,6 +108,7 @@ fn bool? described_json_field(describe::Visitor* visitor, describe::Info* info, 
         case ARRAY:
         case SLICE: unreachable();
     }
+    state.path_depth--;
     return false;
 }
 
@@ -95,6 +116,7 @@ fn uint? described_reference_index(WriteContext* context, describe::Info* info, 
     Id* id = value;
     if (!id.index && !id.generation) return INDEX_NONE;
     if (!context) return c3d::INVALID_ARGUMENT~;
+    if (info.kind == ENTITY ? !context.scene : !context.assets) return c3d::UNSUPPORTED~;
     char[uint::size] bytes;
     Writer writer = writer_over(bytes[..]);
     if (info.kind == ENTITY) {

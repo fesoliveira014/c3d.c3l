@@ -107,6 +107,32 @@ fn void write_text_pointer(TextStringWriter* writer, TextPathPart[] path) @local
     }
 }
 
+fn void? store_text_pointer(TextPathPart[] path, SerialDiagnostic* diagnostic) @local {
+    TextStringWriter measured;
+    write_text_pointer(&measured, path);
+    if (measured.length > sz::max) return c3d::CAPACITY_EXCEEDED~;
+    if (measured.length) {
+        diagnostic.pointer = (String)(alloc::new_array_try(diagnostic.allocator, char, (sz)measured.length)
+          ?? c3d::CAPACITY_EXCEEDED~!);
+    }
+    TextStringWriter written = { .bytes = diagnostic.pointer.ptr };
+    write_text_pointer(&written, path);
+}
+
+fn fault report_value_error(
+    TextPathPart[] path,
+    fault cause,
+    SerialDiagnostic* diagnostic,
+) @private {
+    clear_serial_diagnostic(diagnostic);
+    diagnostic.cause = cause;
+    if (catch excuse = store_text_pointer(path, diagnostic)) {
+        diagnostic.cause = c3d::CAPACITY_EXCEEDED;
+        return c3d::CAPACITY_EXCEEDED;
+    }
+    return cause;
+}
+
 fn fault report_text_error(
     String source,
     TextPathPart[] path,
@@ -116,22 +142,10 @@ fn fault report_text_error(
 ) @private {
     clear_serial_diagnostic(diagnostic);
     diagnostic.cause = cause;
-    TextStringWriter measured;
-    write_text_pointer(&measured, path);
-    if (measured.length > sz::max) {
+    if (catch excuse = store_text_pointer(path, diagnostic)) {
         diagnostic.cause = c3d::CAPACITY_EXCEEDED;
         return c3d::CAPACITY_EXCEEDED;
     }
-    if (measured.length) {
-        if (try storage = alloc::new_array_try(diagnostic.allocator, char, (sz)measured.length)) {
-            diagnostic.pointer = (String)storage;
-        } else {
-            diagnostic.cause = c3d::CAPACITY_EXCEEDED;
-            return c3d::CAPACITY_EXCEEDED;
-        }
-    }
-    TextStringWriter written = { .bytes = diagnostic.pointer.ptr };
-    write_text_pointer(&written, path);
     diagnostic.byte_offset = offset;
     diagnostic.line = 1;
     diagnostic.byte_column = 1;

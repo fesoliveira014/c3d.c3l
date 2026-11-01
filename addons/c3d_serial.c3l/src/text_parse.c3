@@ -3,6 +3,11 @@ module c3d::serial;
 import c3d;
 
 <*
+ Parse JSONC text into a token document.
+ @param source : "Borrowed by the document until it is destroyed."
+ @param [&inout] diagnostic : "Receives the failure position."
+ @return "Owned by allocator."
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require allocator.ptr != null, diagnostic != null, diagnostic.allocator.ptr != null
 *>
 fn TextDocument? parse_text(
@@ -10,7 +15,7 @@ fn TextDocument? parse_text(
     String source,
     TextLimits limits,
     SerialDiagnostic* diagnostic,
-) @private {
+) {
     clear_serial_diagnostic(diagnostic);
     if (!text_limits_valid(limits)) {
         diagnostic.cause = c3d::INVALID_ARGUMENT;
