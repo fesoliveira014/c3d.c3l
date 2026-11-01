@@ -86,7 +86,7 @@ fn void? read_value_at(
 
 <*
  JSONC object of every non-transient field of a described value.
- @param [&inout] value : "Of the type's layout."
+ @param [&in] value : "Of the type's layout."
  @param [in] assets : "Resolves asset keys; null faults a named asset as UNSUPPORTED."
  @param options : "Omission fields are ignored."
  @return "Owned by allocator."

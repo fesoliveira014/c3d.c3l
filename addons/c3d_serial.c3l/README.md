@@ -1,6 +1,6 @@
 # c3d_serial
 
-Scene serialization for c3d. Module `c3d::serial`, package `c3d_serial`. It saves a scene subtree as a versioned binary blob or a JSONC document, restores it under any live parent, and exports a JSON schema of the registered components. Every component type has an explicit policy: an authored codec or a transient marker. See [Serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md) for the model and common tasks, and the [reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md) for the wire format, component versions and faults.
+Scene serialization for c3d. Module `c3d::serial`, package `c3d_serial`. It saves a scene subtree as a versioned binary blob or a JSONC document, restores it under any live parent, reads and writes one described value as JSONC with an overlay mode, and exports a JSON schema of the registered components. Every component type has an explicit policy: an authored codec or a transient marker. See [Serialization](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization.md) for the model and common tasks, and the [reference](https://github.com/fesoliveira014/c3d.c3l/blob/main/docs/serialization_reference.md) for the wire format, component versions and faults.
 
 ## Package and boundaries
 
@@ -42,7 +42,7 @@ Run a test target with `c3c test <target> --path addons/c3d_serial.c3l`. `script
 | `serial_test` | Container layout, byte helpers, subtree round trips and diagnostics |
 | `serial_order_forward`, `serial_order_reverse` | Identical wire bytes whatever the registration order; run in separate processes |
 | `serial_text_test` | JSONC parser, limits, number spelling and text diagnostics |
-| `serial_described_test` | Described values, core codecs, text import and schema export |
+| `serial_described_test` | Described values, core codecs, text import, single-value text and schema export |
 | `serial_core_policy_test` | Every assigned core component has exactly one expected policy |
 | `serial_all_test` | Every adapter together, without a GPU device: the policy inventory and a scene holding every authored type through binary and JSONC |
 
