@@ -250,7 +250,7 @@ The reader accepts line and block comments and rejects trailing commas, duplicat
 | --- | --- |
 | `ReadMode.RESET` | Initializes the type's defaults, clones default strings and slices into the storage, then overlays the keys present |
 | `ReadMode.OVERLAY` | Skips the root defaults and the clone. Present keys replace their fields, and the other fields keep their contents. A slice key replaces the slice whole, and its new struct elements take their type defaults |
-| `SerialStorage` | Owns every decoded string and slice. A replaced overlay string or slice stays in the storage until `release`, which frees all and keeps the storage usable. `destroy_serial_storage` releases and clears it |
+| `SerialStorage` | Owns every decoded string and slice. No read frees earlier bytes: a replaced string or slice stays in the storage until `release`, which frees all and keeps the storage usable. `destroy_serial_storage` releases and clears it |
 | Faults | A fault leaves the value partly written. The storage holds what was decoded until `release` |
 | `read_value_at` | Reads the object at `token`. `options.limits` is unused; a diagnostic pointer is relative to the document root |
 | `TextDocument` | `member(token, name)` returns the token or `INDEX_NONE`, `kind(token)` returns a `TextKind`, `name(token)` returns the member key, and `@each_member(token; child)` visits the members or elements in order |
