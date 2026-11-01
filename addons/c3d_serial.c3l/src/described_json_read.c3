@@ -96,6 +96,7 @@ fn void? initialize_described_json(
 ) @local {
     usz count = (usz)(state.document.values[state.root].end - state.root);
     state.seen = alloc::new_array_try(state.owned.allocator, bool, (sz)count) ?? c3d::CAPACITY_EXCEEDED~!;
+
     if (mode == OVERLAY) return;
     type.defaults(value);
     clone_described_defaults(type.descriptor, state.owned, value)!;

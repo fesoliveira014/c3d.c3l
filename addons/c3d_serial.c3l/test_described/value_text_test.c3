@@ -233,6 +233,31 @@ fn void test_value_text_round_trips_nested_structs_and_slices() @test {
     assert(restored.title.ptr != original.title.ptr && restored.extras.ptr != original.extras.ptr);
 }
 
+fn void test_value_write_fault_names_the_pointer_of_the_field() @test {
+    initialize_value_descriptions();
+    SerialDiagnostic diagnostic = serial::create_serial_diagnostic(mem);
+    defer serial::destroy_serial_diagnostic(&diagnostic);
+    TextWriteOptions options = serial::TEXT_WRITE_OPTIONS_DEFAULT;
+    options.diagnostic = &diagnostic;
+    char[1] invalid_utf8 = { 0xff };
+    ValueNested[2] extras = {
+        { .label = "valid", .amount = 1 },
+        { .label = (String)invalid_utf8[..], .amount = 2 },
+    };
+    ValueRecord record = { .title = "t", .extras = extras[..] };
+    if (catch excuse = serial::write_value_text(
+        allocator: mem,
+        type: serial::described_type(ValueRecord)!!,
+        value: &record,
+        options: options,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT && diagnostic.cause == excuse);
+        assert(diagnostic.pointer == "/extras/1/label" && !diagnostic.has_text_position);
+    } else {
+        assert(false);
+    }
+}
+
 fn void test_value_references_resolve_through_a_store_and_fault_without_one() @test {
     initialize_value_descriptions();
     Fixture fixture;

@@ -64,6 +64,7 @@ fn bool? described_json_field(describe::Visitor* visitor, describe::Info* info, 
     DescribedJsonWrite* state = visitor.user;
     JsonOutput* output = state.output;
     char[TEXT_NUMBER_FORMAT_BYTES] scratch;
+
     push_value_path(state, info.name);
     switch (info.kind) {
         case BOOL: output.boolean(info.name, *(bool*)value)!;
@@ -108,6 +109,7 @@ fn bool? described_json_field(describe::Visitor* visitor, describe::Info* info, 
         case ARRAY:
         case SLICE: unreachable();
     }
+
     state.path_depth--;
     return false;
 }
@@ -116,7 +118,8 @@ fn uint? described_reference_index(WriteContext* context, describe::Info* info, 
     Id* id = value;
     if (!id.index && !id.generation) return INDEX_NONE;
     if (!context) return c3d::INVALID_ARGUMENT~;
-    if (info.kind == ENTITY ? !context.scene : !context.assets) return c3d::UNSUPPORTED~;
+    if (info.kind == ENTITY && !context.scene) return c3d::UNSUPPORTED~;
+    if (info.kind == ASSET && !context.assets) return c3d::UNSUPPORTED~;
     char[uint::size] bytes;
     Writer writer = writer_over(bytes[..]);
     if (info.kind == ENTITY) {

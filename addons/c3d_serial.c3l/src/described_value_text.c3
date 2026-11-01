@@ -24,6 +24,7 @@ fn void? read_value_text(
     SerialDiagnostic local = create_serial_diagnostic(allocator);
     defer destroy_serial_diagnostic(&local);
     if (!options.diagnostic) options.diagnostic = &local;
+
     TextDocument document = parse_text(
         allocator: allocator,
         source: text,
@@ -31,6 +32,7 @@ fn void? read_value_text(
         diagnostic: options.diagnostic,
     )!;
     defer destroy_text_document(&document);
+
     return read_value_at(
         type: type,
         document: &document,
@@ -67,6 +69,7 @@ fn void? read_value_at(
     SerialDiagnostic local = create_serial_diagnostic(allocator);
     defer destroy_serial_diagnostic(&local);
     SerialDiagnostic* diagnostic = options.diagnostic ? options.diagnostic : &local;
+
     ReadContext context = { .assets = assets, .allocator = allocator, .diagnostic = diagnostic };
     if (catch excuse = read_described_json(
         type: type,
@@ -100,6 +103,7 @@ fn String? write_value_text(
     AssetStore* assets = null,
 ) {
     if (options.diagnostic) clear_serial_diagnostic(options.diagnostic);
+
     String? text = write_value_json(
         allocator: allocator,
         type: type,
@@ -122,10 +126,12 @@ fn String? write_value_json(
     AssetStore* assets,
 ) @local {
     if (!text_limits_valid(options.limits)) return c3d::INVALID_ARGUMENT~;
+
     WriteState state;
     state.keys.tinit();
     state.key_index.tinit();
     WriteContext context = { .assets = assets, .state = &state, .diagnostic = options.diagnostic };
+
     JsonOutput measured = { .writer = measuring_writer(), .limits = options.limits };
     emit_value_json(
         context: &context,
@@ -133,8 +139,10 @@ fn String? write_value_json(
         type: type,
         value: value,
     )!;
+
     char[] bytes = alloc::new_array_try(allocator, char, (sz)measured.writer.written()) ?? c3d::CAPACITY_EXCEEDED~!;
     defer catch alloc::free(allocator, bytes.ptr);
+
     JsonOutput output = { .writer = writer_over(bytes), .limits = options.limits };
     state.filling = true;
     emit_value_json(
@@ -143,6 +151,7 @@ fn String? write_value_json(
         type: type,
         value: value,
     )!;
+
     return (String)bytes;
 }
 
