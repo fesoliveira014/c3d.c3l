@@ -552,3 +552,22 @@ fn void test_gltf_decoded_float_images_remain_rejected_for_color_and_normal_role
         assert(rejected && tracker.allocated() == 0);
     }
 }
+
+fn void test_dropped_gltf_image_loads_the_model() @test {
+    String text = image_document("absent.png", `[
+        {"pbrMetallicRoughness":{"baseColorFactor":[0.5,0.25,0.75,1],"baseColorTexture":{"index":0}}}]`);
+
+    uint dropped;
+    LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
+    options.missing_textures = MissingTextures.DROP;
+    options.dropped_textures = &dropped;
+
+    ModelDocument document = decode_text(text, options, fixture_directory("texture"));
+    defer asset::destroy_model_document(&document);
+
+    StandardParams* params = &document.materials[0].data.standard;
+
+    assert(document.textures.len == 0 && dropped == 1);
+    assert(c3d::same_id(params.base_color_map.texture.asset, (TextureId){}));
+    assert(params.base_color == (Vec4){ 0.5f, 0.25f, 0.75f, 1 });
+}

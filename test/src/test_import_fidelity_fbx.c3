@@ -95,6 +95,55 @@ const String SINGLE_MATERIAL @local = `
         }
     }
 `;
+
+const String TINTED_MATERIAL @local = `
+    Material: 1001, "Material::tinted", "" {
+        Version: 102
+        ShadingModel: "lambert"
+        Properties70: {
+            P: "DiffuseColor", "ColorRGB", "Color", "",0.25,0.5,0.75
+        }
+    }
+`;
+const String TINTED_CONNECTION @local = `C: "OP",2001,1001,"DiffuseColor"`;
+
+const String PACKED_MATERIAL @local = `
+    Material: 1001, "Material::packed", "" {
+        Version: 102
+        ShadingModel: "unknown"
+        Properties70: {
+            P: "3dsMax|ClassIDa", "int", "Integer", "",943849874
+            P: "3dsMax|ClassIDb", "int", "Integer", "",1174294043
+            P: "3dsMax|main|baseColor", "ColorAndAlpha", "", "A",1,1,1,1
+            P: "3dsMax|main|roughness", "Float", "", "A",0.4
+            P: "3dsMax|main|roughnessMap", "Reference", "", "A"
+            P: "3dsMax|main|metalness", "Float", "", "A",0.7
+            P: "3dsMax|main|metalnessMap", "Reference", "", "A"
+            P: "3dsMax|main|Alpha", "Float", "", "A",1
+        }
+    }
+    Video: 3002, "Video::absent", "Clip" {
+        Type: "Clip"
+        Filename: "absent.image"
+        RelativeFilename: "absent.image"
+    }
+    Texture: 2002, "Texture::absent", "" {
+        Type: "TextureVideoClip"
+        Version: 202
+        TextureName: "Texture::absent"
+        Media: "Video::absent"
+        FileName: "absent.image"
+        RelativeFilename: "absent.image"
+        ModelUVTranslation: 0,0
+        ModelUVScaling: 1,1
+    }
+`;
+const String PACKED_CONNECTIONS @local = `
+    C: "OO",3002,2002
+    C: "OP",2002,1001,"3dsMax|main|roughnessMap"
+    C: "OP",2001,1001,"3dsMax|main|metalnessMap"
+`;
+
 const String NORMAL_CONNECTION @local = `C: "OP",2001,1001,"NormalMap"`;
 const String BUMP_CONNECTION @local = `C: "OP",2001,1001,"Bump"`;
 
@@ -467,5 +516,46 @@ fn void test_fbx_authored_zero_tangents_import_and_nan_binormals_fault_unless_fo
         }
 
         assert(tracker.allocated() == 0);
+    };
+}
+
+fn void test_dropped_base_color_map_keeps_the_authored_colour() @test {
+    @pool() {
+        MemorySource source = fixture_source(TINTED_MATERIAL, TINTED_CONNECTION, PNG_PIXELS[..]);
+        source.document = source.document.treplace("shared.image", "absent.image");
+
+        uint dropped;
+        LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
+        options.missing_textures = MissingTextures.DROP;
+        options.dropped_textures = &dropped;
+
+        ModelDocument document = decode_fixture(mem, &source, options);
+        defer asset::destroy_model_document(&document);
+
+        StandardParams* params = &document.materials[0].data.standard;
+
+        assert(document.textures.len == 0 && dropped == 1);
+        assert(c3d::same_id(params.base_color_map.texture.asset, (TextureId){}));
+        assert(params.base_color == (Vec4){ 0.25f, 0.5f, 0.75f, 1 });
+    };
+}
+
+fn void test_missing_roughness_drops_the_packed_map() @test {
+    @pool() {
+        MemorySource source = fixture_source(PACKED_MATERIAL, PACKED_CONNECTIONS, PNG_PIXELS[..]);
+
+        uint dropped;
+        LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
+        options.missing_textures = MissingTextures.DROP;
+        options.dropped_textures = &dropped;
+
+        ModelDocument document = decode_fixture(mem, &source, options);
+        defer asset::destroy_model_document(&document);
+
+        StandardParams* params = &document.materials[0].data.standard;
+
+        assert(document.textures.len == 0 && dropped == 1);
+        assert(c3d::same_id(params.metallic_roughness_map.texture.asset, (TextureId){}));
+        assert(params.metallic == 0.7f && params.roughness == 0.4f);
     };
 }

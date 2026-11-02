@@ -102,7 +102,7 @@ fn GeometryId? convert_part(
         allocator: allocator,
         geometry: &geometry,
         options: importer.options,
-        normal_mapped: part_has_normal_map(mesh, part),
+        normal_mapped: part_has_normal_map(importer, mesh, part),
         uv_set: 0,
     )!;
 
@@ -202,9 +202,11 @@ macro copy_prefix(alloc::Allocator allocator, slice, usz count) @private {
     return copy;
 }
 
-fn bool part_has_normal_map(ufbx::Mesh* mesh, ufbx::MeshPart* part) @private {
+fn bool part_has_normal_map(Importer* importer, ufbx::Mesh* mesh, ufbx::MeshPart* part) @private {
     if (part.index >= mesh.materials.len) return false;
-    return mesh.materials[part.index].pbr.normal_map.texture != null;
+    MaterialId id = importer.materials[mesh.materials[part.index].typed_id];
+    TextureId normal = importer.document.material(id).data.standard.normal_map.texture.asset;
+    return !c3d::same_id(normal, (TextureId){});
 }
 
 fn void? write_skin_streams(

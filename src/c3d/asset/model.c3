@@ -21,6 +21,14 @@ enum NormalEncoding {
 }
 
 <*
+ What a model load does with a texture it cannot read.
+*>
+enum MissingTextures : char {
+    FAIL,
+    DROP,
+}
+
+<*
  Node of a reusable model, addressed by model-local index.
 *>
 struct NodeTemplate {
@@ -103,6 +111,8 @@ struct LoadOptions {
     bool generate_tangents;
     bool regenerate_tangents;
     NormalEncoding normal_encoding;
+    MissingTextures missing_textures;
+    uint* dropped_textures;
 }
 
 <*
