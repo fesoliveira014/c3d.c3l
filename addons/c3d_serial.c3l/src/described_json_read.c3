@@ -42,6 +42,7 @@ fn void? read_described_json(
     SerialDiagnostic* diagnostic,
     bool skip_unknown,
     void* value,
+    ReadMode mode = RESET,
 ) @private {
     clear_serial_diagnostic(diagnostic);
     json_require_kind(
@@ -59,7 +60,8 @@ fn void? read_described_json(
         .last_token = token,
         .skip_unknown = skip_unknown,
     };
-    if (catch excuse = initialize_described_json(type, &state, value)) {
+    defer alloc::free(owned.allocator, state.seen.ptr);
+    if (catch excuse = initialize_described_json(type, &state, value, mode)) {
         if (!diagnostic.has_text_position) return enrich_text_error(
             document: document,
             token: state.last_token,
@@ -86,10 +88,16 @@ fn void? read_described_json(
     }
 }
 
-fn void? initialize_described_json(DescribedType* type, DescribedJsonRead* state, void* value) @local {
+fn void? initialize_described_json(
+    DescribedType* type,
+    DescribedJsonRead* state,
+    void* value,
+    ReadMode mode,
+) @local {
     usz count = (usz)(state.document.values[state.root].end - state.root);
-    bool* seen = state.owned.acquire(count, bool::size, bool::alignment)!;
-    state.seen = seen[:count];
+    state.seen = alloc::new_array_try(state.owned.allocator, bool, (sz)count) ?? c3d::CAPACITY_EXCEEDED~!;
+
+    if (mode == OVERLAY) return;
     type.defaults(value);
     clone_described_defaults(type.descriptor, state.owned, value)!;
 }
@@ -368,6 +376,7 @@ fn void? decode_described_json_field(
             if (input.kind == TextKind.NIL) {
                 *(Entity*)value = {};
             } else {
+                if (!state.context.scene) return c3d::UNSUPPORTED~;
                 uint index = (uint)text_read_unsigned(
                     document: document,
                     value: token,
@@ -408,6 +417,7 @@ fn void? read_json_asset(
     String key,
     void* value,
 ) @local {
+    if (!context.assets) return asset_diagnostic(context.diagnostic, key, c3d::UNSUPPORTED)~;
     if (catch excuse = find_json_asset(
         context: context,
         kind: kind,

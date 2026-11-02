@@ -20,7 +20,8 @@ const usz TEXT_NUMBER_FORMAT_BYTES @private = 32; // 32 bytes per scalar; fits t
 
 const uint TEXT_NO_PARENT @private = uint::max;
 
-enum TextKind @private {
+<* JSONC value kinds. *>
+enum TextKind {
     OBJECT,
     ARRAY,
     STRING,
@@ -74,7 +75,10 @@ struct TextValue @private {
     bool boolean;
 }
 
-struct TextDocument @private {
+<*
+ Parsed JSONC tokens addressed by index; the source text must outlive it.
+*>
+struct TextDocument {
     Allocator allocator;
     String source;
     TextValue[] values;
@@ -109,6 +113,43 @@ struct TextParser @private {
 }
 
 <*
+ Token of the named member of an object.
+ @return? NOT_FOUND
+ @require token < self.values.len
+*>
+fn uint? TextDocument.member(&self, uint token, String name) {
+    uint child = json_member(self, token, name);
+    if (child == INDEX_NONE) return NOT_FOUND~;
+    return child;
+}
+
+<*
+ Kind of the value at a token.
+ @require token < self.values.len
+*>
+fn TextKind TextDocument.kind(&self, uint token) {
+    return self.values[token].kind;
+}
+
+<*
+ Member name of the value at a token; empty outside an object.
+ @require token < self.values.len
+*>
+fn String TextDocument.name(&self, uint token) {
+    return self.values[token].name;
+}
+
+<*
+ Visit the members of an object or the elements of an array in order.
+ @require token < self.values.len
+*>
+macro void TextDocument.@each_member(&self, uint token; @body(child)) {
+    for (uint child = token + 1; child < self.values[token].end; child = self.values[child].end) {
+        @body(child);
+    }
+}
+
+<*
  Create an empty caller-owned diagnostic without allocating storage.
  @require allocator.ptr != null
 *>
@@ -135,7 +176,11 @@ fn void clear_serial_diagnostic(SerialDiagnostic* diagnostic) @private {
     *diagnostic = { .allocator = allocator };
 }
 
-fn void destroy_text_document(TextDocument* document) @private {
+<*
+ Free a document's tokens and strings and clear it.
+ @param [&inout] document : "Owns its storage; cleared afterward."
+*>
+fn void destroy_text_document(TextDocument* document) {
     alloc::free(document.allocator, document.values.ptr);
     alloc::free(document.allocator, document.strings.ptr);
     *document = {};

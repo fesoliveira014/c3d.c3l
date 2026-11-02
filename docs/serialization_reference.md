@@ -11,6 +11,11 @@ Entry points, options, codec and described-value APIs, the container layout, the
 | `write_subtree_text(allocator, scene, assets, root, options = TEXT_WRITE_OPTIONS_DEFAULT)` | `String` owned by `allocator` | `INVALID_ID`, `INVALID_ARGUMENT`, `UNSUPPORTED`, `CAPACITY_EXCEEDED`, `describe::MISSING_DESCRIPTION` |
 | `read_subtree_text(scene, assets, text, parent = null, options = READ_OPTIONS_DEFAULT)` | The restored root `Node*` | `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ID`, `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` |
 | `write_schema(allocator, limits = TEXT_LIMITS_DEFAULT)` | `String` owned by `allocator` | `INVALID_ARGUMENT`, `UNSUPPORTED`, `CAPACITY_EXCEEDED`, `describe::MISSING_DESCRIPTION` |
+| `read_value_text(type, text, value, storage, mode = RESET, options = READ_OPTIONS_DEFAULT, assets = null)` | Fills `value` from one JSONC object | `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ID`, `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` |
+| `read_value_at(type, document, token, value, storage, mode = RESET, options = READ_OPTIONS_DEFAULT, assets = null)` | Fills `value` from the object at one token of a parsed document | `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ID`, `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` |
+| `write_value_text(allocator, type, value, options = TEXT_WRITE_OPTIONS_DEFAULT, assets = null)` | `String` owned by `allocator` | `INVALID_ID`, `INVALID_ARGUMENT`, `UNSUPPORTED`, `CAPACITY_EXCEEDED` |
+| `parse_text(allocator, source, limits, diagnostic)` | `TextDocument` over `source`, freed by `destroy_text_document` | `ASSET_FORMAT_ERROR`, `CAPACITY_EXCEEDED`, `INVALID_ARGUMENT` |
+| `create_serial_storage(allocator)` | `SerialStorage` for value reads, freed by `destroy_serial_storage` | none |
 | `read_header(bytes)` | `SubtreeHeader` of a binary document | `ASSET_FORMAT_ERROR`, `UNSUPPORTED` |
 | `register_core_codecs()` | Registers every built-in component policy and its prerequisites | `describe::DESCRIPTION_CONFLICT`, `describe::MISSING_DESCRIPTION`, `INVALID_ARGUMENT`, `UNSUPPORTED`, `CAPACITY_EXCEEDED` |
 | `register_core_value_types()` | Registers the shared value types (transform, bounds, sway, fade, LOD, billboard, node reference) | `describe::DESCRIPTION_CONFLICT`, `describe::MISSING_DESCRIPTION`, `INVALID_ARGUMENT` |
@@ -19,7 +24,7 @@ Entry points, options, codec and described-value APIs, the container layout, the
 Rules shared by the calls:
 
 - `write_*` require the root to be live in the source scene. `read_*` require `parent` to be null or live in the destination scene with current world matrices.
-- The write, read and schema calls use `tmem` scratch and need an enclosing `@pool()`. They never open an inner pool.
+- The write, read and schema calls use `tmem` scratch and need an enclosing `@pool()`. They never open an inner pool. `read_value_text` and `read_value_at` use no `tmem`.
 - The scene and the store stay fixed while a call runs. A read never modifies the store.
 - Registration calls run during single-threaded setup. Repeating a registration adds no slot and keeps the same policy.
 
@@ -236,6 +241,23 @@ The reader accepts line and block comments and rejects trailing commas, duplicat
 - Fixed arrays, vectors, quaternions and matrices need their exact element counts. Unknown fields and components fault unless `skip_unknown` is set; skipped values still need valid syntax.
 - Only versions a codec lists in `text_default_versions` read with defaults. Other older text versions fault.
 - A failed import removes the new subtree. A supplied diagnostic keeps the JSON Pointer, source position, node record path and component name.
+
+### Single value
+
+`read_value_text`, `read_value_at` and `write_value_text` apply the field reader and writer of a component value to one registered described type, with no scene.
+
+| Item | Rule |
+| --- | --- |
+| `ReadMode.RESET` | Initializes the type's defaults, clones default strings and slices into the storage, then overlays the keys present |
+| `ReadMode.OVERLAY` | Skips the root defaults and the clone. Present keys replace their fields, and the other fields keep their contents. A slice key replaces the slice whole, and its new struct elements take their type defaults |
+| `SerialStorage` | Owns every decoded string and slice. No read frees earlier bytes: a replaced string or slice stays in the storage until `release`, which frees all and keeps the storage usable. `destroy_serial_storage` releases and clears it |
+| Faults | A fault leaves the value partly written. The storage holds what was decoded until `release` |
+| `read_value_at` | Reads the object at `token`. `options.limits` is unused; a diagnostic pointer is relative to the document root |
+| `TextDocument` | `member(token, name)` returns the token or faults `NOT_FOUND`, `kind(token)` returns a `TextKind`, `name(token)` returns the member key, and `@each_member(token; child)` visits the members or elements in order |
+| Asset fields | Read by key through `assets` and written as the store's key. With `assets` null, a named asset faults `UNSUPPORTED` and `null` is accepted |
+| Entity fields | A non-null entity faults `UNSUPPORTED` on read and write. `null` is accepted |
+| Fault position | A read fault carries the JSON Pointer, line and column. A write fault carries the pointer of the field being written, with no position |
+| Output | One root object holding every non-transient field, defaults included, with the number forms and limits of the subtree export. `omit_binary_only` and `omissions` are ignored |
 
 ## Schema export
 

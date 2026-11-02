@@ -1,5 +1,13 @@
 module c3d::serial;
 
+<* Field-level application of a JSONC object onto a described value. *>
+enum ReadMode : char {
+    <* The type's defaults first, then the keys present. *>
+    RESET,
+    <* The keys present only; fields not named keep their contents. *>
+    OVERLAY,
+}
+
 <* Default reader behavior and JSONC bounds. *>
 const ReadOptions READ_OPTIONS_DEFAULT = { .limits = TEXT_LIMITS_DEFAULT };
 
