@@ -33,12 +33,31 @@ fn MaterialId default_material(Importer* importer) @private {
 fn material::Material? convert_material(Importer* importer, ufbx::Material* source) @private {
     ufbx::MaterialPbrMaps* pbr = &source.pbr;
     bool glossiness = source.features.roughness_as_glossiness.enabled;
-    vector::Vec3 base_color = map_color(&pbr.base_color, { 1, 1, 1 }) * map_factor(&pbr.base_factor);
-    vector::Vec3 emissive = map_color(&pbr.emission_color, { 0, 0, 0 }) * map_factor(&pbr.emission_factor);
-    float metallic = map_scalar(&pbr.metalness, 0);
-    float roughness = map_scalar(&pbr.roughness, 1);
-    if (glossiness && !pbr.roughness.texture) roughness = 1 - roughness;
-    float opacity = map_scalar(&pbr.opacity, 1);
+
+    TextureSlot base_color_map = base_color_slot(importer, source)!;
+    TextureSlot metallic_roughness_map = metallic_roughness_slot(importer, source, glossiness)!;
+    TextureSlot normal_map = texture_slot_for(
+        importer: importer,
+        texture:  pbr.normal_map.texture,
+        srgb:     false,
+        semantic: image::normal_semantic(importer.options.normal_encoding),
+    )!;
+    TextureSlot occlusion_map = texture_slot_for(importer, pbr.ambient_occlusion.texture, false)!;
+    TextureSlot emissive_map = texture_slot_for(importer, pbr.emission_color.texture, true)!;
+
+    bool base_connected = map_connected(&pbr.base_color, base_color_map);
+    bool opacity_connected = map_connected(&pbr.opacity, base_color_map);
+    bool emission_connected = map_connected(&pbr.emission_color, emissive_map);
+    bool metalness_connected = map_connected(&pbr.metalness, metallic_roughness_map);
+    bool roughness_connected = map_connected(&pbr.roughness, metallic_roughness_map);
+
+    vector::Vec3 base_color = map_color(&pbr.base_color, base_connected, { 1, 1, 1 }) * map_factor(&pbr.base_factor);
+    vector::Vec3 emissive = map_color(&pbr.emission_color, emission_connected, { 0, 0, 0 })
+        * map_factor(&pbr.emission_factor);
+    float metallic = map_scalar(&pbr.metalness, metalness_connected, 0);
+    float roughness = map_scalar(&pbr.roughness, roughness_connected, 1);
+    if (glossiness && !roughness_connected) roughness = 1 - roughness;
+    float opacity = map_scalar(&pbr.opacity, opacity_connected, 1);
 
     bool finite = finite_rgb(base_color) && finite_rgb(emissive)
         && math::is_finite(metallic) && math::is_finite(roughness) && math::is_finite(opacity);
@@ -46,7 +65,7 @@ fn material::Material? convert_material(Importer* importer, ufbx::Material* sour
     if (!finite || !emissive_nonnegative) return c3d::ASSET_FORMAT_ERROR~;
 
     MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
-    common.alpha_mode = opacity < 1 || pbr.opacity.texture ? AlphaMode.BLEND : AlphaMode.OPAQUE;
+    common.alpha_mode = opacity < 1 || opacity_connected ? AlphaMode.BLEND : AlphaMode.OPAQUE;
 
     StandardParams params = material::STANDARD_PARAMS_DEFAULT;
     params.base_color = {
@@ -59,16 +78,11 @@ fn material::Material? convert_material(Importer* importer, ufbx::Material* sour
     params.roughness = math::clamp(roughness, 0.0f, 1.0f);
     params.emissive = emissive;
 
-    params.base_color_map = base_color_slot(importer, source)!;
-    params.metallic_roughness_map = metallic_roughness_slot(importer, source, glossiness)!;
-    params.normal_map = texture_slot_for(
-        importer: importer,
-        texture:  pbr.normal_map.texture,
-        srgb:     false,
-        semantic: image::normal_semantic(importer.options.normal_encoding),
-    )!;
-    params.occlusion_map = texture_slot_for(importer, pbr.ambient_occlusion.texture, false)!;
-    params.emissive_map = texture_slot_for(importer, pbr.emission_color.texture, true)!;
+    params.base_color_map = base_color_map;
+    params.metallic_roughness_map = metallic_roughness_map;
+    params.normal_map = normal_map;
+    params.occlusion_map = occlusion_map;
+    params.emissive_map = emissive_map;
 
     return material::standard(params, common);
 }
@@ -77,16 +91,20 @@ fn float map_factor(ufbx::MaterialMap* map) @private {
     return map.has_value ? (float)map.value_real : 1;
 }
 
-fn float map_scalar(ufbx::MaterialMap* map, float fallback) @private {
+fn float map_scalar(ufbx::MaterialMap* map, bool connected, float fallback) @private {
     // A connected FBX texture replaces the property value.
-    if (map.texture) return 1;
+    if (connected) return 1;
     return map.has_value ? (float)map.value_real : fallback;
 }
 
-fn vector::Vec3 map_color(ufbx::MaterialMap* map, vector::Vec3 fallback) @private {
-    if (map.texture) return { 1, 1, 1 };
+fn vector::Vec3 map_color(ufbx::MaterialMap* map, bool connected, vector::Vec3 fallback) @private {
+    if (connected) return { 1, 1, 1 };
     if (!map.has_value) return fallback;
     return { (float)map.value_vec3.x, (float)map.value_vec3.y, (float)map.value_vec3.z };
+}
+
+fn bool map_connected(ufbx::MaterialMap* map, TextureSlot slot) @private {
+    return map.texture && !c3d::same_id(slot.texture.asset, (TextureId){});
 }
 
 fn bool finite_rgb(vector::Vec3 color) @private {
@@ -103,12 +121,16 @@ fn TextureSlot? texture_slot_for(
 
     ufbx::Texture* file = file_texture(texture)!;
 
-    TextureId id = plain_texture(
+    TextureId? id = plain_texture(
         importer: importer,
         texture:  file,
         srgb:     srgb,
         semantic: semantic,
-    )!;
+    );
+    if (catch excuse = id) {
+        if (drop_missing(importer, excuse)) return material::texture_slot();
+        return excuse~;
+    }
 
     return material::texture_slot(id, sampler_for(importer, file)!);
 }
@@ -120,7 +142,11 @@ fn TextureSlot? base_color_slot(Importer* importer, ufbx::Material* source) @pri
     ufbx::Texture* opacity_file = file_texture(opacity)!;
     ufbx::Texture* base_file = base ? file_texture(base)! : null;
     if (base_file == opacity_file) return texture_slot_for(importer, base, true);
-    TextureId id = base_opacity_texture(importer, base_file, opacity_file)!;
+    TextureId? id = base_opacity_texture(importer, base_file, opacity_file);
+    if (catch excuse = id) {
+        if (drop_missing(importer, excuse)) return material::texture_slot();
+        return excuse~;
+    }
     return material::texture_slot(id, sampler_for(importer, base_file ?: opacity_file)!);
 }
 
@@ -130,13 +156,24 @@ fn TextureSlot? metallic_roughness_slot(Importer* importer, ufbx::Material* sour
     if (!roughness && !metalness) return material::texture_slot();
     ufbx::Texture* roughness_file = roughness ? file_texture(roughness)! : null;
     ufbx::Texture* metalness_file = metalness ? file_texture(metalness)! : null;
-    TextureId id = metallic_roughness_texture(
+    TextureId? id = metallic_roughness_texture(
         importer:   importer,
         roughness:  roughness_file,
         metalness:  metalness_file,
         glossiness: glossiness,
-    )!;
+    );
+    if (catch excuse = id) {
+        if (drop_missing(importer, excuse)) return material::texture_slot();
+        return excuse~;
+    }
     return material::texture_slot(id, sampler_for(importer, roughness_file ?: metalness_file)!);
+}
+
+fn bool drop_missing(Importer* importer, fault excuse) @private {
+    // Only an unreadable texture file raises ASSET_IO_ERROR while textures convert.
+    if (excuse != c3d::ASSET_IO_ERROR || importer.options.missing_textures != MissingTextures.DROP) return false;
+    importer.dropped_textures++;
+    return true;
 }
 
 fn ufbx::Texture*? file_texture(ufbx::Texture* texture) @private {
