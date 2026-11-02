@@ -182,7 +182,7 @@ Unknown keys fault `ASSET_FORMAT_ERROR` unless `ReadOptions.skip_unknown` is set
 
 `SerialStorage` owns every string and slice a value read decodes. Keep one per value or per table, pass it to every read that fills that value, and call `release` or `destroy_serial_storage` once, after the last use of the values. A read never frees what an earlier read decoded: an overlay that replaces a string or a slice, and a `RESET` read over a filled value, leave the old bytes in the storage. A table overlaid N times grows until it is released. `release` frees everything and leaves the storage reusable; a value read into it must not be used afterwards.
 
-To read records out of a larger document, parse it once with `parse_text`, walk an object's members with `document.@each_member(token; uint child)`, and read each record with `read_value_at`. `document.name(child)` is the member key, `document.member(token, name)` finds a member, and `document.kind(token)` gives its kind. A diagnostic pointer is relative to the document root. `parse_text` borrows the source text until `destroy_text_document`.
+To read records out of a larger document, parse it once with `parse_text`, walk an object's members with `document.@each_member(token; uint child)`, and read each record with `read_value_at`. `document.name(child)` is the member key, `document.member(token, name)` finds a member or faults `NOT_FOUND`, and `document.kind(token)` gives its kind. A diagnostic pointer is relative to the document root. `parse_text` borrows the source text until `destroy_text_document`.
 
 ```c3
 TextDocument document = serial::parse_text(mem, source, serial::TEXT_LIMITS_DEFAULT, &diagnostic)!;

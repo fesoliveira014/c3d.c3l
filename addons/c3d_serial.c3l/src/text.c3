@@ -113,11 +113,14 @@ struct TextParser @private {
 }
 
 <*
- Token of the named member of an object, or INDEX_NONE.
+ Token of the named member of an object.
+ @return? NOT_FOUND
  @require token < self.values.len
 *>
-fn uint TextDocument.member(&self, uint token, String name) {
-    return json_member(self, token, name);
+fn uint? TextDocument.member(&self, uint token, String name) {
+    uint child = json_member(self, token, name);
+    if (child == INDEX_NONE) return NOT_FOUND~;
+    return child;
 }
 
 <*

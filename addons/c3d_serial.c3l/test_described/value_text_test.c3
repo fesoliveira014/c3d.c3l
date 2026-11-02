@@ -174,8 +174,12 @@ fn void test_value_read_at_walks_records_of_a_document() @test {
     assert(records[0].gain == 1.0f && records[0].title == "untitled");
     assert(records[1].gain == 2.0f && records[1].title == "b");
     assert(records[2].gain == 1.5f && records[2].nested.amount == 3 && records[2].nested.label == "base");
-    assert(document.kind(0) == TextKind.OBJECT && document.kind(document.member(0, "beta")) == TextKind.OBJECT);
-    assert(document.member(0, "missing") == serial::INDEX_NONE);
+    assert(document.kind(0) == TextKind.OBJECT && document.kind(document.member(0, "beta")!!) == TextKind.OBJECT);
+    if (catch excuse = document.member(0, "missing")) {
+        assert(excuse == serial::NOT_FOUND);
+    } else {
+        assert(false);
+    }
 
     String invalid = `{"alpha":{"gain":1.0},"beta":{"gain":true}}`;
     TextDocument rejected = serial::parse_text(
@@ -190,7 +194,7 @@ fn void test_value_read_at_walks_records_of_a_document() @test {
     if (catch excuse = serial::read_value_at(
         type: type,
         document: &rejected,
-        token: rejected.member(0, "beta"),
+        token: rejected.member(0, "beta")!!,
         value: &records[0],
         storage: &storage,
         options: options,

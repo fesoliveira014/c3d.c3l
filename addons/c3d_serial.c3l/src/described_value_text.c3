@@ -5,9 +5,10 @@ import c3d::asset;
 
 <*
  Read one JSONC object into a described value.
- Leaves the value partly written on a fault. Replaced overlay bytes stay in the storage until release.
+ Leaves the value partly written on a fault.
+ @param [&in] type : "Registered with its defaults."
  @param [&inout] value : "Of the type's layout; OVERLAY keeps the fields the text omits."
- @param [&inout] storage : "Owns every decoded string and slice."
+ @param [&inout] storage : "Owns every decoded string and slice; grows until released."
  @param [in] assets : "Resolves asset keys; null faults a named asset as UNSUPPORTED."
  @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
@@ -47,10 +48,12 @@ fn void? read_value_text(
 
 <*
  Read the JSONC object at one token of a parsed document into a described value.
- Same contract as read_value_text; options.limits is unused.
+ Leaves the value partly written on a fault.
+ @param [&in] type : "Registered with its defaults."
  @param [&in] document : "Parsed by the caller."
  @param [&inout] value : "Of the type's layout; OVERLAY keeps the fields the text omits."
- @param [&inout] storage : "Owns every decoded string and slice."
+ @param [&inout] storage : "Owns every decoded string and slice; grows until released."
+ @param options : "The limits are unused; the document is parsed."
  @param [in] assets : "Resolves asset keys; null faults a named asset as UNSUPPORTED."
  @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require token < document.values.len
@@ -89,6 +92,7 @@ fn void? read_value_at(
 
 <*
  JSONC object of every non-transient field of a described value.
+ @param [&in] type : "Registered with its defaults."
  @param [&in] value : "Of the type's layout."
  @param [in] assets : "Resolves asset keys; null faults a named asset as UNSUPPORTED."
  @param options : "Omission fields are ignored."
