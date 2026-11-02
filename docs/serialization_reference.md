@@ -272,12 +272,11 @@ Defaults come from the same callbacks as text import. The export never runs comp
 | `ASSET_FORMAT_ERROR` | Malformed header, chunks, records or counts; duplicate entries; invalid bool, enum or UTF-8; truncation; bad reference index; unconsumed payload; a document naming more than 128 types |
 | `UNSUPPORTED` | Container or type version, unknown name, codec or destination store unavailable; binary-only codec in text export; a component with no policy; a described `CustomId{T}` field whose kind has no slot or no pool in the store |
 | `INCOMPATIBLE_TEMPLATE` | A referenced model differs from the saved structural signature |
-| `NOT_FOUND` | `TextDocument.member` finds no member of that name |
 | `INVALID_ID` | Missing or wrong-kind asset reference, including a dead source asset |
 | `INVALID_ARGUMENT` | Unkeyed source asset; node reference outside the subtree, to an omitted node or to another scene; conflicting owner claims or codec name; invalid text limits; `omit_binary_only` without an `omissions` list |
 | `CAPACITY_EXCEEDED` | Authored nodes do not fit, the output or a count exceeds the format, or a fallible allocation fails |
 
-`INCOMPATIBLE_TEMPLATE` and `NOT_FOUND` are `c3d::serial` faults; the others are `c3d` faults. Owner codecs add their declared faults, and a codec classifies invalid stored descriptors before it calls an owner API with programming preconditions. Retained diagnostics add the JSON Pointer and source position for text and the component, node and asset or model details when known.
+`INCOMPATIBLE_TEMPLATE` is `c3d::serial::INCOMPATIBLE_TEMPLATE`; the others are `c3d` faults. Owner codecs add their declared faults, and a codec classifies invalid stored descriptors before it calls an owner API with programming preconditions. Retained diagnostics add the JSON Pointer and source position for text and the component, node and asset or model details when known.
 
 ## Component policies
 

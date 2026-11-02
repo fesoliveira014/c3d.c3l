@@ -176,7 +176,7 @@ fn void test_value_read_at_walks_records_of_a_document() @test {
     assert(records[2].gain == 1.5f && records[2].nested.amount == 3 && records[2].nested.label == "base");
     assert(document.kind(0) == TextKind.OBJECT && document.kind(document.member(0, "beta")!!) == TextKind.OBJECT);
     if (catch excuse = document.member(0, "missing")) {
-        assert(excuse == serial::NOT_FOUND);
+        assert(excuse == NOT_FOUND);
     } else {
         assert(false);
     }
