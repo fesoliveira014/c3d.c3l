@@ -120,7 +120,9 @@ fn ModelDocument? decode_model(
         importer.base_dir = path.path_tdirname() ?? "";
         convert_model(&importer)!;
     };
+
     if (options.dropped_textures) *options.dropped_textures = importer.dropped_textures;
+
     return importer.document;
 }
 

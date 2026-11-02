@@ -203,7 +203,9 @@ fn ModelDocument? decode_file(
         if (source) finish_source_record(&importer, diagnostic)!;
     };
     if (source) *source = record;
+
     report_dropped_textures(&importer);
+
     return importer.document;
 }
 
@@ -274,7 +276,9 @@ fn ModelDocument? decode_memory(
         if (source) finish_source_record(&importer, diagnostic)!;
     };
     if (source) *source = record;
+
     report_dropped_textures(&importer);
+
     return importer.document;
 }
 

@@ -142,11 +142,13 @@ fn TextureSlot? base_color_slot(Importer* importer, ufbx::Material* source) @pri
     ufbx::Texture* opacity_file = file_texture(opacity)!;
     ufbx::Texture* base_file = base ? file_texture(base)! : null;
     if (base_file == opacity_file) return texture_slot_for(importer, base, true);
+
     TextureId? id = base_opacity_texture(importer, base_file, opacity_file);
     if (catch excuse = id) {
         if (drop_missing(importer, excuse)) return material::texture_slot();
         return excuse~;
     }
+
     return material::texture_slot(id, sampler_for(importer, base_file ?: opacity_file)!);
 }
 
@@ -156,6 +158,7 @@ fn TextureSlot? metallic_roughness_slot(Importer* importer, ufbx::Material* sour
     if (!roughness && !metalness) return material::texture_slot();
     ufbx::Texture* roughness_file = roughness ? file_texture(roughness)! : null;
     ufbx::Texture* metalness_file = metalness ? file_texture(metalness)! : null;
+
     TextureId? id = metallic_roughness_texture(
         importer:   importer,
         roughness:  roughness_file,
@@ -166,6 +169,7 @@ fn TextureSlot? metallic_roughness_slot(Importer* importer, ufbx::Material* sour
         if (drop_missing(importer, excuse)) return material::texture_slot();
         return excuse~;
     }
+
     return material::texture_slot(id, sampler_for(importer, roughness_file ?: metalness_file)!);
 }
 
