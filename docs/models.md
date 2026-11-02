@@ -109,8 +109,8 @@ unmasked texture. A DDS or KTX image with supplied mip levels keeps its authored
 ## Options
 
 `LoadOptions` selects what the importer keeps. It lives in `c3d::asset` and is shared by every model loader.
-`LOAD_OPTIONS_DEFAULT` enables `animations`, `lights`, `cameras` and `generate_tangents`; `regenerate_tangents` is off and
-`normal_encoding` is `RGB`.
+`LOAD_OPTIONS_DEFAULT` enables `animations`, `lights`, `cameras` and `generate_tangents`; `regenerate_tangents` is off,
+`normal_encoding` is `RGB`, `missing_textures` is `FAIL` and `dropped_textures` is null.
 
 | Field | Effect |
 | --- | --- |
@@ -120,6 +120,8 @@ unmasked texture. A DDS or KTX image with supplied mip levels keeps its authored
 | `generate_tangents` | Generate a missing tangent stream for a normal-mapped triangle primitive. |
 | `regenerate_tangents` | Replace authored tangents and split geometry where needed. |
 | `normal_encoding` | `RGB` (default) or `RG` for imported normal textures; their generated mips filter decoded vectors. |
+| `missing_textures` | `FAIL` (default) faults `ASSET_IO_ERROR` on a texture that cannot be read. `DROP` imports the material without that map. |
+| `dropped_textures` | Optional. A decode that succeeds sets it to the number of maps `DROP` removed; a decode fault leaves it unchanged. Read it only when the load succeeds: a publish fault after a successful decode (store capacity, key clash) can leave it written. |
 
 With `generate_tangents`, a missing tangent stream is generated from the normal map's raw UV0 or UV1 using the pinned
 MikkTSpace, and lookup transforms are excluded. When the base and clearcoat normal maps use different UV sets, generated
@@ -156,6 +158,10 @@ UV set. Sampler filters map nearest-or-linear per stage; the mip filter follows 
 is linear when the source names none. Wrap modes map to the matching address modes; the W axis repeats. Every factor is
 validated against the constructor domains before the material is built; a value outside them is `ASSET_FORMAT_ERROR`.
 Only UV sets 0 and 1 exist, so a higher `texCoord`, including one set by `KHR_texture_transform`, is the same fault.
+An image whose URI names a file that does not read is `ASSET_IO_ERROR`; under `missing_textures = DROP` the texture view
+imports as an empty slot and counts once in `dropped_textures`. Factors multiply the texture in glTF, so they keep their
+authored values. An image that reads but does not decode, an image with neither a URI nor a buffer view, and a malformed
+data URI stay faults.
 Material and sampler fidelity for tools is in [glTF source inspection](gltf_source.md#material-and-sampler-fidelity).
 
 ### Geometry
@@ -273,6 +279,14 @@ roughness.
   metalness in blue; sources of different sizes are resampled to the larger), and an opacity texture is multiplied into a
   copy of the base color's alpha (resampled to the base color's size). Texture bytes come from embedded content, then the relative path next to the file,
   then the absolute path.
+- **Missing textures.** A texture with no embedded content and no path that reads through the file source is missing,
+  empty filenames included. Under `missing_textures = DROP` its map imports empty, and a factor that the texture would
+  have forced to one or white takes the value it has without a texture: the material's own value, else the default.
+  Glossiness inversion follows the same rule. A packed metallic-roughness map and a base color with opacity read two
+  textures; if either is missing the whole map is dropped and both of its factors take those values. A dropped opacity
+  texture no longer selects blending, and a dropped normal map no longer asks for generated tangents. Each dropped map
+  counts once in `dropped_textures`, so a packed map counts once and a texture shared by two materials counts twice. A
+  texture that reads but does not decode, a texture that is not RGBA8 and an `UNSUPPORTED` texture stay faults.
 - **Skins.** Each skin deformer becomes a skeleton in cluster order, with the bone's local transform as rest pose and
   ufbx's geometry-to-bone matrix as inverse bind. Vertices keep their four largest weights, renormalized. When a skinned
   mesh has vertices without weights, the skeleton gains one last joint bound to the mesh part itself with an identity
@@ -291,14 +305,15 @@ roughness.
 Unsupported: texture UV transforms (`UNSUPPORTED`), UV set selection by name (textures use UV set 0), a mesh with more than
 one skin deformer (`UNSUPPORTED`), dual-quaternion skinning (imported as linear), area and volume lights (skipped), NURBS,
 constraints and geometry caches. A texture that has neither embedded content nor a readable file fails with
-`ASSET_IO_ERROR`; any other ufbx load failure, a texture that does not decode to RGBA8, a skin cluster without a bone node,
-a non-finite material value or invalid in-between weights fail with `ASSET_FORMAT_ERROR`. A fault rolls back as for glTF.
+`ASSET_IO_ERROR` unless `missing_textures` is `DROP`; any other ufbx load failure, a texture that does not decode to RGBA8,
+a skin cluster without a bone node, a non-finite material value or invalid in-between weights fail with
+`ASSET_FORMAT_ERROR`. A fault rolls back as for glTF.
 
 ## Faults
 
 | Fault | Meaning |
 | --- | --- |
-| `ASSET_IO_ERROR` | The file, an external buffer or an external image could not be read. |
+| `ASSET_IO_ERROR` | The file, an external buffer or an external image could not be read. `missing_textures = DROP` turns an unreadable texture into a dropped map. |
 | `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, a joint lies outside the imported nodes, or a numeric value lies outside the constructor domains. |
 | `UNSUPPORTED` | A required extension or a compressed primitive the importer does not implement, an unsupported required `MSFT_lod` shape, an FBX texture UV transform, an FBX mesh with more than one skin deformer or 65,535 or more clusters, or an FBX texture that is not a file texture and has none. |
 | `CAPACITY_EXCEEDED` | A store pool has fewer free slots than the model needs. |

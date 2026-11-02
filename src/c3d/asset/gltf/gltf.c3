@@ -36,6 +36,7 @@ struct Importer @private {
     TextureId[]      normal_textures;
     TextureVariant[] texture_variants;
     usz              texture_variant_count;
+    uint             dropped_textures;
     MaterialId[]     materials;
     MaterialId       default_material;
     GeometryId[]     geometries;
@@ -202,6 +203,9 @@ fn ModelDocument? decode_file(
         if (source) finish_source_record(&importer, diagnostic)!;
     };
     if (source) *source = record;
+
+    report_dropped_textures(&importer);
+
     return importer.document;
 }
 
@@ -272,7 +276,15 @@ fn ModelDocument? decode_memory(
         if (source) finish_source_record(&importer, diagnostic)!;
     };
     if (source) *source = record;
+
+    report_dropped_textures(&importer);
+
     return importer.document;
+}
+
+fn void report_dropped_textures(Importer* importer) @private {
+    uint* report = importer.options.dropped_textures;
+    if (report) *report = importer.dropped_textures;
 }
 
 fn gltf::Options read_options(FileSource* file_source) @private {

@@ -41,6 +41,7 @@ struct Importer @private {
     TextureId[]      normal_textures;
     DerivedTexture[] derived_textures;
     usz              derived_count;
+    uint             dropped_textures;
     SamplerId[MIXED_SAMPLER_COUNT] mixed_samplers;
     MaterialId[]     materials;
     MaterialId       default_material;
@@ -119,6 +120,9 @@ fn ModelDocument? decode_model(
         importer.base_dir = path.path_tdirname() ?? "";
         convert_model(&importer)!;
     };
+
+    if (options.dropped_textures) *options.dropped_textures = importer.dropped_textures;
+
     return importer.document;
 }
 

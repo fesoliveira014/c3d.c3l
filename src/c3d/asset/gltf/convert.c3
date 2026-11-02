@@ -197,6 +197,13 @@ fn char[]? image_bytes(Importer* importer, gltf::Image* image) @private {
     return importer.file_source.read_path(tmem, join_path(importer.base_dir, encoded_uri.str_view()[:length]));
 }
 
+fn bool drop_missing(Importer* importer, fault excuse) @private {
+    // Only an unreadable image file raises ASSET_IO_ERROR while textures convert.
+    if (excuse != c3d::ASSET_IO_ERROR || importer.options.missing_textures != MissingTextures.DROP) return false;
+    importer.dropped_textures++;
+    return true;
+}
+
 fn TextureSlot? texture_slot_for(
     Importer* importer,
     gltf::TextureView* view,
@@ -207,14 +214,18 @@ fn TextureSlot? texture_slot_for(
 ) @private {
     if (!view.texture) return material::texture_slot();
 
-    TextureId texture = texture_for(
+    TextureId? texture = texture_for(
         importer: importer,
         texture: view.texture,
         srgb: srgb,
         semantic: semantic,
         coverage: coverage,
         alpha_threshold: alpha_threshold,
-    )!;
+    );
+    if (catch excuse = texture) {
+        if (drop_missing(importer, excuse)) return material::texture_slot();
+        return excuse~;
+    }
 
     gltf::Sampler* sampler = view.texture.sampler;
     SamplerId sampler_id = sampler
