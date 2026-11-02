@@ -168,7 +168,7 @@ finish.
 | --- | --- |
 | `path` | File to decode. Copied. |
 | `format` | `ModelFormat.GLTF` or `ModelFormat.FBX`. |
-| `options` | `LoadOptions`. |
+| `options` | `LoadOptions`. A `dropped_textures` pointer must stay valid until the request is terminal; the decode worker writes it. |
 | `replace` | A live `ModelId` to replace instead of adding; its key must equal `path`. |
 | `missing` | Borrowed until the request is terminal; publication alone writes it, and cancellation never does. |
 
