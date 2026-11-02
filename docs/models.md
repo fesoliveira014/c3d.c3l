@@ -121,7 +121,7 @@ unmasked texture. A DDS or KTX image with supplied mip levels keeps its authored
 | `regenerate_tangents` | Replace authored tangents and split geometry where needed. |
 | `normal_encoding` | `RGB` (default) or `RG` for imported normal textures; their generated mips filter decoded vectors. |
 | `missing_textures` | `FAIL` (default) faults `ASSET_IO_ERROR` on a texture that cannot be read. `DROP` imports the material without that map. |
-| `dropped_textures` | Optional. A decode that succeeds sets it to the number of maps `DROP` removed; a decode fault leaves it unchanged. |
+| `dropped_textures` | Optional. A decode that succeeds sets it to the number of maps `DROP` removed; a decode fault leaves it unchanged. Read it only when the load succeeds: a publish fault after a successful decode (store capacity, key clash) can leave it written. |
 
 With `generate_tangents`, a missing tangent stream is generated from the normal map's raw UV0 or UV1 using the pinned
 MikkTSpace, and lookup transforms are excluded. When the base and clearcoat normal maps use different UV sets, generated
